@@ -39,17 +39,18 @@ The repo ships a `shell.nix` with Python 3.12, ffmpeg, and DejaVu fonts:
 nix-shell                       # creates and activates .venv on first entry
 pip install -r requirements.txt && pip install -e .
 ```
+
 </details>
 
 `.env` keys:
 
-| Key | Needed for | Where to get |
-|---|---|---|
-| `DEEPSEEK_API_KEY` | LLM (provider `deepseek`) | platform.deepseek.com |
-| `GEMINI_API_KEY` | LLM (provider `gemini`, has a free tier) | aistudio.google.com |
-| `OPENROUTER_API_KEY` | LLM (provider `openrouter`, has `:free` models) | openrouter.ai |
-| `PEXELS_API_KEY` | stock footage (primary) | pexels.com/api |
-| `PIXABAY_API_KEY` | stock footage (fallback) | pixabay.com/api/docs |
+| Key                  | Needed for                                      | Where to get          |
+| -------------------- | ----------------------------------------------- | --------------------- |
+| `DEEPSEEK_API_KEY`   | LLM (provider `deepseek`)                       | platform.deepseek.com |
+| `GEMINI_API_KEY`     | LLM (provider `gemini`, has a free tier)        | aistudio.google.com   |
+| `OPENROUTER_API_KEY` | LLM (provider `openrouter`, has `:free` models) | openrouter.ai         |
+| `PEXELS_API_KEY`     | stock footage (primary)                         | pexels.com/api        |
+| `PIXABAY_API_KEY`    | stock footage (fallback)                        | pixabay.com/api/docs  |
 
 Only the key for the provider selected in `configs/slopgen.toml` `[llm]` (or TUI → Configuration → LLM) is required. Everything else is key-free: edge-tts needs no key, YouTube uses OAuth (a client JSON, not an API key). Footage can stay key-free too via the `local` provider (`assets/footage/`).
 
@@ -83,35 +84,35 @@ The first positional argument is the **mode**: `info` (the minute-of-info clip) 
 
 **`info LANG TYPE [flags]`**
 
-| Argument / flag | Meaning |
-|---|---|
-| `LANG` `TYPE` | positional: language (`en`/`ru`) and content type (`story`/`cyber`/`psych`/`facts`) |
-| `--idea "..."` | your own topic; omit to let the LLM invent one |
-| `--visuals NAME` | visuals profile from `configs/visuals/` (default `classic`) |
-| `--duration N` | target spoken length in seconds (default 45; >60 is fine, Shorts allow up to 3 min). A hint for the LLM, not a hard cap |
-| `--profanity N` | swearing level in the narration, 0 (clean) … 100 (constant); in the TUI it's a slider on the Content step |
-| `--ad NAME` | ad contract from `configs/ads/` |
-| `--ad-mode` | `overlay` (corner animation + caption), `native` (spoken mention + ad clip), `both` |
-| `--push NAME` | account from `configs/accounts/`; omit → save locally |
-| `-n, --count N` | videos per run |
-| `--preset NAME` | load a parameter bundle from `configs/presets/` |
-| `--resume DIR` | continue a crashed run from its output dir (the folder holding `checkpoint.json`) |
-| `--subs` | subtitle style: `word_pop` / `phrases` / `karaoke` |
-| `--out DIR` | output dir override |
-| `--dry-run` | generate but don't publish (dev tool; picking "save locally" does the same) |
-| `--keep-temp` | keep intermediate ffmpeg files |
+| Argument / flag  | Meaning                                                                                                                 |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `LANG` `TYPE`    | positional: language (`en`/`ru`) and content type (`story`/`cyber`/`psych`/`facts`)                                     |
+| `--idea "..."`   | your own topic; omit to let the LLM invent one                                                                          |
+| `--visuals NAME` | visuals profile from `configs/visuals/` (default `classic`)                                                             |
+| `--duration N`   | target spoken length in seconds (default 45; >60 is fine, Shorts allow up to 3 min). A hint for the LLM, not a hard cap |
+| `--profanity N`  | swearing level in the narration, 0 (clean) … 100 (constant); in the TUI it's a slider on the Content step               |
+| `--ad NAME`      | ad contract from `configs/ads/`                                                                                         |
+| `--ad-mode`      | `overlay` (corner animation + caption), `native` (spoken mention + ad clip), `both`                                     |
+| `--push NAME`    | account from `configs/accounts/`; omit → save locally                                                                   |
+| `-n, --count N`  | videos per run                                                                                                          |
+| `--preset NAME`  | load a parameter bundle from `configs/presets/`                                                                         |
+| `--resume DIR`   | continue a crashed run from its output dir (the folder holding `checkpoint.json`)                                       |
+| `--subs`         | subtitle style: `word_pop` / `phrases` / `karaoke`                                                                      |
+| `--out DIR`      | output dir override                                                                                                     |
+| `--dry-run`      | generate but don't publish (dev tool; picking "save locally" does the same)                                             |
+| `--keep-temp`    | keep intermediate ffmpeg files                                                                                          |
 
 **`drama LANG [flags]`** — shares `--ad`, `--ad-mode`, `--profanity`, `--push`, `-n/--count`, `--subs`, `--out`, `--dry-run`, `--keep-temp` with `info`, plus:
 
-| Flag | Meaning |
-|---|---|
-| `LANG` | positional: narration language (`en`/`ru`) |
-| `--scenario "..."` | the plot/premise; omit to let the LLM invent one |
-| `--cast A,B` | comma-separated character names from `configs/characters/` |
+| Flag                   | Meaning                                                                        |
+| ---------------------- | ------------------------------------------------------------------------------ |
+| `LANG`                 | positional: narration language (`en`/`ru`)                                     |
+| `--scenario "..."`     | the plot/premise; omit to let the LLM invent one                               |
+| `--cast A,B`           | comma-separated character names from `configs/characters/`                     |
 | `--orchestration NAME` | AI-generator chain from `configs/orchestration/` (default: one `wan2.1` stage) |
-| `--duration-min N` | target length in **minutes** |
-| `--tol N` | how many **seconds** the finished video may run over/under the target |
-| `--voice ID` | edge-tts narrator voice (default per language) |
+| `--duration-min N`     | target length in **minutes**                                                   |
+| `--tol N`              | how many **seconds** the finished video may run over/under the target          |
+| `--voice ID`           | edge-tts narrator voice (default per language)                                 |
 
 **Global** (before the mode, or standalone): `--resume DIR`, and the inspectors
 `--list-types` `--list-ads` `--list-accounts` `--list-presets` `--list-visuals`
@@ -203,6 +204,10 @@ Subtitles default to the **DejaVu Sans** font. It's preinstalled on most Linux d
 - TikTok publishing is a stub (`publish/tiktok.py`) — no official upload API for regular accounts.
 - edge-tts is an unofficial use of Microsoft's public endpoint; it can break or be rate-limited at any time.
 
+## Made with Claude Code
+
+100% vibe-coded via [Claude Code](https://claude.com/claude-code). The author wrote zero lines of code — every function, stage, prompt, and config was generated through conversation with Claude Sonnet. The ideas, design decisions, and product vision are human; the implementation is AI.
+
 ---
 
 <a name="slopgen-ru"></a>
@@ -234,6 +239,7 @@ cp .env.example .env             # вписать ключи (Windows: copy .env
 nix-shell                        # при первом входе создаст и активирует .venv
 pip install -r requirements.txt && pip install -e .
 ```
+
 </details>
 
 Личное и копирайтное вынесено в `.gitignore`: `assets/music/`, `assets/footage/`, `assets/ads/`, а также `configs/characters/`, `configs/accounts/` и `configs/ads/*.toml` (кроме `example_vpn.toml`). Занеси свои (правомерные) треки, клипы и персонажей сам — в репозитории лежат только нейтральные шаблоны.
@@ -334,3 +340,7 @@ slopgen --resume output/<время>_<тип|режим>_<язык>   # прод
 - Политика YouTube **inauthentic content** (июль 2025) демонетизирует шаблонный масс-контент. Инструмент от неё не спасает: вкладывайся в разнообразие брифов, голосов и ассетов по каналам.
 - Публикация в TikTok — заглушка (официального API нет).
 - edge-tts — неофициальное использование публичного эндпоинта Microsoft; может отвалиться в любой момент.
+
+## Сделано через Claude Code
+
+100% навайбкожено через [Claude Code](https://claude.com/claude-code). Автор не написал ни одной строчки кода — каждая функция, стадия, промпт и конфиг сгенерированы в диалоге с Claude Sonnet. Идеи, дизайн-решения и продуктовое видение — человеческие; реализация — ИИ.
