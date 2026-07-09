@@ -204,9 +204,9 @@ Subtitles default to the **DejaVu Sans** font. It's preinstalled on most Linux d
 - TikTok publishing is a stub (`publish/tiktok.py`) — no official upload API for regular accounts.
 - edge-tts is an unofficial use of Microsoft's public endpoint; it can break or be rate-limited at any time.
 
-## Made with Claude Code
+## Made in Russia 🤍💙🤍
 
-100% vibe-coded via [Claude Code](https://claude.com/claude-code). The author wrote zero lines of code — every function, stage, prompt, and config was generated through conversation with Claude Sonnet. The ideas, design decisions, and product vision are human; the implementation is AI.
+100% vibe-coded via [Claude Code](https://claude.com/claude-code). The author wrote zero lines of code — every function, stage, prompt, and config was generated through conversation with Claude Opus. The ideas, design decisions, and product vision are human; the implementation is AI.
 
 ---
 
@@ -341,6 +341,6 @@ slopgen --resume output/<время>_<тип|режим>_<язык>   # прод
 - Публикация в TikTok — заглушка (официального API нет).
 - edge-tts — неофициальное использование публичного эндпоинта Microsoft; может отвалиться в любой момент.
 
-## Сделано через Claude Code
+## Сделано в России 🤍💙🤍
 
-100% навайбкожено через [Claude Code](https://claude.com/claude-code). Автор не написал ни одной строчки кода — каждая функция, стадия, промпт и конфиг сгенерированы в диалоге с Claude Sonnet. Идеи, дизайн-решения и продуктовое видение — человеческие; реализация — ИИ.
+100% навайбкожено через [Claude Code](https://claude.com/claude-code). Автор не написал ни одной строчки кода — каждая функция, стадия, промпт и конфиг сгенерированы в диалоге с Claude Opus. Идеи, дизайн-решения и продуктовое видение — человеческие; реализация — ИИ.
