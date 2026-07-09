@@ -1,0 +1,5 @@
+# config
+
+**EN:** Pydantic models for every config kind (`models.py`) and the loader (`loader.py`). `ConfigStore` scans `configs/` (global, content types, ads, accounts, presets, visuals profiles, LLM profiles) and resolves run parameters with the priority CLI > preset > account defaults > global defaults; `active_llm_profile()` picks the LLM connection. `RunParams` is the single validated parameter object the rest of the app consumes (including ad-hoc `manual_ad`/`manual_visuals` built by the TUI). `envfile.py` writes single variables into `.env` (API keys entered in the TUI).
+
+**RU:** Pydantic-модели всех видов конфигов (`models.py`) и загрузчик (`loader.py`). `ConfigStore` сканирует `configs/` (глобальный, типы контента, реклама, аккаунты, пресеты, профили видеоряда, профили нейронок) и резолвит параметры с приоритетом CLI > пресет > дефолты аккаунта > глобальные; `active_llm_profile()` выбирает LLM-подключение. `RunParams` — единый валидированный объект параметров (включая ad-hoc `manual_ad`/`manual_visuals` из TUI). `envfile.py` пишет отдельные переменные в `.env` (ключи, введённые в TUI).

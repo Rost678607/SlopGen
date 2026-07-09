@@ -1,0 +1,12 @@
+# Photo slideshow: background photos change with the narration, Ken Burns motion.
+name = "slideshow"
+description = "Narration-synced photos with Ken Burns motion"
+
+[background]
+source = "stock_photo"
+linkage = "narration"
+interval_s = 3.5 # a new photo roughly every N seconds of speech
+motion = "subtle" # none | subtle | strong
+
+[foreground]
+enabled = false

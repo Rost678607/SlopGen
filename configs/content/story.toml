@@ -1,0 +1,15 @@
+name = "story"
+description = "Gripping narrative stories with a hook and a twist"
+fallback_keywords = ["dark city night", "rain on window", "person silhouette fog", "old photographs"]
+
+[voices]
+en = "en-US-ChristopherNeural"
+ru = "ru-RU-DmitryNeural"
+
+[idea_brief]
+en = "A short gripping story premise: an unbelievable-but-true-feeling event that happened to an ordinary person. Mystery, coincidence, survival, betrayal or an eerie twist. Must hook in the first sentence."
+ru = "Завязка короткой захватывающей истории: невероятное, но правдоподобное событие с обычным человеком. Тайна, совпадение, выживание, предательство или жуткий поворот. Должна цеплять с первой фразы."
+
+[script_brief]
+en = "Tell the story in second or third person, present tense, punchy short sentences. Open with a shocking hook, escalate tension every scene, end with a twist or an open question that begs a comment."
+ru = "Расскажи историю во втором или третьем лице, в настоящем времени, короткими хлёсткими фразами. Начни с шокирующего хука, наращивай напряжение каждой сценой, закончи твистом или открытым вопросом, провоцирующим комментарии."

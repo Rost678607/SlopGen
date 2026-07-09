@@ -1,0 +1,39 @@
+[paths]
+assets = "assets"
+output = "output"
+state = "state"
+
+[video]
+width = 1080
+height = 1920
+fps = 30
+target_duration_s = 45.0
+
+[subtitles]
+style = "word_pop"
+font = "DejaVu Sans"
+font_size = 110
+primary_color = "&H00FFFFFF"
+accent_color = "&H0000D7FF"
+outline = 8
+
+[audio]
+music_volume = 0.12
+
+[llm]
+profile = "deepseek"
+
+[ui]
+lang = "ru"
+theme = "minecraft"
+
+[footage]
+providers = [
+    "pexels",
+    "pixabay",
+    "local",
+]
+
+[defaults]
+count = 1
+ad_mode = "both"

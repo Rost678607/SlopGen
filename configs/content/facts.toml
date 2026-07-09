@@ -1,0 +1,15 @@
+name = "facts"
+description = "Weird science and mind-blowing facts"
+fallback_keywords = ["space nebula", "ocean deep underwater", "microscope cells", "nature macro"]
+
+[voices]
+en = "en-US-GuyNeural"
+ru = "ru-RU-DmitryNeural"
+
+[idea_brief]
+en = "One mind-blowing science fact or weird phenomenon (human body, space, deep sea, animals, physics) that sounds fake but is true and is visual enough to illustrate with stock footage."
+ru = "Один сносящий крышу научный факт или странный феномен (тело человека, космос, глубины океана, животные, физика), который звучит как фейк, но правда, и достаточно визуален для стокового футажа."
+
+[script_brief]
+en = "Start with 'did you know'-energy but never those literal words — open with the most shocking framing of the fact. Explain why/how in simple terms, add one comparison to everyday scale, end with a bonus mini-fact."
+ru = "Начни с энергии 'а ты знал', но без этих слов буквально — открой самой шокирующей формулировкой факта. Объясни почему/как простыми словами, добавь одно сравнение с бытовым масштабом, закончи бонусным мини-фактом."

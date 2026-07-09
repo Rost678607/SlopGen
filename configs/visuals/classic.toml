@@ -1,0 +1,14 @@
+# Default visuals: narration-linked stock video clips (one per scene), no foreground.
+name = "classic"
+description = "Stock video b-roll matching the narration"
+
+[background]
+source = "stock_video" # stock_video | stock_photo | local_video | local_photo | ai_video | ai_photo
+linkage = "narration"  # narration | neutral
+# ai_model = "auto"     # ai_video: auto|wan2.1|ltx-video|animatediff · ai_photo: flux|turbo
+# continuous = true     # one long clip straight through (video sources only)
+
+[foreground]
+enabled = false
+# source = "stock_photo" # stock_photo | stock_video | local_photo | local_video | ai_photo | ai_video
+# ai_model = "flux"      # generator for ai_photo/ai_video inserts

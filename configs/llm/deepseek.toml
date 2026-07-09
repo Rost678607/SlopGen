@@ -1,0 +1,7 @@
+name = "deepseek"
+provider = "deepseek"
+base_url = ""
+model = "deepseek-v4-pro"
+key_env = ""
+temperature = 1.2
+web_search = true

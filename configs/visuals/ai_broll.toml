@@ -1,0 +1,14 @@
+# AI-generated b-roll: a fresh clip generated per scene from the narration.
+# Free but slow (HF Spaces, minutes per clip); falls back to the stock chain in
+# [footage] providers when a generator is unavailable. Needs no API key; set
+# HF_TOKEN in .env to shorten Hugging Face queues.
+name = "ai_broll"
+description = "AI-generated video b-roll (free, slow) matching the narration"
+
+[background]
+source = "ai_video"
+linkage = "narration"
+ai_model = "auto"  # auto | wan2.1 | ltx-video | animatediff
+
+[foreground]
+enabled = false

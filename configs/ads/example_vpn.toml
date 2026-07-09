@@ -1,0 +1,20 @@
+name = "example_vpn"
+url = "https://example-vpn.com/?ref=me"
+modes = [
+    "overlay",
+    "native",
+]
+
+[overlay]
+assets_dir = "assets/ads/example_vpn/overlay"
+text = "EXAMPLE VPN −50%"
+position = "top_right"
+start_s = 0.0
+duration_s = 16.0
+
+[native]
+assets_dir = "assets/ads/example_vpn/native"
+talking_points = "Лучший впн, обходит все блокировки и т д, месяц бесплатно дают, а по моему промокоду сразу целых 3"
+
+[description]
+snippet = "🔒 Stay anonymous online with ExampleVPN (3 months free): {url}"

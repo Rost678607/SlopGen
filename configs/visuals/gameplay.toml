@@ -1,0 +1,19 @@
+# Gameplay background (drop your minecraft-parkour/subway-surfers clips into
+# assets/footage/gameplay/) + narration-linked inserts popping in front.
+name = "gameplay"
+description = "One continuous gameplay loop behind, narration inserts in front"
+
+[background]
+source = "local_video"
+linkage = "neutral"
+assets_dir = "assets/footage/gameplay"
+continuous = true  # ONE clip plays straight through — no per-scene restart
+
+[foreground]
+enabled = true
+source = "stock_photo" # stock_photo | stock_video | local_photo | local_video | ai_photo | ai_video
+# ai_model = "flux"      # ai_photo: flux|turbo · ai_video: auto|wan2.1|ltx-video|animatediff
+# no cadence/length here — inserts are driven by the narration: each one appears
+# while the phrase it illustrates is spoken and disappears afterwards.
+width_pct = 78
+position = "center"

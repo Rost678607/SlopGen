@@ -1,0 +1,15 @@
+name = "cyber"
+description = "Internet mysteries: dark web, hackers, digital privacy scares"
+fallback_keywords = ["hacker dark room", "computer code screen", "server room dark", "city night neon"]
+
+[voices]
+en = "en-US-ChristopherNeural"
+ru = "ru-RU-DmitryNeural"
+
+[idea_brief]
+en = "An internet mystery or cyber story: dark web legends, real hacker incidents, creepy websites, data leaks, surveillance, digital privacy scares. Must feel forbidden and slightly scary, grounded in something real."
+ru = "Интернет-мистерия или кибер-история: легенды даркнета, реальные взломы, жуткие сайты, утечки данных, слежка, цифровая приватность. Должно ощущаться запретным и слегка пугающим, с опорой на реальные события."
+
+[script_brief]
+en = "Narrate like a conspiracy documentary: low, tense, factual. Open with 'what you're about to hear' style hook. Sprinkle concrete details (dates, numbers, handles). End warning the viewer their own data might be next."
+ru = "Рассказывай как конспирологическую документалку: сдержанно, напряжённо, фактурно. Начни с хука в стиле 'то, что ты сейчас узнаешь'. Добавляй конкретику (даты, цифры, ники). Закончи предупреждением, что данные зрителя могут быть следующими."

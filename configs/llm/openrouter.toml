@@ -1,0 +1,7 @@
+name = "openrouter"
+provider = "openrouter"
+base_url = ""
+model = "nvidia/nemotron-3-ultra-550b-a55b:free"
+key_env = ""
+temperature = 1.2
+web_search = true

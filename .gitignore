@@ -1,0 +1,38 @@
+# --- Python / build ---
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+
+# --- Secrets & runtime output ---
+.env
+secrets/
+output/
+state/
+
+# --- OS / editor cruft ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# --- Private / bring-your-own content (not shipped) ---
+# Personal AI-drama cast, publishing accounts, and ad contracts.
+configs/characters/*.toml
+!configs/characters/example.toml
+configs/accounts/*.toml
+configs/ads/*.toml
+!configs/ads/example_vpn.toml
+
+# Media libraries are copyright-sensitive — supply your own.
+assets/music/*
+!assets/music/.gitkeep
+assets/footage/*
+!assets/footage/.gitkeep
+assets/ads/*
+!assets/ads/.gitkeep
+!assets/ads/example_vpn/
+!assets/ads/example_vpn/**

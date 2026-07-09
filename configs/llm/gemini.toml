@@ -1,0 +1,7 @@
+name = "gemini"
+provider = "gemini"
+base_url = ""
+model = "gemini-2.5-flash"
+key_env = ""
+temperature = 1.2
+web_search = true

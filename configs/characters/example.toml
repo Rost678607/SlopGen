@@ -1,0 +1,8 @@
+# Example character for the AI-drama cast. Copy this file, rename it to your
+# character's name (the file name is the name used in --cast), and edit.
+# `visual_prompt` is compiled from `appearance` on first use; leave it empty and
+# keep `dirty = true` to have it (re)generated.
+age = "20"
+appearance = "Short silver hair, sharp green eyes, black hoodie with a neon-blue zipper, calm and observant."
+visual_prompt = ""
+dirty = true

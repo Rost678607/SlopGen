@@ -1,0 +1,15 @@
+name = "psych"
+description = "Psychology: cognitive biases, manipulation, human behavior"
+fallback_keywords = ["human eye closeup", "crowd walking", "brain abstract", "chess pieces"]
+
+[voices]
+en = "en-US-AriaNeural"
+ru = "ru-RU-SvetlanaNeural"
+
+[idea_brief]
+en = "One striking psychology insight: a cognitive bias, manipulation tactic, dark psychology trick or counterintuitive research finding that viewers can recognize in their own life immediately."
+ru = "Один яркий психологический инсайт: когнитивное искажение, приём манипуляции, трюк тёмной психологии или контринтуитивный результат исследования, который зритель сразу узнает в своей жизни."
+
+[script_brief]
+en = "Speak directly to the viewer ('you do this every day...'). Explain the mechanism simply, give one vivid everyday example, then flip it: how it's used against them. End with a defense tip or an unsettling question."
+ru = "Обращайся прямо к зрителю ('ты делаешь это каждый день...'). Объясни механизм просто, дай один яркий бытовой пример, затем разверни: как это используют против него. Закончи советом защиты или тревожным вопросом."
