@@ -97,6 +97,55 @@ NONE = "__none__"
 MANUAL = "__manual__"
 CUSTOM = "__custom__"
 
+# (key, {lang: (label, description)}) — English label is sent to the LLM
+DRAMA_TROPES: list[tuple[str, dict[str, tuple[str, str]]]] = [
+    ("system",      {
+        "en": ("System / Gacha (MC gets a game-like interface or system)",
+               "MC gets a game-like HUD: quests, stats, rewards, penalties"),
+        "ru": ("Система", "ГГ получает игровой интерфейс: задания, характеристики, штрафы"),
+    }),
+    ("rebirth",     {
+        "en": ("Reincarnation / Transmigration",
+               "MC dies and wakes up in another body or world, with memories intact"),
+        "ru": ("Перерождение", "ГГ умирает и возрождается — в чужом теле, мире или прошлом"),
+    }),
+    ("revenge",     {
+        "en": ("Revenge (betrayal → cold comeback)",
+               "MC was betrayed or humiliated and returns to settle the score"),
+        "ru": ("Месть", "ГГ предали или унизили — теперь холодный расчётливый возврат"),
+    }),
+    ("family",      {
+        "en": ("Family betrayal / Hidden heir",
+               "Family schemes, fake children, lost heirs, blood secrets"),
+        "ru": ("Семья", "Предательство родных, подменённые дети, тайное наследство"),
+    }),
+    ("reputation",  {
+        "en": ("Reputation / Public humiliation → reversal",
+               "Everyone thinks MC is worthless — until a single moment flips it all"),
+        "ru": ("Репутация", "Все считают ГГ ничтожеством — один момент переворачивает всё"),
+    }),
+    ("artifact",    {
+        "en": ("Magic artifact / Portal / Gate to another world",
+               "An object (vase, mirror, ring…) connects worlds or grants forbidden power"),
+        "ru": ("Артефакт (связь миров)", "Предмет (ваза, зеркало, кольцо…) связывает миры или даёт запретную силу"),
+    }),
+    ("cultivation", {
+        "en": ("Cultivation / Power levels / Spiritual roots",
+               "MC rises through ranked power tiers via training, breakthroughs, or rare talent"),
+        "ru": ("Культивация", "Уровни силы, духовные корни, прорывы — рост через практику"),
+    }),
+    ("apocalypse",  {
+        "en": ("Apocalypse / End of the world",
+               "The world is ending or already collapsed; survival and hope are the core"),
+        "ru": ("Конец света", "Мир гибнет или уже рухнул — выживание и надежда в центре"),
+    }),
+    ("trial",       {
+        "en": ("Trial / Hidden test (e.g. billionaire's inheritance challenge)",
+               "A powerful figure sets a secret test; passing it brings life-changing reward"),
+        "ru": ("Проверка / Испытание", "Тайное испытание от влиятельного лица — приз меняет жизнь ГГ"),
+    }),
+]
+
 MINECRAFT_THEME = Theme(
     name="minecraft",
     primary="#5EBB2B",  # grass
@@ -132,6 +181,12 @@ I18N: dict[str, dict[str, str]] = {
         "drama_cast_head": "Cast",
         "drama_add": "＋ Add character",
         "drama_plot_head": "— Plot —",
+        "drama_ai_head": "— AI story polish —",
+        "drama_protagonist": "Protagonist",
+        "drama_protagonist_none": "— let AI decide —",
+        "drama_tropes_btn": "🎭 Tropes",
+        "drama_tropes_head": "— Story tropes —",
+        "drama_tropes_done": "✓ Done",
         "drama_prompt_ph": "optional: tell the AI how to fill the cast / rewrite the plot",
         "drama_cast_hint2": "Click a character to edit it on the right. Empty fields are improvised at generation time.",
         "cast_st_local": "Not saved",
@@ -372,6 +427,12 @@ I18N: dict[str, dict[str, str]] = {
         "drama_cast_head": "Каст",
         "drama_add": "＋ Добавить персонажа",
         "drama_plot_head": "— Сюжет —",
+        "drama_ai_head": "— ИИ-доработка сюжета —",
+        "drama_protagonist": "Главный герой",
+        "drama_protagonist_none": "— ИИ сам решит —",
+        "drama_tropes_btn": "🎭 Клише",
+        "drama_tropes_head": "— Клише сюжета —",
+        "drama_tropes_done": "✓ Готово",
         "drama_prompt_ph": "опционально: как ИИ заполнить каст / переписать сюжет",
         "drama_cast_hint2": "Клик по персонажу — редактирование справа. Пустые поля додумываются при генерации.",
         "cast_st_local": "Не сохранён",
@@ -1320,6 +1381,8 @@ class DramaScreen(_CharEditAI, GenerateScreen):
         self._scenario_ai_val: str | None = None  # AI-set plot, for un-tint on manual edit
         self._think_timers: dict = {}  # prompt-field id -> animation Timer while the AI works
         self._think_orig: dict = {}  # prompt-field id -> its original placeholder
+        self._tropes: set[str] = set()  # selected trope keys
+        self._protagonist: str = ""  # selected protagonist name (empty = let AI decide)
         # video orchestration (the drama Visuals step): ordered generator stages
         self._stages: list[dict] = []
         self._stage_sel: int | None = None
@@ -1567,9 +1630,19 @@ class DramaScreen(_CharEditAI, GenerateScreen):
             return
         yield Static(t("drama_plot_head"), classes="group-head")
         yield from Text("scenario", "", large=True).build("drama", t)  # id: drama-scenario
+        # ── AI story polish block ──────────────────────────────────────────
+        yield Static(t("drama_ai_head"), classes="group-head")
+        yield Label(t("drama_protagonist"))
+        yield Select(
+            [(t("drama_protagonist_none"), "")],
+            id="drama-protagonist", allow_blank=False, value="",
+        )
+        with Horizontal(classes="entity-actions"):
+            yield Button(t("drama_tropes_btn"), id="drama-tropes-btn")
         yield from Text("prompt", "", placeholder="drama_prompt_ph").build("drama", t)
         with Horizontal(classes="entity-actions"):
             yield Button(t("char_autofill_all"), id="cast-fill-all", variant="primary")
+        # ── Cast ──────────────────────────────────────────────────────────
         yield Static(t("drama_cast_head"), classes="group-head")
         with Horizontal(classes="entity-actions"):
             yield Button(t("drama_add"), id="cast-add", variant="success")
@@ -1585,11 +1658,29 @@ class DramaScreen(_CharEditAI, GenerateScreen):
             return ("cast_st_global_dirty", "st-dirty")
         return ("cast_st_global", "st-global")
 
+    def _refresh_protagonist_select(self) -> None:
+        try:
+            sel = self.query_one("#drama-protagonist", Select)
+        except Exception:
+            return
+        t = lambda k: _label(self.app, k)  # noqa: E731
+        opts = [(t("drama_protagonist_none"), "")] + [
+            (m["name"], m["name"]) for m in self._cast if m.get("name")
+        ]
+        sel.set_options(opts)
+        cur = self._protagonist
+        if cur and any(m["name"] == cur for m in self._cast):
+            sel.value = cur
+        else:
+            sel.value = ""
+            self._protagonist = ""
+
     def _refresh_cast_list(self) -> None:
         try:
             lv = self.query_one("#cast-list", ListView)
         except Exception:
             return
+        self._refresh_protagonist_select()
         self._rev += 1  # unique id prefix so appends don't clash with the async clear()
         lv.clear()
         for i, m in enumerate(self._cast):
@@ -1612,6 +1703,48 @@ class DramaScreen(_CharEditAI, GenerateScreen):
                 classes="cast-item",
             )
             lv.append(item)
+
+    # -- tropes panel -------------------------------------------------------
+    async def _show_tropes_panel(self) -> None:
+        t = lambda k: _label(self.app, k)  # noqa: E731
+        self._insp_mode = "tropes"
+        lang = self.app.store.global_cfg.ui.lang
+        widgets: list = [Static(t("drama_tropes_head"), classes="group-head")]
+        for key, labels in DRAMA_TROPES:
+            label, desc = labels.get(lang, labels["en"])
+            widgets.append(
+                Horizontal(
+                    Switch(value=(key in self._tropes), id=f"trope-{key}"),
+                    Vertical(Label(label), Static(desc, classes="trope-desc"), classes="trope-text"),
+                    classes="trope-row",
+                )
+            )
+        widgets.append(Button(t("drama_tropes_done"), id="tropes-done", variant="primary"))
+        await self._set_inspector(widgets)
+
+    @on(Button.Pressed, "#drama-tropes-btn")
+    async def _open_tropes(self) -> None:
+        await self._show_tropes_panel()
+
+    @on(Button.Pressed, "#tropes-done")
+    async def _tropes_done(self) -> None:
+        await self._show_help("step.characters")
+
+    @on(Switch.Changed)
+    def _trope_switch(self, event: Switch.Changed) -> None:
+        wid = event.switch.id or ""
+        if not wid.startswith("trope-"):
+            return
+        key = wid[len("trope-"):]
+        if event.value:
+            self._tropes.add(key)
+        else:
+            self._tropes.discard(key)
+
+    @on(Select.Changed, "#drama-protagonist")
+    def _protagonist_changed(self, event: Select.Changed) -> None:
+        v = event.value
+        self._protagonist = "" if v is Select.BLANK else str(v)
 
     # -- inspector: picker + editor -----------------------------------------
     async def _show_picker(self) -> None:
@@ -1899,13 +2032,23 @@ class DramaScreen(_CharEditAI, GenerateScreen):
             pass
         lang = self.app.store.global_cfg.ui.lang
         cast_copy = [dict(m) for m in self._cast]
+        tropes = [labels["en"][0] for key, labels in DRAMA_TROPES if key in self._tropes]
+        protagonist = self._protagonist
         self._start_thinking("drama-prompt")
         self.run_worker(
-            lambda: self._all_worker(cast_copy, lang, scenario, prompt), thread=True, exclusive=False)
+            lambda: self._all_worker(cast_copy, lang, scenario, prompt, tropes, protagonist),
+            thread=True, exclusive=False,
+        )
 
-    def _all_worker(self, cast: list[dict], lang: str, scenario: str, prompt: str) -> None:
+    def _all_worker(
+        self, cast: list[dict], lang: str, scenario: str, prompt: str,
+        tropes: list[str] | None = None, protagonist: str = "",
+    ) -> None:
         try:
-            res = char_ai.autofill_all(self._llm(), cast, lang, scenario, prompt)
+            res = char_ai.autofill_all(
+                self._llm(), cast, lang, scenario, prompt,
+                tropes=tropes or [], protagonist=protagonist,
+            )
         except Exception as e:
             self.app.call_from_thread(self._all_done, None, str(e))
             return
@@ -2734,9 +2877,9 @@ class SlopgenApp(App):
     }
     /* AI-filled fields are tinted so edits from the model stand out */
     .ai-filled { border: round $accent; background: $accent 15%; }
-    #cast-list { height: 1fr; min-height: 8; margin-top: 1; border: round $secondary; }
+    #cast-list { height: 27; min-height: 27; margin-top: 1; border: round $secondary; }
     /* cast rows: bordered 3-line cards, name/age/look left, status right at a fixed column */
-    .cast-item { height: auto; padding: 0; margin: 0 1 1 1; border: round $secondary; }
+    .cast-item { height: auto; padding: 0; margin: 0 1 0 1; border: round $secondary; }
     .cast-item.-highlight { border: round $accent; background: $accent 12%; }
     .cast-row { height: 3; width: 1fr; padding: 0 1; }
     .cast-info { width: 1fr; height: 3; }
@@ -2797,6 +2940,12 @@ class SlopgenApp(App):
     .nav-row .nav-btn { margin-top: 0; }
     .switch-row { height: auto; margin-top: 1; }
     .switch-row Label { margin-top: 1; margin-left: 2; }
+    .drama-sep { color: $secondary; margin: 1 0; }
+    .trope-row { height: auto; margin-bottom: 1; }
+    .trope-row Switch { margin-top: 1; }
+    .trope-text { width: 1fr; height: auto; margin-left: 1; }
+    .trope-text Label { margin-top: 1; color: $text; }
+    .trope-desc { color: $text-muted; }
 
     #w-summary { margin-top: 1; }
     #w-cmd {

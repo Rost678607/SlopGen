@@ -100,7 +100,8 @@ def autofill_one(llm, char: dict, lang: str = "en", user_prompt: str = "") -> di
 
 
 def autofill_all(
-    llm, cast: list[dict], lang: str = "en", scenario: str = "", user_prompt: str = ""
+    llm, cast: list[dict], lang: str = "en", scenario: str = "", user_prompt: str = "",
+    tropes: list[str] | None = None, protagonist: str = "",
 ) -> dict:
     """Fill the whole cast at once, reading every character plus the scenario for a
     coherent ensemble. Without a prompt it only fills EMPTY character fields; WITH a
@@ -128,10 +129,16 @@ def autofill_all(
             '(relationships, contrasts, fitting the premise). NEVER change filled fields. '
             'Do NOT return "scenario". '
         )
+    extras: list[str] = []
+    if tropes:
+        extras.append(f"Story tropes to weave in: {'; '.join(tropes)}.")
+    if protagonist:
+        extras.append(f"The protagonist (main character) is: {protagonist}.")
+    extras_str = (" " + " ".join(extras)) if extras else ""
     system = (
         "You are casting a short dramatic anime-style web drama. `appearance` = "
         "looks/clothing/build. Improvise freely where the premise or characters are thin. "
-        f"{edit_rule}Write values in {lang}.\n"
+        f"{edit_rule}Write values in {lang}.{extras_str}\n"
         'Respond with JSON only: {"cast": [{"age": "...", "appearance": "..."}, ...], '
         '"scenario": "..."} — cast same order/length as input, each object holding ONLY '
         "the fields you changed."

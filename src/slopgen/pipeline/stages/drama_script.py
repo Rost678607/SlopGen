@@ -27,9 +27,15 @@ from .script import _count_profanity, _inject_profanity, profanity_rule
 
 SYSTEM = (
     "You are the writer of a narrated, anime-style vertical web drama (короткая дорама). "
-    "One offscreen NARRATOR tells the whole story in {lang}; the narrator may quote a "
-    "character's line inline inside the narration (e.g. «Она сказала: “...”»), but there is "
-    "only ONE voice — never a screenplay with separate speakers. "
+    "One offscreen NARRATOR tells the whole story in {lang}. "
+    "The narrator has three tools: "
+    "(1) plot narration ('Она вошла в зал…'); "
+    "(2) the MC's inner thoughts / internal monologue, voiced in first person "
+    "('«Они предали меня. Но я вернусь.»'); "
+    "(3) direct quotes of any character, introduced briefly "
+    "('Он усмехнулся: «Ты проиграла.»'). "
+    "Mix all three freely within a beat for maximum emotional pull. "
+    "There is still only ONE voice — never a screenplay with separate speaker lines. "
     "Break the story into BEATS. Each beat is exactly ONE short shot. For each beat give:\n"
     '  • "narration": the spoken text for this shot, in {lang} (~{words} words), advancing the plot;\n'
     '  • "video_prompt": an ENGLISH text-to-image/video prompt describing THIS shot — the setting, '
