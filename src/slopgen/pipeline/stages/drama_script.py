@@ -22,6 +22,7 @@ from ...llm.characters import recompile_if_dirty
 from ..context import AppContext
 from ..drama import plan_slots, word_budget
 from ..job import Scene, VideoJob
+from ..parts import normalize_scene_parts, requested_parts
 from .idea import LANG_NAMES
 from .script import _count_profanity, _inject_profanity, profanity_rule
 
@@ -37,6 +38,7 @@ SYSTEM = (
     "Mix all three freely within a beat for maximum emotional pull. "
     "There is still only ONE voice — never a screenplay with separate speaker lines. "
     "Break the story into BEATS. Each beat is exactly ONE short shot. For each beat give:\n"
+    '  • "part": the output part number for this shot (1 if there is only one part);\n'
     '  • "narration": the spoken text for this shot, in {lang} (~{words} words), advancing the plot;\n'
     '  • "video_prompt": an ENGLISH text-to-image/video prompt describing THIS shot — the setting, '
     "which characters are on screen and what they are doing, camera framing and mood. Token-dense, "
@@ -49,7 +51,8 @@ SYSTEM = (
     "Give the drama a clear arc (hook → rise → turn → payoff) across about {beats} beats and roughly "
     "{duration:.0f} seconds total (you MAY use a few more or fewer beats — up to ~{tol:.0f}s over/under — "
     "when the story flows better). Keep characters consistent with the cast sheet.\n"
-    'Respond with JSON only: {{"title": "<short title in {lang}>", "scenes": [{{"narration": "...", '
+    "{part_rule}"
+    'Respond with JSON only: {{"title": "<short title in {lang}>", "scenes": [{{"part": 1, "narration": "...", '
     '"video_prompt": "...", "characters": ["..."], "is_ad": false}}, ...]}}.'
 )
 
@@ -59,6 +62,15 @@ AD_RULES = (
     "organically brings up the product and says the link is in the description, based on these talking "
     "points: {points}. The lead-in beats before it should make the mention feel earned, not abrupt. "
     'Give the ad beat a normal "video_prompt" and "characters" too.'
+)
+
+PART_RULES = (
+    "\nMULTI-PART OUTPUT: split the story into exactly {parts} ordered parts. "
+    'Every scene must have integer "part" from 1 to {parts}; part numbers never go backwards. '
+    "The final beat of every non-final part MUST be the strongest unresolved moment available: "
+    "a revelation, betrayal, discovery, threat, impossible choice, or emotional reversal that cuts at peak tension. "
+    "Do not resolve that moment inside the same part. The next part starts with the immediate fallout, "
+    "not a recap. Make each part feel publishable on its own while still demanding the next part.\n"
 )
 
 
@@ -81,7 +93,12 @@ def _parse_scenes(data: dict) -> list[Scene]:
         narration = str(s.get("narration") or s.get("text") or "").strip()
         if not narration:
             continue
+        try:
+            part = int(s.get("part", 1) or 1)
+        except (TypeError, ValueError):
+            part = 1
         out.append(Scene(
+            part=part,
             text=narration,
             video_prompt=str(s.get("video_prompt", "")).strip(),
             characters=[str(c).strip() for c in s.get("characters", []) if str(c).strip()],
@@ -120,10 +137,12 @@ def run(job: VideoJob, ctx: AppContext) -> None:
     slots = plan_slots(ctx.orchestration, p.duration_s)
     beats = len(slots)
     avg_words = word_budget(sum(s.clip_seconds for s in slots) / beats, p.lang)
+    parts = requested_parts(p)
 
     system = SYSTEM.format(
         lang=lang, words=avg_words, beats=beats,
         duration=p.duration_s, tol=p.duration_tol_s,
+        part_rule=PART_RULES.format(parts=parts) if parts > 1 else "",
     )
     system += profanity_rule(p.profanity, p.lang)
     if ctx.native_ad_on:
@@ -156,6 +175,14 @@ def run(job: VideoJob, ctx: AppContext) -> None:
             s.is_ad = False
         seen_ad = seen_ad or s.is_ad
 
+    normalize_scene_parts(scenes, parts)
+    if parts > 1:
+        missing = set(range(1, parts + 1)) - {s.part for s in scenes}
+        if missing:
+            raise ValueError(
+                f"drama script has {len(scenes)} scenes and cannot fill "
+                f"{parts} non-empty parts"
+            )
     _assign_slots(scenes, slots)
     job.scenes = scenes
     job.topic = str(data.get("title", "")).strip() or (p.scenario.strip()[:80] or "AI drama")

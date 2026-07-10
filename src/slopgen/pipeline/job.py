@@ -59,6 +59,7 @@ class Scene(BaseModel):
     clip_target_s: float = 0.0  # planned shot length (drives word budget + stretch)
     audio_src_duration: float = 0.0  # natural TTS length before the atempo stretch
     audio_tempo: float = 1.0  # atempo factor applied so the voice fits the clip
+    part: int = 1  # drama: output part number; cuts happen after the last scene in a part
 
 
 class VideoJob(BaseModel):
@@ -68,7 +69,9 @@ class VideoJob(BaseModel):
     scenes: list[Scene] = []
     cast_prompts: dict[str, str] = Field(default_factory=dict)  # drama: name → visual_prompt
     ass_path: Path | None = None
+    part_ass_paths: list[Path] = Field(default_factory=list)
     final_path: Path | None = None
+    final_paths: list[Path] = Field(default_factory=list)
     metadata: dict = Field(default_factory=dict)
     published: str = ""  # URL or local path after publish
 

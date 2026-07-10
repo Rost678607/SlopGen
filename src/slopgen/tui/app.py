@@ -232,6 +232,7 @@ I18N: dict[str, dict[str, str]] = {
         "help.ad_mode": "overlay = corner banner; native = spoken mention; both.",
         "help.push": "A saved account to publish to, or just save the file locally.",
         "help.count": "How many videos to generate in this run.",
+        "help.parts": "How many publishable parts to split one AI drama into. Parts end on script-planned cliffhangers.",
         "help.subs": "Subtitle animation style: word-pop, phrases, or karaoke.",
         "help.drama_scenario": "The drama's premise/plot. Empty or thin is fine — it's improvised at generation.",
         "help.drama_prompt": "Optional steer for '✨ AI fill cast': how to fill the cast, or ask it to rewrite the plot.",
@@ -325,6 +326,7 @@ I18N: dict[str, dict[str, str]] = {
         "push": "Publish to",
         "push_local": "— save locally —",
         "count": "Videos count",
+        "parts": "Drama parts",
         "subs": "Subtitle style",
         "next": "Next  →",
         "prev": "←  Prev",
@@ -478,6 +480,7 @@ I18N: dict[str, dict[str, str]] = {
         "help.ad_mode": "overlay = баннер в углу; native = устное упоминание; both — оба.",
         "help.push": "Аккаунт для публикации или просто локальное сохранение файла.",
         "help.count": "Сколько видео сгенерировать за этот прогон.",
+        "help.parts": "На сколько публикуемых частей разбить одну ИИ-дораму. Обрывы планируются в сценарии как клиффхэнгеры.",
         "help.subs": "Стиль субтитров: word-pop, phrases или karaoke.",
         "help.drama_scenario": "Замысел/сюжет дорамы. Можно пусто или частично — додумается при генерации.",
         "help.drama_prompt": "Опциональная подсказка для «✨ ИИ заполнит каст»: как заполнить каст или переписать сюжет.",
@@ -571,6 +574,7 @@ I18N: dict[str, dict[str, str]] = {
         "push": "Куда публиковать",
         "push_local": "— сохранить локально —",
         "count": "Количество роликов",
+        "parts": "Частей в дораме",
         "subs": "Стиль субтитров",
         "next": "Далее  →",
         "prev": "←  Назад",
@@ -800,7 +804,7 @@ FIELD_HELP = {
     "w-fg-on": "help.fg_on", "w-fg-src": "help.fg_src", "w-fg-width": "help.fg_width",
     "w-fg-pos": "help.fg_pos", "w-fg-ai-vmodel": "help.ai_model", "w-fg-ai-pmodel": "help.ai_model",
     "w-ad-src": "help.ad_src", "w-ad-mode": "help.ad_mode",
-    "w-push": "help.push", "w-count": "help.count", "w-subs": "help.subs",
+    "w-push": "help.push", "w-count": "help.count", "w-parts": "help.parts", "w-subs": "help.subs",
     "drama-scenario": "help.drama_scenario", "drama-prompt": "help.drama_prompt",
     "e-characters-name": "help.char_name", "e-characters-age": "help.char_age",
     "e-characters-appearance": "help.char_appearance",
@@ -1388,6 +1392,10 @@ class DramaScreen(_CharEditAI, GenerateScreen):
         self._stage_sel: int | None = None
         self._stage_form: Form | None = None
         self._orch_rev = 0
+
+    def _make_forms(self, t, store: ConfigStore, vis0: VisualsConfig) -> None:
+        super()._make_forms(t, store, vis0)
+        self.f_publish.fields.insert(2, Number("parts", "parts", value="1", default=1, integer=True))
 
     def _content_form(self, store: ConfigStore) -> Form:
         # drama: no content-type / idea — the premise lives in the Story step
@@ -2109,6 +2117,7 @@ class DramaScreen(_CharEditAI, GenerateScreen):
             "ad_src": a["ad-src"], "ad_mode": a["ad-mode"] or "both",
             "push": "" if p["push"] == NONE else p["push"],
             "subs": p["subs"], "count": max(1, int(p["count"])),
+            "parts": max(1, int(p.get("parts", 1) or 1)),
         }
 
     def _render_summary(self) -> None:
@@ -2125,7 +2134,8 @@ class DramaScreen(_CharEditAI, GenerateScreen):
             f"[b]{t('drama_summary_head')}[/b]",
             "",
             f"  {t('lang')}: [b]{g['lang']}[/b]      {t('duration')}: "
-            f"~{g['duration'] / 60:.1f} min ±{g['duration_tol']:.0f}s",
+            f"~{g['duration'] / 60:.1f} min ±{g['duration_tol']:.0f}s"
+            + (f"      {t('parts')}: [b]{g['parts']}[/b]" if g["parts"] != 1 else ""),
             f"  {t('drama_plot_head')}: {plot}",
             f"  {t('drama_cast_head')}: [b]{cast}[/b]",
             f"  ★ {t('cfg.characters')}: {glob}",
@@ -2139,6 +2149,8 @@ class DramaScreen(_CharEditAI, GenerateScreen):
     def _drama_command(self, g: dict) -> str:
         cmd = f"slopgen drama {g['lang']}"
         cmd += f" --duration-min {g['duration'] / 60:g} --tol {g['duration_tol']:g}"
+        if g["parts"] != 1:
+            cmd += f" --parts {g['parts']}"
         glob = [m["name"] for m in self._cast if m["glob"]]
         if glob:
             cmd += f" --cast {','.join(glob)}"
@@ -2185,6 +2197,7 @@ class DramaScreen(_CharEditAI, GenerateScreen):
                 manual_cast=cast,
                 manual_orchestration=orch,
                 duration_s=g["duration"], duration_tol_s=g["duration_tol"],
+                parts=g["parts"],
                 profanity=g["profanity"],
                 ad=g["ad_src"] if g["ad_src"] not in (NONE, MANUAL) else "",
                 manual_ad=self._manual_ad_config(g["ad_src"]),
@@ -2249,7 +2262,8 @@ class ProgressScreen(Screen):
         ad = f"{(p.manual_ad.name if p.manual_ad else p.ad) or '—'} ({p.ad_mode})"
         push = f"push: {p.push or t('run.local')} · {t('run.subs')}: {p.subtitle_style}"
         if p.mode == "drama":
-            head = f" {p.count}× 🎭 {p.lang} · ~{p.duration_s / 60:.1f} min ±{p.duration_tol_s:.0f}s · ad: "
+            parts = f" · {t('parts')}: {p.parts}" if p.parts != 1 else ""
+            head = f" {p.count}× 🎭 {p.lang} · ~{p.duration_s / 60:.1f} min ±{p.duration_tol_s:.0f}s{parts} · ad: "
         else:
             vis = (p.manual_visuals.name + "*") if p.manual_visuals else p.visuals
             head = f" {p.count}× {p.lang}/{p.content_type} · {t('run.vis')}: {vis} ~{p.duration_s:.0f}s · ad: "
@@ -2292,7 +2306,8 @@ class ProgressScreen(Screen):
         t = lambda k: _label(self.app, k)  # noqa: E731
         self._log(f"[bold green]{t('run.finished')}: {len(done)}/{total}[/bold green]")
         for j in done:
-            self._log(f"  → {j.published}")
+            for line in str(j.published).splitlines():
+                self._log(f"  → {line}")
         self.notify(f"{t('run.finished')}: {len(done)}/{total}", timeout=10)
 
 

@@ -28,6 +28,7 @@ def run(job: VideoJob, ctx: AppContext) -> None:
     if ctx.ad and ctx.ad.description.snippet:
         description += "\n\n" + ctx.ad.description.snippet.format(url=ctx.ad.url)
     description += "\n\n" + " ".join(hashtags)
+    files = job.final_paths or ([job.final_path] if job.final_path else [])
 
     job.metadata = {
         "title": meta["title"][:100],
@@ -37,6 +38,8 @@ def run(job: VideoJob, ctx: AppContext) -> None:
         "lang": ctx.params.lang,
         "content_type": ctx.params.content_type,
         "duration_s": round(job.total_duration, 2),
+        "parts": len(files),
+        "files": [str(p) for p in files],
     }
     (job.workdir / "metadata.json").write_text(
         json.dumps(job.metadata, ensure_ascii=False, indent=2), encoding="utf-8"

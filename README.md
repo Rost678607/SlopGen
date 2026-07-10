@@ -67,14 +67,15 @@ slopgen --preset daily_en                                 # a preset is an info 
 
 # AI drama: a narrated story with a recurring cast + AI-generated shots
 slopgen drama ru --scenario "Две подруги ссорятся из-за тайны" \
-                 --cast example --duration-min 2 --tol 20
+                 --cast example --duration-min 2 --tol 20 --parts 3
 slopgen drama en --orchestration my_chain --ad example_vpn --dry-run
 
 # generate without publishing (demo assets included)
 slopgen info en cyber --ad example_vpn --dry-run
 ```
 
-Output lands in `output/<timestamp>_<type|mode>_<lang>/<n>/final.mp4` + `metadata.json`.
+Single-part output lands in `output/<timestamp>_<type|mode>_<lang>/<n>/final.mp4` + `metadata.json`.
+Multi-part dramas produce `part_01.mp4`, `part_02.mp4`, ... together in that same `<n>/` directory.
 
 ### CLI reference
 
@@ -112,6 +113,7 @@ The first positional argument is the **mode**: `info` (the minute-of-info clip) 
 | `--orchestration NAME` | AI-generator chain from `configs/orchestration/` (default: one `wan2.1` stage) |
 | `--duration-min N`     | target length in **minutes**                                                   |
 | `--tol N`              | how many **seconds** the finished video may run over/under the target          |
+| `--parts N`            | split one drama into N publishable parts; script cuts are planned as cliffhangers |
 | `--voice ID`           | edge-tts narrator voice (default per language)                                 |
 
 **Global** (before the mode, or standalone): `--resume DIR`, and the inspectors
@@ -127,7 +129,7 @@ Parameter priority (info mode): **CLI flags > preset > account defaults > global
 `slopgen` with no arguments. Custom **Minecraft theme**, no footer — the top bar holds the RU/EN interface-language toggle, the `<-` back button and the command Palette.
 
 - **Home** — centered menu, arrow keys + Enter.
-- **Generate** — first pick a mode (**minute-of-info** or **AI drama**), then a step-by-step wizard with a vertical step list on the left. *Info:* 1) content (language, type, your own idea, a profanity slider), 2) visuals (profile + full overrides: background source/linkage/interval/Ken Burns, foreground inserts; target duration), 3) ads (a saved contract *or* fully manual fields), 4) publishing (account, count, subtitles), 5) summary with the equivalent CLI command and the GENERATE button. *Drama* adds a **Story** step (plot + a reorderable cast, edited on the right, with photo→appearance vision and AI cast-fill) and turns the Visuals step into **orchestration** (an ordered list of AI generators; see below). Set everything up, press it, walk away.
+- **Generate** — first pick a mode (**minute-of-info** or **AI drama**), then a step-by-step wizard with a vertical step list on the left. *Info:* 1) content (language, type, your own idea, a profanity slider), 2) visuals (profile + full overrides: background source/linkage/interval/Ken Burns, foreground inserts; target duration), 3) ads (a saved contract *or* fully manual fields), 4) publishing (account, count, subtitles), 5) summary with the equivalent CLI command and the GENERATE button. *Drama* adds a **Story** step (plot + a reorderable cast, edited on the right, with photo→appearance vision and AI cast-fill), adds a parts field to **Publishing** for cliffhanger splits, and turns the Visuals step into **orchestration** (an ordered list of AI generators; see below). Set everything up, press it, walk away.
 - **Configuration** — sections on the left: LLM profiles (profile tabs, per-provider model presets, API-key input auto-saved to `.env`, ★ activation), ad contracts, accounts, presets. Entity sections have a tab per existing config file on top plus `+ new`; forms are prefilled, with 💾 save and 🗑 delete (confirmed).
 - The chosen color theme persists across runs (`[ui].theme`).
 
@@ -137,9 +139,9 @@ A second mode: a **narrated web drama** — one voiceover narrator tells a story
 
 - **Cast** (`configs/characters/*.toml`): `name`, `age`, `appearance`. Before generation each character is compiled once into a token-dense English `visual_prompt` that is injected into every shot the character appears in, so the look stays consistent (a text-only anchor — free generators won't lock a face perfectly). In the TUI you can build an ad-hoc cast, pull members from the library, upload a photo (vision → appearance), and let the AI fill the whole cast from the premise.
 - **Orchestration** (`configs/orchestration/*.toml`): an ordered list of AI generators, each a `model` (`wan2.1`/`ltx-video`/`animatediff` video, `flux`/`turbo` image), a `key_mode` (`rotate` keys on a limit / `single` key then skip), and a `metric`+`amount`. The pipeline walks the stages in order and each makes its share of the clips: `percent` = a share of the length budget, `seconds`/`clips` = an absolute chunk, and the last stage fills the remainder. Multiple API keys (one per line in `.env`) are rotated across stages.
-- **Length & sync**: authored in **minutes** + a **tolerance** in seconds (the story may run a bit over/under). Each scene gets one clip; the narration is synthesized per scene and time-stretched (ffmpeg `atempo`) to fit its clip, with subtitle timings rescaled to match — audio and video stay locked. A native ad, when enabled, is woven into the plot at the script level rather than bolted on.
+- **Length, parts & sync**: authored in **minutes** + a **tolerance** in seconds (the story may run a bit over/under). If parts >1, the writer labels scenes by part and places each non-final cut on a cliffhanger. Each scene gets one clip; the narration is synthesized per scene and time-stretched (ffmpeg `atempo`) to fit its clip, with subtitle timings rescaled to match — audio and video stay locked. A native ad, when enabled, is woven into the plot at the script level rather than bolted on.
 
-Run it from the TUI (Generate → AI drama) or headless: `slopgen drama ru --scenario "…" --cast example --duration-min 2 --tol 20 --orchestration my_chain`.
+Run it from the TUI (Generate → AI drama) or headless: `slopgen drama ru --scenario "…" --cast example --duration-min 2 --tol 20 --parts 3 --orchestration my_chain`.
 
 ## Visuals profiles (`configs/visuals/`)
 
@@ -260,15 +262,16 @@ slopgen --preset daily_en                    # пресет — это info-пр
 
 # ИИ-дорама: озвученная история с постоянным кастом + ИИ-кадры
 slopgen drama ru --scenario "Две подруги ссорятся из-за тайны" \
-                 --cast example --duration-min 2 --tol 20
+                 --cast example --duration-min 2 --tol 20 --parts 3
 slopgen drama en --orchestration my_chain --ad example_vpn --dry-run
 
 slopgen --resume output/<время>_<тип|режим>_<язык>   # продолжить оборвавшийся прогон
 ```
 
-Результат: `output/<время>_<тип|режим>_<язык>/<n>/final.mp4` + `metadata.json`.
+Одиночный результат: `output/<время>_<тип|режим>_<язык>/<n>/final.mp4` + `metadata.json`.
+Многочастные дорамы складываются рядом в той же папке `<n>/` как `part_01.mp4`, `part_02.mp4`, ...
 
-Первый позиционный аргумент — **режим**: `info` (ролик-минутка) или `drama` (ИИ-дорама); он меняет остальную часть команды. Флаги драмы: `--scenario`, `--cast A,B` (имена из `configs/characters/`), `--orchestration`, `--duration-min` (минуты), `--tol` (секунды допуска), `--voice`; плюс общие с `info`: `--ad`, `--ad-mode`, `--profanity`, `--push`, `-n`, `--subs`, `--out`, `--dry-run`. Глобальные (до режима): `--resume`, `--list-types/-ads/-accounts/-presets/-visuals/-characters/-orchestrations`.
+Первый позиционный аргумент — **режим**: `info` (ролик-минутка) или `drama` (ИИ-дорама); он меняет остальную часть команды. Флаги драмы: `--scenario`, `--cast A,B` (имена из `configs/characters/`), `--orchestration`, `--duration-min` (минуты), `--tol` (секунды допуска), `--parts` (количество частей с клиффхэнгерами), `--voice`; плюс общие с `info`: `--ad`, `--ad-mode`, `--profanity`, `--push`, `-n`, `--subs`, `--out`, `--dry-run`. Глобальные (до режима): `--resume`, `--list-types/-ads/-accounts/-presets/-visuals/-characters/-orchestrations`.
 
 **Восстановление после сбоя.** Каждый прогон пишет чекпойнт в `output/<время>_<тип>_<язык>/checkpoint.json` после каждого этапа конвейера. Если прогон оборвался на ошибке (обрыв сети, убитый процесс), пройденная часть (озвучка, скачанный футаж, состояние задачи) сохраняется, а этап и текст ошибки записываются. Команда `slopgen --resume <эта папка>` пропустит выполненные этапы и продолжит с места остановки: готовые видео не трогаются, недоделанные досчитываются. Если прогон завершился с ошибками, в итоговой сводке печатается готовая команда `--resume`.
 
@@ -279,7 +282,7 @@ slopgen --resume output/<время>_<тип|режим>_<язык>   # прод
 `slopgen` без аргументов. Тема **Minecraft**, нижней панели нет — сверху панель с переключателем языка интерфейса RU/EN, кнопкой `<-` (назад) и Palette.
 
 - **Меню** — по центру, выбор стрелочками + Enter.
-- **Генерация** — сначала выбор режима (**минута инфы** или **ИИ-дорама**), затем пошаговый визард со списком шагов слева. *Info:* 1) контент (язык, тип, идея, ползунок мата), 2) видеоряд (профиль + переопределения: фон, привязка, интервал, Ken Burns, вставки; длительность), 3) реклама (контракт *или* вручную), 4) публикация (аккаунт, количество, сабы), 5) итог с CLI-командой и кнопкой СГЕНЕРИРОВАТЬ. *Дорама* добавляет шаг **Сюжет** (замысел + переставляемый каст, редактирование справа, фото→внешность через vision, ИИ-заполнение каста) и превращает шаг «Видеоряд» в **оркестрацию** (упорядоченный список ИИ-генераторов; см. ниже).
+- **Генерация** — сначала выбор режима (**минута инфы** или **ИИ-дорама**), затем пошаговый визард со списком шагов слева. *Info:* 1) контент (язык, тип, идея, ползунок мата), 2) видеоряд (профиль + переопределения: фон, привязка, интервал, Ken Burns, вставки; длительность), 3) реклама (контракт *или* вручную), 4) публикация (аккаунт, количество, сабы), 5) итог с CLI-командой и кнопкой СГЕНЕРИРОВАТЬ. *Дорама* добавляет шаг **Сюжет** (замысел + переставляемый каст, редактирование справа, фото→внешность через vision, ИИ-заполнение каста), поле количества частей в **Публикации** и превращает шаг «Видеоряд» в **оркестрацию** (упорядоченный список ИИ-генераторов; см. ниже).
 - **Конфигурация** — секции слева: профили нейронок (табы профилей, пресеты моделей, ввод API-ключа с автосохранением в `.env`, активация ★), рекламные контракты, аккаунты, пресеты. В секциях сущностей сверху табы — по одному на конфиг-файл плюс `+ новый`; формы предзаполнены, есть 💾 сохранение и 🗑 удаление с подтверждением.
 - Выбранная тема оформления сохраняется между запусками (`[ui].theme`).
 
@@ -289,9 +292,9 @@ slopgen --resume output/<время>_<тип|режим>_<язык>   # прод
 
 - **Каст** (`configs/characters/*.toml`): `name`, `age`, `appearance`. Перед генерацией каждый персонаж один раз компилируется в токен-плотный английский `visual_prompt`, который подставляется в каждый кадр с его участием — чтобы внешность держалась (это текстовый якорь; бесплатные генераторы не фиксируют лицо идеально). В TUI можно собрать каст ad-hoc, подтянуть из библиотеки, загрузить фото (vision → внешность) и дать ИИ заполнить весь каст по замыслу.
 - **Оркестрация** (`configs/orchestration/*.toml`): упорядоченный список ИИ-генераторов — `model` (`wan2.1`/`ltx-video`/`animatediff` — видео, `flux`/`turbo` — картинка), `key_mode` (`rotate` — ротация ключей на лимите / `single` — один ключ, потом пропуск), и `metric`+`amount`. Конвейер идёт по этапам, каждый делает свою долю клипов: `percent` — доля бюджета длины, `seconds`/`clips` — абсолютный кусок, последний этап добирает остаток. Несколько API-ключей (по одному на строку в `.env`) ротируются между этапами.
-- **Длина и синхрон**: задаётся в **минутах** + **допуск** в секундах (история может немного выйти за рамки). Одна сцена = один клип; озвучка синтезируется посценно и растягивается (ffmpeg `atempo`) под длину клипа, тайминги субтитров пересчитываются — звук и видео синхронны. Нативная реклама вплетается в сюжет на уровне сценария, а не вклеивается отдельно.
+- **Длина, части и синхрон**: задаётся в **минутах** + **допуск** в секундах (история может немного выйти за рамки). Если частей больше одной, сценарист размечает сцены по частям и ставит обрывы на клиффхэнгерах. Одна сцена = один клип; озвучка синтезируется посценно и растягивается (ffmpeg `atempo`) под длину клипа, тайминги субтитров пересчитываются — звук и видео синхронны. Нативная реклама вплетается в сюжет на уровне сценария, а не вклеивается отдельно.
 
-Запуск из TUI (Генерация → ИИ-дорама) или headless: `slopgen drama ru --scenario "…" --cast example --duration-min 2 --tol 20 --orchestration my_chain`.
+Запуск из TUI (Генерация → ИИ-дорама) или headless: `slopgen drama ru --scenario "…" --cast example --duration-min 2 --tol 20 --parts 3 --orchestration my_chain`.
 
 ## Профили видеоряда (`configs/visuals/`)
 

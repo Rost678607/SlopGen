@@ -10,7 +10,7 @@ from ..pipeline.job import VideoJob
 
 class Publisher(Protocol):
     def publish(self, job: VideoJob, ctx: AppContext) -> str:
-        """Upload/save the finished video; return its URL or local path."""
+        """Upload/save the finished video(s); return URL(s) or local path(s)."""
         ...
 
 

@@ -12,6 +12,7 @@ import re
 
 from ..context import AppContext
 from ..job import VideoJob, Word
+from ..parts import part_start_offsets, requested_parts, scenes_by_part
 
 HEADER = """[Script Info]
 ScriptType: v4.00+
@@ -94,11 +95,8 @@ def _events_karaoke(words: list[Word]) -> list[str]:
     return events
 
 
-def run(job: VideoJob, ctx: AppContext) -> None:
+def _ass_text(words: list[Word], ctx: AppContext, style: str) -> str:
     sc = ctx.g.subtitles
-    style = ctx.params.subtitle_style or sc.style
-    words = [w for scene in job.scenes for w in scene.words]
-
     header = HEADER.format(
         w=ctx.g.video.width,
         h=ctx.g.video.height,
@@ -116,7 +114,35 @@ def run(job: VideoJob, ctx: AppContext) -> None:
         events = _events_phrases(words)
     else:
         events = _events_karaoke(words)
+    return header + "\n".join(events) + "\n"
+
+
+def _shift_words(words: list[Word], offset: float) -> list[Word]:
+    return [
+        Word(text=w.text, start=w.start - offset, end=w.end - offset)
+        for w in words
+    ]
+
+
+def run(job: VideoJob, ctx: AppContext) -> None:
+    sc = ctx.g.subtitles
+    style = ctx.params.subtitle_style or sc.style
+    words = [w for scene in job.scenes for w in scene.words]
 
     path = job.workdir / "subs.ass"
-    path.write_text(header + "\n".join(events) + "\n", encoding="utf-8")
+    path.write_text(_ass_text(words, ctx, style), encoding="utf-8")
     job.ass_path = path
+
+    parts = requested_parts(ctx.params)
+    job.part_ass_paths = []
+    if not ctx.is_drama or parts <= 1:
+        return
+
+    starts = part_start_offsets(job.scenes, parts)
+    for i, scenes in enumerate(scenes_by_part(job.scenes, parts), start=1):
+        if not scenes:
+            continue
+        part_words = [w for scene in scenes for w in scene.words]
+        part_path = job.workdir / f"subs_part_{i:02d}.ass"
+        part_path.write_text(_ass_text(_shift_words(part_words, starts[i - 1]), ctx, style), encoding="utf-8")
+        job.part_ass_paths.append(part_path)

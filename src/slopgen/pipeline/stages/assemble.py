@@ -9,6 +9,7 @@ import shutil
 from ...media import ffmpeg
 from ...media.stock import VIDEO_EXTS
 from ..context import AppContext
+from ..parts import requested_parts
 from ..job import VideoJob
 from .ads import build_overlay_spec
 
@@ -24,6 +25,14 @@ def _pick_music(ctx: AppContext):
 
 
 FG_Y = {"center": "(H-h)/2", "top": "220", "bottom": "H-h-560"}
+
+
+def _ass_for_part(job: VideoJob, part: int):
+    name = f"subs_part_{part:02d}.ass"
+    for path in job.part_ass_paths:
+        if path.name == name:
+            return path
+    return None
 
 
 def run(job: VideoJob, ctx: AppContext) -> None:
@@ -60,23 +69,51 @@ def run(job: VideoJob, ctx: AppContext) -> None:
             fg_y=FG_Y[vis.foreground.position],
             tmp=tmp,
         )
-        segments.append(seg)
+        segments.append((scene, seg))
 
-    concat_path = tmp / "concat.mp4"
-    ffmpeg.concat(segments, concat_path)
-
-    final = job.workdir / "final.mp4"
     fonts_dir = ctx.g.paths.assets / "fonts"
-    ffmpeg.finalize(
-        concat_path,
-        final,
-        ctx.g,
-        ass=job.ass_path,
-        music=_pick_music(ctx),
-        overlay=build_overlay_spec(job, ctx),
-        fonts_dir=fonts_dir if fonts_dir.is_dir() else None,
-    )
-    job.final_path = final
+    fonts = fonts_dir if fonts_dir.is_dir() else None
+    music = _pick_music(ctx)
+    parts = requested_parts(ctx.params)
+    if ctx.is_drama and parts > 1:
+        finals = []
+        for part in range(1, parts + 1):
+            part_items = [(scene, seg) for scene, seg in segments if int(scene.part or 1) == part]
+            if not part_items:
+                continue
+            concat_path = tmp / f"concat_part_{part:02d}.mp4"
+            ffmpeg.concat([seg for _, seg in part_items], concat_path)
+            final = job.workdir / f"part_{part:02d}.mp4"
+            part_job = job.model_copy(update={"scenes": [scene for scene, _ in part_items]})
+            ffmpeg.finalize(
+                concat_path,
+                final,
+                ctx.g,
+                ass=_ass_for_part(job, part),
+                music=music,
+                overlay=build_overlay_spec(part_job, ctx),
+                fonts_dir=fonts,
+            )
+            finals.append(final)
+        if not finals:
+            raise ValueError("no drama parts were assembled")
+        job.final_paths = finals
+        job.final_path = finals[0] if finals else None
+    else:
+        concat_path = tmp / "concat.mp4"
+        ffmpeg.concat([seg for _, seg in segments], concat_path)
+        final = job.workdir / "final.mp4"
+        ffmpeg.finalize(
+            concat_path,
+            final,
+            ctx.g,
+            ass=job.ass_path,
+            music=music,
+            overlay=build_overlay_spec(job, ctx),
+            fonts_dir=fonts,
+        )
+        job.final_path = final
+        job.final_paths = [final]
 
     if not ctx.params.keep_temp:
         shutil.rmtree(tmp, ignore_errors=True)

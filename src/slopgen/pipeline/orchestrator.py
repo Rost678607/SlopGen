@@ -60,6 +60,12 @@ STAGES_DRAMA: list[tuple[str, Callable]] = [
 def stages_for(params) -> list[tuple[str, Callable]]:
     return STAGES_DRAMA if params.mode == "drama" else STAGES_INFO
 
+
+def _local_result(job: VideoJob) -> str:
+    paths = job.final_paths or ([job.final_path] if job.final_path else [])
+    return "\n".join(str(p) for p in paths)
+
+
 # on_event(video_index, stage, status, message); status: start|done|error|skip
 EventCallback = Callable[[int, str, str, str], None]
 
@@ -121,7 +127,7 @@ class Orchestrator:
                     current = "publish"
                     if p.dry_run:
                         self.on_event(i, "publish", "skip", "dry run")
-                        job.published = str(job.final_path)
+                        job.published = _local_result(job)
                     else:
                         self.on_event(i, "publish", "start", "")
                         job.published = get_publisher(self.ctx).publish(job, self.ctx)

@@ -8,4 +8,5 @@ from ..pipeline.job import VideoJob
 
 class LocalPublisher:
     def publish(self, job: VideoJob, ctx: AppContext) -> str:
-        return str(job.final_path)
+        paths = job.final_paths or ([job.final_path] if job.final_path else [])
+        return "\n".join(str(p) for p in paths)

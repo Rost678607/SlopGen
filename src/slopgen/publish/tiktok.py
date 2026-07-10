@@ -13,7 +13,9 @@ from ..pipeline.job import VideoJob
 
 class TikTokPublisher:
     def publish(self, job: VideoJob, ctx: AppContext) -> str:
+        paths = job.final_paths or ([job.final_path] if job.final_path else [])
         raise NotImplementedError(
-            "TikTok upload is not implemented yet — video saved locally at "
-            f"{job.final_path}; upload it manually"
+            "TikTok upload is not implemented yet — video saved locally at:\n"
+            + "\n".join(str(p) for p in paths)
+            + "\nupload it manually"
         )

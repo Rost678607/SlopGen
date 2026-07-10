@@ -5,7 +5,7 @@ A mode is chosen first (before the language), and it shapes the rest of the line
     slopgen                                     -> launch the TUI
     slopgen info ru story                       -> the minute-of-info clip
     slopgen info en cyber --ad example_vpn --ad-mode overlay --push yt_main -n 5
-    slopgen drama ru --scenario "..." --cast example --duration-min 2 --tol 20
+    slopgen drama ru --scenario "..." --cast example --duration-min 2 --tol 20 --parts 3
     slopgen drama en --orchestration my_chain --ad example_vpn
 
     slopgen --preset daily_en                   -> everything from a preset (info)
@@ -52,7 +52,8 @@ def _report(jobs, orch) -> None:
     ok = [j for j in jobs if j.published]
     rprint(f"\n[bold]{len(ok)}/{len(jobs)} videos done[/bold]")
     for j in ok:
-        rprint(f"  {j.published}")
+        for line in str(j.published).splitlines():
+            rprint(f"  {line}")
     if len(ok) < len(jobs):
         if orch.run_dir is not None:
             rprint(f"\n[yellow]to resume the unfinished videos:[/yellow] slopgen --resume {orch.run_dir}")
@@ -221,6 +222,7 @@ def drama(
     orchestration: Optional[str] = typer.Option(None, "--orchestration", help="generator chain from configs/orchestration/ (default: one wan2.1 stage)"),
     duration_min: float = typer.Option(2.0, "--duration-min", help="target length in minutes"),
     tol: float = typer.Option(15.0, "--tol", help="allowed over/under-run, seconds"),
+    parts: int = typer.Option(1, "--parts", min=1, help="split one drama into this many cliffhanger parts"),
     voice: Optional[str] = typer.Option(None, "--voice", help="edge-tts narrator voice id (default per language)"),
     ad: Optional[str] = typer.Option(None, "--ad", help="ad contract name from configs/ads/"),
     ad_mode: str = typer.Option("both", "--ad-mode", help="overlay | native | both"),
@@ -266,6 +268,7 @@ def drama(
             orchestration=orchestration or "",
             duration_s=max(duration_min, 0.1) * 60.0,
             duration_tol_s=max(tol, 0.0),
+            parts=max(1, parts),
             profanity=profanity,
             ad=ad or "", ad_mode=ad_mode,
             push=push or "", count=max(1, count),
@@ -278,7 +281,8 @@ def drama(
     rprint(
         f"[bold]slopgen[/bold] drama: {params.count}× {params.lang}"
         f" ~{params.duration_s / 60:.1f}min ±{params.duration_tol_s:.0f}s"
-        f" cast=[{', '.join(names) or '—'}] orch={orchestration or 'default'}"
+        + (f" parts={params.parts}" if params.parts != 1 else "")
+        + f" cast=[{', '.join(names) or '—'}] orch={orchestration or 'default'}"
         f" ad={params.ad or '-'}({params.ad_mode}) push={params.push or 'local'}"
         + (" [yellow]\\[dry-run][/yellow]" if params.dry_run else "")
     )

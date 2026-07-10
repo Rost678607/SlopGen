@@ -333,6 +333,7 @@ class RunParams(BaseModel):
     voice_override: str = ""  # edge-tts voice id; empty = use content config default
     # -- drama mode --------------------------------------------------------
     scenario: str = ""  # the drama's premise/plot; empty = the LLM invents one
+    parts: int = 1  # drama only: split one drama into this many cliffhanger parts
     manual_cast: list[CharacterConfig] = []  # resolved cast for the run (TUI/CLI)
     orchestration: str = ""  # orchestration profile name from configs/orchestration/
     manual_orchestration: OrchestrationConfig | None = None  # ad-hoc chain from the TUI

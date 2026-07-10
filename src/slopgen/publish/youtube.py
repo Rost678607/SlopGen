@@ -47,18 +47,28 @@ class YouTubePublisher:
         creds = _credentials(yt_cfg.client_secret, yt_cfg.token)
         service = build("youtube", "v3", credentials=creds)
 
-        body = {
-            "snippet": {
-                "title": job.metadata["title"],
-                "description": job.metadata["description"],
-                "tags": job.metadata["tags"],
-                "categoryId": yt_cfg.category_id,
-            },
-            "status": {"privacyStatus": yt_cfg.privacy, "selfDeclaredMadeForKids": False},
-        }
-        media = MediaFileUpload(str(job.final_path), mimetype="video/mp4", resumable=True)
-        request = service.videos().insert(part="snippet,status", body=body, media_body=media)
-        response = None
-        while response is None:
-            _, response = request.next_chunk()
-        return f"https://youtube.com/shorts/{response['id']}"
+        paths = job.final_paths or ([job.final_path] if job.final_path else [])
+        urls = []
+        total = len(paths)
+        for i, path in enumerate(paths, start=1):
+            title = job.metadata["title"]
+            description = job.metadata["description"]
+            if total > 1:
+                title = f"{title} · Part {i}/{total}"
+                description = f"Part {i}/{total}\n\n{description}"
+            body = {
+                "snippet": {
+                    "title": title[:100],
+                    "description": description,
+                    "tags": job.metadata["tags"],
+                    "categoryId": yt_cfg.category_id,
+                },
+                "status": {"privacyStatus": yt_cfg.privacy, "selfDeclaredMadeForKids": False},
+            }
+            media = MediaFileUpload(str(path), mimetype="video/mp4", resumable=True)
+            request = service.videos().insert(part="snippet,status", body=body, media_body=media)
+            response = None
+            while response is None:
+                _, response = request.next_chunk()
+            urls.append(f"https://youtube.com/shorts/{response['id']}")
+        return "\n".join(urls)
