@@ -20,6 +20,15 @@ Thumbs.db
 .vscode/
 
 # --- Private / bring-your-own content (not shipped) ---
+# The active user config is personal (LLM profile, language, keys). Ship the
+# template instead; users copy it to configs/slopgen.toml and edit locally.
+configs/slopgen.toml
+!configs/slopgen.toml.example
+# Personal LLM connection profiles; the three provider presets ship as examples.
+configs/llm/*.toml
+!configs/llm/deepseek.toml
+!configs/llm/gemini.toml
+!configs/llm/openrouter.toml
 # Personal AI-drama cast, publishing accounts, and ad contracts.
 configs/characters/*.toml
 !configs/characters/example.toml
