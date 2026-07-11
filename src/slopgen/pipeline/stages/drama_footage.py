@@ -14,6 +14,7 @@ the word timings are rebuilt into absolute, stretched positions for subtitles.
 
 from __future__ import annotations
 
+import logging
 import random
 
 from ...media.ffmpeg import duration_of
@@ -31,6 +32,8 @@ from ...media.generate import (
 from ...media.stock import VIDEO_EXTS, FootageError, find_image
 from ..context import AppContext
 from ..job import BgAsset, VideoJob, Word
+
+log = logging.getLogger(__name__)
 
 # keep the atempo stretch modest so the voice never sounds sped-up/chipmunked;
 # outside this band the clip is looped/trimmed to the (mildly) stretched voice.
@@ -100,6 +103,11 @@ def _generate(scene, ctx: AppContext, dirs: dict, cursors: dict, cast_prompts: d
             return path, (not video), (duration_of(path) if video else scene.clip_target_s)
 
     # every key/Space failed — fall back to a stock still so the run survives
+    if video:
+        log.warning(
+            "video generation failed for a %s scene (all keys/Spaces exhausted) — "
+            "falling back to a still image", model,
+        )
     img = find_image(
         prompt, _FALLBACK_KEYWORDS, [p for p in ctx.g.footage.providers if p != "local"],
         dirs["img_cache"], dirs["images"], ctx.used_clips, _genparams(ctx, "flux", None),
@@ -155,13 +163,26 @@ def run(job: VideoJob, ctx: AppContext) -> None:
         d.mkdir(parents=True, exist_ok=True)
 
     cursors: dict[str, int] = {}  # rotating key index, shared across scenes
+    want_video = fell_back = 0
     for scene in job.scenes:
         if scene.is_ad:
             clip, is_photo, source_len = _ad_clip(scene, ctx)
             scene.clip = clip
         else:
+            if is_video_model(scene.gen_model or "wan2.1"):
+                want_video += 1
             clip, is_photo, source_len = _generate(scene, ctx, dirs, cursors, job.cast_prompts)
+            if is_photo and is_video_model(scene.gen_model or "wan2.1"):
+                fell_back += 1
         _sync(scene, source_len, is_photo)
         scene.bg_assets = [BgAsset(path=clip, duration=scene.duration, is_photo=is_photo)]
+
+    if want_video and fell_back:
+        level = log.error if fell_back == want_video else log.warning
+        level(
+            "AI video: %d/%d scenes fell back to stills (video Spaces unavailable or "
+            "quota exhausted). The result will be a slideshow for those scenes.",
+            fell_back, want_video,
+        )
 
     _rebuild_words(job)

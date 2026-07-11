@@ -331,6 +331,7 @@ class RunParams(BaseModel):
     keep_temp: bool = False
     subtitle_style: SubtitleStyle | None = None  # override global default
     voice_override: str = ""  # edge-tts voice id; empty = use content config default
+    tts_rate: int = 0  # speech rate offset in percent (-50 = half speed, +50 = 50% faster)
     # -- drama mode --------------------------------------------------------
     scenario: str = ""  # the drama's premise/plot; empty = the LLM invents one
     parts: int = 1  # drama only: split one drama into this many cliffhanger parts

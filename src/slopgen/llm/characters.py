@@ -102,24 +102,46 @@ def autofill_one(llm, char: dict, lang: str = "en", user_prompt: str = "") -> di
 def autofill_all(
     llm, cast: list[dict], lang: str = "en", scenario: str = "", user_prompt: str = "",
     tropes: list[str] | None = None, protagonist: str = "",
+    library: list[dict] | None = None,
 ) -> dict:
     """Fill the whole cast at once, reading every character plus the scenario for a
     coherent ensemble. Without a prompt it only fills EMPTY character fields; WITH a
-    prompt it may also rewrite non-empty fields to satisfy the instruction. The plot
-    (`scenario`) is only rewritten when the prompt asks. Returns
-    {"cast": [per-character changed dict aligned with cast],
-    "scenario": <new plot> (only if changed)}."""
+    prompt it may also rewrite non-empty fields to satisfy the instruction, add saved
+    global characters, or create ad-hoc characters. With an empty cast it may create
+    the initial cast from the premise. The plot (`scenario`) is only rewritten when
+    the prompt asks. Returns {"cast": [per-character changed dict aligned with cast],
+    "add_global": ["exact saved name", ...], "new_characters": [{"name": "...",
+    "age": "...", "appearance": "..."}], "scenario": <new plot> (only if changed)}."""
     roster = [
         {"name": c.get("name", f"#{i}"), **{k: str(c.get(k, "")).strip() for k in FILLABLE}}
         for i, c in enumerate(cast)
     ]
+    library_roster = [
+        {"name": c.get("name", ""), **{k: str(c.get(k, "")).strip() for k in FILLABLE}}
+        for c in (library or [])
+        if str(c.get("name", "")).strip()
+    ]
+    existing_names = {m["name"].casefold() for m in roster if m.get("name")}
     all_full = all(all(m[k] for k in FILLABLE) for m in roster)
-    if all_full and not user_prompt:
+    if cast and all_full and not user_prompt:
         return {"cast": [{} for _ in cast]}
-    if user_prompt:
+    allow_expansion = bool(user_prompt or not cast)
+    if not cast:
+        edit_rule = (
+            "There is no current cast. Create a compact main cast that fits the "
+            'premise and return it in "new_characters" (usually 2-4 people). '
+            'If a saved global character is a strong fit, prefer "add_global" with '
+            "the exact saved name instead of recreating them. "
+            'Do NOT return "scenario" unless the user explicitly asks to write/change the plot. '
+        )
+    elif user_prompt:
         edit_rule = (
             "Follow the user instruction. You MAY overwrite non-empty character fields "
             "when the instruction calls for it, and fill any empty ones. "
+            "If the instruction or story needs more cast members, you MAY add saved "
+            'global characters via "add_global" (exact names only) or create new local '
+            'ones via "new_characters". Prefer saved global characters when the user '
+            "asks for saved/global/library characters. "
             "It MAY also ask to write/change the plot — if so return an updated "
             '"scenario"; otherwise omit "scenario". '
         )
@@ -127,21 +149,36 @@ def autofill_all(
         edit_rule = (
             "Fill in the EMPTY fields of each character so the ensemble is coherent "
             '(relationships, contrasts, fitting the premise). NEVER change filled fields. '
-            'Do NOT return "scenario". '
+            'Do NOT add saved/global or new characters. Do NOT return "scenario". '
         )
     extras: list[str] = []
     if tropes:
         extras.append(f"Story tropes to weave in: {'; '.join(tropes)}.")
     if protagonist:
         extras.append(f"The protagonist (main character) is: {protagonist}.")
+    if library_roster:
+        extras.append(
+            "Available saved global characters (use exact `name` in add_global; "
+            f"do not duplicate them as new characters): {library_roster}."
+        )
+    else:
+        extras.append("No saved global characters are available.")
     extras_str = (" " + " ".join(extras)) if extras else ""
     system = (
         "You are casting a short dramatic anime-style web drama. `appearance` = "
         "looks/clothing/build. Improvise freely where the premise or characters are thin. "
         f"{edit_rule}Write values in {lang}.{extras_str}\n"
         'Respond with JSON only: {"cast": [{"age": "...", "appearance": "..."}, ...], '
-        '"scenario": "..."} — cast same order/length as input, each object holding ONLY '
-        "the fields you changed."
+        '"add_global": ["Exact Saved Name"], '
+        '"new_characters": [{"name": "...", "age": "...", "appearance": "..."}], '
+        '"scenario": "...", "recommended_duration_min": 2.0}.\n'
+        '"cast" must be the same order/length as input, each object holding ONLY the '
+        'fields you changed. "add_global" must contain only exact names from the saved '
+        'global list and never names already in the current cast. "new_characters" must '
+        'contain only genuinely new local characters, each with a non-empty name. '
+        '"recommended_duration_min" is a float: your honest estimate of how many minutes '
+        "the finished drama should run to fit the scenario comfortably — include it ONLY "
+        "when you write or rewrite the scenario, omit it otherwise."
     )
     user = (
         f"Premise/scenario: {scenario or '(none given)'}\n"
@@ -160,9 +197,46 @@ def autofill_all(
                 changed[k] = v
         cast_changes.append(changed)
     out: dict = {"cast": cast_changes}
+
+    library_by_name = {m["name"]: m for m in library_roster}
+    library_by_fold = {m["name"].casefold(): m["name"] for m in library_roster}
+    if allow_expansion:
+        add_global = []
+        raw_global = data.get("add_global") if isinstance(data.get("add_global"), list) else []
+        for name in raw_global:
+            n = str(name).strip()
+            canonical = n if n in library_by_name else library_by_fold.get(n.casefold(), "")
+            if canonical and canonical.casefold() not in existing_names and canonical not in add_global:
+                add_global.append(canonical)
+        if add_global:
+            out["add_global"] = add_global
+            existing_names.update(n.casefold() for n in add_global)
+
+        new_chars = []
+        raw_new = data.get("new_characters") if isinstance(data.get("new_characters"), list) else []
+        for row in raw_new:
+            if not isinstance(row, dict):
+                continue
+            name = str(row.get("name", "")).strip()
+            if not name or name.casefold() in existing_names or name.casefold() in library_by_fold:
+                continue
+            member = {"name": name}
+            for k in FILLABLE:
+                member[k] = str(row.get(k, "")).strip()
+            new_chars.append(member)
+            existing_names.add(name.casefold())
+        if new_chars:
+            out["new_characters"] = new_chars
+
     new_plot = str(data.get("scenario", "")).strip()
     if user_prompt and new_plot and new_plot != scenario.strip():
         out["scenario"] = new_plot
+        try:
+            dur = float(data.get("recommended_duration_min") or 0)
+            if dur > 0:
+                out["recommended_duration_min"] = dur
+        except (TypeError, ValueError):
+            pass
     return out
 
 

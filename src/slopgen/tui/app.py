@@ -64,6 +64,7 @@ from .forms import Choice, Form, Group, Heading, Note, NumStep, Number, Range, T
 
 # slider bucket captions (threshold -> i18n key)
 PROFANITY_LABELS = {0: "prof_none", 1: "prof_mild", 26: "prof_mod", 51: "prof_heavy", 76: "prof_max"}
+TTS_RATE_LABELS = {-50: "rate_very_slow", -25: "rate_slow", 0: "rate_normal", 25: "rate_fast", 50: "rate_very_fast"}
 
 # Curated voice lists per content language (label, edge-tts voice id).
 # Labels are language-neutral proper names so they read correctly in any UI language.
@@ -181,13 +182,14 @@ I18N: dict[str, dict[str, str]] = {
         "drama_cast_head": "Cast",
         "drama_add": "＋ Add character",
         "drama_plot_head": "— Plot —",
+        "drama_dur_hint": "AI recommends: ~{min:.1f} min",
         "drama_ai_head": "— AI story polish —",
         "drama_protagonist": "Protagonist",
         "drama_protagonist_none": "— let AI decide —",
         "drama_tropes_btn": "🎭 Tropes",
         "drama_tropes_head": "— Story tropes —",
         "drama_tropes_done": "✓ Done",
-        "drama_prompt_ph": "optional: tell the AI how to fill the cast / rewrite the plot",
+        "drama_prompt_ph": "optional: fill/rewrite plot, create characters, or add saved ones",
         "drama_cast_hint2": "Click a character to edit it on the right. Empty fields are improvised at generation time.",
         "cast_st_local": "Not saved",
         "cast_st_global": "Global",
@@ -204,7 +206,7 @@ I18N: dict[str, dict[str, str]] = {
         "insp_help_head": "— Help —",
         "insp_keys": "Keys:\n  ↑ / ↓   move between steps\n  Tab     next field\n  Enter   open / confirm\n  Esc     back",
         "help.step.content": "Language, voice, topic and tone of the video. Leave the idea empty to let the LLM pick one.",
-        "help.step.characters": "The drama's cast. Add characters (new or from your library), toggle who appears, and edit each on the right. AI can fill everyone at once (reading the premise) or one at a time.",
+        "help.step.characters": "The drama's cast. Add characters (new or from your library), toggle who appears, and edit each on the right. AI can fill everyone at once, create missing characters, add saved ones, or edit one at a time.",
         "help.step.visuals": "How the video looks: background source (stock / AI / local) and optional narration-linked inserts.",
         "help.step.ads": "Optional sponsor: pick a saved ad contract or fill a manual one.",
         "help.step.publish": "Where the result goes (a saved account or local), how many, and the subtitle style.",
@@ -235,7 +237,7 @@ I18N: dict[str, dict[str, str]] = {
         "help.parts": "How many publishable parts to split one AI drama into. Parts end on script-planned cliffhangers.",
         "help.subs": "Subtitle animation style: word-pop, phrases, or karaoke.",
         "help.drama_scenario": "The drama's premise/plot. Empty or thin is fine — it's improvised at generation.",
-        "help.drama_prompt": "Optional steer for '✨ AI fill cast': how to fill the cast, or ask it to rewrite the plot.",
+        "help.drama_prompt": "Optional steer for '✨ AI fill / add cast': fill or rewrite the plot, create local characters, or add saved global characters.",
         "help.char_name": "Character name — also the file name in the global library.",
         "help.char_age": "Age (e.g. 17, late 20s). Optional; folded into the visual prompt.",
         "help.char_appearance": "Looks, build and clothing — injected into every image/video prompt for consistency.",
@@ -279,11 +281,11 @@ I18N: dict[str, dict[str, str]] = {
         "char_new_name": "New character",
         "char_edit_head": "— Character —",
         "char_prompt_ph": "optional: tell the AI how to fill/rewrite this character",
-        "char_autofill_all": "✨ AI fill cast",
+        "char_autofill_all": "✨ AI fill / add cast",
         "char_cfg_note": "Manual editor. AI help (photo → description, autofill) lives in the AI-drama wizard.",
         "cast_save_global": "★ Save to library",
         "cast_remove": "🗑 Remove",
-        "cast_empty": "add a character or write a plot first",
+        "cast_empty": "add a character, write a plot, or enter an AI prompt first",
         "lang": "Content language",
         "voice": "Voice",
         "ctype": "Content type",
@@ -295,6 +297,13 @@ I18N: dict[str, dict[str, str]] = {
         "prof_mod": "moderate",
         "prof_heavy": "heavy",
         "prof_max": "constant f-bombs",
+        "tts_rate": "Speech rate (←/→ to adjust)",
+        "rate_very_slow": "very slow",
+        "rate_slow": "slow",
+        "rate_normal": "normal",
+        "rate_fast": "fast",
+        "rate_very_fast": "very fast",
+        "help.tts_rate": "Speech speed. ←/→ to adjust: −50 = slowest … 0 = normal … +50 = fastest.",
         "vis_profile": "Visuals profile",
         "duration": "Duration",
         "bg_head": "— Background —",
@@ -351,8 +360,8 @@ I18N: dict[str, dict[str, str]] = {
         "char_ai_err": "AI fill failed (network hiccup, or check the active LLM key)",
         "char_photo_err": "Photo description failed (needs a vision-capable model + key)",
         "char_described": "appearance filled from the photo",
-        "char_filled": "empty fields filled by AI",
-        "char_nothing": "nothing to fill — all fields already set",
+        "char_filled": "updated by AI",
+        "char_nothing": "AI made no changes",
         "web_search": "Web search tool (ground the script in real facts)",
         "web_search_note": "gives the model a web_search tool so it verifies facts instead of inventing names/events; needs a tool-calling model",
         "footage_note": "Stock keys (Pexels/Pixabay) for stock_* visuals, plus optional AI-generator tokens for ai_* visuals. All optional; local assets and Pollinations work with no key.",
@@ -429,13 +438,14 @@ I18N: dict[str, dict[str, str]] = {
         "drama_cast_head": "Каст",
         "drama_add": "＋ Добавить персонажа",
         "drama_plot_head": "— Сюжет —",
+        "drama_dur_hint": "ИИ рекомендует: ~{min:.1f} мин",
         "drama_ai_head": "— ИИ-доработка сюжета —",
         "drama_protagonist": "Главный герой",
         "drama_protagonist_none": "— ИИ сам решит —",
         "drama_tropes_btn": "🎭 Клише",
         "drama_tropes_head": "— Клише сюжета —",
         "drama_tropes_done": "✓ Готово",
-        "drama_prompt_ph": "опционально: как ИИ заполнить каст / переписать сюжет",
+        "drama_prompt_ph": "опционально: переписать сюжет, создать персонажей или добавить сохранённых",
         "drama_cast_hint2": "Клик по персонажу — редактирование справа. Пустые поля додумываются при генерации.",
         "cast_st_local": "Не сохранён",
         "cast_st_global": "Глобальный",
@@ -452,7 +462,7 @@ I18N: dict[str, dict[str, str]] = {
         "insp_help_head": "— Помощь —",
         "insp_keys": "Клавиши:\n  ↑ / ↓   переход между шагами\n  Tab     следующее поле\n  Enter   открыть / подтвердить\n  Esc     назад",
         "help.step.content": "Язык, голос, тема и тон видео. Оставь идею пустой — тему придумает LLM.",
-        "help.step.characters": "Каст дорамы. Добавляй персонажей (новых или из библиотеки), включай/выключай участие, редактируй каждого справа. ИИ может заполнить всех сразу (читая замысел) или по одному.",
+        "help.step.characters": "Каст дорамы. Добавляй персонажей (новых или из библиотеки), включай/выключай участие, редактируй каждого справа. ИИ может заполнить всех сразу, создать недостающих персонажей, добавить сохранённых или редактировать по одному.",
         "help.step.visuals": "Как выглядит видео: источник фона (сток / ИИ / локальный) и опциональные вставки под нарратив.",
         "help.step.ads": "Опциональный спонсор: готовый контракт или ручной ввод.",
         "help.step.publish": "Куда идёт результат (аккаунт или локально), сколько штук и стиль субтитров.",
@@ -483,7 +493,7 @@ I18N: dict[str, dict[str, str]] = {
         "help.parts": "На сколько публикуемых частей разбить одну ИИ-дораму. Обрывы планируются в сценарии как клиффхэнгеры.",
         "help.subs": "Стиль субтитров: word-pop, phrases или karaoke.",
         "help.drama_scenario": "Замысел/сюжет дорамы. Можно пусто или частично — додумается при генерации.",
-        "help.drama_prompt": "Опциональная подсказка для «✨ ИИ заполнит каст»: как заполнить каст или переписать сюжет.",
+        "help.drama_prompt": "Опциональная подсказка для «✨ ИИ заполнит / добавит каст»: как заполнить или переписать сюжет, создать локальных персонажей или добавить сохранённых глобальных.",
         "help.char_name": "Имя персонажа — оно же имя файла в глобальной библиотеке.",
         "help.char_age": "Возраст (напр. 17, ~25). Опционально; вшивается в визуальный промпт.",
         "help.char_appearance": "Вид, телосложение и одежда — вшивается в каждый промпт кадра для консистентности.",
@@ -527,11 +537,11 @@ I18N: dict[str, dict[str, str]] = {
         "char_new_name": "Новый персонаж",
         "char_edit_head": "— Персонаж —",
         "char_prompt_ph": "опционально: как ИИ должен заполнить/переписать персонажа",
-        "char_autofill_all": "✨ ИИ заполнит каст",
+        "char_autofill_all": "✨ ИИ заполнит / добавит каст",
         "char_cfg_note": "Ручной редактор. ИИ-помощь (фото → описание, автозаполнение) — в визарде ИИ-дорам.",
         "cast_save_global": "★ Сохранить в библиотеку",
         "cast_remove": "🗑 Убрать",
-        "cast_empty": "сначала добавь персонажа или впиши сюжет",
+        "cast_empty": "сначала добавь персонажа, впиши сюжет или промпт для ИИ",
         "lang": "Язык контента",
         "voice": "Голос",
         "ctype": "Тип контента",
@@ -543,6 +553,13 @@ I18N: dict[str, dict[str, str]] = {
         "prof_mod": "умеренный",
         "prof_heavy": "жёсткий",
         "prof_max": "сплошной мат",
+        "tts_rate": "Скорость речи (←/→ регулировка)",
+        "rate_very_slow": "очень медленно",
+        "rate_slow": "медленно",
+        "rate_normal": "нормально",
+        "rate_fast": "быстро",
+        "rate_very_fast": "очень быстро",
+        "help.tts_rate": "Скорость речи. ←/→ для настройки: −50 = медленно … 0 = норма … +50 = быстро.",
         "vis_profile": "Профиль видеоряда",
         "duration": "Длительность",
         "bg_head": "— Фон —",
@@ -599,8 +616,8 @@ I18N: dict[str, dict[str, str]] = {
         "char_ai_err": "ИИ-заполнение не удалось (сбой сети или проверь ключ активной LLM)",
         "char_photo_err": "Не удалось описать фото (нужна vision-модель и ключ)",
         "char_described": "внешность заполнена по фото",
-        "char_filled": "пустые поля заполнены ИИ",
-        "char_nothing": "нечего заполнять — все поля уже заданы",
+        "char_filled": "ИИ обновил каст/сюжет",
+        "char_nothing": "ИИ ничего не изменил",
         "web_search": "Инструмент веб-поиска (опора на реальные факты)",
         "web_search_note": "даёт модели инструмент web_search — она проверяет факты, а не выдумывает имена/события; нужна модель с tool-calling",
         "footage_note": "Ключи стоков (Pexels/Pixabay) для stock_*-видеоряда и опциональные токены ИИ-генераторов для ai_*-видеоряда. Все необязательны: локальным ассетам и Pollinations ключ не нужен.",
@@ -795,7 +812,7 @@ DRAMA_STEP_KEYS = ["step.content", "step.characters", "step.visuals", "step.ads"
 # when that setting is focused. Fields absent here fall back to the step blurb.
 FIELD_HELP = {
     "w-lang": "help.lang", "w-voice": "help.voice", "w-ctype": "help.ctype",
-    "w-idea": "help.idea", "w-profanity": "help.profanity",
+    "w-idea": "help.idea", "w-profanity": "help.profanity", "w-tts_rate": "help.tts_rate",
     "w-duration_min": "help.drama_duration_min", "w-duration_tol": "help.drama_duration_tol",
     "w-vprofile": "help.vprofile", "w-duration": "help.duration",
     "w-bg-src": "help.bg_src", "w-bg-link": "help.bg_link", "w-bg-dir": "help.bg_dir",
@@ -891,6 +908,8 @@ class GenerateScreen(Screen):
             Text("idea", "idea", placeholder="idea_ph"),
             Range("profanity", "profanity", value=store.global_cfg.defaults.profanity,
                   lo=0, hi=100, step=5, labels=PROFANITY_LABELS),
+            Range("tts_rate", "tts_rate", value=0,
+                  lo=-50, hi=50, step=5, labels=TTS_RATE_LABELS),
         ])
 
     def _make_forms(self, t, store: ConfigStore, vis0: VisualsConfig) -> None:
@@ -1189,6 +1208,7 @@ class GenerateScreen(Screen):
             "ctype": c.get("ctype", ""),  # absent in the drama wizard's content form
             "idea": c.get("idea", ""),
             "profanity": c["profanity"],
+            "tts_rate": c.get("tts_rate", 0),  # absent in the drama wizard's content form
             "duration": v["duration"],
             "ad_src": a["ad-src"],
             "ad_mode": a["ad-mode"] or "both",
@@ -1204,6 +1224,8 @@ class GenerateScreen(Screen):
         cmd += f" --visuals {vis_name} --duration {g['duration']:.0f}"
         if g["profanity"]:
             cmd += f" --profanity {g['profanity']}"
+        if g["tts_rate"]:
+            cmd += f" --tts-rate {g['tts_rate']}"
         manual_notes = []
         if vis_manual:
             manual_notes.append("custom visuals")
@@ -1232,7 +1254,7 @@ class GenerateScreen(Screen):
             "",
             f"  {t('lang')}: [b]{g['lang']}[/b]  {t('voice')}: [b]{g['voice']}[/b]      {t('ctype')}: [b]{g['ctype']}[/b]",
             f"  {t('idea')}: {g['idea'] or '—'}",
-            f"  {t('profanity')}: [b]{g['profanity']}%[/b]",
+            f"  {t('profanity')}: [b]{g['profanity']}%[/b]      {t('tts_rate').split(' (')[0]}: [b]{g['tts_rate']:+d}%[/b]",
             f"  {t('vis_profile').split(' (')[0]}: [b]{vis_label}[/b]      {t('duration')}: ~{g['duration']:.0f}s",
             f"  {t('ad_source')}: {ad_label}"
             + (f"  ({g['ad_mode']})" if g["ad_src"] != NONE else ""),
@@ -1246,7 +1268,6 @@ class GenerateScreen(Screen):
 
     # -- launch ---------------------------------------------------------------
 
-    @on(Button.Pressed, "#w-start")
     def _manual_ad_config(self, ad_src: str) -> AdConfig | None:
         """Build an ad-hoc AdConfig from the Ads form (MANUAL source), else None.
         Shared by the info and drama launch paths."""
@@ -1272,6 +1293,10 @@ class GenerateScreen(Screen):
             description=AdDescriptionConfig(snippet="🔗 {url}"),
         )
 
+    @on(Button.Pressed, "#w-start")
+    def _start_pressed(self) -> None:
+        self._start()
+
     def _start(self) -> None:
         g = self._gather()
         vis_name, vis_manual = self._visuals_selection()
@@ -1292,6 +1317,7 @@ class GenerateScreen(Screen):
                 manual_visuals=vis_manual,
                 subtitle_style=g["subs"],
                 voice_override=g["voice"],
+                tts_rate=g["tts_rate"],
             )
         except ConfigError as e:
             self.notify(str(e), severity="error", timeout=8)
@@ -1619,6 +1645,12 @@ class DramaScreen(_CharEditAI, GenerateScreen):
         # edit (value diverges) clears the highlight while programmatic fills don't.
         return {"name": name, "age": "", "appearance": "", "glob": False, "ai": {}}
 
+    @staticmethod
+    def _member_from_global(c: CharacterConfig) -> dict:
+        member = {"name": c.name, "age": c.age, "appearance": c.appearance, "glob": True, "ai": {}}
+        member["saved"] = {k: member[k] for k in CHAR_FIELD_KEYS}
+        return member
+
     # -- middle pane: plot + cast list --------------------------------------
     def _pane_body(self, key: str, t):
         if key == "step.visuals":  # drama: the Visuals step is the orchestration editor
@@ -1711,6 +1743,17 @@ class DramaScreen(_CharEditAI, GenerateScreen):
                 classes="cast-item",
             )
             lv.append(item)
+
+    # -- duration hint (shown as placeholder in the prompt field after AI rewrites scenario) ---
+    def _set_duration_hint(self, minutes: float | None) -> None:
+        try:
+            ta = self.query_one("#drama-prompt")
+        except Exception:
+            return
+        if minutes and minutes > 0:
+            ta.placeholder = _label(self.app, "drama_dur_hint").format(min=minutes)
+        else:
+            ta.placeholder = _label(self.app, "drama_prompt_ph")
 
     # -- tropes panel -------------------------------------------------------
     async def _show_tropes_panel(self) -> None:
@@ -1867,6 +1910,11 @@ class DramaScreen(_CharEditAI, GenerateScreen):
         except Exception:
             pass
 
+    def on_descendant_focus(self, event: events.DescendantFocus) -> None:
+        super().on_descendant_focus(event)
+        if (event.widget.id or "") == "drama-prompt":
+            self._set_duration_hint(None)
+
     @on(Input.Changed)
     def _inp_changed(self, event: Input.Changed) -> None:
         self._maybe_unhighlight(event.input.id, event.value)
@@ -1878,6 +1926,7 @@ class DramaScreen(_CharEditAI, GenerateScreen):
             if self._scenario_ai_val is not None and event.text_area.text != self._scenario_ai_val:
                 self._scenario_ai_val = None
                 event.text_area.remove_class("ai-filled")
+                self._set_duration_hint(None)
             return
         self._maybe_unhighlight(event.text_area.id, event.text_area.text)
 
@@ -1921,9 +1970,7 @@ class DramaScreen(_CharEditAI, GenerateScreen):
         if i >= len(names):
             return
         c = self.app.store.characters[names[i]]
-        member = {"name": c.name, "age": c.age, "appearance": c.appearance, "glob": True, "ai": {}}
-        member["saved"] = {k: member[k] for k in CHAR_FIELD_KEYS}  # snapshot from the library
-        self._cast.append(member)
+        self._cast.append(self._member_from_global(c))
         self._refresh_cast_list()
         await self._show_editor(len(self._cast) - 1)
 
@@ -2030,32 +2077,37 @@ class DramaScreen(_CharEditAI, GenerateScreen):
     def _fill_all(self) -> None:
         self._save_editor()
         scenario = self._scenario_text()
-        if not self._cast and not scenario.strip():
-            self.notify(_label(self.app, "cast_empty"), severity="warning")
-            return
         prompt = ""
         try:
             prompt = self.query_one("#drama-prompt", TextArea).text.strip()
         except Exception:
             pass
+        if not self._cast and not scenario.strip() and not prompt:
+            self.notify(_label(self.app, "cast_empty"), severity="warning")
+            return
         lang = self.app.store.global_cfg.ui.lang
         cast_copy = [dict(m) for m in self._cast]
+        library = [
+            {"name": c.name, "age": c.age, "appearance": c.appearance}
+            for c in self.app.store.characters.values()
+        ]
         tropes = [labels["en"][0] for key, labels in DRAMA_TROPES if key in self._tropes]
         protagonist = self._protagonist
         self._start_thinking("drama-prompt")
         self.run_worker(
-            lambda: self._all_worker(cast_copy, lang, scenario, prompt, tropes, protagonist),
+            lambda: self._all_worker(cast_copy, lang, scenario, prompt, tropes, protagonist, library),
             thread=True, exclusive=False,
         )
 
     def _all_worker(
         self, cast: list[dict], lang: str, scenario: str, prompt: str,
         tropes: list[str] | None = None, protagonist: str = "",
+        library: list[dict] | None = None,
     ) -> None:
         try:
             res = char_ai.autofill_all(
                 self._llm(), cast, lang, scenario, prompt,
-                tropes=tropes or [], protagonist=protagonist,
+                tropes=tropes or [], protagonist=protagonist, library=library or [],
             )
         except Exception as e:
             self.app.call_from_thread(self._all_done, None, str(e))
@@ -2069,10 +2121,24 @@ class DramaScreen(_CharEditAI, GenerateScreen):
             return
         by_idx = {i: ch for i, ch in enumerate(res.get("cast", [])) if ch}
         scen = res.get("scenario")
-        msg = "char_filled" if (by_idx or scen) else "char_nothing"
-        self._apply_changes(by_idx, msg, scen)
+        rec_dur = res.get("recommended_duration_min")
+        add_global = res.get("add_global") if isinstance(res.get("add_global"), list) else []
+        new_characters = res.get("new_characters") if isinstance(res.get("new_characters"), list) else []
+        msg = "char_filled" if (by_idx or scen or add_global or new_characters) else "char_nothing"
+        self._apply_changes(
+            by_idx, msg, scen, add_global=add_global, new_characters=new_characters,
+            recommended_duration_min=rec_dur,
+        )
 
-    def _apply_changes(self, by_idx: dict[int, dict], msg_key: str, scenario_new: str | None = None) -> None:
+    def _apply_changes(
+        self,
+        by_idx: dict[int, dict],
+        msg_key: str,
+        scenario_new: str | None = None,
+        add_global: list[str] | None = None,
+        new_characters: list[dict] | None = None,
+        recommended_duration_min: float | None = None,
+    ) -> None:
         """Merge AI changes into members / the plot, tint them, refresh the editor."""
         for idx, changed in by_idx.items():
             if idx >= len(self._cast):
@@ -2080,6 +2146,33 @@ class DramaScreen(_CharEditAI, GenerateScreen):
             m = self._cast[idx]
             m.update(changed)
             m["ai"].update({k: changed[k] for k in changed if k in char_ai.FILLABLE})
+        existing = {m.get("name", "").casefold() for m in self._cast if m.get("name")}
+        global_by_name = {name: c for name, c in self.app.store.characters.items()}
+        global_by_fold = {name.casefold(): c for name, c in self.app.store.characters.items()}
+        global_names = {c.name.casefold() for c in self.app.store.characters.values()}
+        for raw_name in add_global or []:
+            name = str(raw_name).strip()
+            c = global_by_name.get(name) or global_by_fold.get(name.casefold())
+            if not c or c.name.casefold() in existing:
+                continue
+            self._cast.append(self._member_from_global(c))
+            existing.add(c.name.casefold())
+        for row in new_characters or []:
+            if not isinstance(row, dict):
+                continue
+            name = str(row.get("name", "")).strip()
+            if not name or name.casefold() in existing or name.casefold() in global_names:
+                continue
+            member = self._new_member(name)
+            changed = {
+                k: str(row.get(k, "")).strip()
+                for k in char_ai.FILLABLE
+                if str(row.get(k, "")).strip()
+            }
+            member.update(changed)
+            member["ai"].update(changed)
+            self._cast.append(member)
+            existing.add(name.casefold())
         if scenario_new:  # only returned when the prompt asked to rewrite the plot
             self._scenario_ai_val = scenario_new
             try:
@@ -2088,6 +2181,7 @@ class DramaScreen(_CharEditAI, GenerateScreen):
                 ta.add_class("ai-filled")
             except Exception:
                 pass
+        self._set_duration_hint(recommended_duration_min if scenario_new else None)
         if self._sel is not None and self._sel in by_idx and self._cast_form:
             try:
                 self._cast_form.fill(self, by_idx[self._sel])
@@ -2956,6 +3050,7 @@ class SlopgenApp(App):
     .switch-row { height: auto; margin-top: 1; }
     .switch-row Label { margin-top: 1; margin-left: 2; }
     .drama-sep { color: $secondary; margin: 1 0; }
+
     .trope-row { height: auto; margin-bottom: 1; }
     .trope-row Switch { margin-top: 1; }
     .trope-text { width: 1fr; height: auto; margin-left: 1; }

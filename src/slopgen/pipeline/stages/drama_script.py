@@ -1,7 +1,9 @@
 """Drama stage 1: write the narrated web-drama script.
 
-Given a premise (scenario) and a cast, one offscreen narrator tells the story and
-may quote characters' lines inline. The story is broken into BEATS — one beat per
+Given a premise (scenario) and a cast, the main character narrates their own story
+in a single first-person voice — living the events, voicing inner thoughts, and
+dropping other characters' lines in raw and inline with no "said X" attribution.
+The story is broken into BEATS — one beat per
 generated shot — and each beat carries two texts: the spoken ``narration`` (in the
 content language) and an English ``video_prompt`` for the AI image/video model,
 plus the list of cast ``characters`` visible in the shot (so footage can inject
@@ -28,15 +30,19 @@ from .script import _count_profanity, _inject_profanity, profanity_rule
 
 SYSTEM = (
     "You are the writer of a narrated, anime-style vertical web drama (короткая дорама). "
-    "One offscreen NARRATOR tells the whole story in {lang}. "
-    "The narrator has three tools: "
-    "(1) plot narration ('Она вошла в зал…'); "
-    "(2) the MC's inner thoughts / internal monologue, voiced in first person "
-    "('«Они предали меня. Но я вернусь.»'); "
-    "(3) direct quotes of any character, introduced briefly "
-    "('Он усмехнулся: «Ты проиграла.»'). "
-    "Mix all three freely within a beat for maximum emotional pull. "
-    "There is still only ONE voice — never a screenplay with separate speaker lines. "
+    "The MAIN CHARACTER narrates their OWN story in first person, in {lang} — a single voice, "
+    "as if retelling what happened to them. Everything is filtered through the MC's 'я'. "
+    "That one voice does three things, blended freely within a beat: "
+    "(1) events as the MC lives them, first person "
+    "('Но он толкнул меня. Все ахнули. Я налился яростью.'); "
+    "(2) the MC's raw inner thoughts, same voice, no quote marks needed "
+    "('Ну всё, ты труп.'); "
+    "(3) other characters' spoken lines dropped in RAW and inline — no 'сказал он', no "
+    "'усмехнулась она', no attribution before OR after; the listener tells who is speaking from "
+    "context and tone alone ('Долго ты будешь прогуливать? — Простите, я плохо сплю. — Останешься "
+    "после уроков.'). "
+    "NEVER narrate the MC in third person ('Юки был лузером' ❌ → 'Я был лузером' ✅). "
+    "NEVER tag a line with who said it. One unbroken first-person voice — never a screenplay. "
     "Break the story into BEATS. Each beat is exactly ONE short shot. For each beat give:\n"
     '  • "part": the output part number for this shot (1 if there is only one part);\n'
     '  • "narration": the spoken text for this shot, in {lang} (~{words} words), advancing the plot;\n'
@@ -54,6 +60,13 @@ SYSTEM = (
     "{part_rule}"
     'Respond with JSON only: {{"title": "<short title in {lang}>", "scenes": [{{"part": 1, "narration": "...", '
     '"video_prompt": "...", "characters": ["..."], "is_ad": false}}, ...]}}.'
+)
+
+DRAMA_PROFANITY = (
+    "\nIn this first-person voice, swearing is the MC's genuine reaction in that exact moment — "
+    "baked into the sentence and coloured by the specific feeling (rage, shock, glee, contempt). "
+    "It must never be the same generic interjection ('Пиздец.', 'Заебись.', 'Сука.') dropped in as a "
+    "standalone beat after every plot turn; that reads as filler, not a voice."
 )
 
 AD_RULES = (
@@ -145,6 +158,8 @@ def run(job: VideoJob, ctx: AppContext) -> None:
         part_rule=PART_RULES.format(parts=parts) if parts > 1 else "",
     )
     system += profanity_rule(p.profanity, p.lang)
+    if p.profanity > 0:
+        system += DRAMA_PROFANITY
     if ctx.native_ad_on:
         system += AD_RULES.format(points=ctx.ad.native.talking_points)
 

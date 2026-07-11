@@ -32,20 +32,22 @@ import httpx
 from .stock import FootageError, _download
 
 # Reserve chain for the `wan` provider: portrait text-to-video Spaces, best quality
-# first, lighter/faster fallbacks after. Space ids drift over time — override via
-# [footage] video_gen_spaces in configs/slopgen.toml when one goes offline.
+# first, lighter/faster fallbacks after. Space ids drift over time (HF removes/renames
+# them constantly) — override via [footage] video_gen_spaces in configs/slopgen.toml
+# when one goes offline. Verified live 2026-07; the old Wan-AI/Wan2.1-T2V-14B and
+# Lightricks/LTX-Video Spaces were removed. The base Wan-AI/Wan2.1 Space is alive but
+# uses an async submit+poll API that _run_space can't drive, so it's intentionally out.
 DEFAULT_VIDEO_SPACES = [
-    "Wan-AI/Wan2.1-T2V-14B",
-    "Lightricks/LTX-Video",
-    "ByteDance/AnimateDiff-Lightning",
+    "DeepRat/LTX-Video-ZeroGPU-Optimized",  # LTX-Video DiT text-to-video, ZeroGPU
+    "ByteDance/AnimateDiff-Lightning",       # fast anime-ish reserve
 ]
 
 # Friendly generator names surfaced in the TUI picker → concrete settings.
 # `ai_video` (find_clip via `wan`): each name pins the HF Space reserve chain.
 VIDEO_MODELS: dict[str, list[str]] = {
     "auto": list(DEFAULT_VIDEO_SPACES),  # try all, best quality first
-    "wan2.1": ["Wan-AI/Wan2.1-T2V-14B"],
-    "ltx-video": ["Lightricks/LTX-Video"],
+    "wan2.1": list(DEFAULT_VIDEO_SPACES),  # native Wan Spaces are gone/async-only → live chain
+    "ltx-video": ["DeepRat/LTX-Video-ZeroGPU-Optimized"],
     "animatediff": ["ByteDance/AnimateDiff-Lightning"],
 }
 # `ai_photo` (find_image via `pollinations`): name maps to a pollinations model.
@@ -169,18 +171,37 @@ def _extract_video(result) -> str | None:
     return None
 
 
+# Known text-to-video endpoints, tried in order. Each is (api_name, extra_kwargs):
+# the prompt is passed by keyword, so a Space whose first input isn't named 'prompt'
+# just errors and we fall through. `mode` pins LTX Spaces to text-to-video (their
+# default is image-to-video, which fails without an input image). `None` is a last
+# resort: a bare positional predict for Spaces whose text input is named differently.
+_VIDEO_ENDPOINTS: tuple[tuple[str | None, dict], ...] = (
+    ("/text_to_video", {"mode": "text-to-video"}),  # DeepRat LTX-Video (+ LTX forks)
+    ("/generate_video", {}),
+    ("/generate_image", {}),  # ByteDance AnimateDiff-Lightning
+    ("/generate", {}),
+    ("/run", {}),
+    ("/predict", {}),
+    (None, {}),
+)
+
+
 def _run_space(space: str, prompt: str, token: str | None) -> str | None:
     """Best-effort call into a text-to-video Space. Space APIs vary wildly, so try
-    the common endpoint names with the prompt as the sole positional arg and take
-    whatever video path comes back. Raises on hard failures (missing dep, dead Space)."""
+    the known endpoint shapes (see _VIDEO_ENDPOINTS) and take whatever video path
+    comes back. Raises on hard failures (missing dep, dead Space)."""
     from gradio_client import Client  # lazy: only when the wan provider is used
 
-    client = Client(space, hf_token=token, verbose=False)
+    client = Client(space, token=token, verbose=False)
     last: Exception | None = None
-    for api in ("/generate_video", "/generate", "/run", "/predict", None):
+    for api, extra in _VIDEO_ENDPOINTS:
         try:
-            result = client.predict(prompt, api_name=api) if api else client.predict(prompt)
-        except Exception as e:  # wrong api_name / arg count — try the next shape
+            if api is None:
+                result = client.predict(prompt)  # positional: odd/renamed text input
+            else:
+                result = client.predict(api_name=api, prompt=prompt, **extra)
+        except Exception as e:  # wrong api_name / arg name / arg count — try the next shape
             last = e
             continue
         path = _extract_video(result)

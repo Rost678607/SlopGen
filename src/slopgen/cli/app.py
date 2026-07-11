@@ -184,6 +184,7 @@ def info(
     preset: Optional[str] = typer.Option(None, "--preset", help="preset from configs/presets/"),
     out: Optional[Path] = typer.Option(None, "--out", help="output dir override"),
     subs: Optional[str] = typer.Option(None, "--subs", help="subtitle style: word_pop | phrases | karaoke"),
+    tts_rate: Optional[int] = typer.Option(None, "--tts-rate", min=-50, max=50, help="speech rate offset in percent (-50 = slowest, 0 = normal, +50 = fastest)"),
     dry_run: bool = typer.Option(False, "--dry-run", help="generate everything but skip publishing"),
     keep_temp: bool = typer.Option(False, "--keep-temp", help="keep intermediate ffmpeg files"),
 ) -> None:
@@ -197,6 +198,7 @@ def info(
             visuals=visuals, duration_s=duration, profanity=profanity,
             push=push, count=count, preset=preset, idea=idea or "",
             out=out, dry_run=dry_run, keep_temp=keep_temp, subtitle_style=subs,
+            tts_rate=tts_rate or 0,
         )
     except (ConfigError, Exception) as e:
         typer.secho(f"error: {e}", fg="red")

@@ -64,6 +64,9 @@ def run(job: VideoJob, ctx: AppContext) -> None:
     # stage stretches (atempo) the voice to the generated clip and finalizes both
     # scene.duration and the absolute word positions.
     drama = ctx.is_drama
+    # drama keeps natural speed (footage stage time-stretches audio to clip length);
+    # info mode honours the user's tts_rate setting.
+    rate = "+0%" if drama else f"{ctx.params.tts_rate:+d}%"
     audio_dir = job.workdir / "tts"
     audio_dir.mkdir(parents=True, exist_ok=True)
 
@@ -83,7 +86,7 @@ def run(job: VideoJob, ctx: AppContext) -> None:
                 # hard timeout: a throttled connection can hang far beyond
                 # edge-tts' own socket timeouts and stall the whole batch
                 raw_words = asyncio.run(
-                    asyncio.wait_for(_synth(scene.text, voice, path), timeout=90)
+                    asyncio.wait_for(_synth(scene.text, voice, path, rate=rate), timeout=90)
                 )
                 if not raw_words:
                     log.warning("TTS scene %d attempt %d: connection OK but no word boundaries returned",
