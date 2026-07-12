@@ -119,11 +119,16 @@ def make_scene_segment(
         bg = (tmp or out.parent) / (out.stem + "_bg.mp4")
         concat(bg_parts, bg)
 
+    # Pad the voiceover with trailing silence (apad) then bound the whole segment
+    # to `dur` with -t, so the audio spans the full scene with no gap and the
+    # segment can't run long (looped inserts / apad are otherwise unbounded). The
+    # audio may still be a frame off the frame-quantised video here — that residual
+    # is re-timed away when finalize concatenates the scenes with the concat filter.
     if not fg_inserts:
         _run([
             "ffmpeg", "-y", "-i", str(bg), "-i", str(audio),
             "-map", "0:v", "-map", "1:a", "-c:v", "copy", *AENC,
-            "-t", f"{dur:.3f}", str(out),
+            "-af", "apad", "-t", f"{dur:.3f}", str(out),
         ])
         return
 
@@ -132,7 +137,7 @@ def make_scene_segment(
         # loop stills forever; loop short video clips so they fill their window
         cmd += (["-stream_loop", "-1", "-i", str(path)] if is_video
                 else ["-loop", "1", "-i", str(path)])
-    filters = []
+    filters = ["[1:a]apad[aout]"]
     vtag = "[0:v]"
     for i, (_, start, fdur, _is_video) in enumerate(fg_inserts):
         # white border frame around the insert
@@ -144,13 +149,17 @@ def make_scene_segment(
         vtag = f"[v{i}]"
     cmd += [
         "-filter_complex", ";".join(filters),
-        "-map", vtag, "-map", "1:a", *VENC, *AENC,
+        "-map", vtag, "-map", "[aout]", *VENC, *AENC,
         "-t", f"{dur:.3f}", str(out),
     ]
     _run(cmd)
 
 
 def concat(segments: list[Path], out: Path) -> None:
+    """Stream-copy join of pre-built parts (concat demuxer). Used only for the
+    SILENT background pieces of one scene, where copy is exact and cheap. The
+    audio-bearing join of whole scenes is done in :func:`finalize` with the concat
+    filter instead — copy-concat of separate AAC pieces drifts (see there)."""
     listfile = out.with_suffix(".txt")
     listfile.write_text("".join(f"file '{p.resolve()}'\n" for p in segments))
     _run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(listfile), "-c", "copy", str(out)])
@@ -189,7 +198,7 @@ def _overlay_input_args(asset: Path) -> list[str]:
 
 
 def finalize(
-    concat_mp4: Path,
+    segments: list[Path],
     out: Path,
     cfg: GlobalConfig,
     ass: Path | None = None,
@@ -197,9 +206,22 @@ def finalize(
     overlay: OverlaySpec | None = None,
     fonts_dir: Path | None = None,
 ) -> None:
-    """Final pass: burn subtitles, mix background music, stamp the ad overlay."""
-    cmd = ["ffmpeg", "-y", "-i", str(concat_mp4)]
-    n = 1
+    """Final pass: join the scene ``segments``, burn subtitles, mix background
+    music, stamp the ad overlay — all in ONE re-encode.
+
+    The join uses the concat *filter*, not the concat demuxer: the demuxer
+    stream-copies and merely re-stamps each piece's timestamps, so per-scene
+    audio/video length mismatches (frame vs. AAC-frame quantisation) and each
+    piece's encoder delay pile up into growing drift and, at a join, an abrupt
+    cut where the next scene's sound starts against the previous scene's tail.
+    The filter decodes every piece and re-times them onto one continuous clock,
+    so audio and video stay locked end-to-end regardless of per-piece rounding."""
+    if not segments:
+        raise FFmpegError("finalize: no segments to assemble")
+    cmd: list[str] = ["ffmpeg", "-y"]
+    for seg in segments:
+        cmd += ["-i", str(seg)]
+    n = len(segments)
     music_idx = overlay_idx = -1
     if music:
         cmd += ["-stream_loop", "-1", "-i", str(music)]
@@ -209,7 +231,14 @@ def finalize(
         overlay_idx, n = n, n + 1
 
     filters: list[str] = []
-    vtag = "[0:v]"
+    # concat every scene into one continuous, re-timed pair of streams.
+    concat_in = "".join(f"[{i}:v][{i}:a]" for i in range(len(segments)))
+    filters.append(f"{concat_in}concat=n={len(segments)}:v=1:a=1[cv][ca]")
+    # rebase the picture to PTS 0 so it starts exactly with the audio (a B-frame
+    # reorder delay otherwise leaves the video a frame behind, which players honour
+    # inconsistently and read as a constant A/V offset).
+    filters.append("[cv]setpts=PTS-STARTPTS[vbase]")
+    vtag = "[vbase]"
     if ass:
         sub = f"ass={ass}" + (f":fontsdir={fonts_dir}" if fonts_dir else "")
         filters.append(f"{vtag}{sub}[vs]")
@@ -233,7 +262,8 @@ def finalize(
             )
             vtag = "[vt]"
 
-    filters.append("[0:a]loudnorm=I=-16:TP=-1.5:LRA=11[voice]")
+    # anchor the audio to PTS 0 so it starts exactly with the picture.
+    filters.append("[ca]asetpts=PTS-STARTPTS,loudnorm=I=-16:TP=-1.5:LRA=11[voice]")
     atag = "[voice]"
     if music:
         filters.append(f"[{music_idx}:a]volume={cfg.audio.music_volume}[bgm]")
@@ -245,6 +275,9 @@ def finalize(
         "-map", vtag, "-map", atag,
         "-c:v", "libx264", "-preset", "medium", "-crf", "19",
         "-c:a", "aac", "-b:a", "192k",
+        # end on the shorter stream so the delivered file has audio and video of
+        # equal length — no trailing stream that players stretch or free-run.
+        "-shortest",
         "-movflags", "+faststart",
         str(out),
     ]

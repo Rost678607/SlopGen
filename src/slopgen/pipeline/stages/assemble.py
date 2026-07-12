@@ -81,12 +81,10 @@ def run(job: VideoJob, ctx: AppContext) -> None:
             part_items = [(scene, seg) for scene, seg in segments if int(scene.part or 1) == part]
             if not part_items:
                 continue
-            concat_path = tmp / f"concat_part_{part:02d}.mp4"
-            ffmpeg.concat([seg for _, seg in part_items], concat_path)
             final = job.workdir / f"part_{part:02d}.mp4"
             part_job = job.model_copy(update={"scenes": [scene for scene, _ in part_items]})
             ffmpeg.finalize(
-                concat_path,
+                [seg for _, seg in part_items],
                 final,
                 ctx.g,
                 ass=_ass_for_part(job, part),
@@ -100,11 +98,9 @@ def run(job: VideoJob, ctx: AppContext) -> None:
         job.final_paths = finals
         job.final_path = finals[0] if finals else None
     else:
-        concat_path = tmp / "concat.mp4"
-        ffmpeg.concat([seg for _, seg in segments], concat_path)
         final = job.workdir / "final.mp4"
         ffmpeg.finalize(
-            concat_path,
+            [seg for _, seg in segments],
             final,
             ctx.g,
             ass=job.ass_path,
