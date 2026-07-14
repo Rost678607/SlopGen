@@ -177,7 +177,9 @@ AD_RULES = (
 
 def run(job: VideoJob, ctx: AppContext) -> None:
     lang = LANG_NAMES.get(ctx.params.lang, ctx.params.lang)
-    brief = ctx.content.script_brief.get(ctx.params.lang) or next(iter(ctx.content.script_brief.values()))
+    briefs = ctx.content.script_brief
+    # No content type ("auto") → no style brief in the prompt.
+    brief = briefs.get(ctx.params.lang) or next(iter(briefs.values()), "")
     duration = ctx.params.duration_s
     system = SYSTEM.format(duration=duration, words=duration * 2.4)
     vis = ctx.visuals
@@ -197,11 +199,10 @@ def run(job: VideoJob, ctx: AppContext) -> None:
     system += profanity_rule(ctx.params.profanity, ctx.params.lang)
     if ctx.native_ad_on:
         system += AD_RULES.format(points=ctx.ad.native.talking_points)
-    user = (
-        f"Topic: {job.topic}\n"
-        f"Style brief: {brief}\n"
-        f"Write all \"text\" in {lang}. Keywords stay in English."
-    )
+    user = f"Topic: {job.topic}\n"
+    if brief:
+        user += f"Style brief: {brief}\n"
+    user += f"Write all \"text\" in {lang}. Keywords stay in English."
     # Reinforce profanity requirement in the user turn for high levels — models weight
     # the user message heavily and this prevents the instruction from being buried.
     if ctx.params.profanity > 50:

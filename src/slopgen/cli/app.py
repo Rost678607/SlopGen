@@ -172,7 +172,7 @@ def main(
 def info(
     ctx: typer.Context,
     lang: Optional[str] = typer.Argument(None, help="content language, e.g. ru / en"),
-    content_type: Optional[str] = typer.Argument(None, help="content type, e.g. story / cyber / psych / facts"),
+    content_type: Optional[str] = typer.Argument(None, help="content type, e.g. story / cyber / psych / facts; omit for any topic"),
     idea: Optional[str] = typer.Option(None, "--idea", help="your own topic; omit to let the LLM invent one"),
     ad: Optional[str] = typer.Option(None, "--ad", help="ad contract name from configs/ads/"),
     ad_mode: Optional[str] = typer.Option(None, "--ad-mode", help="overlay | native | both"),
@@ -204,7 +204,7 @@ def info(
         typer.secho(f"error: {e}", fg="red")
         raise typer.Exit(1)
     rprint(
-        f"[bold]slopgen[/bold]: {params.count}× {params.lang}/{params.content_type}"
+        f"[bold]slopgen[/bold]: {params.count}× {params.lang}/{params.content_type or 'auto'}"
         f" visuals={params.visuals} ~{params.duration_s:.0f}s"
         f" ad={params.ad or '-'}({params.ad_mode}) push={params.push or 'local'}"
         + (" [yellow]\\[dry-run][/yellow]" if params.dry_run else "")

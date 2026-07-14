@@ -24,8 +24,11 @@ def run(job: VideoJob, ctx: AppContext) -> None:
         for h in ctx.load_history()[-30:]
         if h.get("content_type") == ctx.params.content_type and h.get("lang") == ctx.params.lang
     ]
-    brief = ctx.content.idea_brief.get(ctx.params.lang) or next(iter(ctx.content.idea_brief.values()))
-    user = f"Niche brief: {brief}\n\nWrite the topic in {lang}."
+    briefs = ctx.content.idea_brief
+    brief = briefs.get(ctx.params.lang) or next(iter(briefs.values()), "")
+    # No content type ("auto") → no niche brief, let the model pick anything.
+    user = f"Niche brief: {brief}\n\n" if brief else ""
+    user += f"Write the topic in {lang}."
     if recent:
         user += "\n\nDo NOT repeat or paraphrase these already-used topics:\n- " + "\n- ".join(recent)
     job.topic = ctx.llm.complete_json("idea", SYSTEM, user)["topic"].strip()

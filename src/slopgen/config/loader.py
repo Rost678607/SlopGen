@@ -152,22 +152,24 @@ class ConfigStore:
             **extra,
         )
 
-        if not params.lang or not params.content_type:
+        if not params.lang:
             raise ConfigError(
-                "language and content type are required "
-                "(pass as arguments, or via --preset / account defaults)"
+                "language is required (pass as an argument, or via --preset / account defaults)"
             )
-        if params.content_type not in self.content_types:
-            raise ConfigError(
-                f"unknown content type '{params.content_type}' "
-                f"(available: {', '.join(self.content_types)})"
-            )
-        ct = self.content_types[params.content_type]
-        if params.lang not in ct.voices:
-            raise ConfigError(
-                f"content type '{params.content_type}' has no voice for language "
-                f"'{params.lang}' (available: {', '.join(ct.voices)})"
-            )
+        # Empty content_type = "auto": no niche, the LLM picks any topic. Only
+        # validate the type (and its voice for this language) when one is set.
+        if params.content_type:
+            if params.content_type not in self.content_types:
+                raise ConfigError(
+                    f"unknown content type '{params.content_type}' "
+                    f"(available: {', '.join(self.content_types)})"
+                )
+            ct = self.content_types[params.content_type]
+            if params.lang not in ct.voices:
+                raise ConfigError(
+                    f"content type '{params.content_type}' has no voice for language "
+                    f"'{params.lang}' (available: {', '.join(ct.voices)})"
+                )
         if params.ad and params.ad not in self.ads:
             raise ConfigError(f"ad contract '{params.ad}' not found (available: {', '.join(self.ads)})")
         if (

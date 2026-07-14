@@ -19,6 +19,10 @@ from ..config import (
 )
 from ..llm import ChatLLM
 
+# Stand-in for the "no content type" ("auto") choice: empty briefs/voices/
+# fallbacks so nothing about a niche leaks into the prompts.
+_AUTO_CONTENT = ContentTypeConfig(name="", idea_brief={}, script_brief={}, voices={})
+
 
 @dataclass
 class AppContext:
@@ -36,7 +40,12 @@ class AppContext:
 
     @property
     def content(self) -> ContentTypeConfig:
-        return self.store.content_types[self.params.content_type]
+        """The chosen content type, or a blank one when none was picked ("auto").
+        The blank config carries empty briefs / voices / fallbacks, so the idea
+        and script stages inject nothing about a niche and the LLM is free to
+        pick any topic."""
+        ct = self.store.content_types.get(self.params.content_type)
+        return ct if ct else _AUTO_CONTENT
 
     @property
     def visuals(self) -> VisualsConfig:

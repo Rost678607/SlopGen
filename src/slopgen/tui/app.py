@@ -289,6 +289,7 @@ I18N: dict[str, dict[str, str]] = {
         "lang": "Content language",
         "voice": "Voice",
         "ctype": "Content type",
+        "ctype_auto": "Any — no fixed type (LLM picks freely)",
         "idea": "Your idea",
         "idea_ph": "leave empty — the LLM invents a topic",
         "profanity": "Profanity level",
@@ -545,6 +546,7 @@ I18N: dict[str, dict[str, str]] = {
         "lang": "Язык контента",
         "voice": "Голос",
         "ctype": "Тип контента",
+        "ctype_auto": "Любой — без фиксированного типа (нейронка выбирает сама)",
         "idea": "Своя идея",
         "idea_ph": "оставь пустым — нейронка придумает тему",
         "profanity": "Уровень мата",
@@ -904,7 +906,9 @@ class GenerateScreen(Screen):
             Choice("voice", "voice", options=voice_opts,
                    value=voice_opts[0][1] if voice_opts else None),
             Choice("ctype", "ctype",
-                   options=[(f"{n} — {c.description}", n) for n, c in store.content_types.items()]),
+                   options=[(_label(self.app, "ctype_auto"), "")]
+                   + [(f"{n} — {c.description}", n) for n, c in store.content_types.items()],
+                   value=""),
             Text("idea", "idea", placeholder="idea_ph"),
             Range("profanity", "profanity", value=store.global_cfg.defaults.profanity,
                   lo=0, hi=100, step=5, labels=PROFANITY_LABELS),
@@ -2360,7 +2364,7 @@ class ProgressScreen(Screen):
             head = f" {p.count}× 🎭 {p.lang} · ~{p.duration_s / 60:.1f} min ±{p.duration_tol_s:.0f}s{parts} · ad: "
         else:
             vis = (p.manual_visuals.name + "*") if p.manual_visuals else p.visuals
-            head = f" {p.count}× {p.lang}/{p.content_type} · {t('run.vis')}: {vis} ~{p.duration_s:.0f}s · ad: "
+            head = f" {p.count}× {p.lang}/{p.content_type or 'auto'} · {t('run.vis')}: {vis} ~{p.duration_s:.0f}s · ad: "
         self.query_one("#run-summary", Static).update(f"{head}{ad} · {push}")
         table = self.query_one("#queue", DataTable)
         table.add_columns(t("col.video"), t("col.stage"), t("col.status"), t("col.info"))
