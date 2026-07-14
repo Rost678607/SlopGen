@@ -9,8 +9,9 @@ from __future__ import annotations
 import hashlib
 import os
 import random
+import re
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 import httpx
 
@@ -20,9 +21,49 @@ if TYPE_CHECKING:
 VIDEO_EXTS = {".mp4", ".mov", ".webm", ".mkv"}
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
 
+# How many top-scoring candidates to weighted-shuffle for variety (see _ranked).
+RANK_TOPK = 5
+
 
 class FootageError(Exception):
     pass
+
+
+def _tok(s: str) -> set[str]:
+    """Content tokens (len > 2) for lexical overlap scoring; stock APIs are
+    English-indexed so ASCII word splitting is enough."""
+    return {t for t in re.split(r"[^0-9a-z]+", s.lower()) if len(t) > 2}
+
+
+def _ranked(query: str, items: list, meta: "Callable[[dict], str]") -> list:
+    """Order stock candidates by how well their own metadata matches `query`
+    instead of taking a random one — that random pick is why results land
+    "off-topic". `meta(item)` returns the item's searchable text (tags / alt /
+    url slug). Provider order breaks ties (APIs already sort by relevance).
+
+    To keep repeated runs from always yielding the identical top clip, the top
+    RANK_TOPK matches are weighted-shuffled (weight = score + 1) rather than
+    taken strictly in order; lower-scoring items follow as ranked fallback.
+    """
+    qt = _tok(query)
+    scored = sorted(
+        ((len(qt & _tok(meta(it))), -i, it) for i, it in enumerate(items)),
+        key=lambda t: (t[0], t[1]),
+        reverse=True,
+    )
+    pool = [(score + 1, it) for score, _, it in scored[:RANK_TOPK]]
+    tail = [it for _, _, it in scored[RANK_TOPK:]]
+    out: list = []
+    while pool:  # weighted sampling without replacement over the top-K
+        total = sum(w for w, _ in pool)
+        r = random.uniform(0, total)
+        acc = 0.0
+        for idx, (w, it) in enumerate(pool):
+            acc += w
+            if r <= acc:
+                out.append(pool.pop(idx)[1])
+                break
+    return out + tail
 
 
 def _cache_path(cache_dir: Path, url: str) -> Path:
@@ -48,14 +89,15 @@ def _pexels(query: str, cache_dir: Path, exclude: set[str]) -> Path | None:
         return None
     r = httpx.get(
         "https://api.pexels.com/videos/search",
-        params={"query": query, "orientation": "portrait", "per_page": 12},
+        params={"query": query, "orientation": "portrait", "per_page": 20},
         headers={"Authorization": key},
         timeout=30,
     )
     if r.status_code != 200:
         return None
     videos = r.json().get("videos", [])
-    random.shuffle(videos)
+    # Pexels videos carry no tags; the page-url slug holds the descriptive words.
+    videos = _ranked(query, videos, lambda v: v.get("url", ""))
     for v in videos:
         # prefer files close to 1080 wide, portrait
         files = sorted(
@@ -77,13 +119,13 @@ def _pixabay(query: str, cache_dir: Path, exclude: set[str]) -> Path | None:
         return None
     r = httpx.get(
         "https://pixabay.com/api/videos/",
-        params={"key": key, "q": query, "per_page": 12, "safesearch": "true"},
+        params={"key": key, "q": query, "per_page": 20, "safesearch": "true"},
         timeout=30,
     )
     if r.status_code != 200:
         return None
     hits = r.json().get("hits", [])
-    random.shuffle(hits)
+    hits = _ranked(query, hits, lambda h: h.get("tags", ""))
     for h in hits:
         for size in ("large", "medium"):
             f = h.get("videos", {}).get(size)
@@ -112,14 +154,14 @@ def _pexels_photo(query: str, cache_dir: Path, exclude: set[str]) -> Path | None
         return None
     r = httpx.get(
         "https://api.pexels.com/v1/search",
-        params={"query": query, "orientation": "portrait", "per_page": 12},
+        params={"query": query, "orientation": "portrait", "per_page": 20},
         headers={"Authorization": key},
         timeout=30,
     )
     if r.status_code != 200:
         return None
     photos = r.json().get("photos", [])
-    random.shuffle(photos)
+    photos = _ranked(query, photos, lambda p: p.get("alt", "") or "")
     for p in photos:
         url = p.get("src", {}).get("large2x") or p.get("src", {}).get("large")
         if url and url not in exclude:
@@ -135,13 +177,13 @@ def _pixabay_photo(query: str, cache_dir: Path, exclude: set[str]) -> Path | Non
         return None
     r = httpx.get(
         "https://pixabay.com/api/",
-        params={"key": key, "q": query, "per_page": 12, "safesearch": "true", "orientation": "vertical"},
+        params={"key": key, "q": query, "per_page": 20, "safesearch": "true", "orientation": "vertical"},
         timeout=30,
     )
     if r.status_code != 200:
         return None
     hits = r.json().get("hits", [])
-    random.shuffle(hits)
+    hits = _ranked(query, hits, lambda h: h.get("tags", ""))
     for h in hits:
         url = h.get("largeImageURL") or h.get("webformatURL")
         if url and url not in exclude:
