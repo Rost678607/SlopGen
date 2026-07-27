@@ -70,13 +70,55 @@ class Doc:
 
     stage: str
     rows: list[Row] = field(default_factory=list)
-    variable: bool = False  # operator may add/remove lines
+    variable: bool = False  # operator may add/remove/reorder items
     subject: str = "lines"  # what the AI rewrite line is editing (goes into the prompt)
     note_key: str = ""  # i18n key of the hint shown under the list
+    note_extra: str = ""  # run-specific hint appended to it (e.g. the cast roster)
 
     @property
     def editable(self) -> bool:
         return any(not r.readonly for r in self.rows)
+
+
+@dataclass
+class Group:
+    """One reviewed item and every row that belongs to it. A scene is a group: what
+    is said, what is shown, and who is in it are three rows of the SAME thing, so
+    they move, and are dropped, together."""
+
+    head: Row  # the "text" row; its existence is the item's existence
+    extras: list[Row] = field(default_factory=list)
+
+    @property
+    def rows(self) -> list[Row]:
+        return [self.head] + self.extras
+
+
+def group_rows(rows: list[Row]) -> list[Group]:
+    """Split a flat row list into its items. Rows following a "text" row attach to
+    it; a document with one field per item yields one row per group."""
+    groups: list[Group] = []
+    for row in rows:
+        if row.field == "text" or not groups:
+            groups.append(Group(head=row))
+        else:
+            groups[-1].extras.append(row)
+    return groups
+
+
+def flatten(groups: list[Group]) -> list[Row]:
+    return [row for g in groups for row in g.rows]
+
+
+def move_group(rows: list[Row], index: int, delta: int) -> list[Row]:
+    """Swap item `index` with its neighbour, carrying all of its rows along.
+    Returns the new flat row list (unchanged when the move runs off the end)."""
+    groups = group_rows(rows)
+    target = index + delta
+    if not (0 <= index < len(groups) and 0 <= target < len(groups)):
+        return rows
+    groups[index], groups[target] = groups[target], groups[index]
+    return flatten(groups)
 
 
 # -- reading a job into rows -----------------------------------------------
@@ -119,6 +161,7 @@ def _script_doc(job: VideoJob, mode: str) -> Doc:
                 label=label, value=s.video_prompt, src=i, field="prompt",
                 info=" · ".join(x for x in (s.gen_model, f"{s.clip_target_s:.0f}s" if s.clip_target_s else "") if x),
             ))
+            rows.append(Row(label=label, value=", ".join(s.characters), src=i, field="cast"))
         else:
             rows.append(Row(label=label, value=", ".join(s.keywords), src=i, field="keywords"))
     return Doc(
@@ -128,6 +171,9 @@ def _script_doc(job: VideoJob, mode: str) -> Doc:
         subject="a drama script: spoken narration lines and the English shot prompt of each scene"
         if mode == "drama" else "a voiceover script: spoken lines and each scene's stock-search keywords",
         note_key="bp.note.script",
+        # the cast row only works with names spelled as the run knows them — the
+        # footage stage matches them to swap each name for that character's look
+        note_extra=(", ".join(job.cast_prompts) if mode == "drama" and job.cast_prompts else ""),
     )
 
 
@@ -261,10 +307,12 @@ def _apply_scene_texts(job: VideoJob, rows: list[Row], *, resync: bool) -> bool:
     """Rebuild ``job.scenes`` from the edited lines, carrying over everything the
     source scene already held (keywords, cast, generator slot, audio). With
     ``resync`` the audio of every changed or added line is dropped so the TTS stage
-    re-synthesizes exactly those. Returns True when anything actually changed."""
+    re-synthesizes exactly those. Returns True when anything actually changed —
+    reordering counts, because the stage is what lays the lines out on the timeline
+    (their absolute word timings would otherwise still describe the old order)."""
     old = job.scenes
     out: list[Scene] = []
-    changed = False
+    changed = [r.src for r in rows] != list(range(len(old)))
     for row in rows:
         text = row.value.strip()
         if not text:  # an emptied line means "drop this scene"
@@ -300,16 +348,11 @@ def _apply_script(job: VideoJob, rows: list[Row], mode: str) -> bool:
     scene; the rows after it (prompt / keywords) belong to that same scene, so an
     operator-added line becomes a new scene with an empty visual — which the AI edit
     line or the footage stage's fallback then fills."""
-    groups: list[tuple[Row, dict[str, Row]]] = []
-    for row in rows:
-        if row.field == "text":
-            groups.append((row, {}))
-        elif groups:
-            groups[-1][1][row.field] = row
-
     old = job.scenes
     out: list[Scene] = []
-    for head, extras in groups:
+    for group in group_rows(rows):
+        head = group.head
+        extras = {r.field: r for r in group.extras}
         text = head.value.strip()
         if not text:  # emptied narration drops the whole scene, visuals included
             continue
@@ -320,6 +363,8 @@ def _apply_script(job: VideoJob, rows: list[Row], mode: str) -> bool:
             scene.video_prompt = extras["prompt"].value.strip()
         if "keywords" in extras:
             scene.keywords = [k.strip() for k in extras["keywords"].value.split(",") if k.strip()]
+        if "cast" in extras:
+            scene.characters = [c.strip() for c in extras["cast"].value.split(",") if c.strip()]
         out.append(scene)
     if out:
         job.scenes = out

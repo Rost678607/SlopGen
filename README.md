@@ -131,14 +131,14 @@ Parameter priority (info mode): **CLI flags > preset > account defaults > global
 | Breakpoint  | What you get                                                                                            |
 | ----------- | ------------------------------------------------------------------------------------------------------- |
 | `idea`      | the chosen topic, before a single line is written                                                       |
-| `script`    | the script as written: each scene's spoken line **and** its shot prompt / search terms — the only place to fix a shot before it is generated |
+| `script`    | the script as written — per scene: the spoken line, its shot prompt (or search terms) and who is in it. The only place to fix a shot before it is generated |
 | `tts`       | every voiced fragment with the length that came out; editing one re-voices **only** that one            |
 | `footage`   | the shot prompt (drama) or search queries (info) per scene; changed scenes get their footage remade      |
 | `subtitles` | the generated `.ass` files as text, written straight back to disk                                       |
 | `assemble`  | the rendered file(s) — inspect-only, watch them before publishing                                       |
 | `metadata`  | title, description and tags, right before publish                                                       |
 
-Each line is editable by hand (except the `.ass` files, where a wholesale model rewrite would mangle the cue timings), and an **AI edit line** sits under the list: describe the change ("shorter", "make scene 3 angrier", "split this beat in two") and the model rewrites the whole set — for script/voiceover it may also change how many fragments there are. Press **Continue** and the run picks up from there; a breakpoint fires once per video, so a re-run of the stage you just edited won't park again. With `-n` >1 the videos queue up and are reviewed one after another. Both modes support it. Headless runs print `slopgen review <dir>` to reopen the parked run (same as `slopgen gather` for manual clips).
+Everything is grouped by scene — one band per scene carrying its fields, with **▲ ▼** to reorder it and **✖** to drop it (all of its fields move and go together). Each field is editable by hand (except the `.ass` files, where a wholesale model rewrite would mangle the cue timings), and an **AI edit line** sits under the list: describe the change ("shorter", "make scene 3 angrier", "split this beat in two") and the model rewrites the whole set — for script/voiceover it may also change how many fragments there are. Press **Continue** and the run picks up from there; a breakpoint fires once per video, so a re-run of the stage you just edited won't park again. With `-n` >1 the videos queue up and are reviewed one after another. Both modes support it. Headless runs print `slopgen review <dir>` to reopen the parked run (same as `slopgen gather` for manual clips).
 
 ## TUI
 
@@ -296,14 +296,14 @@ slopgen --resume output/<время>_<тип|режим>_<язык>   # прод
 | Брейкпоинт  | Что показывает                                                                                        |
 | ----------- | ------------------------------------------------------------------------------------------------------ |
 | `idea`      | выбранную тему, ещё до единой написанной строчки                                                       |
-| `script`    | сценарий как он написан: реплика сцены **и** её промпт кадра / поисковые слова — единственное место, где кадр правится до генерации |
+| `script`    | сценарий как он написан — по сцене: реплика, промпт кадра (или поисковые слова) и кто в кадре. Единственное место, где кадр правится до генерации |
 | `tts`       | каждый озвученный фрагмент с получившейся длительностью; правка строки переозвучивает **только** её     |
 | `footage`   | промпт кадра (дорама) или поисковые запросы (инфа) по сценам; изменённым сценам видеоряд соберут заново |
 | `subtitles` | сгенерированные `.ass` как текст, правки пишутся прямо на диск                                         |
 | `assemble`  | готовые файлы — только просмотр, посмотри перед публикацией                                            |
 | `metadata`  | заголовок, описание и теги перед самой публикацией                                                     |
 
-Каждую строку можно править руками (кроме `.ass` — переписывание файла нейронкой снесёт тайминги, поэтому ИИ-строки там нет), а под списком — **ИИ-строка**: пишешь, что поменять («короче», «третью сцену злее», «разбей этот бит на два»), и модель переписывает весь набор; для сценария и озвучки она может ещё и поменять количество фрагментов. Жмёшь **Продолжить** — конвейер идёт дальше. Брейкпоинт срабатывает один раз на видео, так что переделка только что отредактированного этапа снова не встанет. При `-n` >1 видео выстраиваются в очередь и разбираются по одному. Работает в обоих режимах. В headless-прогоне печатается команда `slopgen review <папка>`, чтобы вернуться к застывшему прогону (по аналогии с `slopgen gather` для ручных клипов).
+Всё сгруппировано по сценам: на сцену одна полоса с её полями, **▲ ▼** двигают сцену, **✖** удаляет (поля едут и удаляются вместе). Каждое поле правится руками (кроме `.ass` — переписывание файла нейронкой снесёт тайминги, поэтому ИИ-строки там нет), а под списком — **ИИ-строка**: пишешь, что поменять («короче», «третью сцену злее», «разбей этот бит на два»), и модель переписывает весь набор; для сценария и озвучки она может ещё и поменять количество фрагментов. Жмёшь **Продолжить** — конвейер идёт дальше. Брейкпоинт срабатывает один раз на видео, так что переделка только что отредактированного этапа снова не встанет. При `-n` >1 видео выстраиваются в очередь и разбираются по одному. Работает в обоих режимах. В headless-прогоне печатается команда `slopgen review <папка>`, чтобы вернуться к застывшему прогону (по аналогии с `slopgen gather` для ручных клипов).
 
 Приоритет параметров (режим info): **флаги CLI > пресет > дефолты аккаунта > глобальные дефолты**. Аккаунт может нести свои дефолты — `slopgen info --push yt_main` уже валидная команда. Драма собирает параметры прямо из своих флагов (слияния с пресетом/аккаунтом пока нет).
 

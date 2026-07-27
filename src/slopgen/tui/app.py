@@ -473,7 +473,7 @@ I18N: dict[str, dict[str, str]] = {
         "bp.title": "Breakpoint",
         "bp.needed": "The run stopped at a breakpoint — opening the review screen.",
         "bp.paused": "breakpoint — waiting for review",
-        "bp.head": "video {i} · stage: [b]{stage}[/b] · {n} line(s)",
+        "bp.head": "video {i} · stage: [b]{stage}[/b] · {n} entries",
         "bp.left": "{n} more video(s) waiting after this one",
         "bp.add": "＋ Add line",
         "bp.remove": "✖",
@@ -490,8 +490,14 @@ I18N: dict[str, dict[str, str]] = {
         "bp.rerun": "Saved — the {stage} stage will run again for the changed lines.",
         "bp.none": "Nothing is waiting at a breakpoint.",
         "bp.readonly": "This stage is inspect-only — nothing here can be edited.",
+        "bp.field.text": "line",
         "bp.field.prompt": "shot",
         "bp.field.keywords": "search",
+        "bp.field.cast": "who is in it",
+        "bp.cast_known": "Cast of this run",
+        "bp.scene": "Scene",
+        "bp.up": "▲",
+        "bp.down": "▼",
         "bp.f.topic": "topic",
         "bp.f.title": "title",
         "bp.f.description": "description",
@@ -799,7 +805,7 @@ I18N: dict[str, dict[str, str]] = {
         "bp.title": "Брейкпоинт",
         "bp.needed": "Конвейер встал на брейкпоинте — открываю экран разбора.",
         "bp.paused": "брейкпоинт — ждёт проверки",
-        "bp.head": "видео {i} · этап: [b]{stage}[/b] · строк: {n}",
+        "bp.head": "видео {i} · этап: [b]{stage}[/b] · позиций: {n}",
         "bp.left": "после этого в очереди ещё видео: {n}",
         "bp.add": "＋ Добавить строку",
         "bp.remove": "✖",
@@ -816,8 +822,14 @@ I18N: dict[str, dict[str, str]] = {
         "bp.rerun": "Сохранено — этап {stage} переделает изменённые строки.",
         "bp.none": "Никто не ждёт на брейкпоинте.",
         "bp.readonly": "Этот этап только для просмотра — править тут нечего.",
+        "bp.field.text": "реплика",
         "bp.field.prompt": "кадр",
         "bp.field.keywords": "поиск",
+        "bp.field.cast": "кто в кадре",
+        "bp.cast_known": "Каст этого прогона",
+        "bp.scene": "Сцена",
+        "bp.up": "▲",
+        "bp.down": "▼",
         "bp.f.topic": "тема",
         "bp.f.title": "заголовок",
         "bp.f.description": "описание",
@@ -2887,21 +2899,45 @@ class BreakpointScreen(Screen):
         self._load()
         self.run_worker(self._rebuild())
 
-    def _row_widgets(self, i: int, row: review.Row) -> list:
-        t = lambda k: _label(self.app, k)  # noqa: E731
-        head: list = [Static(f"[b]{self._row_label(row)}[/b]", classes="bp-row-label")]
-        if row.info:
-            head.append(Static(row.info, classes="bp-row-info"))
-        if self.doc.variable and not row.readonly:
-            head.append(Button(t("bp.remove"), id=f"bp-del-{self._rev}-{i}", classes="bp-del"))
+    def _field_widget(self, index: int, row: review.Row, labelled: bool) -> list:
+        """One editable field: its name (only where a group holds several) + the box."""
+        widgets: list = []
+        if labelled:
+            widgets.append(Static(_label(self.app, f"bp.field.{row.field}"), classes="bp-field-label"))
         # multi-line payloads (a whole .ass file) get the tall, scrolling field
         large = row.value.count("\n") > 1 or len(row.value) > 300
-        area = FieldTextArea(
-            text=row.value, id=f"bp-val-{self._rev}-{i}", read_only=row.readonly,
+        widgets.append(FieldTextArea(
+            text=row.value, id=f"bp-val-{self._rev}-{index}", read_only=row.readonly,
             single_line=not large,
             classes="text-field " + ("text-field-large" if large else "text-field-short"),
-        )
-        return [Horizontal(*head, classes="bp-row-head"), area]
+        ))
+        return widgets
+
+    def _group_widgets(self, gi: int, group: review.Group, first_index: int) -> list:
+        """One reviewed item: a header band (what it is, plus move/remove) over its
+        fields. Grouping is what makes a script readable — the spoken line, the shot
+        and the cast are one scene, not three unrelated rows."""
+        t = lambda k: _label(self.app, k)  # noqa: E731
+        head = group.head
+        bar: list = [Static(f"[b]{self._item_label(head)}[/b]", classes="bp-row-label")]
+        info = " · ".join(r.info for r in group.rows if r.info)
+        if info:
+            bar.append(Static(info, classes="bp-row-info"))
+        if self.doc.variable and not head.readonly:
+            bar.append(Button(t("bp.up"), id=f"bp-up-{self._rev}-{gi}", classes="bp-move"))
+            bar.append(Button(t("bp.down"), id=f"bp-down-{self._rev}-{gi}", classes="bp-move"))
+            bar.append(Button(t("bp.remove"), id=f"bp-del-{self._rev}-{gi}", classes="bp-del"))
+        widgets: list = [Horizontal(*bar, classes="bp-row-head")]
+        labelled = len(group.rows) > 1
+        for n, row in enumerate(group.rows):
+            widgets.extend(self._field_widget(first_index + n, row, labelled))
+        return widgets
+
+    def _item_label(self, head: review.Row) -> str:
+        if head.label.startswith("bp."):  # a named field (title, topic, …)
+            return _label(self.app, head.label)
+        # "#3" / "#3 · AD" — a scene; say so, the number alone reads as nothing
+        return f"{_label(self.app, 'bp.scene')} {head.label}" if head.label.startswith("#") else head.label
 
     async def _rebuild(self) -> None:
         """Repaint the whole document (header, rows, AI line, buttons)."""
@@ -2916,8 +2952,10 @@ class BreakpointScreen(Screen):
             self.query_one("#bp-discard", Button).display = False
             return
         widgets: list = []
-        for i, row in enumerate(self.doc.rows):
-            widgets.extend(self._row_widgets(i, row))
+        index = 0
+        for gi, group in enumerate(review.group_rows(self.doc.rows)):
+            widgets.extend(self._group_widgets(gi, group, index))
+            index += len(group.rows)
         if self.doc.subject and self.doc.editable:  # the AI edit line
             widgets.append(Static(t("bp.ai"), classes="group-head"))
             widgets.append(
@@ -2933,12 +2971,14 @@ class BreakpointScreen(Screen):
         await body.mount(*widgets)
         head = t("bp.head").format(
             i=self.queue[0], stage=t(f"bp.stage.{self.doc.stage}").split(" (")[0],
-            n=len(self.doc.rows),
+            n=len(review.group_rows(self.doc.rows)),
         )
         if len(self.queue) > 1:
             head += f"  [dim]{t('bp.left').format(n=len(self.queue) - 1)}[/dim]"
         self.query_one("#bp-head", Static).update(head)
         note = t(self.doc.note_key) if self.doc.note_key else ""
+        if self.doc.note_extra:
+            note += f"\n{t('bp.cast_known')}: {self.doc.note_extra}"
         if not self.doc.editable:
             note = f"{note}\n{t('bp.readonly')}" if note else t("bp.readonly")
         self.query_one("#bp-note", Static).update(note)
@@ -2946,18 +2986,33 @@ class BreakpointScreen(Screen):
 
     # -- editing -----------------------------------------------------------
 
+    @staticmethod
+    def _button_index(event: Button.Pressed) -> int:
+        return int((event.button.id or "").rsplit("-", 1)[1])
+
     @on(Button.Pressed, "#bp-add")
     async def _add_row(self) -> None:
         self._sync()
-        self.doc.rows.append(review.Row(label=f"#{len(self.doc.rows) + 1}", value=""))
+        n = len(review.group_rows(self.doc.rows)) + 1
+        self.doc.rows.append(review.Row(label=f"#{n}", value=""))
         await self._rebuild()
 
     @on(Button.Pressed, ".bp-del")
     async def _del_row(self, event: Button.Pressed) -> None:
+        """Remove a whole item — its narration, its shot and its cast together."""
         self._sync()
-        idx = int((event.button.id or "").rsplit("-", 1)[1])
-        if 0 <= idx < len(self.doc.rows):
-            del self.doc.rows[idx]
+        groups = review.group_rows(self.doc.rows)
+        gi = self._button_index(event)
+        if 0 <= gi < len(groups):
+            del groups[gi]
+            self.doc.rows = review.flatten(groups)
+        await self._rebuild()
+
+    @on(Button.Pressed, ".bp-move")
+    async def _move_row(self, event: Button.Pressed) -> None:
+        self._sync()
+        delta = -1 if (event.button.id or "").startswith(f"bp-up-") else 1
+        self.doc.rows = review.move_group(self.doc.rows, self._button_index(event), delta)
         await self._rebuild()
 
     @on(Button.Pressed, "#bp-discard")
@@ -3747,10 +3802,11 @@ class SlopgenApp(App):
     #bp-head { padding: 0 2; height: 1; background: $surface; }
     #bp-rows { height: 1fr; margin: 1 2 0 2; }
     #bp-note { padding: 0 2; color: $text-muted; }
-    .bp-row-head { height: 1; }
+    .bp-row-head { height: 1; margin-top: 1; background: $surface; }
     .bp-row-label { width: auto; margin-right: 2; }
     .bp-row-info { width: 1fr; color: $text-muted; }
-    .bp-del { min-width: 4; height: 1; border: none; }
+    .bp-del, .bp-move { min-width: 4; height: 1; border: none; }
+    .bp-field-label { color: $text-muted; padding: 0 1; }
     #bp-actions { height: 3; align: center middle; padding: 0 2; }
     #bp-actions Button { margin: 0 1; }
     """
