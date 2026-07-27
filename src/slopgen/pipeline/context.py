@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable
 
 from ..config import (
     AccountConfig,
@@ -30,9 +31,23 @@ class AppContext:
     params: RunParams
     llm: object = None
     used_clips: set[str] = field(default_factory=set)
+    # optional (unit, done, total) sink so a stage can report progress WITHIN itself:
+    # the orchestrator's event stream only fires between stages, which leaves the
+    # long ones (voicing 40 lines, generating 40 clips) looking frozen.
+    on_progress: Callable[[str, int, int], None] | None = None
 
     def __post_init__(self):
         self.llm = ChatLLM(self.store.active_llm_profile())
+
+    def progress(self, unit: str, done: int, total: int) -> None:
+        """Report `done of total` for a stage's inner loop. Never raises: a broken
+        or missing reporter must not take the pipeline down."""
+        if self.on_progress is None:
+            return
+        try:
+            self.on_progress(unit, done, total)
+        except Exception:
+            pass
 
     @property
     def g(self) -> GlobalConfig:

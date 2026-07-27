@@ -320,3 +320,4 @@ def run(job: VideoJob, ctx: AppContext) -> None:
             _fill_background(scene, vis, ctx, dirs, cont)
         _fill_foreground(scene, vis, ctx, dirs, scene_start, i, delivered if manual_fg else None)
         scene_start += scene.duration
+        ctx.progress("footage", i + 1, len(job.scenes))

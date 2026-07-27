@@ -70,6 +70,7 @@ def run(job: VideoJob, ctx: AppContext) -> None:
             tmp=tmp,
         )
         segments.append((scene, seg))
+        ctx.progress("assemble", i + 1, len(job.scenes))
 
     fonts_dir = ctx.g.paths.assets / "fonts"
     fonts = fonts_dir if fonts_dir.is_dir() else None
@@ -93,6 +94,7 @@ def run(job: VideoJob, ctx: AppContext) -> None:
                 fonts_dir=fonts,
             )
             finals.append(final)
+            ctx.progress("finalize", part, parts)
         if not finals:
             raise ValueError("no drama parts were assembled")
         job.final_paths = finals
@@ -110,6 +112,7 @@ def run(job: VideoJob, ctx: AppContext) -> None:
         )
         job.final_path = final
         job.final_paths = [final]
+        ctx.progress("finalize", 1, 1)
 
     if not ctx.params.keep_temp:
         shutil.rmtree(tmp, ignore_errors=True)

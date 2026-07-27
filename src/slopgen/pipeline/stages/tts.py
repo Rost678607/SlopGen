@@ -95,53 +95,95 @@ def _store_words(audio: Path, text: str, voice: str, rate: str, words: list[dict
         pass
 
 
+def _voice_settings(ctx: AppContext) -> tuple[str, str]:
+    """(voice, rate) for this run. Drama keeps natural speed — the footage stage
+    time-stretches the voice to the generated clip — while info mode honours the
+    user's tts_rate."""
+    rate = "+0%" if ctx.is_drama else f"{ctx.params.tts_rate:+d}%"
+    return _resolve_voice(ctx), rate
+
+
+def _synth_scene(scene, index: int, path: Path, voice: str, rate: str,
+                 use_cache: bool = True) -> list[dict]:
+    """Voice ONE line, with retries, and return its raw word timings. A cached
+    result (same text, voice and rate) is reused unless the caller forbids it."""
+    raw_words: list[dict] = (_cached_words(path, scene.text, voice, rate) or []) if use_cache else []
+    last_exc: Exception | None = None
+    for attempt in range(_MAX_ATTEMPTS if not raw_words else 0):
+        if attempt:
+            base = _RETRY_DELAYS[attempt - 1]
+            delay = base * (0.75 + 0.5 * random.random())
+            log.info("TTS scene %d: attempt %d/%d — retry in %.1fs",
+                     index, attempt + 1, _MAX_ATTEMPTS, delay)
+            time.sleep(delay)
+        try:
+            # hard timeout: a throttled connection can hang far beyond edge-tts'
+            # own socket timeouts and stall the whole batch
+            raw_words = asyncio.run(
+                asyncio.wait_for(_synth(scene.text, voice, path, rate=rate), timeout=90)
+            )
+            if not raw_words:
+                log.warning("TTS scene %d attempt %d: connection OK but no word boundaries returned",
+                            index, attempt + 1)
+        except Exception as exc:
+            last_exc = exc
+            log.warning("TTS scene %d attempt %d/%d failed: %s: %s",
+                        index, attempt + 1, _MAX_ATTEMPTS, type(exc).__name__, exc)
+            raw_words = []
+        if raw_words:
+            _store_words(path, scene.text, voice, rate, raw_words)
+            break
+    if not raw_words:
+        detail = f" — last error: {last_exc}" if last_exc else " — server returned empty audio"
+        raise RuntimeError(
+            f"edge-tts returned no audio for scene {index} after {_MAX_ATTEMPTS} attempts{detail}"
+        )
+    return raw_words
+
+
+def audio_path(job: VideoJob, index: int) -> Path:
+    return job.workdir / "tts" / f"scene_{index:02d}.mp3"
+
+
+def resynth_one(job: VideoJob, ctx: AppContext, index: int) -> float:
+    """Re-voice a single line right now, ignoring the cache, and write the result
+    back into the scene. Used by the voiceover breakpoint, where the operator edits
+    a line and wants to hear the new take without leaving the screen. Returns the
+    fresh audio length.
+
+    The sidecar cache is refreshed too, so the stage's own re-run on resume picks
+    this take up instead of paying for the same synthesis twice."""
+    scene = job.scenes[index]
+    voice, rate = _voice_settings(ctx)
+    path = audio_path(job, index)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    raw = _synth_scene(scene, index, path, voice, rate, use_cache=False)
+    scene.audio = path
+    src = duration_of(path)
+    # timings stay scene-relative here; whichever stage lays the timeline out
+    # (tts for info, footage for drama) converts them to absolute positions.
+    scene.words = [Word(text=w["text"], start=w["start"], end=w["end"]) for w in raw]
+    scene.audio_src_duration = src
+    if not ctx.is_drama:
+        scene.duration = src
+    return src
+
+
 def run(job: VideoJob, ctx: AppContext) -> None:
-    voice = _resolve_voice(ctx)
+    voice, rate = _voice_settings(ctx)
     # drama: one clip per scene is the master timeline — keep the voice at natural
     # speed here and record its length + scene-relative word timings; the footage
     # stage stretches (atempo) the voice to the generated clip and finalizes both
     # scene.duration and the absolute word positions.
     drama = ctx.is_drama
-    # drama keeps natural speed (footage stage time-stretches audio to clip length);
-    # info mode honours the user's tts_rate setting.
-    rate = "+0%" if drama else f"{ctx.params.tts_rate:+d}%"
     audio_dir = job.workdir / "tts"
     audio_dir.mkdir(parents=True, exist_ok=True)
 
     offset = 0.0
+    total = len(job.scenes)
     for i, scene in enumerate(job.scenes):
         path = audio_dir / f"scene_{i:02d}.mp3"
-        raw_words: list[dict] = _cached_words(path, scene.text, voice, rate) or []
-        last_exc: Exception | None = None
-        for attempt in range(_MAX_ATTEMPTS if not raw_words else 0):
-            if attempt:
-                base = _RETRY_DELAYS[attempt - 1]
-                delay = base * (0.75 + 0.5 * random.random())
-                log.info("TTS scene %d: attempt %d/%d — retry in %.1fs",
-                         i, attempt + 1, _MAX_ATTEMPTS, delay)
-                time.sleep(delay)
-            try:
-                # hard timeout: a throttled connection can hang far beyond
-                # edge-tts' own socket timeouts and stall the whole batch
-                raw_words = asyncio.run(
-                    asyncio.wait_for(_synth(scene.text, voice, path, rate=rate), timeout=90)
-                )
-                if not raw_words:
-                    log.warning("TTS scene %d attempt %d: connection OK but no word boundaries returned",
-                                i, attempt + 1)
-            except Exception as exc:
-                last_exc = exc
-                log.warning("TTS scene %d attempt %d/%d failed: %s: %s",
-                            i, attempt + 1, _MAX_ATTEMPTS, type(exc).__name__, exc)
-                raw_words = []
-            if raw_words:
-                _store_words(path, scene.text, voice, rate, raw_words)
-                break
-        if not raw_words:
-            detail = f" — last error: {last_exc}" if last_exc else " — server returned empty audio"
-            raise RuntimeError(
-                f"edge-tts returned no audio for scene {i} after {_MAX_ATTEMPTS} attempts{detail}"
-            )
+        raw_words = _synth_scene(scene, i, path, voice, rate)
         scene.audio = path
         src = duration_of(path)
         if drama:
@@ -157,4 +199,5 @@ def run(job: VideoJob, ctx: AppContext) -> None:
                 for w in raw_words
             ]
             offset += scene.duration
+        ctx.progress("tts", i + 1, total)
     # the target duration is a hint for the LLM, not a hard cap — accept whatever came out

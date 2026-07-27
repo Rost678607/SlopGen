@@ -276,6 +276,7 @@ def run(job: VideoJob, ctx: AppContext) -> None:
                 fell_back += 1
         _sync(scene, source_len, is_photo)
         scene.bg_assets = [BgAsset(path=clip, duration=scene.duration, is_photo=is_photo)]
+        ctx.progress("footage", i + 1, len(job.scenes))
 
     if want_video and fell_back:
         level = log.error if fell_back == want_video else log.warning

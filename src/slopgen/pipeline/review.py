@@ -131,7 +131,7 @@ def move_group(rows: list[Row], index: int, delta: int) -> list[Row]:
 # -- reading a job into rows -----------------------------------------------
 
 
-def _generator_names() -> list[str]:
+def generator_names() -> list[str]:
     """Every generator a scene may be pinned to (same names the orchestration uses)."""
     from ..media.generate import PHOTO_MODELS, VIDEO_MODELS
 
@@ -178,7 +178,7 @@ def _script_doc(job: VideoJob, mode: str) -> Doc:
             ))
             rows.append(Row(
                 label=label, value=s.gen_model, src=i, field="model",
-                kind="choice", options=_generator_names(),
+                kind="choice", options=generator_names(),
             ))
             rows.append(Row(
                 label=label, value=f"{s.clip_target_s:g}" if s.clip_target_s else "",

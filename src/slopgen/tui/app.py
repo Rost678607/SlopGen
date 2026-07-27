@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import subprocess
 import tomllib
 from pathlib import Path
 
@@ -32,6 +33,7 @@ from textual.widgets import (
     Label,
     ListItem,
     ListView,
+    ProgressBar,
     RichLog,
     Select,
     Static,
@@ -62,6 +64,7 @@ from ..media.generate import key_var_for_model
 from ..pipeline import Orchestrator, VideoJob, manual, review
 from ..pipeline.checkpoint import Checkpoint
 from ..pipeline.context import AppContext
+from ..pipeline.stages import tts as tts_stage
 from .forms import (
     Choice,
     FieldTextArea,
@@ -500,6 +503,18 @@ I18N: dict[str, dict[str, str]] = {
         "bp.chip_none": "the whole cast is already in this shot",
         "bp.cast_known": "Cast of this run",
         "bp.scene": "Scene",
+        "bp.regen": "🔊 Re-voice",
+        "bp.play": "▶ Listen",
+        "bp.regen_working": "voicing this line…",
+        "bp.regen_done": "new take: {s:.1f}s",
+        "bp.regen_err": "could not voice it",
+        "bp.play_none": "this line has no audio yet — re-voice it first",
+        "bp.play_err": "ffplay not found (it ships with ffmpeg)",
+        "bp.ai_ph_script": "anything: rewrite, reorder, merge, split, add or drop scenes, recast, change generators",
+        "unit.tts": "voiceover fragments",
+        "unit.footage": "video fragments",
+        "unit.assemble": "scenes assembled",
+        "unit.finalize": "files rendered",
         "bp.up": "▲",
         "bp.down": "▼",
         "bp.f.topic": "topic",
@@ -836,6 +851,18 @@ I18N: dict[str, dict[str, str]] = {
         "bp.chip_none": "весь каст уже в этом кадре",
         "bp.cast_known": "Каст этого прогона",
         "bp.scene": "Сцена",
+        "bp.regen": "🔊 Переозвучить",
+        "bp.play": "▶ Прослушать",
+        "bp.regen_working": "озвучиваю эту строку…",
+        "bp.regen_done": "новый дубль: {s:.1f}с",
+        "bp.regen_err": "не смог озвучить",
+        "bp.play_none": "у строки ещё нет озвучки — сначала переозвучь",
+        "bp.play_err": "ffplay не найден (он идёт вместе с ffmpeg)",
+        "bp.ai_ph_script": "что угодно: переписать, переставить, склеить, разбить, добавить или убрать сцены, сменить каст и нейронки",
+        "unit.tts": "фрагментов озвучки",
+        "unit.footage": "видеофрагментов",
+        "unit.assemble": "сцен смонтировано",
+        "unit.finalize": "файлов собрано",
         "bp.up": "▲",
         "bp.down": "▼",
         "bp.f.topic": "тема",
@@ -2599,10 +2626,15 @@ class ProgressScreen(Screen):
         self.params = params
         self.resume_dir = resume_dir
         self.run_dir: Path | None = resume_dir
+        self._video: int | None = None  # video the progress line is currently about
 
     def compose(self) -> ComposeResult:
         yield TopBar(_label(self.app, "step.summary"))
         yield Static("", id="run-summary")
+        with Horizontal(id="run-progress"):
+            yield Static("", id="run-stage")
+            yield ProgressBar(total=100, show_eta=False, id="run-bar")
+            yield Static("", id="run-count")
         yield DataTable(id="queue")
         yield RichLog(id="log", wrap=True, highlight=True)
 
@@ -2626,7 +2658,8 @@ class ProgressScreen(Screen):
 
     def _run_pipeline(self) -> None:
         try:
-            ctx = AppContext(store=self.app.store, params=self.params)
+            ctx = AppContext(store=self.app.store, params=self.params,
+                             on_progress=self._on_progress_threadsafe)
         except Exception as e:
             self.app.call_from_thread(self._log, f"[red]{_label(self.app, 'err.startup')}: {e}")
             return
@@ -2639,13 +2672,44 @@ class ProgressScreen(Screen):
     def _on_event_threadsafe(self, i: int, stage: str, status: str, message: str) -> None:
         self.app.call_from_thread(self._on_event, i, stage, status, message)
 
+    # -- progress ----------------------------------------------------------
+
+    def _on_progress_threadsafe(self, unit: str, done: int, total: int) -> None:
+        self.app.call_from_thread(self._on_progress, unit, done, total)
+
+    def _on_progress(self, unit: str, done: int, total: int) -> None:
+        """A stage reporting from inside its own loop (voiced lines, generated
+        clips, assembled scenes) — the only signal that a long stage is moving."""
+        t = lambda k: _label(self.app, k)  # noqa: E731
+        self.query_one("#run-bar", ProgressBar).update(total=max(total, 1), progress=done)
+        self.query_one("#run-count", Static).update(f"{done}/{total} {t(f'unit.{unit}')}")
+        # the queue row carries it too, so a finished video keeps the final tally
+        if self._video is not None:
+            table = self.query_one("#queue", DataTable)
+            table.update_cell_at(Coordinate(self._video, 3), f"{done}/{total}")
+
+    def _set_stage(self, i: int, stage: str) -> None:
+        """Open a fresh progress line for a stage that just started."""
+        t = lambda k: _label(self.app, k)  # noqa: E731
+        self._video = i
+        self.query_one("#run-stage", Static).update(
+            f" {t('col.video')} {i} · [b]{t(f'bp.stage.{stage}').split(' (')[0]}[/b]"
+        )
+        self.query_one("#run-bar", ProgressBar).update(total=100, progress=0)
+        self.query_one("#run-count", Static).update("")
+
     def _on_event(self, i: int, stage: str, status: str, message: str) -> None:
         t = lambda k: _label(self.app, k)  # noqa: E731
         table = self.query_one("#queue", DataTable)
         icons = {"start": "⏳", "done": "✔", "error": "✘", "skip": "↷", "paused": "⏸", "review": "⏸"}
         table.update_cell_at(Coordinate(i, 1), stage)
         table.update_cell_at(Coordinate(i, 2), icons.get(status, "·"))
-        table.update_cell_at(Coordinate(i, 3), message[:60])
+        if status != "done" or message:  # keep an item tally the stage just reported
+            table.update_cell_at(Coordinate(i, 3), message[:60])
+        if status == "start":
+            self._set_stage(i, stage)
+        elif status in ("done", "skip"):
+            self.query_one("#run-bar", ProgressBar).update(total=100, progress=100)
         if status == "error":
             self._log(f"[red]{t('col.video')} {i} — {stage}:[/red]\n{message}")
         elif status == "paused":
@@ -2892,6 +2956,9 @@ class BreakpointScreen(Screen):
         self._list_rev = 0  # same, for card ids
         self._sel: int | None = None  # open card
         self._quiet = False  # suppress selection handling while we repaint the list
+        # an in-place edit or re-voicing already applied to the job; Continue must
+        # still mark the stage for a re-run, which the final apply can no longer tell
+        self._forced_rerun = False
 
     # -- data --------------------------------------------------------------
 
@@ -2956,12 +3023,10 @@ class BreakpointScreen(Screen):
                     yield Button(t("bp.remove"), id="bp-del", variant="error")
                 yield ListView(id="bp-list")
             yield VerticalScroll(id="bp-detail")
-        with Vertical(id="bp-ai-box"):
-            yield Static(t("bp.ai"), classes="group-head")
+        with Horizontal(id="bp-ai-box"):
             yield FieldTextArea(id="bp-ai-prompt", placeholder=t("bp.ai_ph"),
-                                single_line=True, classes="text-field text-field-short")
-            with Horizontal(classes="entity-actions"):
-                yield Button(t("bp.ai"), id="bp-ai-go", variant="primary")
+                                single_line=True, classes="text-field text-field-short")  # placeholder set per stage
+            yield Button(t("bp.ai"), id="bp-ai-go", variant="primary")
         yield Static("", id="bp-note")
         with Horizontal(id="bp-actions"):
             yield Button(t("bp.discard"), id="bp-discard")
@@ -3064,7 +3129,77 @@ class BreakpointScreen(Screen):
         widgets: list = [Static(f"[b]{self._item_label(group.head)}[/b]", classes="group-head")]
         for n, row in enumerate(group.rows):
             widgets.extend(self._field_widgets(start + n, row))
+        widgets.extend(self._card_actions())
         await pane.mount(*widgets)
+
+    def _card_actions(self) -> list:
+        """Stage-specific buttons for the open card. At the voiceover breakpoint the
+        operator can re-voice this one line and listen to it without leaving."""
+        t = lambda k: _label(self.app, k)  # noqa: E731
+        if self.doc.stage != "tts" or not self.doc.variable:
+            return []
+        return [Horizontal(
+            Button(t("bp.regen"), id="bp-regen", variant="primary"),
+            Button(t("bp.play"), id="bp-play"),
+            classes="entity-actions",
+        )]
+
+    # -- re-voicing one line -----------------------------------------------
+
+    def _scene_index(self) -> int | None:
+        """The open card's scene, once the pending edits are folded into the job so
+        cards and scenes line up one to one."""
+        if self.job is None or self._sel is None:
+            return None
+        self._sync()
+        if review.apply(self.doc.stage, self.job, self.doc.rows, self.mode):
+            self._forced_rerun = True  # the edit outdated the stage; remember for Continue
+        return self._sel if self._sel < len(self.job.scenes) else None
+
+    @on(Button.Pressed, "#bp-regen")
+    def _regen(self) -> None:
+        index = self._scene_index()
+        if index is None:
+            return
+        self.notify(_label(self.app, "bp.regen_working"), timeout=4)
+        self.run_worker(lambda: self._regen_worker(index), thread=True, exclusive=False)
+
+    def _regen_worker(self, index: int) -> None:
+        try:
+            ctx = AppContext(store=self.app.store, params=self.cp.params)
+            secs = tts_stage.resynth_one(self.job, ctx, index)
+        except Exception as e:
+            self.app.call_from_thread(self._regen_done, index, None, str(e))
+            return
+        self.app.call_from_thread(self._regen_done, index, secs, None)
+
+    def _regen_done(self, index: int, secs: float | None, err: str | None) -> None:
+        if err is not None:
+            self.notify(f"{_label(self.app, 'bp.regen_err')}: {err}", severity="error", timeout=10)
+            return
+        # a fresh take means the stage must lay the timeline out again on resume;
+        # it costs nothing — the sidecar cache we just wrote is what it will read
+        self._forced_rerun = True
+        self.doc = review.read(self.doc.stage, self.job, self.mode)  # picks up the new length
+        self.notify(_label(self.app, "bp.regen_done").format(s=secs or 0.0), timeout=6)
+        self.run_worker(self._rebuild(keep=index))
+
+    @on(Button.Pressed, "#bp-play")
+    def _play(self) -> None:
+        index = self._scene_index()
+        if index is None:
+            return
+        audio = self.job.scenes[index].audio
+        if not audio or not Path(audio).exists():
+            self.notify(_label(self.app, "bp.play_none"), severity="warning", timeout=5)
+            return
+        try:
+            subprocess.Popen(
+                ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", str(audio)],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+        except (OSError, FileNotFoundError):
+            self.notify(_label(self.app, "bp.play_err"), severity="error", timeout=8)
 
     async def _rebuild(self, keep: int | None = None) -> None:
         """Repaint everything: header, cards, the open card's fields, notes."""
@@ -3091,7 +3226,11 @@ class BreakpointScreen(Screen):
         if not self.doc.editable:
             note = f"{note}\n{t('bp.readonly')}" if note else t("bp.readonly")
         self.query_one("#bp-note", Static).update(note)
-        self.query_one("#bp-ai-box", Vertical).display = bool(self.doc.subject and self.doc.editable)
+        ai_box = self.query_one("#bp-ai-box", Horizontal)
+        ai_box.display = bool(self.doc.subject and self.doc.editable)
+        self.query_one("#bp-ai-prompt", FieldTextArea).placeholder = t(
+            "bp.ai_ph_script" if self.doc.stage == "script" else "bp.ai_ph"
+        )
         for wid in ("#bp-add", "#bp-up", "#bp-down", "#bp-del"):
             self.query_one(wid, Button).display = self.doc.variable
 
@@ -3182,11 +3321,51 @@ class BreakpointScreen(Screen):
 
     @on(Button.Pressed, "#bp-discard")
     async def _discard(self) -> None:
+        self._forced_rerun = False
         self._load()
         await self._rebuild(keep=0)
         self.notify(_label(self.app, "bp.discard"), timeout=3)
 
     # -- AI edit line ------------------------------------------------------
+
+    def _scene_payload(self) -> list[dict]:
+        """The whole document as structured scenes for the AI (id + every field)."""
+        payload = []
+        for group in self._groups():
+            item: dict = {"id": group.head.src}
+            for row in group.rows:
+                item[row.field] = (
+                    [v.strip() for v in row.value.split(",") if v.strip()]
+                    if row.kind == "chips" else row.value
+                )
+            payload.append(item)
+        return payload
+
+    def _rows_from_scenes(self, items: list[dict]) -> list[review.Row]:
+        """Rebuild the rows from what the AI returned. A scene carrying a known id
+        keeps that source — and with it the audio and clip already made for it — while
+        one with a null id becomes new. The field set, kinds and options are taken from
+        the scene it came from, or from the first existing one for a brand-new scene."""
+        groups = self._groups()
+        by_src = {g.head.src: g for g in groups if g.head.src is not None}
+        proto = groups[0] if groups else None
+        rows: list[review.Row] = []
+        for n, item in enumerate(items):
+            sid = item.get("id")
+            base = by_src.get(sid) if isinstance(sid, int) else None
+            template = base or proto
+            if template is None:
+                continue
+            for old in template.rows:
+                raw = item.get(old.field, old.value if base else "")
+                value = ", ".join(str(v) for v in raw) if isinstance(raw, list) else str(raw)
+                rows.append(review.Row(
+                    label=f"#{n + 1}", value=value,
+                    src=base.head.src if base else None,
+                    info=old.info if base else "",
+                    field=old.field, kind=old.kind, options=list(old.options),
+                ))
+        return rows
 
     @on(Button.Pressed, "#bp-ai-go")
     def _ai_edit(self) -> None:
@@ -3198,6 +3377,13 @@ class BreakpointScreen(Screen):
             self.notify(_label(self.app, "bp.ai_need"), severity="warning")
             return
         self._sync()
+        if self.doc.stage == "script":  # structured: the AI may restructure the whole list
+            self.notify(_label(self.app, "bp.ai_working"), timeout=3)
+            payload = self._scene_payload()
+            self.run_worker(
+                lambda: self._ai_scenes_worker(payload, instruction), thread=True, exclusive=False
+            )
+            return
         # only free-text fields go to the model: a cast chip set, a generator choice or
         # a clip length are not prose and must not be "rewritten"
         editable = [r for r in self.doc.rows if not r.readonly and r.kind == "text"]
@@ -3211,6 +3397,31 @@ class BreakpointScreen(Screen):
         self.run_worker(
             lambda: self._ai_worker(lines, instruction, kinds), thread=True, exclusive=False
         )
+
+    def _ai_scenes_worker(self, payload: list[dict], instruction: str) -> None:
+        try:
+            out = bp_ai.rewrite_scenes(
+                ChatLLM(self.app.store.active_llm_profile()), payload, instruction,
+                lang=self.cp.params.lang,
+                roster=list(self.job.cast_prompts) if self.job else [],
+                models=review.generator_names(),
+            )
+        except Exception as e:
+            self.app.call_from_thread(self._ai_scenes_done, None, str(e))
+            return
+        self.app.call_from_thread(self._ai_scenes_done, out, None)
+
+    def _ai_scenes_done(self, items: list[dict] | None, err: str | None) -> None:
+        if err is not None:
+            self.notify(f"{_label(self.app, 'bp.ai_err')}: {err}", severity="error", timeout=10)
+            return
+        rows = self._rows_from_scenes(items or [])
+        if not rows:
+            self.notify(_label(self.app, "bp.ai_nothing"), timeout=5)
+            return
+        self.doc.rows = rows
+        self.notify(_label(self.app, "bp.ai_done"), timeout=6)
+        self.run_worker(self._rebuild(keep=0))
 
     def _ai_worker(self, lines: list[str], instruction: str, kinds: list[str] | None) -> None:
         try:
@@ -3262,7 +3473,7 @@ class BreakpointScreen(Screen):
         index = self.queue[0]
         stage = self.doc.stage
         try:
-            rerun = review.apply(stage, self.job, self.doc.rows, self.mode)
+            rerun = review.apply(stage, self.job, self.doc.rows, self.mode) or self._forced_rerun
             self.cp.review_done(self.job, self.cp.completed(index), stage, rerun)
         except Exception as e:
             self.notify(f"{_label(self.app, 'err.save')}: {e}", severity="error", timeout=10)
@@ -3272,6 +3483,7 @@ class BreakpointScreen(Screen):
             else _label(self.app, "bp.saved"),
             timeout=6,
         )
+        self._forced_rerun = False
         self._load()
         if self.job is None:  # every parked video reviewed — let the pipeline run on
             self.app.push_screen(ProgressScreen(self.cp.params, resume_dir=self.run_dir))
@@ -3953,6 +4165,10 @@ class SlopgenApp(App):
     #confirm-row Button { margin-right: 2; }
 
     #run-summary { padding: 0 2; height: 1; background: $surface; }
+    #run-progress { height: 1; padding: 0 2; }
+    #run-stage { width: 34; }
+    #run-bar { width: 1fr; }
+    #run-count { width: 26; text-align: right; color: $text-muted; }
     #queue { height: 40%; margin: 1 2; }
     #log { height: 1fr; margin: 0 2 1 2; border: round $primary; }
 
@@ -3968,13 +4184,20 @@ class SlopgenApp(App):
 
     #bp-head { padding: 0 2; height: 1; background: $surface; }
     #bp-body { height: 1fr; margin: 0 2; }
-    #bp-list-pane { width: 46; }
+    #bp-list-pane { width: 48; }
+    #bp-list-pane .entity-actions { height: 3; margin-top: 0; }
+    #bp-list-pane .entity-actions Button { margin-right: 1; }
+    #bp-add { width: auto; }
+    #bp-up, #bp-down, #bp-del { width: auto; min-width: 5; }
     #bp-list { height: 1fr; }
     #bp-detail { width: 1fr; padding: 0 2; border-left: solid $primary 30%; }
+    #bp-detail Select, #bp-detail .number-row { margin-bottom: 1; }
     #bp-note { padding: 0 2; color: $text-muted; }
-    #bp-ai-box { height: auto; padding: 0 2; }
+    #bp-ai-box { height: auto; padding: 0 2; align: left middle; }
+    #bp-ai-prompt { width: 1fr; }
+    #bp-ai-go { margin-left: 2; }
     .bp-field-label { color: $text-muted; padding: 1 1 0 1; }
-    .bp-chips { height: auto; }
+    .bp-chips { height: auto; margin-bottom: 1; }
     .bp-chip, .bp-chip-add { height: 1; min-width: 6; border: none; margin-right: 1; }
     #bp-actions { height: 3; align: center middle; padding: 0 2; }
     #bp-actions Button { margin: 0 1; }

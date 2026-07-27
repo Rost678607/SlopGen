@@ -77,3 +77,70 @@ def rewrite(
     if not variable and len(out) != len(lines):
         return None
     return [str(x).strip() for x in out]
+
+
+_SCENES_SYSTEM = (
+    "You are editing the scene list of a short vertical video on the operator's behalf. "
+    "You get every scene as an object and one instruction. Apply it and return the FULL "
+    "new scene list, in the order it should play.\n"
+    "You may do ANYTHING the instruction calls for: rewrite any field, REORDER scenes, "
+    "merge them, split one in two, add new ones, drop existing ones.\n"
+    'Each scene keeps an "id": the id of the scene it came from — carry it over even when '
+    "you rewrite or move that scene, so its already-made audio and clip can be kept. Use "
+    'null only for a genuinely new scene. Never invent an id that was not given to you.\n'
+    "Field rules:\n"
+    '  • "text" — the spoken narration, in {lang}.\n'
+    '  • "prompt" — the ENGLISH shot description for a video generator. No character '
+    "NAMES (it cannot map a name to a face and prints foreign names across the frame) — "
+    "refer to people by a short visual tag. ONE continuous take: no cuts, no 'THEN', no "
+    "montage or split screen, or the generator renders every shot at once.\n"
+    '  • "cast" — who is on screen, as a list of names taken EXACTLY from this roster: '
+    "{roster}. Never use a name outside it.\n"
+    '  • "keywords" — English stock-search terms, as a list.\n'
+    '  • "model" — the generator, one of: {models}.\n'
+    '  • "clip_s" — the clip length in seconds, a number.\n'
+    "Include every field the input scenes have; leave a field as it was when the "
+    "instruction does not touch it.\n"
+    'Respond with JSON only: {{"scenes": [{{"id": 0, ...}}, ...]}}.'
+)
+
+
+def rewrite_scenes(
+    llm,
+    scenes: list[dict],
+    instruction: str,
+    *,
+    lang: str = "en",
+    roster: list[str] | None = None,
+    models: list[str] | None = None,
+) -> list[dict] | None:
+    """Apply a free-form instruction to a whole scene list — the structured sibling of
+    :func:`rewrite`. Unlike a flat line rewrite this can reorder, add, drop and retype
+    scenes, and it edits every field of one, not only its prose.
+
+    Returns the new scene list (each entry carrying the `id` of the scene it came from,
+    or None when it is new), or None when the model gave nothing usable."""
+    system = _SCENES_SYSTEM.format(
+        lang=lang,
+        roster=", ".join(roster or []) or "(no fixed cast)",
+        models=", ".join(models or []) or "(leave as is)",
+    )
+    user = (
+        f"Instruction: {instruction}\n"
+        f"Scenes:\n{json.dumps(scenes, ensure_ascii=False, indent=1)}"
+    )
+    data = llm.complete_json("bp_scenes", system, user)
+    out = data.get("scenes")
+    if not isinstance(out, list) or not out:
+        return None
+    known = {s.get("id") for s in scenes}
+    clean: list[dict] = []
+    for item in out:
+        if not isinstance(item, dict):
+            continue
+        sid = item.get("id")
+        # an id the operator's list never had would silently graft one scene's audio
+        # onto another's text — treat it as a new scene instead
+        item["id"] = sid if sid in known and sid is not None else None
+        clean.append(item)
+    return clean or None
