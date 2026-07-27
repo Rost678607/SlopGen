@@ -289,6 +289,11 @@ class OrchestrationStage(BaseModel):
     key: str = ""  # key_mode="single": which key label to pin; empty = the first available
     metric: OrchMetric = "percent"  # unit of `amount`
     amount: float = 100.0  # produce up to this much on this stage before moving on
+    # average length of one clip from THIS generator, in seconds. 0 = the model's
+    # nominal (generate.MODEL_CLIP_SECONDS). Overrides the run-level average — set it
+    # when a stage's clips are longer than the rest (a hand-made Kling/Veo shot next
+    # to 5-second Space clips, say).
+    clip_seconds: float = 0.0
 
 
 class OrchestrationConfig(BaseModel):
@@ -338,6 +343,10 @@ class RunParams(BaseModel):
     # -- drama mode --------------------------------------------------------
     scenario: str = ""  # the drama's premise/plot; empty = the LLM invents one
     parts: int = 1  # drama only: split one drama into this many cliffhanger parts
+    # average length of ONE generated clip, in seconds (0 = each generator's nominal).
+    # It sets how many clips the story is cut into and how much narration each carries;
+    # long clips are written as multi-shot sequences instead of a single framing.
+    clip_seconds: float = 0.0
     manual_cast: list[CharacterConfig] = []  # resolved cast for the run (TUI/CLI)
     orchestration: str = ""  # orchestration profile name from configs/orchestration/
     manual_orchestration: OrchestrationConfig | None = None  # ad-hoc chain from the TUI

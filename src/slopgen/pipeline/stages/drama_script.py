@@ -4,14 +4,16 @@ Given a premise (scenario) and a cast, the main character narrates their own sto
 in a single first-person voice — living the events, voicing inner thoughts, and
 dropping other characters' lines in raw and inline with no "said X" attribution.
 The story is broken into BEATS — one beat per
-generated shot — and each beat carries two texts: the spoken ``narration`` (in the
+generated clip — and each beat carries two texts: the spoken ``narration`` (in the
 content language) and an English ``video_prompt`` for the AI image/video model,
 plus the list of cast ``characters`` visible in the shot (so footage can inject
 their compiled visual prompts).
 
 Beat count and each beat's length come from the orchestration plan (see
 pipeline/drama.py): the timeline is authored in minutes ± a tolerance, and the
-narration for a beat is sized to the seconds of the clip that will carry it.
+narration for a beat is sized to the seconds of the clip that will carry it. Clip
+length is authored too, and it changes what a beat IS: a short clip is one framing,
+while a long one is written as a sequence of several scenes (see `shot_rule`).
 
 A native ad, when enabled, is woven into the plot at the scenario level — a
 natural in-story lead-in that culminates in one spoken ad beat — rather than a
@@ -43,7 +45,7 @@ SYSTEM = (
     "после уроков.'). "
     "NEVER narrate the MC in third person ('Юки был лузером' ❌ → 'Я был лузером' ✅). "
     "NEVER tag a line with who said it. One unbroken first-person voice — never a screenplay. "
-    "Break the story into BEATS. Each beat is exactly ONE short shot. For each beat give:\n"
+    "Break the story into BEATS. {shot_rule} For each beat give:\n"
     '  • "part": the output part number for this shot (1 if there is only one part);\n'
     '  • "narration": the spoken text for this shot, in {lang} (~{words} words), advancing the plot;\n'
     '  • "video_prompt": an ENGLISH text-to-image/video prompt describing THIS shot — the setting, '
@@ -61,6 +63,28 @@ SYSTEM = (
     'Respond with JSON only: {{"title": "<short title in {lang}>", "scenes": [{{"part": 1, "narration": "...", '
     '"video_prompt": "...", "characters": ["..."], "is_ad": false}}, ...]}}.'
 )
+
+# One beat is always one generated clip — but how that clip is described depends on
+# how long it runs. A ~5s Space clip is a single framing; a 12s clip made by hand in
+# an external tool comfortably holds a whole little sequence, so the writer is told
+# which of the two it is authoring instead of always writing one frozen shot.
+SHOT_RULE_SINGLE = "Each beat is exactly ONE short shot."
+SHOT_RULE_SEQUENCE = (
+    "Each beat is ONE clip of about {secs:.0f} seconds — long enough to hold several "
+    "different scenes in a row. Write its video_prompt as an ordered sequence of ~{shots} "
+    "shots separated by ' THEN ' (e.g. 'wide shot of the empty classroom at dusk THEN "
+    "close-up of her hands shaking THEN over-the-shoulder as he walks in'), so the clip "
+    "carries visual movement instead of one frozen framing. The narration of the beat runs "
+    "across that whole sequence."
+)
+SEQUENCE_FROM_S = 8.0  # clips at least this long are authored as multi-shot sequences
+
+
+def shot_rule(clip_seconds: float) -> str:
+    if clip_seconds < SEQUENCE_FROM_S:
+        return SHOT_RULE_SINGLE
+    return SHOT_RULE_SEQUENCE.format(secs=clip_seconds, shots=max(2, round(clip_seconds / 5)))
+
 
 DRAMA_PROFANITY = (
     "\nIn this first-person voice, swearing is the MC's genuine reaction in that exact moment — "
@@ -147,14 +171,16 @@ def run(job: VideoJob, ctx: AppContext) -> None:
     # hand the compiled per-character prompts to footage (so it needn't recompile)
     job.cast_prompts = {c.name: c.visual_prompt for c in cast if c.visual_prompt}
 
-    slots = plan_slots(ctx.orchestration, p.duration_s)
+    slots = plan_slots(ctx.orchestration, p.duration_s, p.clip_seconds)
     beats = len(slots)
-    avg_words = word_budget(sum(s.clip_seconds for s in slots) / beats, p.lang)
+    avg_clip_s = sum(s.clip_seconds for s in slots) / beats
+    avg_words = word_budget(avg_clip_s, p.lang)
     parts = requested_parts(p)
 
     system = SYSTEM.format(
         lang=lang, words=avg_words, beats=beats,
         duration=p.duration_s, tol=p.duration_tol_s,
+        shot_rule=shot_rule(avg_clip_s),
         part_rule=PART_RULES.format(parts=parts) if parts > 1 else "",
     )
     system += profanity_rule(p.profanity, p.lang)

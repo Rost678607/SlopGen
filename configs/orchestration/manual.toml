@@ -14,3 +14,8 @@ name = "manual"
 model = "manual"
 metric = "percent"
 amount = 100.0
+# You are making these clips by hand, so they can be far longer than a Space's ~5s
+# — and one 10-second clip comfortably holds several scenes in a row. At 8s+ the
+# writer describes each shot as a sequence ("wide THEN close-up THEN reaction")
+# instead of one frozen framing. Fewer, longer clips = fewer generations per video.
+clip_seconds = 10.0

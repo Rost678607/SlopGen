@@ -10,6 +10,10 @@ Timeline rules (decided with the user):
   * Length is authored in minutes ± a seconds tolerance; that budget is the
     authority. The tolerance is the scriptwriter's creative leeway (it may emit a
     few more/fewer beats) and is reconciled against the slots at generation time.
+  * Clip length is authored too (run-level average, per-stage override, or the
+    generator's nominal — see :func:`stage_clip_seconds`). It decides how many
+    clips the budget is cut into and how much narration each one carries; a long
+    clip holds a whole sequence of shots rather than one framing.
   * Orchestration only *routes* which generator makes each clip. Metrics mix
     freely (hybrid): ``percent`` = a share of the budget, ``seconds`` / ``clips``
     = an absolute chunk of real timeline, and the LAST stage always absorbs
@@ -42,7 +46,15 @@ class Slot:
     is_video: bool
 
 
-def _stage_budget_s(stage: OrchestrationStage, total_s: float) -> float:
+def stage_clip_seconds(stage: OrchestrationStage, average_s: float = 0.0) -> float:
+    """How long one clip from this stage nominally runs. The stage's own override
+    wins, then the run-level average the operator set, then the generator's nominal
+    length. Clip length is a property of where the clip comes from: a hand-made
+    Kling/Veo shot can run 10-15s while an HF Space emits ~5s."""
+    return max(stage.clip_seconds or average_s or model_clip_seconds(stage.model), 0.5)
+
+
+def _stage_budget_s(stage: OrchestrationStage, total_s: float, clip_s: float) -> float:
     """The seconds of timeline a stage claims, per its metric (before remainder
     fill / truncation)."""
     if stage.metric == "percent":
@@ -50,14 +62,18 @@ def _stage_budget_s(stage: OrchestrationStage, total_s: float) -> float:
     if stage.metric == "seconds":
         return max(stage.amount, 0.0)
     # clips
-    return max(stage.amount, 0.0) * model_clip_seconds(stage.model)
+    return max(stage.amount, 0.0) * clip_s
 
 
-def plan_slots(orch: OrchestrationConfig | None, total_s: float) -> list[Slot]:
+def plan_slots(
+    orch: OrchestrationConfig | None, total_s: float, average_clip_s: float = 0.0
+) -> list[Slot]:
     """Expand the orchestration into an ordered per-clip slot list filling
     ``total_s`` seconds. Stages are walked in order; each non-last stage takes its
     metric's chunk (capped so it never overshoots the budget), and the last stage
-    fills whatever remains. Always returns at least one slot."""
+    fills whatever remains. ``average_clip_s`` (0 = per-generator nominal) sets how
+    long one clip runs, and so how many of them the budget is cut into. Always
+    returns at least one slot."""
     stages = (orch.stages if orch and orch.stages else None) or [
         OrchestrationStage(model="wan2.1", metric="percent", amount=100.0)
     ]
@@ -68,11 +84,11 @@ def plan_slots(orch: OrchestrationConfig | None, total_s: float) -> list[Slot]:
     for i, st in enumerate(stages):
         is_last = i == len(stages) - 1
         remaining = max(total_s - consumed, 0.0)
+        cs = stage_clip_seconds(st, average_clip_s)
         if is_last:
             budget = remaining
         else:
-            budget = min(_stage_budget_s(st, total_s), remaining)
-        cs = model_clip_seconds(st.model)
+            budget = min(_stage_budget_s(st, total_s, cs), remaining)
         n = round(budget / cs) if budget > 0 else 0
         # the last stage must contribute at least one clip if nothing has yet
         if is_last and not slots:

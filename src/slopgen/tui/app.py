@@ -215,8 +215,11 @@ I18N: dict[str, dict[str, str]] = {
         "drama_soon": "Starting drama generation — cast: {n}.",
         "drama_duration_min": "Length, min",
         "drama_duration_tol": "Tolerance, sec",
+        "drama_clip_s": "Average AI clip, sec",
+        "drama_clip_auto": "per generator",
         "help.drama_duration_min": "Target length of the drama, in minutes. The story may run a little over/under (see Tolerance).",
         "help.drama_duration_tol": "How many seconds the finished video may run over or under the target when the story calls for it.",
+        "help.drama_clip_s": "How long ONE generated clip runs on average. It decides how many clips the story is cut into and how much narration each carries — and a long clip (8s+) is written as a sequence of several scenes instead of one framing. 0 = each generator's own length.",
         # right-panel help + character editor
         "insp_help_head": "— Help —",
         "insp_keys": "Keys:\n  ↑ / ↓   move between steps\n  Tab     next field\n  Enter   open / confirm\n  Esc     back",
@@ -280,6 +283,8 @@ I18N: dict[str, dict[str, str]] = {
         "orch_m_seconds": "seconds",
         "orch_m_percent": "% of video",
         "orch_amount": "Amount",
+        "orch_clip_s": "Clip length, sec (0 = auto)",
+        "orch_clip_badge": "clip {s:g}s",
         "orch_remove": "🗑 Remove stage",
         "orch_pick_first": "select a stage first",
         "orch_empty": "add a stage first",
@@ -290,6 +295,7 @@ I18N: dict[str, dict[str, str]] = {
         "help.orch_key": "In 'one key' mode: which of your keys to pin (managed in Config → Footage keys).",
         "help.orch_metric": "Unit of the hand-off amount: clips, seconds, or % of the final video.",
         "help.orch_amount": "How much this stage produces before handing off to the next one.",
+        "help.orch_clip_s": "Average length of one clip from THIS generator. Overrides the run-level average — use it when a stage's clips are longer (a hand-made Kling/Veo shot next to 5-second Space clips). 0 = the generator's own length.",
         "pick_head": "Add a character",
         "pick_new": "＋ Create new",
         "pick_from_lib": "…or pick one from the library:",
@@ -533,8 +539,11 @@ I18N: dict[str, dict[str, str]] = {
         "drama_soon": "Запускаю генерацию дорамы — каст: {n}.",
         "drama_duration_min": "Длина, мин",
         "drama_duration_tol": "Допуск, сек",
+        "drama_clip_s": "Средний ИИ-клип, сек",
+        "drama_clip_auto": "по генератору",
         "help.drama_duration_min": "Целевая длина дорамы в минутах. История может немного выйти за рамки (см. Допуск).",
         "help.drama_duration_tol": "На сколько секунд готовое видео может превысить/недотянуть цель, если этого требует сюжет.",
+        "help.drama_clip_s": "Сколько в среднем длится ОДИН сгенерированный клип. От этого зависит, на сколько клипов режется история и сколько озвучки достаётся каждому — а длинный клип (от 8с) пишется как последовательность нескольких сцен, а не один кадр. 0 = длина самого генератора.",
         # помощь в правой панели + редактор персонажа
         "insp_help_head": "— Помощь —",
         "insp_keys": "Клавиши:\n  ↑ / ↓   переход между шагами\n  Tab     следующее поле\n  Enter   открыть / подтвердить\n  Esc     назад",
@@ -598,6 +607,8 @@ I18N: dict[str, dict[str, str]] = {
         "orch_m_seconds": "секунд",
         "orch_m_percent": "% видео",
         "orch_amount": "Значение",
+        "orch_clip_s": "Длина клипа, сек (0 = авто)",
+        "orch_clip_badge": "клип {s:g}с",
         "orch_remove": "🗑 Удалить этап",
         "orch_pick_first": "сначала выбери этап",
         "orch_empty": "сначала добавь этап",
@@ -608,6 +619,7 @@ I18N: dict[str, dict[str, str]] = {
         "help.orch_key": "В режиме «один ключ»: какой из твоих ключей закрепить (управление в Конфиг → Ключи футажа).",
         "help.orch_metric": "Единица объёма передачи: клипы, секунды или % финального видео.",
         "help.orch_amount": "Сколько этот этап производит перед передачей следующему.",
+        "help.orch_clip_s": "Средняя длина одного клипа ИМЕННО этого генератора. Перебивает общее значение прогона — пригодится, когда клипы этапа длиннее (ручной кадр из Kling/Veo рядом с пятисекундными клипами Spaces). 0 = длина самого генератора.",
         "pick_head": "Добавить персонажа",
         "pick_new": "＋ Создать нового",
         "pick_from_lib": "…или выбери из библиотеки:",
@@ -955,6 +967,7 @@ FIELD_HELP = {
     "w-lang": "help.lang", "w-voice": "help.voice", "w-ctype": "help.ctype",
     "w-idea": "help.idea", "w-profanity": "help.profanity", "w-tts_rate": "help.tts_rate",
     "w-duration_min": "help.drama_duration_min", "w-duration_tol": "help.drama_duration_tol",
+    "w-clip_s": "help.drama_clip_s",
     "w-vprofile": "help.vprofile", "w-duration": "help.duration",
     "w-bg-src": "help.bg_src", "w-bg-link": "help.bg_link", "w-bg-dir": "help.bg_dir",
     "w-bg-int": "help.bg_int", "w-bg-motion": "help.bg_motion", "w-bg-cont": "help.bg_cont",
@@ -970,7 +983,7 @@ FIELD_HELP = {
     "orch-profile": "help.orch_profile",
     "e-orch-model": "help.orch_model", "e-orch-key_mode": "help.orch_key_mode",
     "e-orch-key": "help.orch_key", "e-orch-metric": "help.orch_metric",
-    "e-orch-amount": "help.orch_amount",
+    "e-orch-amount": "help.orch_amount", "e-orch-clip_seconds": "help.orch_clip_s",
 }
 
 BG_SOURCES = ["stock_video", "stock_photo", "local_video", "local_photo", "ai_video", "ai_photo"]
@@ -984,7 +997,7 @@ def _model_opt(m: str) -> tuple[str, str]:  # (label, value) for a Select
 AI_VIDEO_MODELS = [_model_opt(m) for m in VIDEO_MODELS]  # (label, value) for the picker
 AI_PHOTO_MODELS = [_model_opt(m) for m in PHOTO_MODELS]
 ORCH_MODEL_OPTS = [_model_opt(m) for m in list(VIDEO_MODELS) + list(PHOTO_MODELS)]  # orchestration stages
-ORCH_FIELDS = ("model", "key_mode", "key", "metric", "amount")
+ORCH_FIELDS = ("model", "key_mode", "key", "metric", "amount", "clip_seconds")
 
 
 def _handle_number_step(host, event: NumStep.Pressed) -> bool:
@@ -1603,6 +1616,7 @@ class DramaScreen(_CharEditAI, GenerateScreen):
                   lo=0, hi=100, step=5, labels=PROFANITY_LABELS),
             Number("duration_min", "drama_duration_min", value="2", default=2.0),
             Number("duration_tol", "drama_duration_tol", value="15", default=15.0),
+            Number("clip_s", "drama_clip_s", value="0", default=0.0),
         ])
 
     def _step_help_key(self, step_key: str) -> str:
@@ -1627,11 +1641,13 @@ class DramaScreen(_CharEditAI, GenerateScreen):
 
     @staticmethod
     def _default_stages() -> list[dict]:
-        return [{"model": "wan2.1", "key_mode": "rotate", "key": "", "metric": "percent", "amount": 100.0}]
+        return [{"model": "wan2.1", "key_mode": "rotate", "key": "",
+                 "metric": "percent", "amount": 100.0, "clip_seconds": 0.0}]
 
     @staticmethod
     def _new_stage() -> dict:
-        return {"model": "wan2.1", "key_mode": "rotate", "key": "", "metric": "percent", "amount": 50.0}
+        return {"model": "wan2.1", "key_mode": "rotate", "key": "",
+                "metric": "percent", "amount": 50.0, "clip_seconds": 0.0}
 
     def _refresh_orch_list(self) -> None:
         try:
@@ -1643,12 +1659,14 @@ class DramaScreen(_CharEditAI, GenerateScreen):
         for i, s in enumerate(self._stages):
             km = _label(self.app, "orch_km_rotate" if s["key_mode"] == "rotate" else "orch_km_single")
             metric = _label(self.app, f"orch_m_{s['metric']}")
+            clip = s.get("clip_seconds") or 0.0
+            clip_badge = f"  ·  {_label(self.app, 'orch_clip_badge').format(s=clip)}" if clip else ""
             item = ListItem(
                 Horizontal(
                     Vertical(
                         Static(f"{i + 1}. {s['model']}", classes="cast-name"),
                         Static(km, classes="cast-line cast-dim"),
-                        Static(f"→ {s['amount']:g} {metric}", classes="cast-line"),
+                        Static(f"→ {s['amount']:g} {metric}{clip_badge}", classes="cast-line"),
                         classes="cast-info",
                     ),
                     classes="cast-row",
@@ -1670,6 +1688,7 @@ class DramaScreen(_CharEditAI, GenerateScreen):
                    options=[(t("orch_m_clips"), "clips"), (t("orch_m_seconds"), "seconds"),
                             (t("orch_m_percent"), "percent")], value=s["metric"]),
             Number("amount", "orch_amount", value=str(s["amount"]), default=100.0),
+            Number("clip_seconds", "orch_clip_s", value=str(s.get("clip_seconds", 0.0)), default=0.0),
         ])
 
     async def _show_stage_editor(self, idx: int) -> None:
@@ -1697,10 +1716,11 @@ class DramaScreen(_CharEditAI, GenerateScreen):
         s["key_mode"] = vals.get("key_mode") or "rotate"
         s["key"] = vals.get("key", "")
         s["metric"] = vals.get("metric") or "percent"
-        try:
-            s["amount"] = float(vals.get("amount", s["amount"]))
-        except (TypeError, ValueError):
-            pass
+        for key, default in (("amount", 100.0), ("clip_seconds", 0.0)):
+            try:
+                s[key] = max(float(vals.get(key, s.get(key, default))), 0.0)
+            except (TypeError, ValueError):
+                pass
         self._refresh_orch_list()
 
     def _set_profile_custom(self) -> None:
@@ -1796,7 +1816,7 @@ class DramaScreen(_CharEditAI, GenerateScreen):
         self.app.push_screen(NameModal(_label(self.app, "orch_name")), _named)
 
     def _write_orchestration(self, name: str) -> None:
-        data = {"stages": [{k: s[k] for k in ORCH_FIELDS} for s in self._stages]}
+        data = {"stages": [{k: s[k] for k in ORCH_FIELDS if k in s} for s in self._stages]}
         path = Path("configs/orchestration") / f"{name}.toml"
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "wb") as f:
@@ -2376,6 +2396,7 @@ class DramaScreen(_CharEditAI, GenerateScreen):
             "profanity": c["profanity"],
             "duration": dur_min * 60.0,
             "duration_tol": float(c.get("duration_tol") or 15.0),
+            "clip_s": max(float(c.get("clip_s") or 0.0), 0.0),
             "ad_src": a["ad-src"], "ad_mode": a["ad-mode"] or "both",
             "push": "" if p["push"] == NONE else p["push"],
             "subs": p["subs"], "count": max(1, int(p["count"])),
@@ -2393,12 +2414,14 @@ class DramaScreen(_CharEditAI, GenerateScreen):
         plot = self._scenario_text().strip().replace("\n", " ")
         plot = (plot[:80] + "…") if len(plot) > 80 else (plot or "—")
         stages = " → ".join(s["model"] for s in self._stages) or "—"
+        clip = f"{g['clip_s']:g}s" if g["clip_s"] else t("drama_clip_auto")
         lines = [
             f"[b]{t('drama_summary_head')}[/b]",
             "",
             f"  {t('lang')}: [b]{g['lang']}[/b]      {t('duration')}: "
             f"~{g['duration'] / 60:.1f} min ±{g['duration_tol']:.0f}s"
             + (f"      {t('parts')}: [b]{g['parts']}[/b]" if g["parts"] != 1 else ""),
+            f"  {t('drama_clip_s').split(',')[0]}: [b]{clip}[/b]",
             f"  {t('drama_plot_head')}: {plot}",
             f"  {t('drama_cast_head')}: [b]{cast}[/b]",
             f"  ★ {t('cfg.characters')}: {glob}",
@@ -2412,6 +2435,8 @@ class DramaScreen(_CharEditAI, GenerateScreen):
     def _drama_command(self, g: dict) -> str:
         cmd = f"slopgen drama {g['lang']}"
         cmd += f" --duration-min {g['duration'] / 60:g} --tol {g['duration_tol']:g}"
+        if g["clip_s"]:
+            cmd += f" --clip-s {g['clip_s']:g}"
         if g["parts"] != 1:
             cmd += f" --parts {g['parts']}"
         glob = [m["name"] for m in self._cast if m["glob"]]
@@ -2451,6 +2476,7 @@ class DramaScreen(_CharEditAI, GenerateScreen):
                 OrchestrationStage(
                     model=s["model"], key_mode=s["key_mode"], key=s.get("key", ""),
                     metric=s["metric"], amount=float(s["amount"]),
+                    clip_seconds=float(s.get("clip_seconds") or 0.0),
                 )
                 for s in self._stages
             ],
@@ -2462,7 +2488,7 @@ class DramaScreen(_CharEditAI, GenerateScreen):
                 manual_cast=cast,
                 manual_orchestration=orch,
                 duration_s=g["duration"], duration_tol_s=g["duration_tol"],
-                parts=g["parts"],
+                clip_seconds=g["clip_s"], parts=g["parts"],
                 profanity=g["profanity"],
                 ad=g["ad_src"] if g["ad_src"] not in (NONE, MANUAL) else "",
                 manual_ad=self._manual_ad_config(g["ad_src"]),

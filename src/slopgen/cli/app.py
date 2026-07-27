@@ -148,7 +148,11 @@ def _print_lists(store: ConfigStore, **flags: bool) -> None:
     if flags.get("orchestrations"):
         rprint("[bold]orchestrations:[/bold]")
         for name, o in store.orchestrations.items():
-            chain = " → ".join(f"{s.model}({s.amount:g}{s.metric[:1]})" for s in o.stages) or "—"
+            chain = " → ".join(
+                f"{s.model}({s.amount:g}{s.metric[:1]}"
+                + (f", {s.clip_seconds:g}s clips" if s.clip_seconds else "") + ")"
+                for s in o.stages
+            ) or "—"
             rprint(f"  {name}: {chain}")
     if flags.get("ads"):
         rprint("[bold]ad contracts:[/bold]")
@@ -286,6 +290,7 @@ def drama(
     orchestration: Optional[str] = typer.Option(None, "--orchestration", help="generator chain from configs/orchestration/ (default: one wan2.1 stage)"),
     duration_min: float = typer.Option(2.0, "--duration-min", help="target length in minutes"),
     tol: float = typer.Option(15.0, "--tol", help="allowed over/under-run, seconds"),
+    clip_s: float = typer.Option(0.0, "--clip-s", help="average length of ONE generated clip, seconds (0 = each generator's own); clips of 8s+ are written as multi-scene sequences"),
     parts: int = typer.Option(1, "--parts", min=1, help="split one drama into this many cliffhanger parts"),
     voice: Optional[str] = typer.Option(None, "--voice", help="edge-tts narrator voice id (default per language)"),
     ad: Optional[str] = typer.Option(None, "--ad", help="ad contract name from configs/ads/"),
@@ -334,6 +339,7 @@ def drama(
             orchestration=orchestration or "",
             duration_s=max(duration_min, 0.1) * 60.0,
             duration_tol_s=max(tol, 0.0),
+            clip_seconds=max(clip_s, 0.0),
             parts=max(1, parts),
             profanity=profanity,
             ad=ad or "", ad_mode=ad_mode,
@@ -348,6 +354,7 @@ def drama(
     rprint(
         f"[bold]slopgen[/bold] drama: {params.count}× {params.lang}"
         f" ~{params.duration_s / 60:.1f}min ±{params.duration_tol_s:.0f}s"
+        + (f" clip~{params.clip_seconds:g}s" if params.clip_seconds else "")
         + (f" parts={params.parts}" if params.parts != 1 else "")
         + f" cast=[{', '.join(names) or '—'}] orch={orchestration or 'default'}"
         f" ad={params.ad or '-'}({params.ad_mode}) push={params.push or 'local'}"
