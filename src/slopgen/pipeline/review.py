@@ -22,7 +22,9 @@ operator's edits away.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+# `field` is aliased: Row has an attribute of that name, which would shadow it
+from dataclasses import dataclass
+from dataclasses import field as dc_field
 from pathlib import Path
 
 from .job import Scene, VideoJob
@@ -62,6 +64,11 @@ class Row:
     # per scene (the script shows what is SAID and what is SHOWN); "text" rows are the
     # ones that define a scene's existence, the rest attach to the preceding one.
     field: str = "text"
+    # how the row is edited: free text, a number, one of `options`, or a set of them
+    # (`chips`). The value stays a string either way — comma-separated for chips — so
+    # reading, applying and the AI edit line need not care.
+    kind: str = "text"  # text | number | choice | chips
+    options: list[str] = dc_field(default_factory=list)
 
 
 @dataclass
@@ -69,7 +76,7 @@ class Doc:
     """Everything a breakpoint screen needs: the rows, plus what may be done to them."""
 
     stage: str
-    rows: list[Row] = field(default_factory=list)
+    rows: list[Row] = dc_field(default_factory=list)
     variable: bool = False  # operator may add/remove/reorder items
     subject: str = "lines"  # what the AI rewrite line is editing (goes into the prompt)
     note_key: str = ""  # i18n key of the hint shown under the list
@@ -87,7 +94,7 @@ class Group:
     they move, and are dropped, together."""
 
     head: Row  # the "text" row; its existence is the item's existence
-    extras: list[Row] = field(default_factory=list)
+    extras: list[Row] = dc_field(default_factory=list)
 
     @property
     def rows(self) -> list[Row]:
@@ -124,6 +131,13 @@ def move_group(rows: list[Row], index: int, delta: int) -> list[Row]:
 # -- reading a job into rows -----------------------------------------------
 
 
+def _generator_names() -> list[str]:
+    """Every generator a scene may be pinned to (same names the orchestration uses)."""
+    from ..media.generate import PHOTO_MODELS, VIDEO_MODELS
+
+    return list(VIDEO_MODELS) + list(PHOTO_MODELS)
+
+
 def _scene_label(i: int, scene: Scene) -> str:
     return f"#{i + 1} · AD" if scene.is_ad else f"#{i + 1}"
 
@@ -157,11 +171,19 @@ def _script_doc(job: VideoJob, mode: str) -> Doc:
             info=", ".join(s.characters) if mode == "drama" else "",
         ))
         if mode == "drama":
+            rows.append(Row(label=label, value=s.video_prompt, src=i, field="prompt"))
             rows.append(Row(
-                label=label, value=s.video_prompt, src=i, field="prompt",
-                info=" · ".join(x for x in (s.gen_model, f"{s.clip_target_s:.0f}s" if s.clip_target_s else "") if x),
+                label=label, value=", ".join(s.characters), src=i, field="cast",
+                kind="chips", options=list(job.cast_prompts),
             ))
-            rows.append(Row(label=label, value=", ".join(s.characters), src=i, field="cast"))
+            rows.append(Row(
+                label=label, value=s.gen_model, src=i, field="model",
+                kind="choice", options=_generator_names(),
+            ))
+            rows.append(Row(
+                label=label, value=f"{s.clip_target_s:g}" if s.clip_target_s else "",
+                src=i, field="clip_s", kind="number",
+            ))
         else:
             rows.append(Row(label=label, value=", ".join(s.keywords), src=i, field="keywords"))
     return Doc(
@@ -365,6 +387,13 @@ def _apply_script(job: VideoJob, rows: list[Row], mode: str) -> bool:
             scene.keywords = [k.strip() for k in extras["keywords"].value.split(",") if k.strip()]
         if "cast" in extras:
             scene.characters = [c.strip() for c in extras["cast"].value.split(",") if c.strip()]
+        if "model" in extras and extras["model"].value.strip():
+            scene.gen_model = extras["model"].value.strip()
+        if "clip_s" in extras:
+            try:
+                scene.clip_target_s = max(float(extras["clip_s"].value or 0), 0.0)
+            except ValueError:
+                pass
         out.append(scene)
     if out:
         job.scenes = out

@@ -475,8 +475,8 @@ I18N: dict[str, dict[str, str]] = {
         "bp.paused": "breakpoint — waiting for review",
         "bp.head": "video {i} · stage: [b]{stage}[/b] · {n} entries",
         "bp.left": "{n} more video(s) waiting after this one",
-        "bp.add": "＋ Add line",
-        "bp.remove": "✖",
+        "bp.add": "＋ Add",
+        "bp.remove": "✖ Drop",
         "bp.continue": "▶ Continue the run",
         "bp.discard": "↺ Revert edits",
         "bp.ai": "✨ Ask AI",
@@ -494,6 +494,10 @@ I18N: dict[str, dict[str, str]] = {
         "bp.field.prompt": "shot",
         "bp.field.keywords": "search",
         "bp.field.cast": "who is in it",
+        "bp.field.model": "generator",
+        "bp.field.clip_s": "clip length, sec",
+        "bp.chip_pick": "Add to this shot:",
+        "bp.chip_none": "the whole cast is already in this shot",
         "bp.cast_known": "Cast of this run",
         "bp.scene": "Scene",
         "bp.up": "▲",
@@ -503,8 +507,8 @@ I18N: dict[str, dict[str, str]] = {
         "bp.f.description": "description",
         "bp.f.tags": "tags (comma-separated)",
         "bp.note.idea": "The topic the whole script is written from.",
-        "bp.note.script": "The script as written: each scene's spoken line plus what will be put on screen for it (the English shot prompt / search terms). This is the ONLY place to fix a shot before it is generated. Emptying a spoken line drops the whole scene; an added line becomes a new scene.",
-        "bp.note.tts": "One line per voiced fragment (with the length of what was synthesized). Editing a line re-voices exactly that one; adding/emptying lines changes how many fragments there are.",
+        "bp.note.script": "Cards are the scenes; open one to edit its spoken line, its shot, who is in it, the generator and the clip length. This is the ONLY place to fix a shot before it is generated.",
+        "bp.note.tts": "One card per voiced fragment, with the length of what was synthesized. Editing a line re-voices exactly that one; adding, dropping or reordering cards changes the fragments themselves.",
         "bp.note.footage": "What each scene is rendered/searched from. Changed scenes get their footage remade.",
         "bp.note.subtitles": "The generated ASS files, as text. Edits are written straight to disk.",
         "bp.note.assemble": "The rendered file(s) — play them, then continue or press Esc to abandon the run.",
@@ -807,8 +811,8 @@ I18N: dict[str, dict[str, str]] = {
         "bp.paused": "брейкпоинт — ждёт проверки",
         "bp.head": "видео {i} · этап: [b]{stage}[/b] · позиций: {n}",
         "bp.left": "после этого в очереди ещё видео: {n}",
-        "bp.add": "＋ Добавить строку",
-        "bp.remove": "✖",
+        "bp.add": "＋ Добавить",
+        "bp.remove": "✖ Удалить",
         "bp.continue": "▶ Продолжить конвейер",
         "bp.discard": "↺ Откатить правки",
         "bp.ai": "✨ Спросить ИИ",
@@ -826,6 +830,10 @@ I18N: dict[str, dict[str, str]] = {
         "bp.field.prompt": "кадр",
         "bp.field.keywords": "поиск",
         "bp.field.cast": "кто в кадре",
+        "bp.field.model": "нейронка",
+        "bp.field.clip_s": "длина клипа, сек",
+        "bp.chip_pick": "Добавить в кадр:",
+        "bp.chip_none": "весь каст уже в этом кадре",
         "bp.cast_known": "Каст этого прогона",
         "bp.scene": "Сцена",
         "bp.up": "▲",
@@ -835,8 +843,8 @@ I18N: dict[str, dict[str, str]] = {
         "bp.f.description": "описание",
         "bp.f.tags": "теги (через запятую)",
         "bp.note.idea": "Тема, из которой пишется весь сценарий.",
-        "bp.note.script": "Сценарий как он написан: реплика сцены плюс то, что будет на экране (английский промпт кадра / поисковые слова). Это единственное место, где кадр можно поправить ДО генерации. Пустая реплика удаляет сцену целиком, добавленная строка становится новой сценой.",
-        "bp.note.tts": "Строка на озвученный фрагмент (и длительность того, что синтезировалось). Правка строки переозвучивает только её; добавление и очистка строк меняют количество фрагментов.",
+        "bp.note.script": "Карточки — это сцены; открой любую, чтобы поправить реплику, кадр, кто в нём, нейронку и длину клипа. Это единственное место, где кадр правится ДО генерации.",
+        "bp.note.tts": "Карточка на озвученный фрагмент, с длительностью того, что синтезировалось. Правка реплики переозвучивает только её; добавление, удаление и перестановка карточек меняют сами фрагменты.",
         "bp.note.footage": "Из чего рисуется/ищется каждая сцена. Изменённым сценам видеоряд соберут заново.",
         "bp.note.subtitles": "Сгенерированные ASS-файлы как текст. Правки пишутся прямо на диск.",
         "bp.note.assemble": "Готовые файлы — посмотри их и продолжай, либо Esc, чтобы бросить запуск.",
@@ -930,6 +938,38 @@ class NameModal(ModalScreen[str | None]):
 # --------------------------------------------------------------------------
 # Home
 # --------------------------------------------------------------------------
+
+
+class PickModal(ModalScreen[str | None]):
+    """Pick one of a list of options; dismisses with the choice or None. Used by the
+    ＋ on set-valued fields, where typing a name would only invite typos."""
+
+    def __init__(self, title: str, options: list[str]):
+        super().__init__()
+        self._title = title
+        self._options = options
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="confirm-box"):
+            yield Static(self._title, id="confirm-text")
+            yield ListView(
+                *[ListItem(Label(o), id=f"pick-{i}") for i, o in enumerate(self._options)],
+                id="pick-list",
+            )
+            with Horizontal(id="confirm-row"):
+                yield Button(_label(self.app, "no"), id="pick-cancel", variant="error")
+
+    def on_mount(self) -> None:
+        self.query_one("#pick-list", ListView).focus()
+
+    @on(ListView.Selected, "#pick-list")
+    def _picked(self, event: ListView.Selected) -> None:
+        i = int(event.item.id.rsplit("-", 1)[1])
+        self.dismiss(self._options[i] if 0 <= i < len(self._options) else None)
+
+    @on(Button.Pressed, "#pick-cancel")
+    def _cancel(self) -> None:
+        self.dismiss(None)
 
 
 class HomeScreen(Screen):
@@ -2831,12 +2871,13 @@ class ManualGatherScreen(Screen):
 
 
 class BreakpointScreen(Screen):
-    """One parked video at a time: the stage's output as a list of editable lines
-    (see pipeline/review.py), an AI edit line over the same lines, and Continue.
+    """One parked video at a time (see pipeline/review.py), as master-detail: the
+    stage's items are cards on the left — reorder, add and drop them there — and the
+    open card's fields are edited on the right. A scene has more to it than text
+    (who is in it, which generator, how long), which is unreadable as one flat list.
 
-    The rows are the screen's state — widgets are rebuilt from them whenever the
-    list itself changes (a line added, removed, or rewritten by the AI), so the
-    values are synced back out of the widgets before every rebuild."""
+    The rows are the screen's state; only the open card's fields exist as widgets, so
+    values are synced back out of them before every rebuild and before saving."""
 
     BINDINGS = [("ctrl+s", "continue_run", "Continue")]
 
@@ -2847,7 +2888,10 @@ class BreakpointScreen(Screen):
         self.cp = Checkpoint.load(run_dir)
         self.job: VideoJob | None = None
         self.doc = review.Doc(stage="")
-        self._rev = 0  # bumps per rebuild so row ids stay unique across async removal
+        self._rev = 0  # bumps per rebuild so field ids stay unique across async removal
+        self._list_rev = 0  # same, for card ids
+        self._sel: int | None = None  # open card
+        self._quiet = False  # suppress selection handling while we repaint the list
 
     # -- data --------------------------------------------------------------
 
@@ -2866,21 +2910,36 @@ class BreakpointScreen(Screen):
         stage = self.cp.review_stage(i)
         self.doc = review.read(stage, self.job, self.mode) if self.job else review.Doc(stage=stage)
 
-    def _row_label(self, row: review.Row) -> str:
-        base = _label(self.app, row.label) if row.label.startswith("bp.") else row.label
-        # documents that show several rows per scene name what each row is
-        return base if row.field == "text" else f"{base} · {_label(self.app, f'bp.field.{row.field}')}"
+    def _item_label(self, head: review.Row) -> str:
+        if head.label.startswith("bp."):  # a named field (title, topic, …)
+            return _label(self.app, head.label)
+        # "#3" / "#3 · AD" — a scene; say so, the number alone reads as nothing
+        return f"{_label(self.app, 'bp.scene')} {head.label}" if head.label.startswith("#") else head.label
 
     def _sync(self) -> None:
-        """Pull what is on screen back into the rows (called before any rebuild,
-        and before saving)."""
+        """Pull what is on screen back into the rows. Only the open card's fields are
+        mounted, so the rest simply keep the value they already hold."""
         for i, row in enumerate(self.doc.rows):
-            if row.readonly:
+            if row.readonly or row.kind == "chips":  # chips are edited on the row itself
                 continue
+            wid = f"#bp-val-{self._rev}-{i}"
             try:
-                row.value = self.query_one(f"#bp-val-{self._rev}-{i}", TextArea).text
-            except Exception:  # widget gone (rebuild raced) — keep the stored value
+                if row.kind == "number":
+                    row.value = self.query_one(wid, Input).value.strip()
+                elif row.kind == "choice":
+                    value = self.query_one(wid, Select).value
+                    row.value = "" if value is Select.BLANK else str(value)
+                else:
+                    row.value = self.query_one(wid, TextArea).text
+            except Exception:  # not mounted (another card is open) — keep it as is
                 pass
+
+    def _groups(self) -> list[review.Group]:
+        return review.group_rows(self.doc.rows)
+
+    def _first_index(self, gi: int) -> int:
+        """Flat row index the given card starts at (row ids stay positional)."""
+        return sum(len(g.rows) for g in self._groups()[:gi])
 
     # -- layout ------------------------------------------------------------
 
@@ -2888,10 +2947,23 @@ class BreakpointScreen(Screen):
         t = lambda k: _label(self.app, k)  # noqa: E731
         yield TopBar(t("bp.title"))
         yield Static("", id="bp-head")
-        yield VerticalScroll(id="bp-rows")
+        with Horizontal(id="bp-body"):
+            with Vertical(id="bp-list-pane"):
+                with Horizontal(classes="entity-actions"):
+                    yield Button(t("bp.add"), id="bp-add", variant="success")
+                    yield Button(t("bp.up"), id="bp-up")
+                    yield Button(t("bp.down"), id="bp-down")
+                    yield Button(t("bp.remove"), id="bp-del", variant="error")
+                yield ListView(id="bp-list")
+            yield VerticalScroll(id="bp-detail")
+        with Vertical(id="bp-ai-box"):
+            yield Static(t("bp.ai"), classes="group-head")
+            yield FieldTextArea(id="bp-ai-prompt", placeholder=t("bp.ai_ph"),
+                                single_line=True, classes="text-field text-field-short")
+            with Horizontal(classes="entity-actions"):
+                yield Button(t("bp.ai"), id="bp-ai-go", variant="primary")
         yield Static("", id="bp-note")
         with Horizontal(id="bp-actions"):
-            yield Button(t("bp.add"), id="bp-add", variant="success")
             yield Button(t("bp.discard"), id="bp-discard")
             yield Button(t("bp.continue"), id="bp-continue", variant="primary")
 
@@ -2899,79 +2971,116 @@ class BreakpointScreen(Screen):
         self._load()
         self.run_worker(self._rebuild())
 
-    def _field_widget(self, index: int, row: review.Row, labelled: bool) -> list:
-        """One editable field: its name (only where a group holds several) + the box."""
-        widgets: list = []
-        if labelled:
-            widgets.append(Static(_label(self.app, f"bp.field.{row.field}"), classes="bp-field-label"))
-        # multi-line payloads (a whole .ass file) get the tall, scrolling field
+    # -- the card list (left) ----------------------------------------------
+
+    def _card_summary(self, group: review.Group) -> str:
+        """The one-line "what else is set here" under a card's opening words."""
+        bits = []
+        for row in group.extras:
+            value = " ".join(row.value.split())
+            if not value:
+                continue
+            name = _label(self.app, f"bp.field.{row.field}")
+            bits.append(f"{name}: {value[:28]}" + ("…" if len(value) > 28 else ""))
+        return "  ·  ".join(bits)
+
+    async def _refresh_list(self, keep: int | None = None) -> None:
+        """Repaint the cards. `keep` is the card to leave selected. The mounts are
+        awaited before the selection is set: assigning an index the list has not
+        built yet is silently clamped to 0, which then snaps the field pane back to
+        the first card."""
+        lv = self.query_one("#bp-list", ListView)
+        self._list_rev += 1
+        self._quiet = True  # our own clear/append must not fire selection handling
+        await lv.clear()
+        groups = self._groups()
+        items = []
+        for gi, group in enumerate(groups):
+            head = " ".join(group.head.value.split())
+            items.append(ListItem(
+                Vertical(
+                    Static(f"[b]{self._item_label(group.head)}[/b]  [dim]{group.head.info}[/dim]",
+                           classes="cast-name"),
+                    Static(head[:70] + ("…" if len(head) > 70 else "") or "—", classes="cast-line"),
+                    Static(self._card_summary(group), classes="cast-line cast-dim"),
+                    classes="cast-info",
+                ),
+                id=f"bpitem-{self._list_rev}-{gi}", classes="cast-item",
+            ))
+        if items:
+            await lv.extend(items)
+        self._quiet = False
+        if groups:
+            self._sel = min(keep if keep is not None else (self._sel or 0), len(groups) - 1)
+            lv.index = self._sel
+        else:
+            self._sel = None
+
+    # -- the field pane (right) --------------------------------------------
+
+    def _field_widgets(self, index: int, row: review.Row) -> list:
+        """One field, rendered the way its kind wants to be edited."""
+        t = lambda k: _label(self.app, k)  # noqa: E731
+        ns = f"bp-val-{self._rev}"  # Field.wid() then yields our positional id
+        key, label = str(index), f"bp.field.{row.field}"
+        if row.kind == "number":
+            return Number(key, label, value=row.value, default=0.0).build(ns, t)
+        if row.kind == "choice":
+            return Choice(key, label, options=[(o, o) for o in row.options],
+                          value=row.value or None).build(ns, t)
+        if row.kind == "chips":
+            return self._chip_widgets(index, row)
         large = row.value.count("\n") > 1 or len(row.value) > 300
-        widgets.append(FieldTextArea(
-            text=row.value, id=f"bp-val-{self._rev}-{index}", read_only=row.readonly,
-            single_line=not large,
-            classes="text-field " + ("text-field-large" if large else "text-field-short"),
-        ))
-        return widgets
+        return [
+            Static(t(label), classes="bp-field-label"),
+            FieldTextArea(
+                text=row.value, id=f"{ns}-{key}", read_only=row.readonly, single_line=not large,
+                classes="text-field " + ("text-field-large" if large else "text-field-short"),
+            ),
+        ]
 
-    def _group_widgets(self, gi: int, group: review.Group, first_index: int) -> list:
-        """One reviewed item: a header band (what it is, plus move/remove) over its
-        fields. Grouping is what makes a script readable — the spoken line, the shot
-        and the cast are one scene, not three unrelated rows."""
+    def _chip_widgets(self, index: int, row: review.Row) -> list:
+        """A set-valued field: one button per member (press to drop it) plus ＋."""
         t = lambda k: _label(self.app, k)  # noqa: E731
-        head = group.head
-        bar: list = [Static(f"[b]{self._item_label(head)}[/b]", classes="bp-row-label")]
-        info = " · ".join(r.info for r in group.rows if r.info)
-        if info:
-            bar.append(Static(info, classes="bp-row-info"))
-        if self.doc.variable and not head.readonly:
-            bar.append(Button(t("bp.up"), id=f"bp-up-{self._rev}-{gi}", classes="bp-move"))
-            bar.append(Button(t("bp.down"), id=f"bp-down-{self._rev}-{gi}", classes="bp-move"))
-            bar.append(Button(t("bp.remove"), id=f"bp-del-{self._rev}-{gi}", classes="bp-del"))
-        widgets: list = [Horizontal(*bar, classes="bp-row-head")]
-        labelled = len(group.rows) > 1
+        names = [n.strip() for n in row.value.split(",") if n.strip()]
+        chips: list = [
+            Button(f"{name} ✖", id=f"bp-chip-{self._rev}-{index}-{k}", classes="bp-chip")
+            for k, name in enumerate(names)
+        ]
+        chips.append(Button("＋", id=f"bp-chipadd-{self._rev}-{index}", classes="bp-chip-add"))
+        return [
+            Static(t(f"bp.field.{row.field}"), classes="bp-field-label"),
+            Horizontal(*chips, classes="bp-chips"),
+        ]
+
+    async def _show_detail(self) -> None:
+        pane = self.query_one("#bp-detail", VerticalScroll)
+        await pane.remove_children()
+        groups = self._groups()
+        if self._sel is None or self._sel >= len(groups):
+            return
+        group = groups[self._sel]
+        start = self._first_index(self._sel)
+        widgets: list = [Static(f"[b]{self._item_label(group.head)}[/b]", classes="group-head")]
         for n, row in enumerate(group.rows):
-            widgets.extend(self._field_widget(first_index + n, row, labelled))
-        return widgets
+            widgets.extend(self._field_widgets(start + n, row))
+        await pane.mount(*widgets)
 
-    def _item_label(self, head: review.Row) -> str:
-        if head.label.startswith("bp."):  # a named field (title, topic, …)
-            return _label(self.app, head.label)
-        # "#3" / "#3 · AD" — a scene; say so, the number alone reads as nothing
-        return f"{_label(self.app, 'bp.scene')} {head.label}" if head.label.startswith("#") else head.label
-
-    async def _rebuild(self) -> None:
-        """Repaint the whole document (header, rows, AI line, buttons)."""
+    async def _rebuild(self, keep: int | None = None) -> None:
+        """Repaint everything: header, cards, the open card's fields, notes."""
         t = lambda k: _label(self.app, k)  # noqa: E731
-        body = self.query_one("#bp-rows", VerticalScroll)
         self._rev += 1
-        await body.remove_children()
         if self.job is None:  # nothing parked — the run is free to continue
             self.query_one("#bp-head", Static).update(t("bp.none"))
             self.query_one("#bp-note", Static).update("")
-            self.query_one("#bp-add", Button).display = False
-            self.query_one("#bp-discard", Button).display = False
+            self.query_one("#bp-body", Horizontal).display = False
+            self.query_one("#bp-ai-box", Vertical).display = False
             return
-        widgets: list = []
-        index = 0
-        for gi, group in enumerate(review.group_rows(self.doc.rows)):
-            widgets.extend(self._group_widgets(gi, group, index))
-            index += len(group.rows)
-        if self.doc.subject and self.doc.editable:  # the AI edit line
-            widgets.append(Static(t("bp.ai"), classes="group-head"))
-            widgets.append(
-                FieldTextArea(
-                    id="bp-ai-prompt", placeholder=t("bp.ai_ph"), single_line=True,
-                    classes="text-field text-field-short",
-                )
-            )
-            widgets.append(
-                Horizontal(Button(t("bp.ai"), id="bp-ai-go", variant="primary"),
-                           classes="entity-actions")
-            )
-        await body.mount(*widgets)
+        await self._refresh_list(keep)
+        await self._show_detail()
         head = t("bp.head").format(
             i=self.queue[0], stage=t(f"bp.stage.{self.doc.stage}").split(" (")[0],
-            n=len(review.group_rows(self.doc.rows)),
+            n=len(self._groups()),
         )
         if len(self.queue) > 1:
             head += f"  [dim]{t('bp.left').format(n=len(self.queue) - 1)}[/dim]"
@@ -2982,43 +3091,99 @@ class BreakpointScreen(Screen):
         if not self.doc.editable:
             note = f"{note}\n{t('bp.readonly')}" if note else t("bp.readonly")
         self.query_one("#bp-note", Static).update(note)
-        self.query_one("#bp-add", Button).display = self.doc.variable
+        self.query_one("#bp-ai-box", Vertical).display = bool(self.doc.subject and self.doc.editable)
+        for wid in ("#bp-add", "#bp-up", "#bp-down", "#bp-del"):
+            self.query_one(wid, Button).display = self.doc.variable
 
     # -- editing -----------------------------------------------------------
 
-    @staticmethod
-    def _button_index(event: Button.Pressed) -> int:
-        return int((event.button.id or "").rsplit("-", 1)[1])
+    @on(ListView.Highlighted, "#bp-list")
+    async def _card_changed(self, event: ListView.Highlighted) -> None:
+        """Open the highlighted card. Arrow keys browse, so the panel follows."""
+        if self._quiet or event.item is None or not event.item.id:
+            return
+        # clearing the list emits a highlight of its own, which arrives after we have
+        # already selected a card — the id carries the list revision, so ignore any
+        # message left over from the list we just replaced.
+        _, rev, index = event.item.id.split("-")
+        if int(rev) != self._list_rev:
+            return
+        gi = int(index)
+        if gi == self._sel:
+            return
+        self._sync()  # the card being left keeps its edits
+        self._sel = gi
+        await self._show_detail()
 
     @on(Button.Pressed, "#bp-add")
-    async def _add_row(self) -> None:
+    async def _add_item(self) -> None:
         self._sync()
-        n = len(review.group_rows(self.doc.rows)) + 1
-        self.doc.rows.append(review.Row(label=f"#{n}", value=""))
-        await self._rebuild()
+        groups = self._groups()
+        self.doc.rows.append(review.Row(label=f"#{len(groups) + 1}", value=""))
+        await self._rebuild(keep=len(groups))
 
-    @on(Button.Pressed, ".bp-del")
-    async def _del_row(self, event: Button.Pressed) -> None:
-        """Remove a whole item — its narration, its shot and its cast together."""
+    @on(Button.Pressed, "#bp-del")
+    async def _del_item(self) -> None:
+        """Remove the open card — its line, its shot, its cast, all of it."""
         self._sync()
-        groups = review.group_rows(self.doc.rows)
-        gi = self._button_index(event)
-        if 0 <= gi < len(groups):
-            del groups[gi]
-            self.doc.rows = review.flatten(groups)
-        await self._rebuild()
+        groups = self._groups()
+        if self._sel is None or self._sel >= len(groups):
+            return
+        gone = self._sel
+        del groups[gone]
+        self.doc.rows = review.flatten(groups)
+        await self._rebuild(keep=max(0, gone - 1))
 
-    @on(Button.Pressed, ".bp-move")
-    async def _move_row(self, event: Button.Pressed) -> None:
+    @on(Button.Pressed, "#bp-up")
+    async def _move_up(self) -> None:
+        await self._move(-1)
+
+    @on(Button.Pressed, "#bp-down")
+    async def _move_down(self) -> None:
+        await self._move(1)
+
+    async def _move(self, delta: int) -> None:
+        if self._sel is None:
+            return
         self._sync()
-        delta = -1 if (event.button.id or "").startswith(f"bp-up-") else 1
-        self.doc.rows = review.move_group(self.doc.rows, self._button_index(event), delta)
-        await self._rebuild()
+        moved = review.move_group(self.doc.rows, self._sel, delta)
+        if moved is self.doc.rows:  # already at the end
+            return
+        self.doc.rows = moved
+        await self._rebuild(keep=self._sel + delta)
+
+    @on(Button.Pressed, ".bp-chip")
+    async def _chip_remove(self, event: Button.Pressed) -> None:
+        _, _, _rev, index, k = (event.button.id or "").split("-")
+        row = self.doc.rows[int(index)]
+        names = [n.strip() for n in row.value.split(",") if n.strip()]
+        if 0 <= int(k) < len(names):
+            del names[int(k)]
+            row.value = ", ".join(names)
+        await self._rebuild(keep=self._sel)
+
+    @on(Button.Pressed, ".bp-chip-add")
+    def _chip_add(self, event: Button.Pressed) -> None:
+        index = int((event.button.id or "").rsplit("-", 1)[1])
+        row = self.doc.rows[index]
+        names = [n.strip() for n in row.value.split(",") if n.strip()]
+        free = [o for o in row.options if o not in names]
+        if not free:
+            self.notify(_label(self.app, "bp.chip_none"), timeout=4)
+            return
+
+        def _picked(name: str | None) -> None:
+            if not name:
+                return
+            row.value = ", ".join(names + [name])
+            self.run_worker(self._rebuild(keep=self._sel))
+
+        self.app.push_screen(PickModal(_label(self.app, "bp.chip_pick"), free), _picked)
 
     @on(Button.Pressed, "#bp-discard")
     async def _discard(self) -> None:
         self._load()
-        await self._rebuild()
+        await self._rebuild(keep=0)
         self.notify(_label(self.app, "bp.discard"), timeout=3)
 
     # -- AI edit line ------------------------------------------------------
@@ -3033,7 +3198,9 @@ class BreakpointScreen(Screen):
             self.notify(_label(self.app, "bp.ai_need"), severity="warning")
             return
         self._sync()
-        editable = [r for r in self.doc.rows if not r.readonly]
+        # only free-text fields go to the model: a cast chip set, a generator choice or
+        # a clip length are not prose and must not be "rewritten"
+        editable = [r for r in self.doc.rows if not r.readonly and r.kind == "text"]
         lines = [r.value for r in editable]
         if not lines:
             return
@@ -3064,10 +3231,10 @@ class BreakpointScreen(Screen):
         if not lines:
             self.notify(_label(self.app, "bp.ai_nothing"), timeout=5)
             return
-        # rows keep their identity by position; anything past the original count is
-        # a line the AI added, so it carries no source scene. Read-only rows were
-        # never sent to the model — they stay exactly where they are.
-        editable = [r for r in self.doc.rows if not r.readonly]
+        # rows keep their identity by position; anything past the original count is a
+        # line the AI added, so it carries no source scene. Rows the model never saw
+        # (read-only, and every non-text field) stay exactly where they are.
+        editable = [r for r in self.doc.rows if not r.readonly and r.kind == "text"]
         for row, text in zip(editable, lines):
             row.value = text
         added = [
@@ -3077,7 +3244,7 @@ class BreakpointScreen(Screen):
         dropped = {id(r) for r in editable[len(lines):]}
         self.doc.rows = [r for r in self.doc.rows if id(r) not in dropped] + added
         self.notify(_label(self.app, "bp.ai_done"), timeout=6)
-        self.run_worker(self._rebuild())
+        self.run_worker(self._rebuild(keep=self._sel))
 
     # -- continue ----------------------------------------------------------
 
@@ -3800,15 +3967,18 @@ class SlopgenApp(App):
     #gather-row Button { margin: 0 1; }
 
     #bp-head { padding: 0 2; height: 1; background: $surface; }
-    #bp-rows { height: 1fr; margin: 1 2 0 2; }
+    #bp-body { height: 1fr; margin: 0 2; }
+    #bp-list-pane { width: 46; }
+    #bp-list { height: 1fr; }
+    #bp-detail { width: 1fr; padding: 0 2; border-left: solid $primary 30%; }
     #bp-note { padding: 0 2; color: $text-muted; }
-    .bp-row-head { height: 1; margin-top: 1; background: $surface; }
-    .bp-row-label { width: auto; margin-right: 2; }
-    .bp-row-info { width: 1fr; color: $text-muted; }
-    .bp-del, .bp-move { min-width: 4; height: 1; border: none; }
-    .bp-field-label { color: $text-muted; padding: 0 1; }
+    #bp-ai-box { height: auto; padding: 0 2; }
+    .bp-field-label { color: $text-muted; padding: 1 1 0 1; }
+    .bp-chips { height: auto; }
+    .bp-chip, .bp-chip-add { height: 1; min-width: 6; border: none; margin-right: 1; }
     #bp-actions { height: 3; align: center middle; padding: 0 2; }
     #bp-actions Button { margin: 0 1; }
+    #pick-list { height: auto; max-height: 14; }
     """
 
     def __init__(self, store: ConfigStore | None = None, open_dir: Path | None = None):
