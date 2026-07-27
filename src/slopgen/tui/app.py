@@ -490,12 +490,14 @@ I18N: dict[str, dict[str, str]] = {
         "bp.rerun": "Saved — the {stage} stage will run again for the changed lines.",
         "bp.none": "Nothing is waiting at a breakpoint.",
         "bp.readonly": "This stage is inspect-only — nothing here can be edited.",
+        "bp.field.prompt": "shot",
+        "bp.field.keywords": "search",
         "bp.f.topic": "topic",
         "bp.f.title": "title",
         "bp.f.description": "description",
         "bp.f.tags": "tags (comma-separated)",
         "bp.note.idea": "The topic the whole script is written from.",
-        "bp.note.script": "Raw script, one line per scene. Edit freely; empty a line to drop the scene, or add lines. Search keywords stay with the scenes they belong to.",
+        "bp.note.script": "The script as written: each scene's spoken line plus what will be put on screen for it (the English shot prompt / search terms). This is the ONLY place to fix a shot before it is generated. Emptying a spoken line drops the whole scene; an added line becomes a new scene.",
         "bp.note.tts": "One line per voiced fragment (with the length of what was synthesized). Editing a line re-voices exactly that one; adding/emptying lines changes how many fragments there are.",
         "bp.note.footage": "What each scene is rendered/searched from. Changed scenes get their footage remade.",
         "bp.note.subtitles": "The generated ASS files, as text. Edits are written straight to disk.",
@@ -814,12 +816,14 @@ I18N: dict[str, dict[str, str]] = {
         "bp.rerun": "Сохранено — этап {stage} переделает изменённые строки.",
         "bp.none": "Никто не ждёт на брейкпоинте.",
         "bp.readonly": "Этот этап только для просмотра — править тут нечего.",
+        "bp.field.prompt": "кадр",
+        "bp.field.keywords": "поиск",
         "bp.f.topic": "тема",
         "bp.f.title": "заголовок",
         "bp.f.description": "описание",
         "bp.f.tags": "теги (через запятую)",
         "bp.note.idea": "Тема, из которой пишется весь сценарий.",
-        "bp.note.script": "Сырой сценарий, строка на сцену. Правь как хочешь: пустая строка удаляет сцену, можно добавлять новые. Поисковые ключи остаются при своих сценах.",
+        "bp.note.script": "Сценарий как он написан: реплика сцены плюс то, что будет на экране (английский промпт кадра / поисковые слова). Это единственное место, где кадр можно поправить ДО генерации. Пустая реплика удаляет сцену целиком, добавленная строка становится новой сценой.",
         "bp.note.tts": "Строка на озвученный фрагмент (и длительность того, что синтезировалось). Правка строки переозвучивает только её; добавление и очистка строк меняют количество фрагментов.",
         "bp.note.footage": "Из чего рисуется/ищется каждая сцена. Изменённым сценам видеоряд соберут заново.",
         "bp.note.subtitles": "Сгенерированные ASS-файлы как текст. Правки пишутся прямо на диск.",
@@ -2851,7 +2855,9 @@ class BreakpointScreen(Screen):
         self.doc = review.read(stage, self.job, self.mode) if self.job else review.Doc(stage=stage)
 
     def _row_label(self, row: review.Row) -> str:
-        return _label(self.app, row.label) if row.label.startswith("bp.") else row.label
+        base = _label(self.app, row.label) if row.label.startswith("bp.") else row.label
+        # documents that show several rows per scene name what each row is
+        return base if row.field == "text" else f"{base} · {_label(self.app, f'bp.field.{row.field}')}"
 
     def _sync(self) -> None:
         """Pull what is on screen back into the rows (called before any rebuild,
@@ -2972,19 +2978,24 @@ class BreakpointScreen(Screen):
             self.notify(_label(self.app, "bp.ai_need"), severity="warning")
             return
         self._sync()
-        lines = [r.value for r in self.doc.rows if not r.readonly]
+        editable = [r for r in self.doc.rows if not r.readonly]
+        lines = [r.value for r in editable]
         if not lines:
             return
+        # a mixed document (narration + shot prompts) tells the model what each line is
+        fields = [r.field for r in editable]
+        kinds = fields if any(f != "text" for f in fields) else None
         self.notify(_label(self.app, "bp.ai_working"), timeout=3)
         self.run_worker(
-            lambda: self._ai_worker(lines, instruction), thread=True, exclusive=False
+            lambda: self._ai_worker(lines, instruction, kinds), thread=True, exclusive=False
         )
 
-    def _ai_worker(self, lines: list[str], instruction: str) -> None:
+    def _ai_worker(self, lines: list[str], instruction: str, kinds: list[str] | None) -> None:
         try:
             out = bp_ai.rewrite(
                 ChatLLM(self.app.store.active_llm_profile()), lines, instruction,
-                lang=self.cp.params.lang, subject=self.doc.subject, variable=self.doc.variable,
+                lang=self.cp.params.lang, subject=self.doc.subject,
+                variable=self.doc.variable, kinds=kinds,
             )
         except Exception as e:
             self.app.call_from_thread(self._ai_done, None, str(e))

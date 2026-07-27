@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import random
+import re
 from pathlib import Path
 
 from ...media.ffmpeg import duration_of
@@ -62,11 +63,60 @@ def _genparams(ctx: AppContext, model: str, token: str | None) -> GenParams:
     )
 
 
+_CYRILLIC = re.compile(r"[Ѐ-ӿ]")
+# shot-list phrasing a video generator turns into a split-screen storyboard
+_CUT_LIST = re.compile(r"\bTHEN\b|\bcut to\b|\bsplit[- ]screen\b|\bmontage\b|\bstoryboard\b", re.I)
+
+
+def _short_tag(look: str) -> str:
+    """The first few descriptor tokens — enough to re-identify a character on a
+    repeat mention without pasting the whole sheet in again."""
+    return ", ".join(t.strip() for t in look.split(",")[:3] if t.strip())
+
+
+def _drop_foreign(text: str) -> str:
+    """Remove any word still carrying non-Latin letters. Generators render such
+    words as literal captions burned into the frame (observed: Cyrillic character
+    names printed across the shot), so nothing but English may reach them."""
+    if not _CYRILLIC.search(text):
+        return text
+    kept = [w for w in text.split() if not _CYRILLIC.search(w)]
+    return " ".join(kept)
+
+
 def _shot_prompt(scene, cast_prompts: dict[str, str]) -> str:
-    """Compose the generator prompt: present characters' looks + the shot."""
-    looks = [cast_prompts[n] for n in scene.characters if cast_prompts.get(n)]
-    parts = looks + ([scene.video_prompt] if scene.video_prompt else [])
-    return ", ".join(p for p in parts if p.strip())
+    """Compose the generator prompt: the shot description with every character's
+    compiled look substituted IN PLACE of their name.
+
+    Names never survive into the prompt. An image model cannot map "Юки" to a face,
+    and a foreign name is rendered as literal on-screen text; worse, prepending all
+    the looks as one comma bag leaves the model to guess which description belongs
+    to whom, which is how two characters get blended or swapped between shots.
+    Substituting each look where the name stands binds the description to the person
+    actually doing the action. Characters present but never named in the description
+    are appended at the end, and a repeat mention gets a short tag instead of the
+    whole sheet."""
+    text = scene.video_prompt or ""
+    mentioned: list[str] = []
+    # longest name first so "Сергей Костенко" is not eaten by "Сергей"
+    for name in sorted(cast_prompts, key=len, reverse=True):
+        look = cast_prompts.get(name, "").strip()
+        if not look or not name.strip():
+            continue
+        pattern = re.compile(re.escape(name), re.IGNORECASE)
+        if not pattern.search(text):
+            continue
+        # first mention carries the full look, later ones a short tag
+        text = pattern.sub(lambda _m: f"({look})", text, count=1)
+        text = pattern.sub(lambda _m: f"({_short_tag(look)})", text)
+        mentioned.append(name)
+
+    absent = [
+        cast_prompts[n] for n in scene.characters
+        if cast_prompts.get(n) and n not in mentioned
+    ]
+    parts = ([text] if text.strip() else []) + absent
+    return _drop_foreign(", ".join(p for p in parts if p.strip()))
 
 
 def _key_candidates(scene, keys: list[str], cursors: dict[str, int]) -> list[str | None]:
@@ -196,6 +246,19 @@ def run(job: VideoJob, ctx: AppContext) -> None:
     # user-assisted scenes: gather their hand-made clips first. This raises
     # ManualInputPending (→ a clean `paused` checkpoint) until every one is in.
     delivered = _collect_manual(job, ctx)
+
+    # A shot description that reads as a cut list makes generators render every shot
+    # at once (a split-screen storyboard) before playing the sequence. The writer is
+    # told not to, but it can slip through — flag it so the operator can fix the
+    # prompts at the `script` breakpoint instead of wondering at the result.
+    cut_listed = [i for i, s in enumerate(job.scenes) if _CUT_LIST.search(s.video_prompt or "")]
+    if cut_listed:
+        log.warning(
+            "%d shot prompt(s) describe several shots in one clip (scenes %s). Generators "
+            "render that as all shots on screen simultaneously — rewrite them as ONE "
+            "continuous take (the `script` breakpoint lets you edit them before generation).",
+            len(cut_listed), ", ".join(str(i) for i in cut_listed),
+        )
 
     cursors: dict[str, int] = {}  # rotating key index, shared across scenes
     want_video = fell_back = 0

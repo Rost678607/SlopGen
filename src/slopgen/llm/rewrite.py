@@ -32,6 +32,14 @@ _VARIABLE = (
 )
 
 
+_KINDS = (
+    "\nEach line comes with a `kind` saying what it is; rewrite every line in the form its "
+    "kind demands and never turn one kind into another. In particular a `prompt` line is an "
+    "ENGLISH visual description for an image/video generator (no character names, no cuts or "
+    "'THEN' sequences — one continuous shot), while a `text` line is the spoken narration.\n"
+)
+
+
 def rewrite(
     llm,
     lines: list[str],
@@ -40,15 +48,27 @@ def rewrite(
     lang: str = "en",
     subject: str = "lines",
     variable: bool = False,
+    kinds: list[str] | None = None,
 ) -> list[str] | None:
     """Apply `instruction` to `lines`. Returns the new lines, or None when the model
-    gave nothing usable (a fixed-length document also rejects a changed count)."""
+    gave nothing usable (a fixed-length document also rejects a changed count).
+
+    `kinds` labels each line for documents that mix several sorts of line (the script
+    shows narration and shot prompts together); labelling pins the count, because a
+    line the model invents would have no kind to belong to."""
+    if kinds:
+        variable = False
     system = _SYSTEM.format(
         subject=subject, lang=lang, count_rule=_VARIABLE if variable else _FIXED
     )
+    if kinds:
+        system += _KINDS
+    payload = (
+        [{"kind": k, "text": t} for k, t in zip(kinds, lines)] if kinds else lines
+    )
     user = (
         f"Instruction: {instruction}\n"
-        f"Lines:\n{json.dumps(lines, ensure_ascii=False, indent=1)}"
+        f"Lines:\n{json.dumps(payload, ensure_ascii=False, indent=1)}"
     )
     data = llm.complete_json("bp_rewrite", system, user)
     out = data.get("lines")

@@ -50,7 +50,11 @@ SYSTEM = (
     '  • "narration": the spoken text for this shot, in {lang} (~{words} words), advancing the plot;\n'
     '  • "video_prompt": an ENGLISH text-to-image/video prompt describing THIS shot — the setting, '
     "which characters are on screen and what they are doing, camera framing and mood. Token-dense, "
-    "concrete, comma-friendly; do NOT translate the narration, describe the VISUAL.\n"
+    "concrete, comma-friendly; do NOT translate the narration, describe the VISUAL. "
+    "ENGLISH ONLY, and NEVER put a character's NAME in it: a generator cannot map a name to a face "
+    "and prints foreign names as literal text across the frame. Refer to each person by a short "
+    "visual tag from the cast sheet instead ('the blonde girl in the rock t-shirt'), and keep that "
+    "tag's gender and age exactly as the sheet has them.\n"
     '  • "characters": the list of cast names visible in this shot (subset of the cast; [] if none).\n'
     "FIRST BEAT — COLD OPEN HOOK: drop the viewer into the most dramatic or surprising moment of the "
     "story (1–2 punchy sentences; tease, don't resolve). Its video_prompt must be visually arresting — "
@@ -58,32 +62,39 @@ SYSTEM = (
     "beginning and builds toward that moment.\n"
     "Give the drama a clear arc (hook → rise → turn → payoff) across about {beats} beats and roughly "
     "{duration:.0f} seconds total (you MAY use a few more or fewer beats — up to ~{tol:.0f}s over/under — "
-    "when the story flows better). Keep characters consistent with the cast sheet.\n"
+    "when the story flows better). The cast sheet is AUTHORITATIVE for every character's gender, age "
+    "and looks — never contradict it, in the narration or in video_prompt, pronouns included (a girl "
+    "on the sheet is never 'he'). Two characters in one shot must stay visually distinct.\n"
     "{part_rule}"
     'Respond with JSON only: {{"title": "<short title in {lang}>", "scenes": [{{"part": 1, "narration": "...", '
     '"video_prompt": "...", "characters": ["..."], "is_ad": false}}, ...]}}.'
 )
 
 # One beat is always one generated clip — but how that clip is described depends on
-# how long it runs. A ~5s Space clip is a single framing; a 12s clip made by hand in
-# an external tool comfortably holds a whole little sequence, so the writer is told
-# which of the two it is authoring instead of always writing one frozen shot.
+# how long it runs. A ~5s clip is a single framing; a 12s one has room for the action
+# to develop. What it must NEVER be is a list of cuts: told "wide shot THEN close-up
+# THEN reaction", real generators (Grok, Kling, …) read that as a storyboard and open
+# the clip with every shot on screen at once, as a split-screen grid, before playing
+# the sequence. So a long clip is authored as ONE unbroken take that moves.
 SHOT_RULE_SINGLE = "Each beat is exactly ONE short shot."
 SHOT_RULE_SEQUENCE = (
-    "Each beat is ONE clip of about {secs:.0f} seconds — long enough to hold several "
-    "different scenes in a row. Write its video_prompt as an ordered sequence of ~{shots} "
-    "shots separated by ' THEN ' (e.g. 'wide shot of the empty classroom at dusk THEN "
-    "close-up of her hands shaking THEN over-the-shoulder as he walks in'), so the clip "
-    "carries visual movement instead of one frozen framing. The narration of the beat runs "
-    "across that whole sequence."
+    "Each beat is ONE CONTINUOUS TAKE of about {secs:.0f} seconds — a single unbroken "
+    "camera shot, long enough for the action to develop through several moments. Write "
+    "its video_prompt as that one take: where it starts, how the camera moves, and what "
+    "changes in frame as it runs (e.g. 'camera tracks her down the empty corridor at dusk, "
+    "she stops at the door, pushes it open and freezes as he turns to face her'). "
+    "CRITICAL: never describe cuts or several shots inside one video_prompt — no 'THEN', "
+    "no 'cut to', no montage, sequence, split screen, collage, grid or storyboard. A video "
+    "generator renders those literally and puts every shot on screen simultaneously. "
+    "ONE camera, ONE continuous action, no edits."
 )
-SEQUENCE_FROM_S = 8.0  # clips at least this long are authored as multi-shot sequences
+SEQUENCE_FROM_S = 8.0  # clips at least this long are authored as one moving take
 
 
 def shot_rule(clip_seconds: float) -> str:
     if clip_seconds < SEQUENCE_FROM_S:
         return SHOT_RULE_SINGLE
-    return SHOT_RULE_SEQUENCE.format(secs=clip_seconds, shots=max(2, round(clip_seconds / 5)))
+    return SHOT_RULE_SEQUENCE.format(secs=clip_seconds)
 
 
 DRAMA_PROFANITY = (
@@ -112,6 +123,9 @@ PART_RULES = (
 
 
 def _roster(cast) -> str:
+    """The cast sheet handed to the writer. Besides the free-text looks it exposes
+    each character's compiled English tag — the wording video_prompt must use to
+    point at that person, since names are banned there (see SYSTEM)."""
     if not cast:
         return "(no fixed cast — invent characters as the story needs)"
     lines = []
@@ -119,6 +133,9 @@ def _roster(cast) -> str:
         look = c.appearance.strip() or "(improvise looks)"
         age = f", age {c.age}" if c.age else ""
         lines.append(f"- {c.name}{age}: {look}")
+        tag = ", ".join(t.strip() for t in c.visual_prompt.split(",")[:4] if t.strip())
+        if tag:
+            lines.append(f"    visual tag for video_prompt (never the name): {tag}")
     return "\n".join(lines)
 
 

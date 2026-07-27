@@ -58,6 +58,10 @@ class Row:
     info: str = ""  # dim annotation: duration, generator, file name …
     readonly: bool = False
     path: Path | None = None
+    # which part of the source item this row edits. A document may show several rows
+    # per scene (the script shows what is SAID and what is SHOWN); "text" rows are the
+    # ones that define a scene's existence, the rest attach to the preceding one.
+    field: str = "text"
 
 
 @dataclass
@@ -99,16 +103,30 @@ def _idea_doc(job: VideoJob, mode: str) -> Doc:
 
 
 def _script_doc(job: VideoJob, mode: str) -> Doc:
-    def info(s: Scene) -> str:
+    """The script as written, not just what is spoken: every scene shows its
+    narration AND what will be put on screen for it. The visual half is only
+    editable here — by the footage breakpoint the clips already exist (and in the
+    user-assisted flow the operator has already made them by hand)."""
+    rows: list[Row] = []
+    for i, s in enumerate(job.scenes):
+        label = _scene_label(i, s)
+        rows.append(Row(
+            label=label, value=s.text, src=i, field="text",
+            info=", ".join(s.characters) if mode == "drama" else "",
+        ))
         if mode == "drama":
-            return " · ".join(x for x in (", ".join(s.characters), s.gen_model) if x)
-        return ", ".join(s.keywords)
-
+            rows.append(Row(
+                label=label, value=s.video_prompt, src=i, field="prompt",
+                info=" · ".join(x for x in (s.gen_model, f"{s.clip_target_s:.0f}s" if s.clip_target_s else "") if x),
+            ))
+        else:
+            rows.append(Row(label=label, value=", ".join(s.keywords), src=i, field="keywords"))
     return Doc(
         stage="script",
-        rows=_scene_rows(job, info),
+        rows=rows,
         variable=True,
-        subject="scene-by-scene voiceover script",
+        subject="a drama script: spoken narration lines and the English shot prompt of each scene"
+        if mode == "drama" else "a voiceover script: spoken lines and each scene's stock-search keywords",
         note_key="bp.note.script",
     )
 
@@ -144,7 +162,8 @@ def _footage_doc(job: VideoJob, mode: str) -> Doc:
     return Doc(
         stage="footage",
         rows=[
-            Row(label=_scene_label(i, s), value=_footage_query(s, mode), src=i, info=info(s))
+            Row(label=_scene_label(i, s), value=_footage_query(s, mode), src=i,
+                field="prompt" if mode == "drama" else "keywords", info=info(s))
             for i, s in enumerate(job.scenes)
         ],
         subject="visual prompts / search queries, one per scene",
@@ -164,7 +183,9 @@ def _subtitles_doc(job: VideoJob, mode: str) -> Doc:
         except OSError:
             continue
         rows.append(Row(label=p.name, value=text, src=i, info=f"{len(text.splitlines())} lines", path=p))
-    return Doc(stage="subtitles", rows=rows, subject="ASS subtitle files", note_key="bp.note.subtitles")
+    # no AI edit line here on purpose: an .ass file is timing-critical and a model
+    # rewriting it wholesale would silently mangle the cue times.
+    return Doc(stage="subtitles", rows=rows, subject="", note_key="bp.note.subtitles")
 
 
 def _assemble_doc(job: VideoJob, mode: str) -> Doc:
@@ -275,7 +296,33 @@ def _apply_idea(job: VideoJob, rows: list[Row], mode: str) -> bool:
 
 
 def _apply_script(job: VideoJob, rows: list[Row], mode: str) -> bool:
-    _apply_scene_texts(job, rows, resync=False)
+    """Rebuild the scenes from the multi-row script document. A "text" row opens a
+    scene; the rows after it (prompt / keywords) belong to that same scene, so an
+    operator-added line becomes a new scene with an empty visual — which the AI edit
+    line or the footage stage's fallback then fills."""
+    groups: list[tuple[Row, dict[str, Row]]] = []
+    for row in rows:
+        if row.field == "text":
+            groups.append((row, {}))
+        elif groups:
+            groups[-1][1][row.field] = row
+
+    old = job.scenes
+    out: list[Scene] = []
+    for head, extras in groups:
+        text = head.value.strip()
+        if not text:  # emptied narration drops the whole scene, visuals included
+            continue
+        src = old[head.src] if head.src is not None and head.src < len(old) else None
+        scene = src.model_copy(deep=True) if src else _inherit(out[-1] if out else (old[0] if old else None))
+        scene.text = text
+        if "prompt" in extras:
+            scene.video_prompt = extras["prompt"].value.strip()
+        if "keywords" in extras:
+            scene.keywords = [k.strip() for k in extras["keywords"].value.split(",") if k.strip()]
+        out.append(scene)
+    if out:
+        job.scenes = out
     return False  # re-running the writer would discard exactly these edits
 
 
