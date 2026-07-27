@@ -98,6 +98,7 @@ The first positional argument is the **mode**: `info` (the minute-of-info clip) 
 | `-n, --count N`  | videos per run                                                                                                          |
 | `--preset NAME`  | load a parameter bundle from `configs/presets/`                                                                         |
 | `--resume DIR`   | continue a crashed run from its output dir (the folder holding `checkpoint.json`)                                       |
+| `-b, --break STAGE` | stop for review after this stage (repeatable): `idea` `script` `tts` `footage` `subtitles` `assemble` `metadata`      |
 | `--subs`         | subtitle style: `word_pop` / `phrases` / `karaoke`                                                                      |
 | `--out DIR`      | output dir override                                                                                                     |
 | `--dry-run`      | generate but don't publish (dev tool; picking "save locally" does the same)                                             |
@@ -123,6 +124,20 @@ The first positional argument is the **mode**: `info` (the minute-of-info clip) 
 Parameter priority (info mode): **CLI flags > preset > account defaults > global defaults**. An account config can carry its own default language/type/ad, so `slopgen info --push yt_main` alone is a valid command. Drama builds its parameters directly from its own flags (no preset/account merge yet).
 
 **Crash recovery.** Every run is checkpointed to `<out>/<stamp>_<type>_<lang>/checkpoint.json` after each pipeline stage. If a run dies partway (network drop, killed process), the finished stages' outputs (TTS audio, downloaded footage, the job state) are kept, and the failing stage + error are recorded. Re-run with `slopgen --resume <that dir>` to skip the completed stages and continue from the point of failure — already-finished videos are left untouched, unfinished ones pick up where they stopped. When a run ends with failures, the summary prints the exact `--resume` command to use.
+
+**Breakpoints.** Tick any pipeline stage on the wizard's **Summary** step (or pass `--break STAGE`, repeatable) and the run parks right after that stage instead of walking on — the checkpoint holds it in a `review` state, and a review screen shows what the stage produced as a list of editable lines:
+
+| Breakpoint  | What you get                                                                                            |
+| ----------- | ------------------------------------------------------------------------------------------------------- |
+| `idea`      | the chosen topic, before a single line is written                                                       |
+| `script`    | the raw script the LLM wrote, one line per scene — rewrite, add or empty lines to drop scenes           |
+| `tts`       | every voiced fragment with the length that came out; editing one re-voices **only** that one            |
+| `footage`   | the shot prompt (drama) or search queries (info) per scene; changed scenes get their footage remade      |
+| `subtitles` | the generated `.ass` files as text, written straight back to disk                                       |
+| `assemble`  | the rendered file(s) — inspect-only, watch them before publishing                                       |
+| `metadata`  | title, description and tags, right before publish                                                       |
+
+Each line is editable by hand, and an **AI edit line** sits under the list: describe the change ("shorter", "make scene 3 angrier", "split this beat in two") and the model rewrites the whole set — for script/voiceover it may also change how many fragments there are. Press **Continue** and the run picks up from there; a breakpoint fires once per video, so a re-run of the stage you just edited won't park again. With `-n` >1 the videos queue up and are reviewed one after another. Both modes support it. Headless runs print `slopgen review <dir>` to reopen the parked run (same as `slopgen gather` for manual clips).
 
 ## TUI
 
@@ -271,9 +286,23 @@ slopgen --resume output/<время>_<тип|режим>_<язык>   # прод
 Одиночный результат: `output/<время>_<тип|режим>_<язык>/<n>/final.mp4` + `metadata.json`.
 Многочастные дорамы складываются рядом в той же папке `<n>/` как `part_01.mp4`, `part_02.mp4`, ...
 
-Первый позиционный аргумент — **режим**: `info` (ролик-минутка) или `drama` (ИИ-дорама); он меняет остальную часть команды. Флаги драмы: `--scenario`, `--cast A,B` (имена из `configs/characters/`), `--orchestration`, `--duration-min` (минуты), `--tol` (секунды допуска), `--parts` (количество частей с клиффхэнгерами), `--voice`; плюс общие с `info`: `--ad`, `--ad-mode`, `--profanity`, `--push`, `-n`, `--subs`, `--out`, `--dry-run`. Глобальные (до режима): `--resume`, `--list-types/-ads/-accounts/-presets/-visuals/-characters/-orchestrations`.
+Первый позиционный аргумент — **режим**: `info` (ролик-минутка) или `drama` (ИИ-дорама); он меняет остальную часть команды. Флаги драмы: `--scenario`, `--cast A,B` (имена из `configs/characters/`), `--orchestration`, `--duration-min` (минуты), `--tol` (секунды допуска), `--parts` (количество частей с клиффхэнгерами), `--voice`; плюс общие с `info`: `--ad`, `--ad-mode`, `--profanity`, `--push`, `-n`, `--subs`, `--out`, `--dry-run`, `-b/--break ЭТАП` (остановка на разбор после этапа, флаг повторяемый). Глобальные (до режима): `--resume`, `--list-types/-ads/-accounts/-presets/-visuals/-characters/-orchestrations`.
 
 **Восстановление после сбоя.** Каждый прогон пишет чекпойнт в `output/<время>_<тип>_<язык>/checkpoint.json` после каждого этапа конвейера. Если прогон оборвался на ошибке (обрыв сети, убитый процесс), пройденная часть (озвучка, скачанный футаж, состояние задачи) сохраняется, а этап и текст ошибки записываются. Команда `slopgen --resume <эта папка>` пропустит выполненные этапы и продолжит с места остановки: готовые видео не трогаются, недоделанные досчитываются. Если прогон завершился с ошибками, в итоговой сводке печатается готовая команда `--resume`.
+
+**Брейкпоинты.** Отметь любой этап конвейера на шаге **«Итог»** в визарде (или передай `--break ЭТАП`, флаг повторяемый) — и прогон встанет сразу после этого этапа: чекпойнт переводится в состояние `review`, а экран разбора показывает результат этапа списком редактируемых строк:
+
+| Брейкпоинт  | Что показывает                                                                                        |
+| ----------- | ------------------------------------------------------------------------------------------------------ |
+| `idea`      | выбранную тему, ещё до единой написанной строчки                                                       |
+| `script`    | сырой сценарий от нейронки, строка на сцену — переписывай, добавляй, очищай (пустая строка удаляет сцену) |
+| `tts`       | каждый озвученный фрагмент с получившейся длительностью; правка строки переозвучивает **только** её     |
+| `footage`   | промпт кадра (дорама) или поисковые запросы (инфа) по сценам; изменённым сценам видеоряд соберут заново |
+| `subtitles` | сгенерированные `.ass` как текст, правки пишутся прямо на диск                                         |
+| `assemble`  | готовые файлы — только просмотр, посмотри перед публикацией                                            |
+| `metadata`  | заголовок, описание и теги перед самой публикацией                                                     |
+
+Каждую строку можно править руками, а под списком — **ИИ-строка**: пишешь, что поменять («короче», «третью сцену злее», «разбей этот бит на два»), и модель переписывает весь набор; для сценария и озвучки она может ещё и поменять количество фрагментов. Жмёшь **Продолжить** — конвейер идёт дальше. Брейкпоинт срабатывает один раз на видео, так что переделка только что отредактированного этапа снова не встанет. При `-n` >1 видео выстраиваются в очередь и разбираются по одному. Работает в обоих режимах. В headless-прогоне печатается команда `slopgen review <папка>`, чтобы вернуться к застывшему прогону (по аналогии с `slopgen gather` для ручных клипов).
 
 Приоритет параметров (режим info): **флаги CLI > пресет > дефолты аккаунта > глобальные дефолты**. Аккаунт может нести свои дефолты — `slopgen info --push yt_main` уже валидная команда. Драма собирает параметры прямо из своих флагов (слияния с пресетом/аккаунтом пока нет).
 

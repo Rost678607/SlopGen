@@ -55,12 +55,27 @@ from ..config.models import (
 )
 from ..llm import MODEL_PRESETS, PROVIDERS, ChatLLM, resolve_provider
 from ..llm import characters as char_ai
+from ..llm import rewrite as bp_ai
 from ..media.generate import PHOTO_MODELS, VIDEO_MODELS
 from ..media.generate import env_keys as gen_keys
 from ..media.generate import key_var_for_model
-from ..pipeline import Orchestrator
+from ..pipeline import Orchestrator, VideoJob, manual, review
+from ..pipeline.checkpoint import Checkpoint
 from ..pipeline.context import AppContext
-from .forms import Choice, Form, Group, Heading, Note, NumStep, Number, Range, Text, Toggle, resize_text_field
+from .forms import (
+    Choice,
+    FieldTextArea,
+    Form,
+    Group,
+    Heading,
+    Note,
+    NumStep,
+    Number,
+    Range,
+    Text,
+    Toggle,
+    resize_text_field,
+)
 
 # slider bucket captions (threshold -> i18n key)
 PROFANITY_LABELS = {0: "prof_none", 1: "prof_mild", 26: "prof_mod", 51: "prof_heavy", 76: "prof_max"}
@@ -419,6 +434,67 @@ I18N: dict[str, dict[str, str]] = {
         "err.startup": "startup failed",
         "err.save": "save failed",
         "keys.saved_n": "key(s) → .env",
+        # user-assisted (manual) clip gathering
+        "gather.title": "Manual clips",
+        "gather.paused": "paused — needs manual clips",
+        "gather.needed": "This run needs hand-made clips — opening the gather screen.",
+        "gather.attach": "＋ Attach clip",
+        "gather.inflight": "⏳ Mark sent",
+        "gather.rescan": "⟳ Rescan inbox",
+        "gather.finish": "▶ Finish & resume",
+        "gather.col.shot": "shot",
+        "gather.col.status": "status",
+        "gather.col.target": "target",
+        "gather.col.prompt": "prompt",
+        "gather.delivered": "delivered",
+        "gather.inbox": "inbox",
+        "gather.clip": "clip",
+        "gather.drop_hint": "drop a clip into the inbox as",
+        "gather.none": "No shots awaiting manual clips.",
+        "gather.attach_prompt": "Path to the clip file:",
+        "gather.bad_clip": "not a readable video file",
+        "gather.incomplete": "some shots still need clips",
+        # breakpoints: picking them (Summary step) and the review screen
+        "bp_head": "— Breakpoints —",
+        "bp_hint": "Pause the run after these stages to check — and edit — what came out.",
+        "bp.stage.idea": "Idea (the chosen topic)",
+        "bp.stage.script": "Script (raw text the LLM wrote)",
+        "bp.stage.tts": "Voiceover (line-by-line narration)",
+        "bp.stage.footage": "Footage (shot prompts / search queries)",
+        "bp.stage.subtitles": "Subtitles (the .ass files)",
+        "bp.stage.assemble": "Assembly (the rendered file)",
+        "bp.stage.metadata": "Metadata (title, description, tags)",
+        "bp.title": "Breakpoint",
+        "bp.needed": "The run stopped at a breakpoint — opening the review screen.",
+        "bp.paused": "breakpoint — waiting for review",
+        "bp.head": "video {i} · stage: [b]{stage}[/b] · {n} line(s)",
+        "bp.left": "{n} more video(s) waiting after this one",
+        "bp.add": "＋ Add line",
+        "bp.remove": "✖",
+        "bp.continue": "▶ Continue the run",
+        "bp.discard": "↺ Revert edits",
+        "bp.ai": "✨ Ask AI",
+        "bp.ai_ph": "tell the AI what to change in the lines above",
+        "bp.ai_need": "write what to change first",
+        "bp.ai_working": "AI is editing…",
+        "bp.ai_done": "AI applied its edit — check it before continuing.",
+        "bp.ai_nothing": "the AI returned nothing usable",
+        "bp.ai_err": "AI edit failed",
+        "bp.saved": "Saved. The run continues.",
+        "bp.rerun": "Saved — the {stage} stage will run again for the changed lines.",
+        "bp.none": "Nothing is waiting at a breakpoint.",
+        "bp.readonly": "This stage is inspect-only — nothing here can be edited.",
+        "bp.f.topic": "topic",
+        "bp.f.title": "title",
+        "bp.f.description": "description",
+        "bp.f.tags": "tags (comma-separated)",
+        "bp.note.idea": "The topic the whole script is written from.",
+        "bp.note.script": "Raw script, one line per scene. Edit freely; empty a line to drop the scene, or add lines. Search keywords stay with the scenes they belong to.",
+        "bp.note.tts": "One line per voiced fragment (with the length of what was synthesized). Editing a line re-voices exactly that one; adding/emptying lines changes how many fragments there are.",
+        "bp.note.footage": "What each scene is rendered/searched from. Changed scenes get their footage remade.",
+        "bp.note.subtitles": "The generated ASS files, as text. Edits are written straight to disk.",
+        "bp.note.assemble": "The rendered file(s) — play them, then continue or press Esc to abandon the run.",
+        "bp.note.metadata": "What gets published with the video.",
     },
     "ru": {
         "subtitle": "промышленный конвейер нейрослопа",
@@ -676,8 +752,71 @@ I18N: dict[str, dict[str, str]] = {
         "err.startup": "ошибка запуска",
         "err.save": "ошибка сохранения",
         "keys.saved_n": "ключ(ей) → .env",
+        # user-assisted (manual) clip gathering
+        "gather.title": "Ручные клипы",
+        "gather.paused": "пауза — нужны ручные клипы",
+        "gather.needed": "Этому запуску нужны клипы, сделанные вручную — открываю экран сбора.",
+        "gather.attach": "＋ Прикрепить клип",
+        "gather.inflight": "⏳ Отметить «отправлен»",
+        "gather.rescan": "⟳ Пересканировать inbox",
+        "gather.finish": "▶ Завершить и продолжить",
+        "gather.col.shot": "кадр",
+        "gather.col.status": "статус",
+        "gather.col.target": "длит.",
+        "gather.col.prompt": "промпт",
+        "gather.delivered": "готово",
+        "gather.inbox": "inbox",
+        "gather.clip": "клип",
+        "gather.drop_hint": "положи клип в inbox под именем",
+        "gather.none": "Нет кадров, ожидающих ручных клипов.",
+        "gather.attach_prompt": "Путь к файлу клипа:",
+        "gather.bad_clip": "не читается как видеофайл",
+        "gather.incomplete": "для части кадров ещё нужны клипы",
+        # брейкпоинты: выбор (шаг «Итог») и экран разбора
+        "bp_head": "— Брейкпоинты —",
+        "bp_hint": "Остановить конвейер после этих этапов, чтобы проверить и поправить результат.",
+        "bp.stage.idea": "Идея (выбранная тема)",
+        "bp.stage.script": "Сценарий (сырой текст от нейронки)",
+        "bp.stage.tts": "Озвучка (построчно, по фрагментам)",
+        "bp.stage.footage": "Видеоряд (промпты кадров / поисковые запросы)",
+        "bp.stage.subtitles": "Субтитры (файлы .ass)",
+        "bp.stage.assemble": "Сборка (готовый файл)",
+        "bp.stage.metadata": "Метаданные (заголовок, описание, теги)",
+        "bp.title": "Брейкпоинт",
+        "bp.needed": "Конвейер встал на брейкпоинте — открываю экран разбора.",
+        "bp.paused": "брейкпоинт — ждёт проверки",
+        "bp.head": "видео {i} · этап: [b]{stage}[/b] · строк: {n}",
+        "bp.left": "после этого в очереди ещё видео: {n}",
+        "bp.add": "＋ Добавить строку",
+        "bp.remove": "✖",
+        "bp.continue": "▶ Продолжить конвейер",
+        "bp.discard": "↺ Откатить правки",
+        "bp.ai": "✨ Спросить ИИ",
+        "bp.ai_ph": "напиши, что поменять в строках выше",
+        "bp.ai_need": "сначала напиши, что менять",
+        "bp.ai_working": "ИИ правит…",
+        "bp.ai_done": "ИИ внёс правки — проверь их перед продолжением.",
+        "bp.ai_nothing": "ИИ не вернул ничего пригодного",
+        "bp.ai_err": "ИИ не смог поправить",
+        "bp.saved": "Сохранено. Конвейер идёт дальше.",
+        "bp.rerun": "Сохранено — этап {stage} переделает изменённые строки.",
+        "bp.none": "Никто не ждёт на брейкпоинте.",
+        "bp.readonly": "Этот этап только для просмотра — править тут нечего.",
+        "bp.f.topic": "тема",
+        "bp.f.title": "заголовок",
+        "bp.f.description": "описание",
+        "bp.f.tags": "теги (через запятую)",
+        "bp.note.idea": "Тема, из которой пишется весь сценарий.",
+        "bp.note.script": "Сырой сценарий, строка на сцену. Правь как хочешь: пустая строка удаляет сцену, можно добавлять новые. Поисковые ключи остаются при своих сценах.",
+        "bp.note.tts": "Строка на озвученный фрагмент (и длительность того, что синтезировалось). Правка строки переозвучивает только её; добавление и очистка строк меняют количество фрагментов.",
+        "bp.note.footage": "Из чего рисуется/ищется каждая сцена. Изменённым сценам видеоряд соберут заново.",
+        "bp.note.subtitles": "Сгенерированные ASS-файлы как текст. Правки пишутся прямо на диск.",
+        "bp.note.assemble": "Готовые файлы — посмотри их и продолжай, либо Esc, чтобы бросить запуск.",
+        "bp.note.metadata": "То, с чем видео уйдёт в публикацию.",
     },
 }
+
+# status badges reuse localized words where useful; keep them compact/ASCII-safe.
 
 
 def _label(app: "SlopgenApp", key: str) -> str:
@@ -836,9 +975,15 @@ FIELD_HELP = {
 
 BG_SOURCES = ["stock_video", "stock_photo", "local_video", "local_photo", "ai_video", "ai_photo"]
 FG_SOURCES = ["stock_photo", "stock_video", "local_photo", "local_video", "ai_photo", "ai_video"]
-AI_VIDEO_MODELS = [(m, m) for m in VIDEO_MODELS]  # (label, value) for the picker
-AI_PHOTO_MODELS = [(m, m) for m in PHOTO_MODELS]
-ORCH_MODEL_OPTS = [(m, m) for m in list(VIDEO_MODELS) + list(PHOTO_MODELS)]  # orchestration stages
+
+# friendlier labels for a few generator keys; everything else shows its raw key.
+MODEL_LABELS = {"manual": "🙋 user-assisted"}
+def _model_opt(m: str) -> tuple[str, str]:  # (label, value) for a Select
+    return (MODEL_LABELS.get(m, m), m)
+
+AI_VIDEO_MODELS = [_model_opt(m) for m in VIDEO_MODELS]  # (label, value) for the picker
+AI_PHOTO_MODELS = [_model_opt(m) for m in PHOTO_MODELS]
+ORCH_MODEL_OPTS = [_model_opt(m) for m in list(VIDEO_MODELS) + list(PHOTO_MODELS)]  # orchestration stages
 ORCH_FIELDS = ("model", "key_mode", "key", "metric", "amount")
 
 
@@ -891,6 +1036,7 @@ class GenerateScreen(Screen):
     ``_pane_body`` to insert steps."""
 
     STEPS = STEP_KEYS  # ordered step keys; the last one is always the summary
+    MODE = "info"  # which stage chain this wizard launches (drives the breakpoint list)
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -989,6 +1135,16 @@ class GenerateScreen(Screen):
                    options=[(s, s) for s in ("word_pop", "phrases", "karaoke")],
                    value=store.global_cfg.subtitles.style),
         ])
+        # Summary step: one switch per stage that can hold a breakpoint
+        self.f_breaks = Form("w", [
+            Toggle(f"bp-{name}", f"bp.stage.{name}")
+            for name in review.available(self.MODE)
+        ])
+
+    def _breakpoints(self) -> list[str]:
+        """Stages the operator ticked on the Summary step, in pipeline order."""
+        values = self.f_breaks.read(self)
+        return [n for n in review.available(self.MODE) if values.get(f"bp-{n}")]
 
     def _nav_buttons(self, step: int):
         t = lambda k: _label(self.app, k)  # noqa: E731
@@ -1011,6 +1167,9 @@ class GenerateScreen(Screen):
         elif key == "step.summary":
             yield Static("", id="w-summary")
             yield Static("", id="w-cmd")
+            yield Static(t("bp_head"), classes="group-head")
+            yield Static(t("bp_hint"), classes="hint")
+            yield from self.f_breaks.compose(t)
             yield Button(t("start"), id="w-start", variant="success")
 
     def compose(self) -> ComposeResult:
@@ -1219,6 +1378,7 @@ class GenerateScreen(Screen):
             "push": "" if p["push"] == NONE else p["push"],
             "subs": p["subs"],
             "count": max(1, int(p["count"])),
+            "breakpoints": self._breakpoints(),
         }
 
     def _command(self, g: dict, vis_name: str, vis_manual: VisualsConfig | None) -> str:
@@ -1243,6 +1403,8 @@ class GenerateScreen(Screen):
         if g["count"] != 1:
             cmd += f" -n {g['count']}"
         cmd += f" --subs {g['subs']}"
+        for name in g["breakpoints"]:
+            cmd += f" --break {name}"
         if manual_notes:
             cmd += f"  # + {', '.join(manual_notes)} (TUI only)"
         return cmd
@@ -1322,6 +1484,7 @@ class GenerateScreen(Screen):
                 subtitle_style=g["subs"],
                 voice_override=g["voice"],
                 tts_rate=g["tts_rate"],
+                breakpoints=g["breakpoints"],
             )
         except ConfigError as e:
             self.notify(str(e), severity="error", timeout=8)
@@ -1405,6 +1568,7 @@ class DramaScreen(_CharEditAI, GenerateScreen):
     unless you press save."""
 
     STEPS = DRAMA_STEP_KEYS
+    MODE = "drama"
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -2216,6 +2380,7 @@ class DramaScreen(_CharEditAI, GenerateScreen):
             "push": "" if p["push"] == NONE else p["push"],
             "subs": p["subs"], "count": max(1, int(p["count"])),
             "parts": max(1, int(p.get("parts", 1) or 1)),
+            "breakpoints": self._breakpoints(),
         }
 
     def _render_summary(self) -> None:
@@ -2260,6 +2425,8 @@ class DramaScreen(_CharEditAI, GenerateScreen):
             cmd += f" --push {g['push']}"
         if g["count"] != 1:
             cmd += f" -n {g['count']}"
+        for name in g["breakpoints"]:
+            cmd += f" --break {name}"
         notes = []
         if any(not m["glob"] for m in self._cast):
             notes.append("ad-hoc cast")
@@ -2302,6 +2469,7 @@ class DramaScreen(_CharEditAI, GenerateScreen):
                 ad_mode=g["ad_mode"],
                 push=g["push"], count=g["count"],
                 voice_override=g["voice"], subtitle_style=g["subs"],
+                breakpoints=g["breakpoints"],
             )
         except Exception as e:  # pydantic validation / bad field
             self.notify(str(e), severity="error", timeout=8)
@@ -2344,9 +2512,11 @@ class ModeSelectScreen(Screen):
 
 
 class ProgressScreen(Screen):
-    def __init__(self, params: RunParams):
+    def __init__(self, params: RunParams, resume_dir: Path | None = None):
         super().__init__()
         self.params = params
+        self.resume_dir = resume_dir
+        self.run_dir: Path | None = resume_dir
 
     def compose(self) -> ComposeResult:
         yield TopBar(_label(self.app, "step.summary"))
@@ -2378,7 +2548,9 @@ class ProgressScreen(Screen):
         except Exception as e:
             self.app.call_from_thread(self._log, f"[red]{_label(self.app, 'err.startup')}: {e}")
             return
-        jobs = Orchestrator(ctx, on_event=self._on_event_threadsafe).run()
+        orch = Orchestrator(ctx, on_event=self._on_event_threadsafe)
+        jobs = orch.run(resume_dir=self.resume_dir)
+        self.run_dir = orch.run_dir
         done = [j for j in jobs if j.published]
         self.app.call_from_thread(self._finish, done, len(jobs))
 
@@ -2388,12 +2560,16 @@ class ProgressScreen(Screen):
     def _on_event(self, i: int, stage: str, status: str, message: str) -> None:
         t = lambda k: _label(self.app, k)  # noqa: E731
         table = self.query_one("#queue", DataTable)
-        icons = {"start": "⏳", "done": "✔", "error": "✘", "skip": "↷"}
+        icons = {"start": "⏳", "done": "✔", "error": "✘", "skip": "↷", "paused": "⏸", "review": "⏸"}
         table.update_cell_at(Coordinate(i, 1), stage)
         table.update_cell_at(Coordinate(i, 2), icons.get(status, "·"))
         table.update_cell_at(Coordinate(i, 3), message[:60])
         if status == "error":
             self._log(f"[red]{t('col.video')} {i} — {stage}:[/red]\n{message}")
+        elif status == "paused":
+            self._log(f"[yellow]{t('col.video')} {i} · {t('gather.paused')}[/yellow] — {message}")
+        elif status == "review":
+            self._log(f"[yellow]{t('col.video')} {i} · {stage} · {t('bp.paused')}[/yellow]")
         elif status == "done" and message:
             self._log(f"{t('col.video')} {i} · {stage} ✔ {message}")
 
@@ -2402,11 +2578,446 @@ class ProgressScreen(Screen):
 
     def _finish(self, done: list, total: int) -> None:
         t = lambda k: _label(self.app, k)  # noqa: E731
+        # a run parked on a breakpoint -> straight to the review screen
+        if self.run_dir and _review_jobs(self.run_dir):
+            self._log(f"[yellow]{t('bp.needed')}[/yellow]")
+            self.notify(t("bp.needed"), timeout=8)
+            self.app.push_screen(BreakpointScreen(self.run_dir))
+            return
+        # a run that parked jobs for manual clips -> jump straight to the gather screen
+        if self.run_dir and _paused_jobs(self.run_dir):
+            self._log(f"[yellow]{t('gather.needed')}[/yellow]")
+            self.notify(t("gather.needed"), timeout=8)
+            self.app.push_screen(ManualGatherScreen(self.run_dir))
+            return
         self._log(f"[bold green]{t('run.finished')}: {len(done)}/{total}[/bold green]")
         for j in done:
             for line in str(j.published).splitlines():
                 self._log(f"  → {line}")
         self.notify(f"{t('run.finished')}: {len(done)}/{total}", timeout=10)
+
+
+# --------------------------------------------------------------------------
+# User-assisted ("manual") clip gathering
+# --------------------------------------------------------------------------
+
+_STATUS_BADGE = {"pending": "☐ pending", "in_flight": "⏳ sent", "delivered": "✔ done"}
+
+
+def _jobs_with_status(run_dir: Path, status: str) -> list[int]:
+    """Job indices of a run currently in `status`, in order."""
+    try:
+        cp = Checkpoint.load(run_dir)
+    except (FileNotFoundError, Exception):
+        return []
+    return [i for i in range(cp.params.count) if cp.status(i) == status]
+
+
+def _paused_jobs(run_dir: Path) -> list[int]:
+    """Job indices parked awaiting manual clips."""
+    return _jobs_with_status(run_dir, "paused")
+
+
+def _review_jobs(run_dir: Path) -> list[int]:
+    """Job indices parked on a breakpoint, awaiting operator review."""
+    return _jobs_with_status(run_dir, "review")
+
+
+class ManualGatherScreen(Screen):
+    """Fill hand-made clips for a paused run: browse the shotlist, read each
+    prompt, drop clips into the inbox or attach by path, then resume."""
+
+    BINDINGS = [
+        ("a", "attach", "Attach clip"),
+        ("i", "inflight", "Mark sent"),
+        ("r", "rescan", "Rescan inbox"),
+        ("f", "finish", "Finish & resume"),
+    ]
+
+    def __init__(self, run_dir: Path):
+        super().__init__()
+        self.run_dir = Path(run_dir)
+        self.manifests: dict[int, manual.ManualManifest] = {}
+        self.rows: list[tuple[int, str]] = []  # (job_index, shot_id) parallel to the table
+
+    # -- data --------------------------------------------------------------
+
+    def _workdir(self, job_index: int) -> Path:
+        return self.run_dir / f"{job_index:02d}"
+
+    def _load(self) -> None:
+        self.manifests = {}
+        for i in _paused_jobs(self.run_dir):
+            self.manifests[i] = manual.ManualManifest.load(self._workdir(i))
+
+    def _shot(self, job_index: int, shot_id: str) -> manual.ManualShot | None:
+        m = self.manifests.get(job_index)
+        return next((s for s in m.shots if s.id == shot_id), None) if m else None
+
+    def _totals(self) -> tuple[int, int]:
+        shots = [s for m in self.manifests.values() for s in m.shots]
+        return sum(1 for s in shots if s.status == "delivered"), len(shots)
+
+    # -- layout ------------------------------------------------------------
+
+    def compose(self) -> ComposeResult:
+        yield TopBar(_label(self.app, "gather.title"))
+        with Horizontal(id="gather-body"):
+            yield DataTable(id="shots")
+            yield Static("", id="shot-detail")
+        yield Static("", id="gather-progress")
+        with Horizontal(id="gather-row"):
+            yield Button(_label(self.app, "gather.attach"), id="g-attach", variant="success")
+            yield Button(_label(self.app, "gather.inflight"), id="g-inflight")
+            yield Button(_label(self.app, "gather.rescan"), id="g-rescan", variant="primary")
+            yield Button(_label(self.app, "gather.finish"), id="g-finish", variant="warning")
+
+    def on_mount(self) -> None:
+        table = self.query_one("#shots", DataTable)
+        table.cursor_type = "row"
+        table.add_columns(
+            _label(self.app, "gather.col.shot"), _label(self.app, "gather.col.status"),
+            _label(self.app, "gather.col.target"), _label(self.app, "gather.col.prompt"),
+        )
+        self.action_rescan()  # loads, scans the inbox once, and paints
+
+    # -- rendering ---------------------------------------------------------
+
+    def _refresh(self) -> None:
+        table = self.query_one("#shots", DataTable)
+        prev = table.cursor_row
+        table.clear()
+        self.rows = []
+        for job_index, m in self.manifests.items():
+            for s in m.shots:
+                self.rows.append((job_index, s.id))
+                prompt = (s.prompt[:48] + "…") if len(s.prompt) > 49 else s.prompt
+                table.add_row(s.id, _STATUS_BADGE.get(s.status, s.status), f"{s.target_s:.0f}s", prompt)
+        done, total = self._totals()
+        t = lambda k: _label(self.app, k)  # noqa: E731
+        self.query_one("#gather-progress", Static).update(
+            f"[bold]{done}/{total}[/bold] {t('gather.delivered')} · {t('gather.inbox')}: "
+            f"{manual.inbox_dir(self._workdir(self.rows[0][0])) if self.rows else self.run_dir}"
+        )
+        if self.rows:
+            table.move_cursor(row=min(prev, len(self.rows) - 1))
+            self._show_detail()
+        else:
+            self.query_one("#shot-detail", Static).update(t("gather.none"))
+
+    def _selected(self) -> manual.ManualShot | None:
+        table = self.query_one("#shots", DataTable)
+        if not self.rows or table.cursor_row is None or table.cursor_row >= len(self.rows):
+            return None
+        return self._shot(*self.rows[table.cursor_row])
+
+    def _show_detail(self) -> None:
+        shot = self._selected()
+        if shot is None:
+            return
+        t = lambda k: _label(self.app, k)  # noqa: E731
+        clip = f"\n\n[dim]{t('gather.clip')}: {shot.clip}[/dim]" if shot.clip else ""
+        self.query_one("#shot-detail", Static).update(
+            f"[b]{shot.id}[/b]  ·  {_STATUS_BADGE.get(shot.status, shot.status)}  ·  "
+            f"~{shot.target_s:.0f}s  ·  {shot.width}×{shot.height}\n\n{shot.prompt}{clip}\n\n"
+            f"[dim]{t('gather.drop_hint')} {shot.id}.mp4[/dim]"
+        )
+
+    @on(DataTable.RowHighlighted, "#shots")
+    def _row_changed(self) -> None:
+        self._show_detail()
+
+    # -- actions -----------------------------------------------------------
+
+    @on(Button.Pressed, "#g-rescan")
+    def action_rescan(self) -> None:
+        self._load()
+        for i, m in self.manifests.items():
+            if manual.scan_inbox(m, self._workdir(i)):
+                m.save(self._workdir(i))
+        self._refresh()
+
+    @on(Button.Pressed, "#g-inflight")
+    def action_inflight(self) -> None:
+        shot = self._selected()
+        if shot is None or shot.status == "delivered":
+            return
+        job_index = self.rows[self.query_one("#shots", DataTable).cursor_row][0]
+        shot.status = "in_flight"
+        self.manifests[job_index].save(self._workdir(job_index))
+        self._refresh()
+
+    @on(Button.Pressed, "#g-attach")
+    def action_attach(self) -> None:
+        if self._selected() is None:
+            return
+
+        def _got(path: str | None) -> None:
+            if not path:
+                return
+            p = Path(path).expanduser()
+            shot = self._selected()
+            if shot is None:
+                return
+            if not manual._valid_clip(p):
+                self.notify(_label(self.app, "gather.bad_clip"), severity="error", timeout=6)
+                return
+            job_index = self.rows[self.query_one("#shots", DataTable).cursor_row][0]
+            manual.attach(shot, p)
+            self.manifests[job_index].save(self._workdir(job_index))
+            self._refresh()
+
+        self.app.push_screen(NameModal(_label(self.app, "gather.attach_prompt")), _got)
+
+    @on(Button.Pressed, "#g-finish")
+    def action_finish(self) -> None:
+        done, total = self._totals()
+        if total == 0 or done < total:
+            self.notify(_label(self.app, "gather.incomplete"), severity="warning", timeout=6)
+            return
+        try:
+            params = Checkpoint.load(self.run_dir).params
+        except Exception as e:
+            self.notify(f"{e}", severity="error", timeout=8)
+            return
+        self.app.push_screen(ProgressScreen(params, resume_dir=self.run_dir))
+
+
+# --------------------------------------------------------------------------
+# Breakpoints: inspect (and edit) what a stage produced, then let the run go on
+# --------------------------------------------------------------------------
+
+
+class BreakpointScreen(Screen):
+    """One parked video at a time: the stage's output as a list of editable lines
+    (see pipeline/review.py), an AI edit line over the same lines, and Continue.
+
+    The rows are the screen's state — widgets are rebuilt from them whenever the
+    list itself changes (a line added, removed, or rewritten by the AI), so the
+    values are synced back out of the widgets before every rebuild."""
+
+    BINDINGS = [("ctrl+s", "continue_run", "Continue")]
+
+    def __init__(self, run_dir: Path):
+        super().__init__()
+        self.run_dir = Path(run_dir)
+        self.queue: list[int] = _review_jobs(run_dir)
+        self.cp = Checkpoint.load(run_dir)
+        self.job: VideoJob | None = None
+        self.doc = review.Doc(stage="")
+        self._rev = 0  # bumps per rebuild so row ids stay unique across async removal
+
+    # -- data --------------------------------------------------------------
+
+    @property
+    def mode(self) -> str:
+        return self.cp.params.mode
+
+    def _load(self) -> None:
+        """Read the first still-parked job and the document of its breakpoint stage."""
+        self.queue = _review_jobs(self.run_dir)
+        if not self.queue:
+            self.job = None
+            return
+        i = self.queue[0]
+        self.job = self.cp.load_job(i)
+        stage = self.cp.review_stage(i)
+        self.doc = review.read(stage, self.job, self.mode) if self.job else review.Doc(stage=stage)
+
+    def _row_label(self, row: review.Row) -> str:
+        return _label(self.app, row.label) if row.label.startswith("bp.") else row.label
+
+    def _sync(self) -> None:
+        """Pull what is on screen back into the rows (called before any rebuild,
+        and before saving)."""
+        for i, row in enumerate(self.doc.rows):
+            if row.readonly:
+                continue
+            try:
+                row.value = self.query_one(f"#bp-val-{self._rev}-{i}", TextArea).text
+            except Exception:  # widget gone (rebuild raced) — keep the stored value
+                pass
+
+    # -- layout ------------------------------------------------------------
+
+    def compose(self) -> ComposeResult:
+        t = lambda k: _label(self.app, k)  # noqa: E731
+        yield TopBar(t("bp.title"))
+        yield Static("", id="bp-head")
+        yield VerticalScroll(id="bp-rows")
+        yield Static("", id="bp-note")
+        with Horizontal(id="bp-actions"):
+            yield Button(t("bp.add"), id="bp-add", variant="success")
+            yield Button(t("bp.discard"), id="bp-discard")
+            yield Button(t("bp.continue"), id="bp-continue", variant="primary")
+
+    def on_mount(self) -> None:
+        self._load()
+        self.run_worker(self._rebuild())
+
+    def _row_widgets(self, i: int, row: review.Row) -> list:
+        t = lambda k: _label(self.app, k)  # noqa: E731
+        head: list = [Static(f"[b]{self._row_label(row)}[/b]", classes="bp-row-label")]
+        if row.info:
+            head.append(Static(row.info, classes="bp-row-info"))
+        if self.doc.variable and not row.readonly:
+            head.append(Button(t("bp.remove"), id=f"bp-del-{self._rev}-{i}", classes="bp-del"))
+        # multi-line payloads (a whole .ass file) get the tall, scrolling field
+        large = row.value.count("\n") > 1 or len(row.value) > 300
+        area = FieldTextArea(
+            text=row.value, id=f"bp-val-{self._rev}-{i}", read_only=row.readonly,
+            single_line=not large,
+            classes="text-field " + ("text-field-large" if large else "text-field-short"),
+        )
+        return [Horizontal(*head, classes="bp-row-head"), area]
+
+    async def _rebuild(self) -> None:
+        """Repaint the whole document (header, rows, AI line, buttons)."""
+        t = lambda k: _label(self.app, k)  # noqa: E731
+        body = self.query_one("#bp-rows", VerticalScroll)
+        self._rev += 1
+        await body.remove_children()
+        if self.job is None:  # nothing parked — the run is free to continue
+            self.query_one("#bp-head", Static).update(t("bp.none"))
+            self.query_one("#bp-note", Static).update("")
+            self.query_one("#bp-add", Button).display = False
+            self.query_one("#bp-discard", Button).display = False
+            return
+        widgets: list = []
+        for i, row in enumerate(self.doc.rows):
+            widgets.extend(self._row_widgets(i, row))
+        if self.doc.subject and self.doc.editable:  # the AI edit line
+            widgets.append(Static(t("bp.ai"), classes="group-head"))
+            widgets.append(
+                FieldTextArea(
+                    id="bp-ai-prompt", placeholder=t("bp.ai_ph"), single_line=True,
+                    classes="text-field text-field-short",
+                )
+            )
+            widgets.append(
+                Horizontal(Button(t("bp.ai"), id="bp-ai-go", variant="primary"),
+                           classes="entity-actions")
+            )
+        await body.mount(*widgets)
+        head = t("bp.head").format(
+            i=self.queue[0], stage=t(f"bp.stage.{self.doc.stage}").split(" (")[0],
+            n=len(self.doc.rows),
+        )
+        if len(self.queue) > 1:
+            head += f"  [dim]{t('bp.left').format(n=len(self.queue) - 1)}[/dim]"
+        self.query_one("#bp-head", Static).update(head)
+        note = t(self.doc.note_key) if self.doc.note_key else ""
+        if not self.doc.editable:
+            note = f"{note}\n{t('bp.readonly')}" if note else t("bp.readonly")
+        self.query_one("#bp-note", Static).update(note)
+        self.query_one("#bp-add", Button).display = self.doc.variable
+
+    # -- editing -----------------------------------------------------------
+
+    @on(Button.Pressed, "#bp-add")
+    async def _add_row(self) -> None:
+        self._sync()
+        self.doc.rows.append(review.Row(label=f"#{len(self.doc.rows) + 1}", value=""))
+        await self._rebuild()
+
+    @on(Button.Pressed, ".bp-del")
+    async def _del_row(self, event: Button.Pressed) -> None:
+        self._sync()
+        idx = int((event.button.id or "").rsplit("-", 1)[1])
+        if 0 <= idx < len(self.doc.rows):
+            del self.doc.rows[idx]
+        await self._rebuild()
+
+    @on(Button.Pressed, "#bp-discard")
+    async def _discard(self) -> None:
+        self._load()
+        await self._rebuild()
+        self.notify(_label(self.app, "bp.discard"), timeout=3)
+
+    # -- AI edit line ------------------------------------------------------
+
+    @on(Button.Pressed, "#bp-ai-go")
+    def _ai_edit(self) -> None:
+        try:
+            instruction = self.query_one("#bp-ai-prompt", TextArea).text.strip()
+        except Exception:
+            return
+        if not instruction:
+            self.notify(_label(self.app, "bp.ai_need"), severity="warning")
+            return
+        self._sync()
+        lines = [r.value for r in self.doc.rows if not r.readonly]
+        if not lines:
+            return
+        self.notify(_label(self.app, "bp.ai_working"), timeout=3)
+        self.run_worker(
+            lambda: self._ai_worker(lines, instruction), thread=True, exclusive=False
+        )
+
+    def _ai_worker(self, lines: list[str], instruction: str) -> None:
+        try:
+            out = bp_ai.rewrite(
+                ChatLLM(self.app.store.active_llm_profile()), lines, instruction,
+                lang=self.cp.params.lang, subject=self.doc.subject, variable=self.doc.variable,
+            )
+        except Exception as e:
+            self.app.call_from_thread(self._ai_done, None, str(e))
+            return
+        self.app.call_from_thread(self._ai_done, out, None)
+
+    def _ai_done(self, lines: list[str] | None, err: str | None) -> None:
+        if err is not None:
+            self.notify(f"{_label(self.app, 'bp.ai_err')}: {err}", severity="error", timeout=10)
+            return
+        if not lines:
+            self.notify(_label(self.app, "bp.ai_nothing"), timeout=5)
+            return
+        # rows keep their identity by position; anything past the original count is
+        # a line the AI added, so it carries no source scene. Read-only rows were
+        # never sent to the model — they stay exactly where they are.
+        editable = [r for r in self.doc.rows if not r.readonly]
+        for row, text in zip(editable, lines):
+            row.value = text
+        added = [
+            review.Row(label=f"#{len(self.doc.rows) + i + 1}", value=text)
+            for i, text in enumerate(lines[len(editable):])
+        ]
+        dropped = {id(r) for r in editable[len(lines):]}
+        self.doc.rows = [r for r in self.doc.rows if id(r) not in dropped] + added
+        self.notify(_label(self.app, "bp.ai_done"), timeout=6)
+        self.run_worker(self._rebuild())
+
+    # -- continue ----------------------------------------------------------
+
+    @on(Button.Pressed, "#bp-continue")
+    def _continue_pressed(self) -> None:
+        self.action_continue_run()
+
+    def action_continue_run(self) -> None:
+        """Save the reviewed job, release this breakpoint, then move to the next
+        parked video — or resume the run when none are left."""
+        if self.job is None:
+            self.app.push_screen(ProgressScreen(self.cp.params, resume_dir=self.run_dir))
+            return
+        self._sync()
+        index = self.queue[0]
+        stage = self.doc.stage
+        try:
+            rerun = review.apply(stage, self.job, self.doc.rows, self.mode)
+            self.cp.review_done(self.job, self.cp.completed(index), stage, rerun)
+        except Exception as e:
+            self.notify(f"{_label(self.app, 'err.save')}: {e}", severity="error", timeout=10)
+            return
+        self.notify(
+            _label(self.app, "bp.rerun").format(stage=stage) if rerun
+            else _label(self.app, "bp.saved"),
+            timeout=6,
+        )
+        self._load()
+        if self.job is None:  # every parked video reviewed — let the pipeline run on
+            self.app.push_screen(ProgressScreen(self.cp.params, resume_dir=self.run_dir))
+            return
+        self.run_worker(self._rebuild())
 
 
 # --------------------------------------------------------------------------
@@ -3085,14 +3696,36 @@ class SlopgenApp(App):
     #run-summary { padding: 0 2; height: 1; background: $surface; }
     #queue { height: 40%; margin: 1 2; }
     #log { height: 1fr; margin: 0 2 1 2; border: round $primary; }
+
+    #gather-body { height: 1fr; margin: 1 2 0 2; }
+    #shots { width: 1fr; height: 100%; }
+    #shot-detail {
+        width: 52; height: 100%; padding: 1 2; margin-left: 2;
+        border: round $primary; background: $surface;
+    }
+    #gather-progress { height: 1; padding: 0 2; background: $surface; }
+    #gather-row { height: 3; align: center middle; padding: 0 2; }
+    #gather-row Button { margin: 0 1; }
+
+    #bp-head { padding: 0 2; height: 1; background: $surface; }
+    #bp-rows { height: 1fr; margin: 1 2 0 2; }
+    #bp-note { padding: 0 2; color: $text-muted; }
+    .bp-row-head { height: 1; }
+    .bp-row-label { width: auto; margin-right: 2; }
+    .bp-row-info { width: 1fr; color: $text-muted; }
+    .bp-del { min-width: 4; height: 1; border: none; }
+    #bp-actions { height: 3; align: center middle; padding: 0 2; }
+    #bp-actions Button { margin: 0 1; }
     """
 
-    def __init__(self, store: ConfigStore | None = None):
+    def __init__(self, store: ConfigStore | None = None, open_dir: Path | None = None):
         super().__init__()
         load_dotenv()
         self.store = store or ConfigStore()
         self.ui_lang = self.store.global_cfg.ui.lang
         self._theme_ready = False
+        # a parked run to open straight away: whichever screen it is waiting on
+        self._open_dir = open_dir
 
     def on_mount(self) -> None:
         self.register_theme(MINECRAFT_THEME)
@@ -3104,6 +3737,12 @@ class SlopgenApp(App):
         self._theme_ready = True
         self.theme_changed_signal.subscribe(self, self._persist_theme)
         self.push_screen(HomeScreen())
+        if self._open_dir is None:
+            return
+        if _review_jobs(self._open_dir):  # parked on a breakpoint
+            self.push_screen(BreakpointScreen(self._open_dir))
+        elif _paused_jobs(self._open_dir):  # parked for hand-made clips
+            self.push_screen(ManualGatherScreen(self._open_dir))
 
     def _persist_theme(self, _theme) -> None:
         if self._theme_ready:

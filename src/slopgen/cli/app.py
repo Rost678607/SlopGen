@@ -8,8 +8,12 @@ A mode is chosen first (before the language), and it shapes the rest of the line
     slopgen drama ru --scenario "..." --cast example --duration-min 2 --tol 20 --parts 3
     slopgen drama en --orchestration my_chain --ad example_vpn
 
+    slopgen info ru facts --break script --break tts   -> stop for review after those stages
+
     slopgen --preset daily_en                   -> everything from a preset (info)
     slopgen --resume output/20260709_...        -> continue a crashed run
+    slopgen gather [output/2026...]             -> add user-assisted clips, then resume
+    slopgen review [output/2026...]             -> inspect/edit a breakpoint, then resume
     slopgen --list-types / --list-ads / --list-accounts / --list-presets
             / --list-visuals / --list-characters / --list-orchestrations
 """
@@ -28,7 +32,26 @@ from ..pipeline.context import AppContext
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
 
-STATUS_ICON = {"start": "…", "done": "[green]✔[/green]", "error": "[red]✘[/red]", "skip": "[yellow]↷[/yellow]"}
+STATUS_ICON = {
+    "start": "…", "done": "[green]✔[/green]", "error": "[red]✘[/red]",
+    "skip": "[yellow]↷[/yellow]", "paused": "[yellow]⏸[/yellow]", "review": "[yellow]⏸[/yellow]",
+}
+
+
+def _check_breakpoints(names: Optional[list[str]], mode: str) -> list[str]:
+    """Validate --break stage names against the chain this mode actually runs."""
+    from ..pipeline import review
+
+    wanted = [n.strip() for n in (names or []) if n.strip()]
+    unknown = [n for n in wanted if n not in review.available(mode)]
+    if unknown:
+        typer.secho(
+            f"error: unknown breakpoint stage(s): {', '.join(unknown)} "
+            f"(available for {mode}: {', '.join(review.available(mode))})",
+            fg="red",
+        )
+        raise typer.Exit(1)
+    return wanted
 
 
 # -- shared output ----------------------------------------------------------
@@ -45,8 +68,31 @@ def _console_event(i: int, stage: str, status: str, message: str) -> None:
         rprint(f"video {i} · {stage} {icon}{msg}")
 
 
+def _indices_with_status(run_dir: Optional[Path], status: str) -> list[int]:
+    if run_dir is None:
+        return []
+    from ..pipeline.checkpoint import Checkpoint
+
+    try:
+        cp = Checkpoint.load(run_dir)
+    except Exception:
+        return []
+    return [i for i in range(cp.params.count) if cp.status(i) == status]
+
+
+def _paused_indices(run_dir: Optional[Path]) -> list[int]:
+    """Job indices parked awaiting manual clips (see pipeline/manual.py)."""
+    return _indices_with_status(run_dir, "paused")
+
+
+def _review_indices(run_dir: Optional[Path]) -> list[int]:
+    """Job indices parked on a breakpoint (see pipeline/review.py)."""
+    return _indices_with_status(run_dir, "review")
+
+
 def _report(jobs, orch) -> None:
-    """Print the run summary and, if anything failed, how to resume it."""
+    """Print the run summary; point at `gather` for paused jobs and `--resume` for
+    failed ones."""
     from rich import print as rprint
 
     ok = [j for j in jobs if j.published]
@@ -54,7 +100,21 @@ def _report(jobs, orch) -> None:
     for j in ok:
         for line in str(j.published).splitlines():
             rprint(f"  {line}")
-    if len(ok) < len(jobs):
+
+    parked = _review_indices(orch.run_dir)
+    if parked:
+        rprint(
+            f"\n[yellow]{len(parked)} video(s) stopped at a breakpoint.[/yellow] "
+            f"Check them, then it resumes: [bold]slopgen review {orch.run_dir}[/bold]"
+        )
+    paused = _paused_indices(orch.run_dir)
+    if paused:
+        rprint(
+            f"\n[yellow]{len(paused)} video(s) need hand-made clips.[/yellow] "
+            f"Add them, then it resumes: [bold]slopgen gather {orch.run_dir}[/bold]"
+        )
+    failed = len(jobs) - len(ok) - len(paused) - len(parked)
+    if failed > 0:
         if orch.run_dir is not None:
             rprint(f"\n[yellow]to resume the unfinished videos:[/yellow] slopgen --resume {orch.run_dir}")
         raise typer.Exit(2)
@@ -185,6 +245,7 @@ def info(
     out: Optional[Path] = typer.Option(None, "--out", help="output dir override"),
     subs: Optional[str] = typer.Option(None, "--subs", help="subtitle style: word_pop | phrases | karaoke"),
     tts_rate: Optional[int] = typer.Option(None, "--tts-rate", min=-50, max=50, help="speech rate offset in percent (-50 = slowest, 0 = normal, +50 = fastest)"),
+    breaks: Optional[list[str]] = typer.Option(None, "--break", "-b", help="stop for review after this stage (repeatable): idea | script | tts | footage | subtitles | assemble | metadata"),
     dry_run: bool = typer.Option(False, "--dry-run", help="generate everything but skip publishing"),
     keep_temp: bool = typer.Option(False, "--keep-temp", help="keep intermediate ffmpeg files"),
 ) -> None:
@@ -192,13 +253,14 @@ def info(
     from rich import print as rprint
 
     store: ConfigStore = ctx.obj
+    breakpoints = _check_breakpoints(breaks, "info")
     try:
         params = store.resolve(
             lang=lang, content_type=content_type, ad=ad, ad_mode=ad_mode,
             visuals=visuals, duration_s=duration, profanity=profanity,
             push=push, count=count, preset=preset, idea=idea or "",
             out=out, dry_run=dry_run, keep_temp=keep_temp, subtitle_style=subs,
-            tts_rate=tts_rate or 0,
+            tts_rate=tts_rate or 0, breakpoints=breakpoints,
         )
     except (ConfigError, Exception) as e:
         typer.secho(f"error: {e}", fg="red")
@@ -233,6 +295,7 @@ def drama(
     count: int = typer.Option(1, "--count", "-n", help="videos to generate"),
     out: Optional[Path] = typer.Option(None, "--out", help="output dir override"),
     subs: Optional[str] = typer.Option(None, "--subs", help="subtitle style: word_pop | phrases | karaoke"),
+    breaks: Optional[list[str]] = typer.Option(None, "--break", "-b", help="stop for review after this stage (repeatable): script | tts | footage | subtitles | assemble | metadata"),
     dry_run: bool = typer.Option(False, "--dry-run", help="generate everything but skip publishing"),
     keep_temp: bool = typer.Option(False, "--keep-temp", help="keep intermediate ffmpeg files"),
 ) -> None:
@@ -241,6 +304,7 @@ def drama(
     from rich import print as rprint
 
     store: ConfigStore = ctx.obj
+    breakpoints = _check_breakpoints(breaks, "drama")
     # resolve the cast by name
     names = [n.strip() for n in (cast or "").split(",") if n.strip()]
     missing = [n for n in names if n not in store.characters]
@@ -276,6 +340,7 @@ def drama(
             push=push or "", count=max(1, count),
             voice_override=voice or "",
             out=out, dry_run=dry_run, keep_temp=keep_temp, subtitle_style=subs,
+            breakpoints=breakpoints,
         )
     except Exception as e:
         typer.secho(f"error: {e}", fg="red")
@@ -289,6 +354,51 @@ def drama(
         + (" [yellow]\\[dry-run][/yellow]" if params.dry_run else "")
     )
     _execute(store, params)
+
+
+# -- user-assisted clip gathering -------------------------------------------
+
+
+def _latest_run_with(store: ConfigStore, indices) -> Optional[Path]:
+    """Most recently touched run under the output dir that has a job in that state."""
+    base = Path(store.global_cfg.paths.output)
+    if not base.is_dir():
+        return None
+    runs = [d for d in base.iterdir() if d.is_dir() and indices(d)]
+    return max(runs, key=lambda d: d.stat().st_mtime, default=None)
+
+
+def _open_parked(store: ConfigStore, run_dir: Optional[Path], indices, what: str) -> None:
+    """Open the TUI on a parked run (the screen follows what it is waiting for)."""
+    rd = run_dir or _latest_run_with(store, indices)
+    if rd is None:
+        typer.secho(f"no run is waiting for {what}", fg="yellow")
+        raise typer.Exit(1)
+    if not indices(rd):
+        typer.secho(f"{rd} has no jobs waiting for {what}", fg="yellow")
+        raise typer.Exit(1)
+    from ..tui.app import SlopgenApp
+
+    SlopgenApp(store, open_dir=rd).run()
+
+
+@app.command()
+def gather(
+    ctx: typer.Context,
+    run_dir: Optional[Path] = typer.Argument(None, help="a run's output dir; omit for the latest run awaiting manual clips"),
+) -> None:
+    """Fill hand-made clips for a paused run, then resume it (opens the TUI)."""
+    _open_parked(ctx.obj, run_dir, _paused_indices, "manual clips")
+
+
+@app.command()
+def review(
+    ctx: typer.Context,
+    run_dir: Optional[Path] = typer.Argument(None, help="a run's output dir; omit for the latest run stopped at a breakpoint"),
+) -> None:
+    """Inspect and edit what a stage produced at a breakpoint, then resume the run
+    (opens the TUI)."""
+    _open_parked(ctx.obj, run_dir, _review_indices, "a breakpoint review")
 
 
 def run() -> None:

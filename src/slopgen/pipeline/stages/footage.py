@@ -33,6 +33,7 @@ from ...media.stock import (
     find_clip,
     find_image,
 )
+from .. import manual
 from ..context import AppContext
 from ..job import BgAsset, FgInsert, Scene, VideoJob, Word
 
@@ -201,21 +202,31 @@ def _fetch_insert(query: str, fg, ctx: AppContext, dirs: dict) -> Path:
     return path
 
 
-def _fill_foreground(scene: Scene, vis: VisualsConfig, ctx: AppContext, dirs: dict, scene_start: float) -> None:
+def _fill_foreground(
+    scene: Scene, vis: VisualsConfig, ctx: AppContext, dirs: dict, scene_start: float,
+    idx: int = 0, delivered: dict[str, Path] | None = None,
+) -> None:
     """Place foreground inserts driven by the narration: each LLM cue is anchored
-    to the exact words of its phrase and shown only while those words are spoken."""
+    to the exact words of its phrase and shown only while those words are spoken.
+    When ``delivered`` is given the fg source is user-assisted: each anchored cue's
+    clip is looked up by id (``fg_<scene>_<cue>``) instead of being fetched."""
     fg = vis.foreground
     if not fg.enabled or not scene.insert_cues:
         return
     is_video = fg.source in ("stock_video", "local_video", "ai_video")
 
     inserts: list[FgInsert] = []
-    for cue in scene.insert_cues:
+    for k, cue in enumerate(scene.insert_cues):
         span = _anchor_phrase(cue.phrase, scene.words, scene_start, scene.duration)
         if span is None:  # phrase not found in the audio — skip rather than guess
             continue
         start, end = span
-        path = _fetch_insert(cue.query or " ".join(scene.keywords), fg, ctx, dirs)
+        if delivered is not None:
+            path = delivered.get(f"fg_{idx:02d}_{k}")
+            if path is None:  # not delivered (cue anchored differently) — skip
+                continue
+        else:
+            path = _fetch_insert(cue.query or " ".join(scene.keywords), fg, ctx, dirs)
         inserts.append(FgInsert(path=path, start=start, duration=end - start, is_video=is_video))
 
     # keep inserts from stacking: clip each end to the next start
@@ -226,22 +237,67 @@ def _fill_foreground(scene: Scene, vis: VisualsConfig, ctx: AppContext, dirs: di
     scene.fg_inserts = inserts
 
 
+def _collect_manual(job: VideoJob, ctx: AppContext, manual_bg: bool, manual_fg: bool) -> dict[str, Path]:
+    """Register a manual shot for every user-assisted asset — one background per
+    non-ad scene (id ``shot_NN``) and/or one per anchored foreground cue (id
+    ``fg_NN_K``) — and gather the operator's clips. Prompts are narration-derived
+    (info mode has no authored video_prompt). Raises ManualInputPending until every
+    clip is in; the assemble stage loops/crops each to its on-screen duration."""
+    suffix = ctx.g.footage.gen_style_suffix
+    fallback = ctx.content.fallback_keywords
+
+    def _prompt(q: str) -> str:
+        return ", ".join(p for p in (q, suffix) if p.strip()) or "cinematic scene"
+
+    specs: list[manual.ShotSpec] = []
+    scene_start = 0.0  # must mirror run()'s offset so fg anchoring lines up
+    for i, scene in enumerate(job.scenes):
+        if scene.is_ad:
+            scene_start += scene.duration
+            continue
+        if manual_bg:
+            specs.append(manual.ShotSpec(
+                id=f"shot_{i:02d}", scene_index=i,
+                prompt=_prompt(_queries(scene, 1, fallback)[0]), target_s=scene.duration,
+            ))
+        if manual_fg:
+            for k, cue in enumerate(scene.insert_cues):
+                span = _anchor_phrase(cue.phrase, scene.words, scene_start, scene.duration)
+                if span is None:
+                    continue
+                specs.append(manual.ShotSpec(
+                    id=f"fg_{i:02d}_{k}", scene_index=i,
+                    prompt=_prompt(cue.query or " ".join(scene.keywords)),
+                    target_s=span[1] - span[0],
+                ))
+        scene_start += scene.duration
+    if not specs:
+        return {}
+    return manual.collect_or_pause(job.workdir, specs, ctx.g.video.width, ctx.g.video.height)
+
+
 def run(job: VideoJob, ctx: AppContext) -> None:
     vis = ctx.visuals
+    bg, fg = vis.background, vis.foreground
     dirs = {
         "clip_cache": ctx.g.paths.state / "cache" / "footage",
         "img_cache": ctx.g.paths.state / "cache" / "images",
         "footage": ctx.g.paths.assets / "footage",
         "images": ctx.g.paths.assets / "images",
     }
+    # user-assisted background/foreground: gather hand-made clips first (raises → `paused`).
+    manual_bg = bg.source == "ai_video" and bg.ai_model == "manual"
+    manual_fg = fg.enabled and fg.source == "ai_video" and fg.ai_model == "manual"
+    delivered = _collect_manual(job, ctx, manual_bg, manual_fg) if (manual_bg or manual_fg) else {}
+
     # continuous background: pick the single clip once, then track a running
     # read offset across scenes so the loop plays straight through.
     cont: dict | None = None
-    if vis.background.continuous and vis.background.source in ("stock_video", "local_video"):
+    if bg.continuous and bg.source in ("stock_video", "local_video"):
         cont = {"clip": _pick_continuous_clip(vis, ctx, dirs), "offset": 0.0}
 
     scene_start = 0.0  # running absolute offset, to anchor phrase-timed inserts
-    for scene in job.scenes:
+    for i, scene in enumerate(job.scenes):
         if scene.is_ad:
             ad_dir = ctx.ad.native.assets_dir
             clips = (
@@ -257,6 +313,10 @@ def run(job: VideoJob, ctx: AppContext) -> None:
                 cont["offset"] += scene.duration
             scene_start += scene.duration
             continue
-        _fill_background(scene, vis, ctx, dirs, cont)
-        _fill_foreground(scene, vis, ctx, dirs, scene_start)
+        bg_id = f"shot_{i:02d}"
+        if manual_bg and bg_id in delivered:  # manual background clip
+            scene.bg_assets = [BgAsset(path=delivered[bg_id], duration=scene.duration, is_photo=False)]
+        else:
+            _fill_background(scene, vis, ctx, dirs, cont)
+        _fill_foreground(scene, vis, ctx, dirs, scene_start, i, delivered if manual_fg else None)
         scene_start += scene.duration

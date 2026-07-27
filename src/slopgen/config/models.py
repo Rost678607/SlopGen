@@ -329,6 +329,9 @@ class RunParams(BaseModel):
     out: Path | None = None  # output dir override
     dry_run: bool = False  # skip the publish stage
     keep_temp: bool = False
+    # stage names (see pipeline.review) after which the run parks for operator
+    # review instead of walking on. Each fires once per video.
+    breakpoints: list[str] = []
     subtitle_style: SubtitleStyle | None = None  # override global default
     voice_override: str = ""  # edge-tts voice id; empty = use content config default
     tts_rate: int = 0  # speech rate offset in percent (-50 = half speed, +50 = 50% faster)

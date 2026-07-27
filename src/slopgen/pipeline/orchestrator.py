@@ -9,6 +9,11 @@ job state is written to ``<run_dir>/checkpoint.json``, and on failure the stage
 that died and the error are recorded. A crashed run can be resumed with
 ``run(resume_dir=...)``, which skips already-finished stages and continues from
 the point of failure.
+
+The same machinery carries breakpoints (see review.py): when a stage listed in
+``params.breakpoints`` finishes, the job is parked in a ``review`` checkpoint and
+the batch moves on to the next video. Resuming after the operator has inspected —
+and possibly edited — the result continues from there.
 """
 
 from __future__ import annotations
@@ -20,9 +25,11 @@ from pathlib import Path
 from typing import Callable
 
 from ..publish import get_publisher
+from . import review
 from .checkpoint import Checkpoint
 from .context import AppContext
 from .job import VideoJob
+from .manual import ManualInputPending
 from .stages import (
     assemble,
     drama_footage,
@@ -66,7 +73,7 @@ def _local_result(job: VideoJob) -> str:
     return "\n".join(str(p) for p in paths)
 
 
-# on_event(video_index, stage, status, message); status: start|done|error|skip
+# on_event(video_index, stage, status, message); status: start|done|error|skip|paused|review
 EventCallback = Callable[[int, str, str, str], None]
 
 
@@ -109,7 +116,9 @@ class Orchestrator:
             job.workdir.mkdir(parents=True, exist_ok=True)
             jobs.append(job)
             done = cp.completed(i)  # ordered list of finished stages
+            breakpoints = review.wanted(p.breakpoints, p.mode) - set(cp.reviewed(i))
             current = ""
+            at_breakpoint = False
             try:
                 for name, fn in stages:
                     if name in done:  # resumed: output already on disk
@@ -122,6 +131,13 @@ class Orchestrator:
                     self.on_event(i, name, "done", f"{time.monotonic() - t0:.1f}s")
                     done.append(name)
                     cp.stage_done(job, done)
+                    if name in breakpoints:  # park for review; the run continues later
+                        cp.awaiting_review(job, done, name)
+                        self.on_event(i, name, "review", "breakpoint")
+                        at_breakpoint = True
+                        break
+                if at_breakpoint:
+                    continue
 
                 if "publish" not in done:
                     current = "publish"
@@ -142,6 +158,9 @@ class Orchestrator:
                     "date": datetime.now().isoformat(timespec="seconds"),
                     "result": job.published,
                 })
+            except ManualInputPending as e:  # not a failure — awaiting operator clips
+                cp.paused(job, done, current, str(e))
+                self.on_event(i, current, "paused", str(e))
             except Exception as e:  # keep the batch alive; remember where it died
                 cp.failed(job, done, current, str(e))
                 self.on_event(i, "error", "error", f"{e}\n{traceback.format_exc(limit=3)}")

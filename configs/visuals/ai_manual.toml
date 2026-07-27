@@ -1,0 +1,20 @@
+# User-assisted b-roll: slopgen writes one prompt per scene and YOU generate the
+# clip by hand in an external web tool (Kling / Veo-Flow / Pika), then hand the
+# file back. The run pauses at the footage stage; add clips with `slopgen gather`
+# (or drop shot_NN.mp4 files into the run's manual/inbox/ folder) and it resumes.
+#
+# Free with no API: you beat the daily limits yourself by hopping services and
+# accounts. Best for the info clips where a handful of scenes need real video.
+name = "ai_manual"
+description = "User-assisted video: you generate each clip by hand, no API"
+
+[background]
+source = "ai_video"
+linkage = "narration"
+ai_model = "manual"  # the user-assisted backend (see pipeline/manual.py)
+
+# Foreground inserts can be user-assisted too: set enabled = true, source =
+# "ai_video", ai_model = "manual" and each narration-anchored insert becomes its
+# own manual shot (id fg_NN_K) in the gather screen.
+[foreground]
+enabled = false

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import random
+from pathlib import Path
 
 from ...media.ffmpeg import duration_of
 from ...media.generate import (
@@ -24,12 +25,14 @@ from ...media.generate import (
     VIDEO_MODELS,
     GenParams,
     env_keys,
+    is_manual_model,
     is_video_model,
     key_var_for_model,
     pollinations_image,
     wan_video,
 )
 from ...media.stock import VIDEO_EXTS, FootageError, find_image
+from .. import manual
 from ..context import AppContext
 from ..job import BgAsset, VideoJob, Word
 
@@ -87,6 +90,8 @@ def _key_candidates(scene, keys: list[str], cursors: dict[str, int]) -> list[str
 def _generate(scene, ctx: AppContext, dirs: dict, cursors: dict, cast_prompts: dict):
     """Return (path, is_photo, source_len_s) for the scene's shot, or raise."""
     model = scene.gen_model or "wan2.1"
+    if is_manual_model(model):  # manual scenes are ingested in run(), never generated
+        raise FootageError("manual scene reached the auto generator — this is a bug")
     prompt = _shot_prompt(scene, cast_prompts) or " ".join(scene.characters) or "cinematic scene"
     keys = env_keys(key_var_for_model(model))
     video = is_video_model(model)
@@ -152,6 +157,32 @@ def _rebuild_words(job: VideoJob) -> None:
         offset += scene.duration
 
 
+def _collect_manual(job: VideoJob, ctx: AppContext) -> dict[int, Path]:
+    """Register a manual shot per user-assisted scene and gather the operator's
+    clips. Returns {scene_index: clip} once all are delivered; otherwise raises
+    ManualInputPending so the orchestrator parks the job as `paused`."""
+    manual_idx = [
+        i for i, scene in enumerate(job.scenes)
+        if not scene.is_ad and is_manual_model(scene.gen_model or "wan2.1")
+    ]
+    if not manual_idx:
+        return {}
+    specs = [
+        manual.ShotSpec(
+            id=f"shot_{i:02d}",
+            scene_index=i,
+            prompt=_shot_prompt(job.scenes[i], job.cast_prompts)
+            or " ".join(job.scenes[i].characters)
+            or "cinematic scene",
+            target_s=job.scenes[i].clip_target_s,
+            part=job.scenes[i].part,
+        )
+        for i in manual_idx
+    ]
+    idmap = manual.collect_or_pause(job.workdir, specs, ctx.g.video.width, ctx.g.video.height)
+    return {i: idmap[f"shot_{i:02d}"] for i in manual_idx}
+
+
 def run(job: VideoJob, ctx: AppContext) -> None:
     dirs = {
         "clip_cache": ctx.g.paths.state / "cache" / "footage",
@@ -162,12 +193,18 @@ def run(job: VideoJob, ctx: AppContext) -> None:
     for d in dirs.values():
         d.mkdir(parents=True, exist_ok=True)
 
+    # user-assisted scenes: gather their hand-made clips first. This raises
+    # ManualInputPending (→ a clean `paused` checkpoint) until every one is in.
+    delivered = _collect_manual(job, ctx)
+
     cursors: dict[str, int] = {}  # rotating key index, shared across scenes
     want_video = fell_back = 0
-    for scene in job.scenes:
+    for i, scene in enumerate(job.scenes):
         if scene.is_ad:
             clip, is_photo, source_len = _ad_clip(scene, ctx)
             scene.clip = clip
+        elif i in delivered:  # manual clip supplied by the operator
+            clip, is_photo, source_len = delivered[i], False, duration_of(delivered[i])
         else:
             if is_video_model(scene.gen_model or "wan2.1"):
                 want_video += 1

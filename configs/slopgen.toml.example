@@ -33,6 +33,14 @@ providers = [
     "pixabay",
     "local",
 ]
+# Video generators are picked per visuals profile / drama orchestration, not here.
+# Besides the free AI backends (auto | wan2.1 | ltx-video | animatediff) there is
+# a user-assisted backend: ai_model / model = "manual". With it slopgen writes one
+# prompt per shot and you generate each clip by hand in an external web tool
+# (Kling / Veo-Flow / Pika), then hand the files back — the run pauses at the
+# footage stage and you fill clips with `slopgen gather` (or by dropping
+# shot_NN.mp4 into the run's manual/inbox/). See configs/visuals/ai_manual.toml
+# and configs/orchestration/manual.toml.
 
 [defaults]
 count = 1

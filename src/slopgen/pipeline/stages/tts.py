@@ -2,14 +2,21 @@
 
 edge-tts streams WordBoundary events (offsets in 100ns ticks) alongside the
 audio, which gives us subtitle timings for free — no Whisper needed.
+
+Each line's raw (scene-relative) timings are cached next to its mp3 as
+``scene_NN.json``, keyed by the exact text that produced them. A re-run — after a
+crash, or after the operator edited the narration at the TTS breakpoint — then
+re-synthesizes only the lines whose text actually changed and reuses the rest.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import random
 import time
+from pathlib import Path
 
 import edge_tts
 
@@ -57,6 +64,37 @@ async def _synth(text: str, voice: str, out_path, rate: str = "+0%") -> list[dic
     return words
 
 
+def _cache_path(audio: Path) -> Path:
+    return audio.with_suffix(".json")
+
+
+def _cached_words(audio: Path, text: str, voice: str, rate: str) -> list[dict] | None:
+    """Timings from a previous run, but only if the audio next to them was made
+    from exactly this text with the same voice and rate."""
+    cache = _cache_path(audio)
+    if not (audio.exists() and cache.exists()):
+        return None
+    try:
+        data = json.loads(cache.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if data.get("text") != text or data.get("voice") != voice or data.get("rate") != rate:
+        return None
+    words = data.get("words")
+    return words if isinstance(words, list) and words else None
+
+
+def _store_words(audio: Path, text: str, voice: str, rate: str, words: list[dict]) -> None:
+    try:
+        _cache_path(audio).write_text(
+            json.dumps({"text": text, "voice": voice, "rate": rate, "words": words},
+                       ensure_ascii=False),
+            encoding="utf-8",
+        )
+    except OSError:  # a missing cache only costs a re-synthesis
+        pass
+
+
 def run(job: VideoJob, ctx: AppContext) -> None:
     voice = _resolve_voice(ctx)
     # drama: one clip per scene is the master timeline — keep the voice at natural
@@ -73,9 +111,9 @@ def run(job: VideoJob, ctx: AppContext) -> None:
     offset = 0.0
     for i, scene in enumerate(job.scenes):
         path = audio_dir / f"scene_{i:02d}.mp3"
-        raw_words: list[dict] = []
+        raw_words: list[dict] = _cached_words(path, scene.text, voice, rate) or []
         last_exc: Exception | None = None
-        for attempt in range(_MAX_ATTEMPTS):
+        for attempt in range(_MAX_ATTEMPTS if not raw_words else 0):
             if attempt:
                 base = _RETRY_DELAYS[attempt - 1]
                 delay = base * (0.75 + 0.5 * random.random())
@@ -97,6 +135,7 @@ def run(job: VideoJob, ctx: AppContext) -> None:
                             i, attempt + 1, _MAX_ATTEMPTS, type(exc).__name__, exc)
                 raw_words = []
             if raw_words:
+                _store_words(path, scene.text, voice, rate, raw_words)
                 break
         if not raw_words:
             detail = f" — last error: {last_exc}" if last_exc else " — server returned empty audio"
