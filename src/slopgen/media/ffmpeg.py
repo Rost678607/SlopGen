@@ -60,14 +60,22 @@ def stretch_audio(src: Path, dst: Path, tempo: float) -> None:
     _run(["ffmpeg", "-y", "-i", str(src), "-filter:a", f"atempo={tempo:.4f}", "-vn", str(dst)])
 
 
-def make_video_part(clip: Path, dur: float, out: Path, cfg: GlobalConfig, start: float = 0.0) -> None:
-    """Silent background piece: loop the clip to `dur`, crop to vertical.
-    `start` seeks into the (looped) clip — continuous mode passes each scene's
-    running offset so the action carries over instead of restarting."""
+def make_video_part(clip: Path, dur: float, out: Path, cfg: GlobalConfig, start: float = 0.0,
+                    speed: float = 1.0) -> None:
+    """Silent background piece: fit the clip to `dur`, crop to vertical.
+
+    `start` seeks into the clip — continuous mode passes each scene's running offset
+    so the action carries over instead of restarting. `speed` retimes the clip
+    (>1 faster, <1 slower); the drama sync uses it to make a clip and its voiceover
+    the same length instead of looping the clip back to its start half way through.
+    The stream still loops as a last resort, for whatever the retime could not cover."""
     seek = ["-ss", f"{start:.3f}"] if start > 0 else []
+    vf = _vf_fit(cfg)
+    if abs(speed - 1.0) > 0.01:
+        vf = f"setpts={1 / speed:.4f}*PTS," + vf
     _run([
         "ffmpeg", "-y", "-stream_loop", "-1", "-i", str(clip), *seek,
-        "-vf", _vf_fit(cfg), "-an", *VENC, "-t", f"{dur:.3f}", str(out),
+        "-vf", vf, "-an", *VENC, "-t", f"{dur:.3f}", str(out),
     ])
 
 

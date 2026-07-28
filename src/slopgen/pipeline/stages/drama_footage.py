@@ -15,6 +15,7 @@ the word timings are rebuilt into absolute, stretched positions for subtitles.
 from __future__ import annotations
 
 import logging
+import math
 import random
 import re
 from pathlib import Path
@@ -39,9 +40,12 @@ from ..job import BgAsset, VideoJob, Word
 
 log = logging.getLogger(__name__)
 
-# keep the atempo stretch modest so the voice never sounds sped-up/chipmunked;
-# outside this band the clip is looped/trimmed to the (mildly) stretched voice.
-TEMPO_LO, TEMPO_HI = 0.75, 1.6
+# How far each medium may be retimed to meet the other. Speech degrades audibly
+# well before picture does — a voice 30% off still reads as the same person, while
+# a clip at half or double speed just reads as slow-motion or haste — so the video
+# band is the wider one. Past both bands the picture is looped/trimmed as a last resort.
+TEMPO_LO, TEMPO_HI = 0.8, 1.35   # voice (atempo)
+VIDEO_LO, VIDEO_HI = 0.5, 2.0    # picture (setpts)
 
 # generic stock queries for the last-ditch fallback (drama has no content-type
 # fallback_keywords to borrow, and stock APIs are English-indexed).
@@ -67,6 +71,11 @@ _CYRILLIC = re.compile(r"[Ѐ-ӿ]")
 # shot-list phrasing a video generator turns into a split-screen storyboard
 _CUT_LIST = re.compile(r"\bTHEN\b|\bcut to\b|\bsplit[- ]screen\b|\bmontage\b|\bstoryboard\b", re.I)
 
+# Closing clause on every shot prompt. Generators reach for a storyboard layout on
+# their own — even a single-action prompt has come back as a grid of panels — and
+# spelling out the negative is what they respond to.
+SINGLE_FRAME = "single continuous shot, one full-frame image, no split screen, no panels, no grid, no collage"
+
 
 def _short_tag(look: str) -> str:
     """The first few descriptor tokens — enough to re-identify a character on a
@@ -84,7 +93,7 @@ def _drop_foreign(text: str) -> str:
     return " ".join(kept)
 
 
-def _shot_prompt(scene, cast_prompts: dict[str, str]) -> str:
+def _shot_prompt(scene, cast_prompts: dict[str, str], notes: str = "") -> str:
     """Compose the generator prompt: the shot description with every character's
     compiled look substituted IN PLACE of their name.
 
@@ -115,7 +124,10 @@ def _shot_prompt(scene, cast_prompts: dict[str, str]) -> str:
         cast_prompts[n] for n in scene.characters
         if cast_prompts.get(n) and n not in mentioned
     ]
-    parts = ([text] if text.strip() else []) + absent
+    # the run's visual constraints ride along on every prompt, so a hand-edited or
+    # AI-rewritten one cannot quietly drop them. Non-Latin words are stripped below,
+    # so a constraint written in Russian only reaches the generator via the writer.
+    parts = ([text] if text.strip() else []) + absent + ([notes.strip()] if notes.strip() else []) + [SINGLE_FRAME]
     return _drop_foreign(", ".join(p for p in parts if p.strip()))
 
 
@@ -142,7 +154,8 @@ def _generate(scene, ctx: AppContext, dirs: dict, cursors: dict, cast_prompts: d
     model = scene.gen_model or "wan2.1"
     if is_manual_model(model):  # manual scenes are ingested in run(), never generated
         raise FootageError("manual scene reached the auto generator — this is a bug")
-    prompt = _shot_prompt(scene, cast_prompts) or " ".join(scene.characters) or "cinematic scene"
+    prompt = (_shot_prompt(scene, cast_prompts, ctx.params.visual_notes)
+              or " ".join(scene.characters) or "cinematic scene")
     keys = env_keys(key_var_for_model(model))
     video = is_video_model(model)
     cache = dirs["clip_cache"] if video else dirs["img_cache"]
@@ -180,18 +193,35 @@ def _ad_clip(scene, ctx: AppContext):
 
 
 def _sync(scene, source_len: float, is_photo: bool) -> None:
-    """Set the scene's final duration and atempo factor from the natural voice
-    length vs. the shot length. Stills simply span the narration (no stretch);
-    video clips are the master and the voice is stretched (within limits) to them."""
+    """Make the clip and its voiceover exactly as long as each other.
+
+    The mismatch is split between the two rather than dumped on either: the voice
+    speeds up (or slows) by √ratio and the clip is retimed by the same factor the
+    other way, so a 20-second line over a 15-second clip becomes 17.3 seconds of
+    both — a 15% faster voice and a 13% slower clip, neither conspicuous. Loading
+    it all onto the voice is what used to leave the clip short, and a short clip
+    was looped: it restarted from the beginning mid-scene, in plain view.
+
+    Each factor has its own limits (speech tolerates less retiming than picture),
+    so an extreme ratio still leaves a remainder; the voice always plays whole and
+    the picture takes the rest (looping only for what is genuinely left over).
+    Stills simply span the narration — a photo has no length of its own."""
     natural = scene.audio_src_duration or source_len or scene.clip_target_s or 1.0
     if is_photo:
         scene.audio_tempo = 1.0
+        scene.video_tempo = 1.0
         scene.duration = natural
         return
-    target = source_len or scene.clip_target_s or natural
-    tempo = min(max(natural / target, TEMPO_LO), TEMPO_HI)
-    scene.audio_tempo = tempo
-    scene.duration = natural / tempo
+    clip = source_len or scene.clip_target_s or natural
+    ratio = natural / clip if clip > 0 else 1.0
+    # split evenly in log space, then clamp each to what its medium can take
+    audio = min(max(math.sqrt(ratio), TEMPO_LO), TEMPO_HI)
+    video = min(max(audio / ratio, VIDEO_LO), VIDEO_HI)
+    # whatever the picture could not absorb goes back to the voice, within its own band
+    audio = min(max(video * ratio, TEMPO_LO), TEMPO_HI)
+    scene.audio_tempo = audio
+    scene.video_tempo = video
+    scene.duration = natural / audio
 
 
 def _rebuild_words(job: VideoJob) -> None:
@@ -221,7 +251,7 @@ def _collect_manual(job: VideoJob, ctx: AppContext) -> dict[int, Path]:
         manual.ShotSpec(
             id=f"shot_{i:02d}",
             scene_index=i,
-            prompt=_shot_prompt(job.scenes[i], job.cast_prompts)
+            prompt=_shot_prompt(job.scenes[i], job.cast_prompts, ctx.params.visual_notes)
             or " ".join(job.scenes[i].characters)
             or "cinematic scene",
             target_s=job.scenes[i].clip_target_s,
@@ -275,7 +305,8 @@ def run(job: VideoJob, ctx: AppContext) -> None:
             if is_photo and is_video_model(scene.gen_model or "wan2.1"):
                 fell_back += 1
         _sync(scene, source_len, is_photo)
-        scene.bg_assets = [BgAsset(path=clip, duration=scene.duration, is_photo=is_photo)]
+        scene.bg_assets = [BgAsset(path=clip, duration=scene.duration, is_photo=is_photo,
+                                   speed=scene.video_tempo)]
         ctx.progress("footage", i + 1, len(job.scenes))
 
     if want_video and fell_back:

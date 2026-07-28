@@ -338,6 +338,13 @@ class RunParams(BaseModel):
     # review instead of walking on. Each fires once per video.
     breakpoints: list[str] = []
     subtitle_style: SubtitleStyle | None = None  # override global default
+    # swap profanity out of the BURNED-IN subtitles while the voice keeps every word
+    # (platforms moderate what they can read). See llm/censor.py.
+    clean_subtitles: bool = False
+    # free-form constraints for the PICTURE only, never for the story: "all weapons
+    # are toy ones", "no logos", "no blood". Handed to the writer and appended to
+    # every generated shot prompt.
+    visual_notes: str = ""
     voice_override: str = ""  # edge-tts voice id; empty = use content config default
     tts_rate: int = 0  # speech rate offset in percent (-50 = half speed, +50 = 50% faster)
     # -- drama mode --------------------------------------------------------

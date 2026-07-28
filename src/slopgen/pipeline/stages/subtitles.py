@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 
+from ...llm import censor
 from ..context import AppContext
 from ..job import VideoJob, Word
 from ..parts import part_start_offsets, requested_parts, scenes_by_part
@@ -124,10 +125,31 @@ def _shift_words(words: list[Word], offset: float) -> list[Word]:
     ]
 
 
+def _cleaned_words(job: VideoJob, ctx: AppContext) -> list[list[Word]]:
+    """Per-scene subtitle words, with profanity swapped out when the run asks for it.
+    The job itself is left alone: the voice keeps every word it was given, and only
+    what gets burned onto the picture is sanitised."""
+    per_scene = [list(scene.words) for scene in job.scenes]
+    if not ctx.params.clean_subtitles:
+        return per_scene
+    flat = [w.text for words in per_scene for w in words]
+    clean = censor.clean_words(ctx.llm, flat, ctx.params.lang)
+    out: list[list[Word]] = []
+    i = 0
+    for words in per_scene:
+        out.append([
+            Word(text=clean[i + n], start=w.start, end=w.end) for n, w in enumerate(words)
+        ])
+        i += len(words)
+    return out
+
+
 def run(job: VideoJob, ctx: AppContext) -> None:
     sc = ctx.g.subtitles
     style = ctx.params.subtitle_style or sc.style
-    words = [w for scene in job.scenes for w in scene.words]
+    per_scene = _cleaned_words(job, ctx)
+    at = {id(scene): i for i, scene in enumerate(job.scenes)}
+    words = [w for words in per_scene for w in words]
 
     path = job.workdir / "subs.ass"
     path.write_text(_ass_text(words, ctx, style), encoding="utf-8")
@@ -142,7 +164,7 @@ def run(job: VideoJob, ctx: AppContext) -> None:
     for i, scenes in enumerate(scenes_by_part(job.scenes, parts), start=1):
         if not scenes:
             continue
-        part_words = [w for scene in scenes for w in scene.words]
+        part_words = [w for scene in scenes for w in per_scene[at[id(scene)]]]
         part_path = job.workdir / f"subs_part_{i:02d}.ass"
         part_path.write_text(_ass_text(_shift_words(part_words, starts[i - 1]), ctx, style), encoding="utf-8")
         job.part_ass_paths.append(part_path)

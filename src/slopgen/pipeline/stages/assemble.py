@@ -49,7 +49,7 @@ def run(job: VideoJob, ctx: AppContext) -> None:
             if a.is_photo:
                 ffmpeg.make_photo_part(a.path, a.duration, part, ctx.g, vis.background.motion, direction=k)
             else:
-                ffmpeg.make_video_part(a.path, a.duration, part, ctx.g, start=a.start)
+                ffmpeg.make_video_part(a.path, a.duration, part, ctx.g, start=a.start, speed=a.speed)
             bg_parts.append(part)
         # 2) compose scene with voiceover + foreground inserts. In drama mode the
         # clip length is the master, so the voice is time-stretched (atempo) to it.

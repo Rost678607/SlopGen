@@ -20,6 +20,10 @@ class BgAsset(BaseModel):
     duration: float
     is_photo: bool = False
     start: float = 0.0  # seek offset into the clip (continuous background mode)
+    # playback speed for a video piece (>1 faster, <1 slower). The drama sync splits
+    # a clip/voice length mismatch between this and the voice's atempo instead of
+    # looping the clip back to its start mid-scene.
+    speed: float = 1.0
 
 
 class InsertCue(BaseModel):
@@ -59,6 +63,7 @@ class Scene(BaseModel):
     clip_target_s: float = 0.0  # planned shot length (drives word budget + stretch)
     audio_src_duration: float = 0.0  # natural TTS length before the atempo stretch
     audio_tempo: float = 1.0  # atempo factor applied so the voice fits the clip
+    video_tempo: float = 1.0  # setpts factor applied to the clip for the same reason
     part: int = 1  # drama: output part number; cuts happen after the last scene in a part
 
 

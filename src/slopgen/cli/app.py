@@ -250,6 +250,7 @@ def info(
     subs: Optional[str] = typer.Option(None, "--subs", help="subtitle style: word_pop | phrases | karaoke"),
     tts_rate: Optional[int] = typer.Option(None, "--tts-rate", min=-50, max=50, help="speech rate offset in percent (-50 = slowest, 0 = normal, +50 = fastest)"),
     breaks: Optional[list[str]] = typer.Option(None, "--break", "-b", help="stop for review after this stage (repeatable): idea | script | tts | footage | subtitles | assemble | metadata"),
+    clean_subs: bool = typer.Option(False, "--clean-subs", help="swap profanity out of the burned-in subtitles; the voiceover keeps every word"),
     dry_run: bool = typer.Option(False, "--dry-run", help="generate everything but skip publishing"),
     keep_temp: bool = typer.Option(False, "--keep-temp", help="keep intermediate ffmpeg files"),
 ) -> None:
@@ -264,7 +265,7 @@ def info(
             visuals=visuals, duration_s=duration, profanity=profanity,
             push=push, count=count, preset=preset, idea=idea or "",
             out=out, dry_run=dry_run, keep_temp=keep_temp, subtitle_style=subs,
-            tts_rate=tts_rate or 0, breakpoints=breakpoints,
+            tts_rate=tts_rate or 0, breakpoints=breakpoints, clean_subtitles=clean_subs,
         )
     except (ConfigError, Exception) as e:
         typer.secho(f"error: {e}", fg="red")
@@ -301,6 +302,8 @@ def drama(
     out: Optional[Path] = typer.Option(None, "--out", help="output dir override"),
     subs: Optional[str] = typer.Option(None, "--subs", help="subtitle style: word_pop | phrases | karaoke"),
     breaks: Optional[list[str]] = typer.Option(None, "--break", "-b", help="stop for review after this stage (repeatable): script | tts | footage | subtitles | assemble | metadata"),
+    clean_subs: bool = typer.Option(False, "--clean-subs", help="swap profanity out of the burned-in subtitles; the voiceover keeps every word"),
+    visual_notes: Optional[str] = typer.Option(None, "--visual-notes", help="constraints on what the shots may SHOW, never on the story: \"all weapons are toy ones\", \"no blood\""),
     dry_run: bool = typer.Option(False, "--dry-run", help="generate everything but skip publishing"),
     keep_temp: bool = typer.Option(False, "--keep-temp", help="keep intermediate ffmpeg files"),
 ) -> None:
@@ -346,7 +349,8 @@ def drama(
             push=push or "", count=max(1, count),
             voice_override=voice or "",
             out=out, dry_run=dry_run, keep_temp=keep_temp, subtitle_style=subs,
-            breakpoints=breakpoints,
+            breakpoints=breakpoints, clean_subtitles=clean_subs,
+            visual_notes=visual_notes or "",
         )
     except Exception as e:
         typer.secho(f"error: {e}", fg="red")

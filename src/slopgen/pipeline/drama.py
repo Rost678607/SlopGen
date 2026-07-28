@@ -105,6 +105,14 @@ def plan_slots(
     ]
 
 
+def clip_bounds(average_s: float) -> tuple[float, float]:
+    """How far a single beat may stray from the authored average. The writer picks
+    each beat's length inside this band: a drawn-out moment gets a long take, a fast
+    exchange is cut into several short ones. Fixing every beat at the average is what
+    made long clips monotonous — one scene holding three actions, over and over."""
+    return max(3.0, average_s * 0.4), max(average_s * 2.0, average_s + 4.0)
+
+
 def word_budget(seconds: float, lang: str) -> int:
     """Roughly how many spoken words fit in `seconds` of narration for `lang`."""
     return max(3, round(seconds * _WORDS_PER_SEC.get(lang, _DEFAULT_WPS)))

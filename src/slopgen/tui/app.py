@@ -502,6 +502,11 @@ I18N: dict[str, dict[str, str]] = {
         "bp.chip_pick": "Add to this shot:",
         "bp.chip_none": "the whole cast is already in this shot",
         "bp.cast_known": "Cast of this run",
+        "clean_subs": "Clean the subtitles (voice keeps the words)",
+        "help.clean_subs": "Swap profanity out of the burned-in subtitles — including words that merely look profane, like the first part of a name. The voiceover is untouched: platforms moderate what they can read.",
+        "visual_notes": "Visual constraints",
+        "visual_notes_ph": "binds the picture only, not the plot: \"all weapons are toy ones\", \"no blood\", \"no logos\"",
+        "help.visual_notes": "Constraints on what the shots may SHOW. The story is written as if they did not exist — only the picture obeys. English reaches the generator verbatim; other languages go through the writer.",
         "bp.scene": "Scene",
         "bp.regen": "🔊 Re-voice",
         "bp.play": "▶ Listen",
@@ -850,6 +855,11 @@ I18N: dict[str, dict[str, str]] = {
         "bp.chip_pick": "Добавить в кадр:",
         "bp.chip_none": "весь каст уже в этом кадре",
         "bp.cast_known": "Каст этого прогона",
+        "clean_subs": "Чистить субтитры (в озвучке мат остаётся)",
+        "help.clean_subs": "Заменяет мат в вожжённых субтитрах — включая слова, которые лишь похожи на мат, вроде первой части имени. Озвучка не трогается: платформы модерируют то, что могут прочитать.",
+        "visual_notes": "Ограничения картинки",
+        "visual_notes_ph": "связывают только картинку, не сюжет: «всё оружие игрушечное», «без крови», «без логотипов»",
+        "help.visual_notes": "Ограничения на то, что можно ПОКАЗЫВАТЬ. Сюжет пишется так, будто их нет — подчиняется только картинка. Английский уходит в генератор дословно, остальные языки — через сценариста.",
         "bp.scene": "Сцена",
         "bp.regen": "🔊 Переозвучить",
         "bp.play": "▶ Прослушать",
@@ -1050,7 +1060,8 @@ FIELD_HELP = {
     "w-lang": "help.lang", "w-voice": "help.voice", "w-ctype": "help.ctype",
     "w-idea": "help.idea", "w-profanity": "help.profanity", "w-tts_rate": "help.tts_rate",
     "w-duration_min": "help.drama_duration_min", "w-duration_tol": "help.drama_duration_tol",
-    "w-clip_s": "help.drama_clip_s",
+    "w-clip_s": "help.drama_clip_s", "w-visual_notes": "help.visual_notes",
+    "w-clean_subs": "help.clean_subs",
     "w-vprofile": "help.vprofile", "w-duration": "help.duration",
     "w-bg-src": "help.bg_src", "w-bg-link": "help.bg_link", "w-bg-dir": "help.bg_dir",
     "w-bg-int": "help.bg_int", "w-bg-motion": "help.bg_motion", "w-bg-cont": "help.bg_cont",
@@ -1230,6 +1241,7 @@ class GenerateScreen(Screen):
             Choice("subs", "subs",
                    options=[(s, s) for s in ("word_pop", "phrases", "karaoke")],
                    value=store.global_cfg.subtitles.style),
+            Toggle("clean_subs", "clean_subs"),
         ])
         # Summary step: one switch per stage that can hold a breakpoint
         self.f_breaks = Form("w", [
@@ -1473,8 +1485,10 @@ class GenerateScreen(Screen):
             "ad_mode": a["ad-mode"] or "both",
             "push": "" if p["push"] == NONE else p["push"],
             "subs": p["subs"],
+            "clean_subs": bool(p.get("clean_subs")),
             "count": max(1, int(p["count"])),
             "breakpoints": self._breakpoints(),
+            "visual_notes": c.get("visual_notes", ""),
         }
 
     def _command(self, g: dict, vis_name: str, vis_manual: VisualsConfig | None) -> str:
@@ -1499,6 +1513,8 @@ class GenerateScreen(Screen):
         if g["count"] != 1:
             cmd += f" -n {g['count']}"
         cmd += f" --subs {g['subs']}"
+        if g["clean_subs"]:
+            cmd += " --clean-subs"
         for name in g["breakpoints"]:
             cmd += f" --break {name}"
         if manual_notes:
@@ -1581,6 +1597,8 @@ class GenerateScreen(Screen):
                 voice_override=g["voice"],
                 tts_rate=g["tts_rate"],
                 breakpoints=g["breakpoints"],
+                clean_subtitles=g["clean_subs"],
+                visual_notes=g["visual_notes"],
             )
         except ConfigError as e:
             self.notify(str(e), severity="error", timeout=8)
@@ -1700,6 +1718,7 @@ class DramaScreen(_CharEditAI, GenerateScreen):
             Number("duration_min", "drama_duration_min", value="2", default=2.0),
             Number("duration_tol", "drama_duration_tol", value="15", default=15.0),
             Number("clip_s", "drama_clip_s", value="0", default=0.0),
+            Text("visual_notes", "visual_notes", placeholder="visual_notes_ph", large=True),
         ])
 
     def _step_help_key(self, step_key: str) -> str:
@@ -2483,6 +2502,8 @@ class DramaScreen(_CharEditAI, GenerateScreen):
             "ad_src": a["ad-src"], "ad_mode": a["ad-mode"] or "both",
             "push": "" if p["push"] == NONE else p["push"],
             "subs": p["subs"], "count": max(1, int(p["count"])),
+            "clean_subs": bool(p.get("clean_subs")),
+            "visual_notes": c.get("visual_notes", ""),
             "parts": max(1, int(p.get("parts", 1) or 1)),
             "breakpoints": self._breakpoints(),
         }
@@ -2520,6 +2541,11 @@ class DramaScreen(_CharEditAI, GenerateScreen):
         cmd += f" --duration-min {g['duration'] / 60:g} --tol {g['duration_tol']:g}"
         if g["clip_s"]:
             cmd += f" --clip-s {g['clip_s']:g}"
+        if g["clean_subs"]:
+            cmd += " --clean-subs"
+        if g["visual_notes"]:
+            note = g["visual_notes"].replace("\n", " ")[:40]
+            cmd += f' --visual-notes "{note}…"'
         if g["parts"] != 1:
             cmd += f" --parts {g['parts']}"
         glob = [m["name"] for m in self._cast if m["glob"]]
@@ -2579,6 +2605,8 @@ class DramaScreen(_CharEditAI, GenerateScreen):
                 push=g["push"], count=g["count"],
                 voice_override=g["voice"], subtitle_style=g["subs"],
                 breakpoints=g["breakpoints"],
+                clean_subtitles=g["clean_subs"],
+                visual_notes=g["visual_notes"],
             )
         except Exception as e:  # pydantic validation / bad field
             self.notify(str(e), severity="error", timeout=8)
@@ -2651,7 +2679,11 @@ class ProgressScreen(Screen):
             head = f" {p.count}× {p.lang}/{p.content_type or 'auto'} · {t('run.vis')}: {vis} ~{p.duration_s:.0f}s · ad: "
         self.query_one("#run-summary", Static).update(f"{head}{ad} · {push}")
         table = self.query_one("#queue", DataTable)
-        table.add_columns(t("col.video"), t("col.stage"), t("col.status"), t("col.info"))
+        # explicit widths: the info cell carries the running tally ("18/18"), which
+        # the auto-width (set from the header alone) truncated to "18/1"
+        for name, width in ((t("col.video"), 7), (t("col.stage"), 12),
+                            (t("col.status"), 7), (t("col.info"), 60)):
+            table.add_column(name, width=width)
         for i in range(p.count):
             table.add_row(f"#{i}", t("row.queued"), "…", "")
         self.run_worker(self._run_pipeline, thread=True, exclusive=True)
