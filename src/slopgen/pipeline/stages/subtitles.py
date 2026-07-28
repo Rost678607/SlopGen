@@ -125,23 +125,44 @@ def _shift_words(words: list[Word], offset: float) -> list[Word]:
     ]
 
 
+def _retime(words: list[Word], text: str) -> list[Word]:
+    """Lay a rewritten line back over the span its original words occupied.
+
+    A contextual rewrite does not preserve the word count — "Съебал нахуй с моей пары
+    пидорас блять" becomes seven words where there were six — so the line's total span
+    is re-divided among the new words in proportion to their length. The line still
+    starts and ends exactly with the speech; only the word-to-word boundaries inside it
+    are approximate, and they were never exact for a rewritten word anyway."""
+    new = text.split()
+    if not words or not new:
+        return words
+    if len(new) == len(words):  # nothing moved — keep the real timings
+        return [Word(text=t, start=w.start, end=w.end) for t, w in zip(new, words)]
+    start, end = words[0].start, words[-1].end
+    weights = [len(t) + 1 for t in new]
+    total = sum(weights)
+    out: list[Word] = []
+    at = start
+    for t, weight in zip(new, weights):
+        share = (end - start) * weight / total
+        out.append(Word(text=t, start=at, end=at + share))
+        at += share
+    return out
+
+
 def _cleaned_words(job: VideoJob, ctx: AppContext) -> list[list[Word]]:
-    """Per-scene subtitle words, with profanity swapped out when the run asks for it.
-    The job itself is left alone: the voice keeps every word it was given, and only
-    what gets burned onto the picture is sanitised."""
+    """Per-scene subtitle words, with the profane lines rewritten when the run asks
+    for it. The job itself is left alone: the voice keeps every word it was given, and
+    only what gets burned onto the picture is sanitised."""
     per_scene = [list(scene.words) for scene in job.scenes]
     if not ctx.params.clean_subtitles:
         return per_scene
-    flat = [w.text for words in per_scene for w in words]
-    clean = censor.clean_words(ctx.llm, flat, ctx.params.lang)
-    out: list[list[Word]] = []
-    i = 0
-    for words in per_scene:
-        out.append([
-            Word(text=clean[i + n], start=w.start, end=w.end) for n, w in enumerate(words)
-        ])
-        i += len(words)
-    return out
+    lines = [" ".join(w.text for w in words) for words in per_scene]
+    clean = censor.clean_lines(ctx.llm, lines, ctx.params.lang)
+    return [
+        _retime(words, new) if new != old else words
+        for words, old, new in zip(per_scene, lines, clean)
+    ]
 
 
 def run(job: VideoJob, ctx: AppContext) -> None:

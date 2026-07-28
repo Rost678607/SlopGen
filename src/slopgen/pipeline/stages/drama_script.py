@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from ...llm.characters import recompile_if_dirty
 from ..context import AppContext
-from ..drama import clip_bounds, plan_slots, word_budget
+from ..drama import plan_slots, word_budget
 from ..job import Scene, VideoJob
 from ..parts import normalize_scene_parts, requested_parts
 from .idea import LANG_NAMES
@@ -47,8 +47,7 @@ SYSTEM = (
     "NEVER tag a line with who said it. One unbroken first-person voice — never a screenplay. "
     "Break the story into BEATS. {shot_rule} For each beat give:\n"
     '  • "part": the output part number for this shot (1 if there is only one part);\n'
-    '  • "narration": the spoken text for this shot, in {lang} — roughly {words} words for every '
-    "10 seconds of its clip_s, so a longer beat carries proportionally more speech;\n"
+    '  • "narration": the spoken text for this shot, in {lang} (~{words} words), advancing the plot;\n'
     '  • "video_prompt": an ENGLISH text-to-image/video prompt describing THIS shot — the setting, '
     "which characters are on screen and what they are doing, camera framing and mood. Token-dense, "
     "concrete, comma-friendly; do NOT translate the narration, describe the VISUAL. "
@@ -60,7 +59,6 @@ SYSTEM = (
     "action. Never a list of moments — a generator handed several beats renders them all at once, "
     "as a split-screen grid, before playing anything.\n"
     '  • "characters": the list of cast names visible in this shot (subset of the cast; [] if none).\n'
-    '  • "clip_s": how many seconds THIS beat runs — see the length rule above.\n'
     "FIRST BEAT — COLD OPEN HOOK: drop the viewer into the most dramatic or surprising moment of the "
     "story (1-2 punchy sentences; tease, don't resolve). Its video_prompt must be visually arresting — "
     "dynamic framing, high contrast, peak-tension action. After this beat, the story unfolds from the "
@@ -72,7 +70,7 @@ SYSTEM = (
     "on the sheet is never 'he'). Two characters in one shot must stay visually distinct.\n"
     "{part_rule}"
     'Respond with JSON only: {{"title": "<short title in {lang}>", "scenes": [{{"part": 1, "narration": "...", '
-    '"video_prompt": "...", "characters": ["..."], "clip_s": 8, "is_ad": false}}, ...]}}.'
+    '"video_prompt": "...", "characters": ["..."], "is_ad": false}}, ...]}}.'
 )
 
 # One beat is one generated clip, and the WRITER sizes it: a fixed length for every
@@ -82,12 +80,13 @@ SYSTEM = (
 # reaction", real generators (Grok, Kling, …) read that as a storyboard and open the
 # clip with every shot on screen at once, as a split-screen grid.
 SHOT_RULE = (
-    "Each beat is ONE clip: a single unbroken take, one camera, one continuous action. "
-    'YOU choose how long each beat runs and return it as "clip_s" — anywhere from {lo:.0f} '
-    "to {hi:.0f} seconds, averaging about {avg:.0f}. Size it to the moment: let a drawn-out "
-    "one (a slow approach, a long look, a confession) run long, and cut a fast exchange or a "
-    "sharp turn into SEVERAL short beats rather than one lazy long take. Vary the lengths — "
-    "beats that all run the same read as monotonous.\n"
+    "Each beat is ONE clip of EXACTLY {avg:.0f} seconds: a single unbroken take, one camera, "
+    "one continuous action. Every beat is that same length — you do not choose it. What you "
+    "choose is how much story goes into each one, and that is where the rhythm comes from: "
+    "let a drawn-out moment (a slow approach, a long look, a confession) run across SEVERAL "
+    "consecutive beats rather than cramming it into one, and compress a fast exchange or a "
+    "sharp turn into a single beat. Never pad a beat with three unrelated actions just to "
+    "fill {avg:.0f} seconds — that is what reads as monotonous.\n"
     "Whatever the length, a video_prompt describes ONE continuous action in one or two "
     "sentences. Never a list of moments, never 'THEN', no cuts, montage, sequence, split "
     "screen, collage, grid or storyboard: a generator renders those literally and puts every "
@@ -96,9 +95,8 @@ SHOT_RULE = (
 )
 
 
-def shot_rule(average_s: float) -> str:
-    lo, hi = clip_bounds(average_s)
-    return SHOT_RULE.format(lo=lo, hi=hi, avg=average_s)
+def shot_rule(clip_s: float) -> str:
+    return SHOT_RULE.format(avg=clip_s)
 
 
 DRAMA_PROFANITY = (
@@ -150,14 +148,6 @@ def _roster(cast) -> str:
     return "\n".join(lines)
 
 
-def _clip_s(scene: dict) -> float:
-    """The beat's own length, as the writer chose it (0 = fall back to the slot's)."""
-    try:
-        return max(float(scene.get("clip_s") or 0), 0.0)
-    except (TypeError, ValueError):
-        return 0.0
-
-
 def _parse_scenes(data: dict) -> list[Scene]:
     out: list[Scene] = []
     for s in data.get("scenes", []):
@@ -175,7 +165,6 @@ def _parse_scenes(data: dict) -> list[Scene]:
             text=narration,
             video_prompt=str(s.get("video_prompt", "")).strip(),
             characters=[str(c).strip() for c in s.get("characters", []) if str(c).strip()],
-            clip_target_s=_clip_s(s),
             is_ad=bool(s.get("is_ad")),
         ))
     return out
@@ -196,12 +185,8 @@ def _assign_slots(scenes: list[Scene], slots) -> None:
         scene.gen_model = slot.model
         scene.key_mode = slot.key_mode
         scene.key = slot.key
-        # the writer sized this beat; the slot only says who generates it. Clamp to
-        # the band so one runaway number cannot swallow the whole budget.
-        lo, hi = clip_bounds(slot.clip_seconds)
-        scene.clip_target_s = (
-            min(max(scene.clip_target_s, lo), hi) if scene.clip_target_s else slot.clip_seconds
-        )
+        # the operator's clip length is authoritative — the writer only writes to it
+        scene.clip_target_s = slot.clip_seconds
         i += 1
 
 

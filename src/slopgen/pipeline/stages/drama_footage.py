@@ -15,7 +15,6 @@ the word timings are rebuilt into absolute, stretched positions for subtitles.
 from __future__ import annotations
 
 import logging
-import math
 import random
 import re
 from pathlib import Path
@@ -40,12 +39,18 @@ from ..job import BgAsset, VideoJob, Word
 
 log = logging.getLogger(__name__)
 
-# How far each medium may be retimed to meet the other. Speech degrades audibly
-# well before picture does — a voice 30% off still reads as the same person, while
-# a clip at half or double speed just reads as slow-motion or haste — so the video
-# band is the wider one. Past both bands the picture is looped/trimmed as a last resort.
-TEMPO_LO, TEMPO_HI = 0.8, 1.35   # voice (atempo)
-VIDEO_LO, VIDEO_HI = 0.5, 2.0    # picture (setpts)
+# How far each medium may be retimed to meet the other, and in which order. The
+# voice moves first: nobody sees it happen. The picture is only retimed once the
+# voice has spent its comfortable range, and the bands differ by direction because
+# the artefacts do:
+#   voice faster  — stays natural well past +25%; the workhorse of the two
+#   voice slower  — sounds sluggish almost immediately, so barely used
+#   picture slower— reads as deliberate slow motion, very forgiving
+#   picture faster— reads as comic haste, so never used: surplus picture is trimmed
+AUDIO_COMFORT_UP = 1.25    # voice speed-up used before the picture is touched at all
+AUDIO_HARD_UP = 1.45       # …and once the picture has nothing left to give
+AUDIO_COMFORT_DOWN = 0.92  # voice slow-down: only to close a gap it can close outright
+VIDEO_SLOW_MAX = 0.45      # picture at 45% speed is still watchable slow motion
 
 # generic stock queries for the last-ditch fallback (drama has no content-type
 # fallback_keywords to borrow, and stock APIs are English-indexed).
@@ -192,20 +197,57 @@ def _ad_clip(scene, ctx: AppContext):
     return clip, False, duration_of(clip)
 
 
+def _clamp(value: float, band: tuple[float, float]) -> float:
+    return min(max(value, band[0]), band[1])
+
+
+def _fit(natural: float, clip: float) -> tuple[float, float]:
+    """Work out (audio_tempo, video_tempo) that make a voice line and its clip the
+    same length. Returns the factors; >1 plays faster.
+
+    The voice is retimed first — it is the cheaper change, being invisible — and the
+    picture is only touched once the voice has gone as far as it comfortably can:
+
+      ratio ≤ ±COMFORT   the voice absorbs it alone, the clip plays untouched
+      beyond that        the voice sits at its comfortable edge and the picture
+                         covers the remainder
+      beyond both        the voice is pushed to its hard limit before the picture
+                         is asked for more, and whatever is still left over is
+                         handled by trimming (clip long) or looping (clip short)
+
+    The bands are asymmetric, because the two directions are not equally forgiving.
+    Speech sped up stays natural far longer than speech slowed down, which quickly
+    sounds drunk — so a voice shorter than its clip is barely stretched at all and
+    the surplus picture is simply cut off, which costs nothing and shows nothing."""
+    ratio = natural / clip if clip > 0 else 1.0
+    if ratio >= 1.0:  # the voice is longer: speed it up, then slow the picture
+        audio = _clamp(ratio, (1.0, AUDIO_COMFORT_UP))
+        video = _clamp(audio / ratio, (VIDEO_SLOW_MAX, 1.0))
+        if video * ratio > AUDIO_COMFORT_UP:  # picture maxed out — push the voice further
+            audio = _clamp(video * ratio, (1.0, AUDIO_HARD_UP))
+        else:
+            audio = video * ratio
+        return audio, video
+    # The voice is SHORTER than the clip, and here the cheapest fix is no fix: the
+    # segment simply ends with the speech and the surplus picture is cut off, which
+    # costs one unused tail and shows nothing. Retiming to save that tail would mean
+    # slowing the voice (sluggish) or racing the picture (comic) — and for a large
+    # gap it would still trim afterwards, buying two artefacts and no benefit. So
+    # only a gap small enough for a barely-audible stretch to close completely is
+    # worth closing; anything wider is trimmed.
+    if ratio >= AUDIO_COMFORT_DOWN:
+        return ratio, 1.0  # the whole clip plays, the voice fills it exactly
+    return 1.0, 1.0  # untouched; the clip is trimmed to the line
+
+
 def _sync(scene, source_len: float, is_photo: bool) -> None:
-    """Make the clip and its voiceover exactly as long as each other.
+    """Give the scene its final length, and the factors that get both media there.
 
-    The mismatch is split between the two rather than dumped on either: the voice
-    speeds up (or slows) by √ratio and the clip is retimed by the same factor the
-    other way, so a 20-second line over a 15-second clip becomes 17.3 seconds of
-    both — a 15% faster voice and a 13% slower clip, neither conspicuous. Loading
-    it all onto the voice is what used to leave the clip short, and a short clip
-    was looped: it restarted from the beginning mid-scene, in plain view.
-
-    Each factor has its own limits (speech tolerates less retiming than picture),
-    so an extreme ratio still leaves a remainder; the voice always plays whole and
-    the picture takes the rest (looping only for what is genuinely left over).
-    Stills simply span the narration — a photo has no length of its own."""
+    The clip length the operator authored is fixed, and what a line of speech
+    actually takes to say is whatever edge-tts produced, so the two rarely agree.
+    Reconciling them is :func:`_fit`'s job; the scene's duration then follows from
+    the retimed voice, which always plays whole. Stills simply span the narration —
+    a photo has no length of its own."""
     natural = scene.audio_src_duration or source_len or scene.clip_target_s or 1.0
     if is_photo:
         scene.audio_tempo = 1.0
@@ -213,12 +255,7 @@ def _sync(scene, source_len: float, is_photo: bool) -> None:
         scene.duration = natural
         return
     clip = source_len or scene.clip_target_s or natural
-    ratio = natural / clip if clip > 0 else 1.0
-    # split evenly in log space, then clamp each to what its medium can take
-    audio = min(max(math.sqrt(ratio), TEMPO_LO), TEMPO_HI)
-    video = min(max(audio / ratio, VIDEO_LO), VIDEO_HI)
-    # whatever the picture could not absorb goes back to the voice, within its own band
-    audio = min(max(video * ratio, TEMPO_LO), TEMPO_HI)
+    audio, video = _fit(natural, clip)
     scene.audio_tempo = audio
     scene.video_tempo = video
     scene.duration = natural / audio

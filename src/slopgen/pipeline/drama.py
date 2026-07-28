@@ -10,10 +10,10 @@ Timeline rules (decided with the user):
   * Length is authored in minutes ± a seconds tolerance; that budget is the
     authority. The tolerance is the scriptwriter's creative leeway (it may emit a
     few more/fewer beats) and is reconciled against the slots at generation time.
-  * Clip length is authored too (run-level average, per-stage override, or the
-    generator's nominal — see :func:`stage_clip_seconds`). It decides how many
-    clips the budget is cut into and how much narration each one carries; a long
-    clip holds a whole sequence of shots rather than one framing.
+  * Clip length is authored too (run level, per-stage override, or the generator's
+    nominal — see :func:`stage_clip_seconds`) and is FIXED: it decides how many
+    clips the budget is cut into and how much narration each one carries. The
+    writer sizes its beats to it and never changes it.
   * Orchestration only *routes* which generator makes each clip. Metrics mix
     freely (hybrid): ``percent`` = a share of the budget, ``seconds`` / ``clips``
     = an absolute chunk of real timeline, and the LAST stage always absorbs
@@ -103,14 +103,6 @@ def plan_slots(
     return slots or [
         Slot("wan2.1", "rotate", "", model_clip_seconds("wan2.1"), is_video_model("wan2.1"))
     ]
-
-
-def clip_bounds(average_s: float) -> tuple[float, float]:
-    """How far a single beat may stray from the authored average. The writer picks
-    each beat's length inside this band: a drawn-out moment gets a long take, a fast
-    exchange is cut into several short ones. Fixing every beat at the average is what
-    made long clips monotonous — one scene holding three actions, over and over."""
-    return max(3.0, average_s * 0.4), max(average_s * 2.0, average_s + 4.0)
 
 
 def word_budget(seconds: float, lang: str) -> int:
