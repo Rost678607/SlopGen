@@ -100,11 +100,13 @@ The first positional argument is the **mode**: `info` (the minute-of-info clip) 
 | `--resume DIR`   | continue a crashed run from its output dir (the folder holding `checkpoint.json`)                                       |
 | `-b, --break STAGE` | stop for review after this stage (repeatable): `idea` `script` `tts` `footage` `subtitles` `assemble` `metadata`      |
 | `--subs`         | subtitle style: `word_pop` / `phrases` / `karaoke`                                                                      |
+| `--tts-rate N`   | speech rate offset in percent (-50 … +50); info mode only, drama keeps the natural speed                                |
+| `--clean-subs`   | swap profanity out of the burned-in subtitles; the voiceover keeps every word                                           |
 | `--out DIR`      | output dir override                                                                                                     |
 | `--dry-run`      | generate but don't publish (dev tool; picking "save locally" does the same)                                             |
 | `--keep-temp`    | keep intermediate ffmpeg files                                                                                          |
 
-**`drama LANG [flags]`** — shares `--ad`, `--ad-mode`, `--profanity`, `--push`, `-n/--count`, `--subs`, `--out`, `--dry-run`, `--keep-temp` with `info`, plus:
+**`drama LANG [flags]`** — shares `--ad`, `--ad-mode`, `--profanity`, `--push`, `-n/--count`, `--subs`, `--clean-subs`, `-b/--break`, `--out`, `--dry-run`, `--keep-temp` with `info`, plus:
 
 | Flag                   | Meaning                                                                        |
 | ---------------------- | ------------------------------------------------------------------------------ |
@@ -123,6 +125,10 @@ The first positional argument is the **mode**: `info` (the minute-of-info clip) 
 **Global** (before the mode, or standalone): `--resume DIR`, and the inspectors
 `--list-types` `--list-ads` `--list-accounts` `--list-presets` `--list-visuals`
 `--list-characters` `--list-orchestrations`.
+
+**Subcommands** that reopen a run which parked itself, each straight into the screen
+it is waiting on: `slopgen gather [DIR]` (hand-made clips) and `slopgen review [DIR]`
+(a breakpoint). Omit the directory and the latest such run is found.
 
 Parameter priority (info mode): **CLI flags > preset > account defaults > global defaults**. An account config can carry its own default language/type/ad, so `slopgen info --push yt_main` alone is a valid command. Drama builds its parameters directly from its own flags (no preset/account merge yet).
 
@@ -147,9 +153,10 @@ The screen is master-detail: the stage's items are **cards** on the left — **�
 `slopgen` with no arguments. Custom **Minecraft theme**, no footer — the top bar holds the RU/EN interface-language toggle, the `<-` back button and the command Palette.
 
 - **Home** — centered menu, arrow keys + Enter.
-- **Generate** — first pick a mode (**minute-of-info** or **AI drama**), then a step-by-step wizard with a vertical step list on the left. *Info:* 1) content (language, type, your own idea, a profanity slider), 2) visuals (profile + full overrides: background source/linkage/interval/Ken Burns, foreground inserts; target duration), 3) ads (a saved contract *or* fully manual fields), 4) publishing (account, count, subtitles), 5) summary with the equivalent CLI command and the GENERATE button. *Drama* adds a **Story** step (plot + a reorderable cast, edited on the right, with photo→appearance vision and AI cast-fill), adds a parts field to **Publishing** for cliffhanger splits, and turns the Visuals step into **orchestration** (an ordered list of AI generators; see below). Set everything up, press it, walk away.
+- **Generate** — first pick a mode (**minute-of-info** or **AI drama**), then a step-by-step wizard with a vertical step list on the left. *Info:* 1) content (language, narrator voice, type, your own idea, profanity and speech-rate sliders), 2) visuals (profile + full overrides: background source/linkage/interval/Ken Burns, foreground inserts; target duration), 3) ads (a saved contract *or* fully manual fields), 4) publishing (account, count, subtitle style, clean-subtitles switch), 5) summary with the equivalent CLI command, the breakpoint switches and the GENERATE button. *Drama* adds a **Story** step (plot + a reorderable cast, edited on the right, with photo→appearance vision and AI cast-fill), puts clip length and visual constraints on **Content** and a parts field on **Publishing**, and turns the Visuals step into **orchestration** (an ordered list of AI generators; see below). Set everything up, press it, walk away.
+- **Review** — where a run parked itself: the breakpoint screen (cards on the left, the open card's fields on the right, an AI edit line under them) or the manual-clip gather screen. Both resume the run when you are done; `slopgen review` / `slopgen gather` open them directly.
 - **Progress** — while a run works, a bar tracks the stage it is inside: voiced fragments, generated video fragments, assembled scenes and rendered files, each as `done/total`, over a per-video queue table and a live log.
-- **Configuration** — sections on the left: LLM profiles (profile tabs, per-provider model presets, API-key input auto-saved to `.env`, ★ activation), ad contracts, accounts, presets. Entity sections have a tab per existing config file on top plus `+ new`; forms are prefilled, with 💾 save and 🗑 delete (confirmed).
+- **Configuration** — sections on the left: LLM profiles (profile tabs, per-provider model presets, API-key input auto-saved to `.env`, ★ activation), footage/generator keys, the character library, ad contracts, accounts, presets. Entity sections have a tab per existing config file on top plus `+ new`; forms are prefilled, with 💾 save and 🗑 delete (confirmed).
 - The chosen color theme persists across runs (`[ui].theme`).
 
 ## AI drama (`configs/characters/`, `configs/orchestration/`)
@@ -191,7 +198,9 @@ Everything is hand-editable TOML; a new file in the folder = a new entity, no co
 - `accounts/*.toml` — publishing targets: `platform`, YouTube OAuth paths/privacy/category, optional `defaults` (lang/type/ad).
 - `presets/*.toml` — full parameter bundles for one-command runs.
 - `characters/*.toml` — AI-drama cast members (`name`, `age`, `appearance`, compiled `visual_prompt`).
-- `orchestration/*.toml` — AI-drama generator chains (ordered `[[stages]]` with `model`/`key_mode`/`metric`/`amount`).
+- `orchestration/*.toml` — AI-drama generator chains (ordered `[[stages]]` with `model`/`key_mode`/`key`/`metric`/`amount`, plus an optional per-stage `clip_seconds`).
+- `visuals/*.toml` — visuals profiles: background source/linkage/AI model/interval/motion/continuous, foreground inserts, described below.
+- `llm/*.toml` — LLM connections (`provider`, `model`, `key_env`, `temperature`, `web_search`); the active one is named in `slopgen.toml` `[llm].profile`.
 
 ## Assets (`assets/`)
 
@@ -292,7 +301,7 @@ slopgen --resume output/<время>_<тип|режим>_<язык>   # прод
 Одиночный результат: `output/<время>_<тип|режим>_<язык>/<n>/final.mp4` + `metadata.json`.
 Многочастные дорамы складываются рядом в той же папке `<n>/` как `part_01.mp4`, `part_02.mp4`, ...
 
-Первый позиционный аргумент — **режим**: `info` (ролик-минутка) или `drama` (ИИ-дорама); он меняет остальную часть команды. Флаги драмы: `--scenario`, `--cast A,B` (имена из `configs/characters/`), `--orchestration`, `--duration-min` (минуты), `--tol` (секунды допуска), `--clip-s` (СРЕДНЯЯ длина клипа в секундах, 0 = длина самого генератора), `--visual-notes` (ограничения картинки, не сюжета), `--clean-subs` (чистить мат в субтитрах), `--parts` (количество частей с клиффхэнгерами), `--voice`; плюс общие с `info`: `--ad`, `--ad-mode`, `--profanity`, `--push`, `-n`, `--subs`, `--out`, `--dry-run`, `-b/--break ЭТАП` (остановка на разбор после этапа, флаг повторяемый). Глобальные (до режима): `--resume`, `--list-types/-ads/-accounts/-presets/-visuals/-characters/-orchestrations`.
+Первый позиционный аргумент — **режим**: `info` (ролик-минутка) или `drama` (ИИ-дорама); он меняет остальную часть команды. Флаги драмы: `--scenario`, `--cast A,B` (имена из `configs/characters/`), `--orchestration`, `--duration-min` (минуты), `--tol` (секунды допуска), `--clip-s` (СРЕДНЯЯ длина клипа в секундах, 0 = длина самого генератора), `--visual-notes` (ограничения картинки, не сюжета), `--clean-subs` (чистить мат в субтитрах), `--parts` (количество частей с клиффхэнгерами), `--voice`; плюс общие с `info`: `--ad`, `--ad-mode`, `--profanity`, `--push`, `-n`, `--subs`, `--out`, `--dry-run`, `--keep-temp`, `-b/--break ЭТАП` (остановка на разбор после этапа, флаг повторяемый). У `info` есть свои `--tts-rate` (скорость речи, ±50%) и `--visuals`. Глобальные (до режима): `--resume`, `--list-types/-ads/-accounts/-presets/-visuals/-characters/-orchestrations`. Подкоманды `slopgen gather [папка]` и `slopgen review [папка]` возвращают к застывшему прогону — к ручным клипам и к брейкпоинту соответственно; без папки берётся последний такой прогон.
 
 **Восстановление после сбоя.** Каждый прогон пишет чекпойнт в `output/<время>_<тип>_<язык>/checkpoint.json` после каждого этапа конвейера. Если прогон оборвался на ошибке (обрыв сети, убитый процесс), пройденная часть (озвучка, скачанный футаж, состояние задачи) сохраняется, а этап и текст ошибки записываются. Команда `slopgen --resume <эта папка>` пропустит выполненные этапы и продолжит с места остановки: готовые видео не трогаются, недоделанные досчитываются. Если прогон завершился с ошибками, в итоговой сводке печатается готовая команда `--resume`.
 
@@ -317,8 +326,10 @@ slopgen --resume output/<время>_<тип|режим>_<язык>   # прод
 `slopgen` без аргументов. Тема **Minecraft**, нижней панели нет — сверху панель с переключателем языка интерфейса RU/EN, кнопкой `<-` (назад) и Palette.
 
 - **Меню** — по центру, выбор стрелочками + Enter.
-- **Генерация** — сначала выбор режима (**минута инфы** или **ИИ-дорама**), затем пошаговый визард со списком шагов слева. *Info:* 1) контент (язык, тип, идея, ползунок мата), 2) видеоряд (профиль + переопределения: фон, привязка, интервал, Ken Burns, вставки; длительность), 3) реклама (контракт *или* вручную), 4) публикация (аккаунт, количество, сабы), 5) итог с CLI-командой и кнопкой СГЕНЕРИРОВАТЬ. *Дорама* добавляет шаг **Сюжет** (замысел + переставляемый каст, редактирование справа, фото→внешность через vision, ИИ-заполнение каста), поле количества частей в **Публикации** и превращает шаг «Видеоряд» в **оркестрацию** (упорядоченный список ИИ-генераторов; см. ниже).
-- **Конфигурация** — секции слева: профили нейронок (табы профилей, пресеты моделей, ввод API-ключа с автосохранением в `.env`, активация ★), рекламные контракты, аккаунты, пресеты. В секциях сущностей сверху табы — по одному на конфиг-файл плюс `+ новый`; формы предзаполнены, есть 💾 сохранение и 🗑 удаление с подтверждением.
+- **Генерация** — сначала выбор режима (**минута инфы** или **ИИ-дорама**), затем пошаговый визард со списком шагов слева. *Info:* 1) контент (язык, голос диктора, тип, идея, ползунки мата и скорости речи), 2) видеоряд (профиль + переопределения: фон, привязка, интервал, Ken Burns, вставки; длительность), 3) реклама (контракт *или* вручную), 4) публикация (аккаунт, количество, стиль сабов, переключатель чистых субтитров), 5) итог с CLI-командой, тумблерами брейкпоинтов и кнопкой СГЕНЕРИРОВАТЬ. *Дорама* добавляет шаг **Сюжет** (замысел + переставляемый каст, редактирование справа, фото→внешность через vision, ИИ-заполнение каста), кладёт длину клипа и ограничения картинки на **Контент**, количество частей — в **Публикацию**, и превращает шаг «Видеоряд» в **оркестрацию** (упорядоченный список ИИ-генераторов; см. ниже).
+- **Прогресс** — пока идёт прогон, полоса показывает, где он внутри этапа: фрагменты озвучки, сгенерированные видеофрагменты, смонтированные сцены и собранные файлы, каждое как `сделано/всего`, над таблицей очереди по роликам и живым логом.
+- **Разбор** — туда, где прогон встал: экран брейкпоинта (слева карточки, справа поля открытой, под ними ИИ-строка) либо экран сбора ручных клипов. Оба по завершении продолжают прогон; `slopgen review` / `slopgen gather` открывают их напрямую.
+- **Конфигурация** — секции слева: профили нейронок (табы профилей, пресеты моделей, ввод API-ключа с автосохранением в `.env`, активация ★), ключи стока и генераторов, библиотека персонажей, рекламные контракты, аккаунты, пресеты. В секциях сущностей сверху табы — по одному на конфиг-файл плюс `+ новый`; формы предзаполнены, есть 💾 сохранение и 🗑 удаление с подтверждением.
 - Выбранная тема оформления сохраняется между запусками (`[ui].theme`).
 
 ## ИИ-дорама (`configs/characters/`, `configs/orchestration/`)
@@ -360,7 +371,9 @@ slopgen --resume output/<время>_<тип|режим>_<язык>   # прод
 - `accounts/*.toml` — площадки публикации + их дефолты;
 - `presets/*.toml` — бандлы параметров для запуска одной командой.
 - `characters/*.toml` — каст ИИ-дорамы (`name`, `age`, `appearance`, компилируемый `visual_prompt`).
-- `orchestration/*.toml` — цепочки ИИ-генераторов для дорамы (упорядоченные `[[stages]]` с `model`/`key_mode`/`metric`/`amount`).
+- `orchestration/*.toml` — цепочки ИИ-генераторов для дорамы (упорядоченные `[[stages]]` с `model`/`key_mode`/`key`/`metric`/`amount` и необязательным `clip_seconds` на этап).
+- `visuals/*.toml` — профили видеоряда: источник фона, привязка, ИИ-модель, интервал, движение, непрерывный режим, передние вставки — описаны ниже.
+- `llm/*.toml` — подключения к нейронкам (`provider`, `model`, `key_env`, `temperature`, `web_search`); активное называется в `slopgen.toml` `[llm].profile`.
 
 ## Ассеты (`assets/`)
 
