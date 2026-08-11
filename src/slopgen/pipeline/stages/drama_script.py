@@ -15,6 +15,13 @@ narration for a beat is sized to the seconds of the clip that will carry it. Cli
 length is authored too, and it changes what a beat IS: a short clip is one framing,
 while a long one is written as a sequence of several scenes (see `shot_rule`).
 
+The script is written a WINDOW of beats at a time rather than all at once. Asked for
+a whole feature-length script in one response, a model spends its attention
+front-loaded — the opening beats track the premise sentence by sentence and the rest
+turns to summary, dropping named props, sub-plots and reversals the operator wrote
+down. Each window instead gets a stated slice of the premise to cover, the tail of
+what came before, and enough room to spend on it (see `ARC_WINDOW`).
+
 A native ad, when enabled, is woven into the plot at the scenario level — a
 natural in-story lead-in that culminates in one spoken ad beat — rather than a
 bolted-on interruption.
@@ -24,7 +31,7 @@ from __future__ import annotations
 
 from ...llm.characters import recompile_if_dirty
 from ..context import AppContext
-from ..drama import plan_slots, word_budget
+from ..drama import plan_slots, plan_windows, word_budget
 from ..job import Scene, VideoJob
 from ..parts import normalize_scene_parts, requested_parts
 from .idea import LANG_NAMES
@@ -59,13 +66,8 @@ SYSTEM = (
     "action. Never a list of moments — a generator handed several beats renders them all at once, "
     "as a split-screen grid, before playing anything.\n"
     '  • "characters": the list of cast names visible in this shot (subset of the cast; [] if none).\n'
-    "FIRST BEAT — COLD OPEN HOOK: drop the viewer into the most dramatic or surprising moment of the "
-    "story (1-2 punchy sentences; tease, don't resolve). Its video_prompt must be visually arresting — "
-    "dynamic framing, high contrast, peak-tension action. After this beat, the story unfolds from the "
-    "beginning and builds toward that moment.\n"
-    "Give the drama a clear arc (hook → rise → turn → payoff) across about {beats} beats and roughly "
-    "{duration:.0f} seconds total (you MAY use a few more or fewer beats — up to ~{tol:.0f}s over/under — "
-    "when the story flows better). The cast sheet is AUTHORITATIVE for every character's gender, age "
+    "{open_rule}"
+    "{arc_rule} The cast sheet is AUTHORITATIVE for every character's gender, age "
     "and looks — never contradict it, in the narration or in video_prompt, pronouns included (a girl "
     "on the sheet is never 'he'). Two characters in one shot must stay visually distinct.\n"
     "{part_rule}"
@@ -99,6 +101,40 @@ def shot_rule(clip_s: float) -> str:
     return SHOT_RULE.format(avg=clip_s)
 
 
+# The cold open belongs to the video, so only the window that owns beat 0 is told
+# about it — every window given the rule would open with its own hook.
+OPEN_RULE = (
+    "FIRST BEAT — COLD OPEN HOOK: drop the viewer into the most dramatic or surprising moment of the "
+    "story (1-2 punchy sentences; tease, don't resolve). Its video_prompt must be visually arresting — "
+    "dynamic framing, high contrast, peak-tension action. After this beat, the story unfolds from the "
+    "beginning and builds toward that moment.\n"
+)
+
+ARC_WHOLE = (
+    "Give the drama a clear arc (hook → rise → turn → payoff) across about {beats} beats and roughly "
+    "{duration:.0f} seconds total (you MAY use a few more or fewer beats — up to ~{tol:.0f}s over/under — "
+    "when the story flows better)."
+)
+
+# A window is a slice of one arc, not an arc of its own. Left to itself a window
+# will pace the whole premise into the beats it was given — racing to the ending in
+# the first window and then having nothing left — so each one is told where in the
+# premise it starts and where it must have got to by its last beat.
+ARC_WINDOW = (
+    "You are writing beats {first}-{last} of {beats_total} — window {win} of {wins} of ONE continuous "
+    "drama, not a story of its own. Write EXACTLY {beats} beats. Your window opens about {from_pct:.0f}% "
+    "of the way through the premise and its last beat must land at about {to_pct:.0f}% — pace it so the "
+    "story arrives there, neither racing ahead to material a later window needs nor stalling on material "
+    "an earlier one already told. {tail_rule}{end_rule}"
+)
+
+CONTINUE_RULE = (
+    "Your first beat continues straight on from the last beat already written (shown below) — "
+    "no recap, no re-introduction, no repeating what it said. "
+)
+FINAL_RULE = "This is the LAST window: your final beat is the story's payoff and must resolve it. "
+
+
 DRAMA_PROFANITY = (
     "\nIn this first-person voice, swearing is the MC's genuine reaction in that exact moment — "
     "baked into the sentence and coloured by the specific feeling (rage, shock, glee, contempt). "
@@ -115,7 +151,8 @@ VISUAL_NOTES_RULE = (
 
 AD_RULES = (
     "\nNATIVE AD: weave a natural, in-story lead-in toward the sponsor and place EXACTLY ONE beat with "
-    '"is_ad": true at roughly 60-70% of the story. In that beat the narrator (same voice and mood) '
+    '"is_ad": true among the beats you are writing now — this is the point of the story the ad belongs '
+    "to, so do not defer it. In that beat the narrator (same voice and mood) "
     "organically brings up the product and says the link is in the description, based on these talking "
     "points: {points}. The lead-in beats before it should make the mention feel earned, not abrupt. "
     'Give the ad beat a normal "video_prompt" and "characters" too.'
@@ -190,6 +227,13 @@ def _assign_slots(scenes: list[Scene], slots) -> None:
         i += 1
 
 
+def _tail(scenes: list[Scene], count: int = 3) -> str:
+    """The last few narrations already written, verbatim — what the next window
+    continues from. Only the spoken text: a window needs to know where the story
+    stands, not how the previous shots were framed."""
+    return "\n".join(f"  … {s.text}" for s in scenes[-count:])
+
+
 def run(job: VideoJob, ctx: AppContext) -> None:
     p = ctx.params
     lang = LANG_NAMES.get(p.lang, p.lang)
@@ -200,32 +244,65 @@ def run(job: VideoJob, ctx: AppContext) -> None:
 
     slots = plan_slots(ctx.orchestration, p.duration_s, p.clip_seconds)
     beats = len(slots)
-    avg_clip_s = sum(s.clip_seconds for s in slots) / beats
-    avg_words = word_budget(avg_clip_s, p.lang)
     parts = requested_parts(p)
-
-    system = SYSTEM.format(
-        lang=lang, words=avg_words, beats=beats,
-        duration=p.duration_s, tol=p.duration_tol_s,
-        shot_rule=shot_rule(avg_clip_s),
-        part_rule=PART_RULES.format(parts=parts) if parts > 1 else "",
-    )
-    system += profanity_rule(p.profanity, p.lang)
-    if p.profanity > 0:
-        system += DRAMA_PROFANITY
-    if p.visual_notes.strip():
-        system += VISUAL_NOTES_RULE.format(notes=p.visual_notes.strip())
-    if ctx.native_ad_on:
-        system += AD_RULES.format(points=ctx.ad.native.talking_points)
-
     scenario = p.scenario.strip() or "(invent a compelling premise that fits the cast)"
-    user = (
-        f"Premise / plot:\n{scenario}\n\nCast:\n{_roster(cast)}\n\n"
-        f"Write the narration in {lang}; keep every video_prompt in English."
-    )
-    data = ctx.llm.complete_json("drama_script", system, user)
+    roster = _roster(cast)
 
-    scenes = _parse_scenes(data)
+    # The script is written a window at a time (see drama.plan_windows). The ad beat
+    # sits at ~65% of the story, so only the window holding that position is told
+    # about it — every window given the rule would place one of its own.
+    windows = plan_windows(beats)
+    ad_window = next(
+        (i for i, (a, b) in enumerate(windows) if a <= int(beats * 0.65) < b), len(windows) - 1
+    )
+
+    scenes: list[Scene] = []
+    title = ""
+    for wi, (first, last) in enumerate(windows):
+        win_beats = last - first
+        # clip length can differ per window under a hybrid orchestration, so the
+        # narration budget is taken from the slots this window actually writes to
+        win_clip_s = sum(s.clip_seconds for s in slots[first:last]) / win_beats
+        if len(windows) == 1:
+            arc = ARC_WHOLE.format(beats=beats, duration=p.duration_s, tol=p.duration_tol_s)
+        else:
+            arc = ARC_WINDOW.format(
+                first=first + 1, last=last, beats_total=beats, beats=win_beats,
+                win=wi + 1, wins=len(windows),
+                from_pct=100.0 * first / beats, to_pct=100.0 * last / beats,
+                tail_rule=CONTINUE_RULE if wi else "",
+                end_rule=FINAL_RULE if wi == len(windows) - 1 else "",
+            )
+        system = SYSTEM.format(
+            lang=lang, words=word_budget(win_clip_s, p.lang),
+            shot_rule=shot_rule(win_clip_s),
+            open_rule=OPEN_RULE if wi == 0 else "",
+            arc_rule=arc,
+            part_rule=PART_RULES.format(parts=parts) if parts > 1 else "",
+        )
+        system += profanity_rule(p.profanity, p.lang)
+        if p.profanity > 0:
+            system += DRAMA_PROFANITY
+        if p.visual_notes.strip():
+            system += VISUAL_NOTES_RULE.format(notes=p.visual_notes.strip())
+        if ctx.native_ad_on and wi == ad_window:
+            system += AD_RULES.format(points=ctx.ad.native.talking_points)
+
+        user = f"Premise / plot:\n{scenario}\n\nCast:\n{roster}\n\n"
+        if scenes:
+            user += f"The beats already written end like this:\n{_tail(scenes)}\n\n"
+        user += f"Write the narration in {lang}; keep every video_prompt in English."
+
+        data = ctx.llm.complete_json("drama_script", system, user)
+        got = _parse_scenes(data)
+        if not got:
+            raise ValueError(
+                f"LLM returned no beats for window {wi + 1}/{len(windows)} of the drama script"
+            )
+        scenes.extend(got)
+        title = title or str(data.get("title", "")).strip()
+        ctx.progress("script", wi + 1, len(windows))
+
     if not scenes:
         raise ValueError("LLM returned an empty drama script")
 
@@ -255,4 +332,5 @@ def run(job: VideoJob, ctx: AppContext) -> None:
             )
     _assign_slots(scenes, slots)
     job.scenes = scenes
-    job.topic = str(data.get("title", "")).strip() or (p.scenario.strip()[:80] or "AI drama")
+    # the title comes from the first window — it is the one that saw the story open
+    job.topic = title or (p.scenario.strip()[:80] or "AI drama")

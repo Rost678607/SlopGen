@@ -27,12 +27,13 @@ from dataclasses import dataclass
 from dataclasses import field as dc_field
 from pathlib import Path
 
-from .job import Scene, VideoJob
+from .job import Entity, Scene, VideoJob
 
 # Stages that can carry a breakpoint, in pipeline order. Drama has no idea stage —
 # its premise is the input, not something the pipeline invents.
 _INFO_STAGES = ["idea", "script", "tts", "footage", "subtitles", "assemble", "metadata"]
-_DRAMA_STAGES = [s for s in _INFO_STAGES if s != "idea"]
+# drama drops idea and gains `entities` (the visual registry) right after the script
+_DRAMA_STAGES = ["script", "entities"] + [s for s in _INFO_STAGES if s not in ("idea", "script")]
 
 
 def available(mode: str) -> list[str]:
@@ -61,8 +62,8 @@ class Row:
     readonly: bool = False
     path: Path | None = None
     # which part of the source item this row edits. A document may show several rows
-    # per scene (the script shows what is SAID and what is SHOWN); "text" rows are the
-    # ones that define a scene's existence, the rest attach to the preceding one.
+    # per item (the script shows what is SAID and what is SHOWN); a HEAD_FIELDS row is
+    # the one that defines the item's existence, the rest attach to the preceding one.
     field: str = "text"
     # how the row is edited: free text, a number, one of `options`, or a set of them
     # (`chips`). The value stays a string either way — comma-separated for chips — so
@@ -101,12 +102,19 @@ class Group:
         return [self.head] + self.extras
 
 
+# The row field that opens a new item. Every document names its head after what the
+# item actually IS — a scene is its spoken "text", a registry entry is its "name" —
+# because the TUI labels each row from its field, and a registry entry headed "text"
+# would be captioned "voiceover".
+HEAD_FIELDS = frozenset({"text", "name"})
+
+
 def group_rows(rows: list[Row]) -> list[Group]:
-    """Split a flat row list into its items. Rows following a "text" row attach to
-    it; a document with one field per item yields one row per group."""
+    """Split a flat row list into its items. Rows following a head row attach to it;
+    a document with one field per item yields one row per group."""
     groups: list[Group] = []
     for row in rows:
-        if row.field == "text" or not groups:
+        if row.field in HEAD_FIELDS or not groups:
             groups.append(Group(head=row))
         else:
             groups[-1].extras.append(row)
@@ -199,6 +207,33 @@ def _script_doc(job: VideoJob, mode: str) -> Doc:
     )
 
 
+def _entities_doc(job: VideoJob, mode: str) -> Doc:
+    """The visual registry: three rows per entry — what it is called in the shot
+    prompts, what it is, and the descriptor the generator actually receives.
+
+    The name row is the "text" one, so a group is an entity: emptying the name drops
+    the entry, and the document is variable, so an entity the model missed can be
+    typed in by hand. Editing a `visual_prompt` here restyles every shot that names
+    it at once, which is the whole point of the stage."""
+    rows: list[Row] = []
+    for i, e in enumerate(job.entities):
+        label = f"#{i + 1}"
+        shots = sum(1 for s in job.scenes if e.name.casefold() in (s.video_prompt or "").casefold())
+        rows.append(Row(label=label, value=e.name, src=i, field="name",
+                        info=f"{e.kind} · {shots} shots" if e.kind else f"{shots} shots"))
+        rows.append(Row(label=label, value=e.note, src=i, field="note"))
+        rows.append(Row(label=label, value=e.visual_prompt, src=i, field="look"))
+    return Doc(
+        stage="entities",
+        rows=rows,
+        variable=True,
+        subject="a registry of recurring things in a drama: each one's name as the shot prompts "
+                "spell it, a short note, and the English visual descriptor fed to the generator",
+        note_key="bp.note.entities",
+        note_extra=", ".join(job.cast_prompts) if job.cast_prompts else "",
+    )
+
+
 def _tts_doc(job: VideoJob, mode: str) -> Doc:
     def info(s: Scene) -> str:
         secs = s.audio_src_duration or s.duration
@@ -283,6 +318,7 @@ def _metadata_doc(job: VideoJob, mode: str) -> Doc:
 _READERS = {
     "idea": _idea_doc,
     "script": _script_doc,
+    "entities": _entities_doc,
     "tts": _tts_doc,
     "footage": _footage_doc,
     "subtitles": _subtitles_doc,
@@ -400,6 +436,28 @@ def _apply_script(job: VideoJob, rows: list[Row], mode: str) -> bool:
     return False  # re-running the writer would discard exactly these edits
 
 
+def _apply_entities(job: VideoJob, rows: list[Row], mode: str) -> bool:
+    """Rebuild the registry from the edited rows. An entity whose name row is empty
+    is dropped; a group with no source is one the operator added by hand."""
+    old = job.entities
+    out: list[Entity] = []
+    for group in group_rows(rows):
+        name = group.head.value.strip()
+        if not name:  # an emptied name drops the entry, descriptor and all
+            continue
+        extras = {r.field: r.value.strip() for r in group.extras}
+        src = old[group.head.src] if group.head.src is not None and group.head.src < len(old) else None
+        entity = src.model_copy(deep=True) if src else Entity(name=name)
+        entity.name = name
+        if "note" in extras:
+            entity.note = extras["note"]
+        if "look" in extras:
+            entity.visual_prompt = extras["look"]
+        out.append(entity)
+    job.entities = out
+    return False  # re-running the stage would discard exactly these edits
+
+
 def _apply_tts(job: VideoJob, rows: list[Row], mode: str) -> bool:
     return _apply_scene_texts(job, rows, resync=True)
 
@@ -459,6 +517,7 @@ def _apply_metadata(job: VideoJob, rows: list[Row], mode: str) -> bool:
 _WRITERS = {
     "idea": _apply_idea,
     "script": _apply_script,
+    "entities": _apply_entities,
     "tts": _apply_tts,
     "footage": _apply_footage,
     "subtitles": _apply_subtitles,

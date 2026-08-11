@@ -1,9 +1,10 @@
-"""Drama stage 3: generate one AI shot per scene and sync the voiceover to it.
+"""Drama stage 4: generate one AI shot per scene and sync the voiceover to it.
 
 Each non-ad scene is rendered by the generator the orchestration pinned to it
 (see pipeline/drama.py). The prompt is the scene's English ``video_prompt`` with
-the compiled visual prompt of every character present prepended, so faces/outfits
-stay on-model. API keys are consumed per the stage's ``key_mode`` — ``rotate``
+the compiled look of every character AND every registered entity (stages/entities.py)
+substituted in place of its name, so faces, outfits and recurring things stay
+on-model. API keys are consumed per the stage's ``key_mode`` — ``rotate``
 walks every key on a limit, ``single`` uses one and then falls back. If every key
 and Space fails, the scene falls back to a stock image so the run still completes.
 
@@ -82,10 +83,56 @@ _CUT_LIST = re.compile(r"\bTHEN\b|\bcut to\b|\bsplit[- ]screen\b|\bmontage\b|\bs
 SINGLE_FRAME = "single continuous shot, one full-frame image, no split screen, no panels, no grid, no collage"
 
 
+# The appearance budget belongs to the FRAME, not to each person in it. Alone, a
+# character can afford their whole sheet; three cannot. At ~20 tags each the looks are
+# some 70% of the prompt and the ACTION — what the shot is actually of — is a rounding
+# error, so the generator draws people matching their descriptions and has nothing left
+# to spend on what they are doing. Observed: three fully-described people "fistfighting
+# on the wing of a flying jet" came back as three people standing in a room.
+#
+# So a shared frame splits one budget: two people get 6 tags each, three get 4, four get
+# the floor of 3. The floor is what keeps a face recognisable between shots (age, build,
+# hair) — below it the cast stops being consistent, which is the problem the looks exist
+# to solve. A single character is never trimmed, and neither is an entity: its descriptor
+# is the only thing teaching the model what an invented compound like "robot-house" is.
+CROWD_TAG_BUDGET = 12
+MIN_TAGS = 3
+
+
+def _tag_budget(named: int) -> int | None:
+    """Tags per person for a frame holding `named` of them; None = the whole sheet."""
+    return None if named <= 1 else max(CROWD_TAG_BUDGET // named, MIN_TAGS)
+
+# "Игнат's robot-house" is a shot of the house; the possessive says who OWNS it, which
+# is not a visual fact about the frame. Substituting the owner's appearance there is how
+# a man with a tool belt gets glued onto a building.
+_POSSESSIVE = "(?:'s|’s)\\s*"
+
+
+def _tags(look: str, limit: int | None = None) -> str:
+    """The look as descriptor tags, optionally capped to the first `limit` of them."""
+    parts = [t.strip() for t in look.split(",") if t.strip()]
+    return ", ".join(parts[:limit] if limit else parts)
+
+
 def _short_tag(look: str) -> str:
     """The first few descriptor tokens — enough to re-identify a character on a
     repeat mention without pasting the whole sheet in again."""
-    return ", ".join(t.strip() for t in look.split(",")[:3] if t.strip())
+    return _tags(look, 3)
+
+
+def _mentions(text: str, name: str) -> bool:
+    return bool(re.search(re.escape(name), text, re.IGNORECASE))
+
+
+def _strip_possessives(text: str, names) -> str:
+    """Drop ``Name's`` for every cast name that owns something in the shot, so the
+    owner is not mistaken for somebody standing in it. A character who appears only
+    possessively is not in frame at all and gets no look."""
+    for name in sorted(names, key=len, reverse=True):
+        if name.strip():
+            text = re.sub(re.escape(name) + _POSSESSIVE, "", text, flags=re.IGNORECASE)
+    return text
 
 
 def _drop_foreign(text: str) -> str:
@@ -98,36 +145,66 @@ def _drop_foreign(text: str) -> str:
     return " ".join(kept)
 
 
-def _shot_prompt(scene, cast_prompts: dict[str, str], notes: str = "") -> str:
-    """Compose the generator prompt: the shot description with every character's
-    compiled look substituted IN PLACE of their name.
+def _shot_prompt(
+    scene, cast_prompts: dict[str, str], notes: str = "",
+    entity_prompts: dict[str, str] | None = None,
+) -> str:
+    """Compose the generator prompt: the shot description with every character's and
+    every registered entity's compiled look substituted IN PLACE of its name.
 
     Names never survive into the prompt. An image model cannot map "Юки" to a face,
     and a foreign name is rendered as literal on-screen text; worse, prepending all
     the looks as one comma bag leaves the model to guess which description belongs
     to whom, which is how two characters get blended or swapped between shots.
     Substituting each look where the name stands binds the description to the person
-    actually doing the action. Characters present but never named in the description
-    are appended at the end, and a repeat mention gets a short tag instead of the
-    whole sheet."""
-    text = scene.video_prompt or ""
+    or thing actually doing the action, and a repeat mention gets a short tag instead
+    of the whole sheet.
+
+    Two things keep the looks from swamping the shot. A frame holding several people
+    splits one appearance budget between them (see :func:`_tag_budget`), because a
+    prompt that is mostly appearance renders as a cast line-up rather than an action. And a
+    character listed as present but never named contributes only a short tag: the
+    whole sheet appended loose binds to nobody and reliably costs more than it buys.
+    Registered entities are never trimmed — their descriptor is the only thing that
+    says what an invented compound like "robot-house" looks like.
+
+    Getting a name into the prompt in the first place is the ``entities`` stage's job
+    (see stages/entities.py); this function only composes what it left behind."""
+    entity_prompts = entity_prompts or {}
+    raw = scene.video_prompt or ""
+    text = _strip_possessives(raw, cast_prompts)
+    # somebody the shot mentions ONLY as an owner ("Игнат's robot-house") is not in
+    # the frame; the writer listing them as present is what would otherwise drag a
+    # person into a shot of a building
+    owners_only = {
+        n for n in cast_prompts
+        if n.strip() and _mentions(raw, n) and not _mentions(text, n)
+    }
+    # cast wins a name clash: a person the operator wrote down outranks a registry
+    # entry that happens to share the spelling
+    looks = {**entity_prompts, **cast_prompts}
+    people = set(cast_prompts)
+    named = [n for n in people if n.strip() and _mentions(text, n)]
+    budget = _tag_budget(len(named))
+
     mentioned: list[str] = []
     # longest name first so "Сергей Костенко" is not eaten by "Сергей"
-    for name in sorted(cast_prompts, key=len, reverse=True):
-        look = cast_prompts.get(name, "").strip()
+    for name in sorted(looks, key=len, reverse=True):
+        look = looks.get(name, "").strip()
         if not look or not name.strip():
             continue
         pattern = re.compile(re.escape(name), re.IGNORECASE)
         if not pattern.search(text):
             continue
-        # first mention carries the full look, later ones a short tag
-        text = pattern.sub(lambda _m: f"({look})", text, count=1)
+        first = _tags(look, budget) if name in people else look
+        # first mention carries the (budgeted) look, later ones a short tag
+        text = pattern.sub(lambda _m: f"({first})", text, count=1)
         text = pattern.sub(lambda _m: f"({_short_tag(look)})", text)
         mentioned.append(name)
 
     absent = [
-        cast_prompts[n] for n in scene.characters
-        if cast_prompts.get(n) and n not in mentioned
+        _short_tag(cast_prompts[n]) for n in scene.characters
+        if cast_prompts.get(n) and n not in mentioned and n not in owners_only
     ]
     # the run's visual constraints ride along on every prompt, so a hand-edited or
     # AI-rewritten one cannot quietly drop them. Non-Latin words are stripped below,
@@ -154,12 +231,13 @@ def _key_candidates(scene, keys: list[str], cursors: dict[str, int]) -> list[str
     return ordered
 
 
-def _generate(scene, ctx: AppContext, dirs: dict, cursors: dict, cast_prompts: dict):
+def _generate(scene, ctx: AppContext, dirs: dict, cursors: dict, cast_prompts: dict,
+              entity_prompts: dict):
     """Return (path, is_photo, source_len_s) for the scene's shot, or raise."""
     model = scene.gen_model or "wan2.1"
     if is_manual_model(model):  # manual scenes are ingested in run(), never generated
         raise FootageError("manual scene reached the auto generator — this is a bug")
-    prompt = (_shot_prompt(scene, cast_prompts, ctx.params.visual_notes)
+    prompt = (_shot_prompt(scene, cast_prompts, ctx.params.visual_notes, entity_prompts)
               or " ".join(scene.characters) or "cinematic scene")
     keys = env_keys(key_var_for_model(model))
     video = is_video_model(model)
@@ -274,6 +352,12 @@ def _rebuild_words(job: VideoJob) -> None:
         offset += scene.duration
 
 
+def _entity_prompts(job: VideoJob) -> dict[str, str]:
+    """name → look for every registered entity that actually carries a descriptor
+    (the operator may have blanked one out at the `entities` breakpoint)."""
+    return {e.name: e.visual_prompt for e in job.entities if e.name.strip() and e.visual_prompt.strip()}
+
+
 def _collect_manual(job: VideoJob, ctx: AppContext) -> dict[int, Path]:
     """Register a manual shot per user-assisted scene and gather the operator's
     clips. Returns {scene_index: clip} once all are delivered; otherwise raises
@@ -284,11 +368,13 @@ def _collect_manual(job: VideoJob, ctx: AppContext) -> dict[int, Path]:
     ]
     if not manual_idx:
         return {}
+    entity_prompts = _entity_prompts(job)
     specs = [
         manual.ShotSpec(
             id=f"shot_{i:02d}",
             scene_index=i,
-            prompt=_shot_prompt(job.scenes[i], job.cast_prompts, ctx.params.visual_notes)
+            prompt=_shot_prompt(job.scenes[i], job.cast_prompts, ctx.params.visual_notes,
+                                entity_prompts)
             or " ".join(job.scenes[i].characters)
             or "cinematic scene",
             target_s=job.scenes[i].clip_target_s,
@@ -313,6 +399,7 @@ def run(job: VideoJob, ctx: AppContext) -> None:
     # user-assisted scenes: gather their hand-made clips first. This raises
     # ManualInputPending (→ a clean `paused` checkpoint) until every one is in.
     delivered = _collect_manual(job, ctx)
+    entity_prompts = _entity_prompts(job)
 
     # A shot description that reads as a cut list makes generators render every shot
     # at once (a split-screen storyboard) before playing the sequence. The writer is
@@ -338,7 +425,8 @@ def run(job: VideoJob, ctx: AppContext) -> None:
         else:
             if is_video_model(scene.gen_model or "wan2.1"):
                 want_video += 1
-            clip, is_photo, source_len = _generate(scene, ctx, dirs, cursors, job.cast_prompts)
+            clip, is_photo, source_len = _generate(
+                scene, ctx, dirs, cursors, job.cast_prompts, entity_prompts)
             if is_photo and is_video_model(scene.gen_model or "wan2.1"):
                 fell_back += 1
         _sync(scene, source_len, is_photo)

@@ -42,6 +42,29 @@ class FgInsert(BaseModel):
     is_video: bool = False  # video insert (looped clip) vs still image
 
 
+class Entity(BaseModel):
+    """One recurring thing the shots must keep looking the same — deliberately
+    UNTYPED.
+
+    The cast covers the people the operator wrote down. Everything else a story
+    reuses has no such anchor: a transforming robot-house, a specific car, the
+    kitchen, a nameless recurring soldier, a crowd with home-made placards. Named
+    once in one shot and once in another, a generator draws each from scratch, and
+    "robot-house" comes back as a plain robot because nothing ever said what one
+    looks like.
+
+    The registry is whatever the model decides is worth pinning: there is no schema
+    of allowed sorts, and `kind` is a free label it writes for the operator's eye
+    only — nothing branches on it. What matters is `name`, which must be the exact
+    string the shot prompts use, because that is what footage substitutes on.
+    """
+
+    name: str  # exactly as the shot prompts spell it — substitution matches on this
+    kind: str = ""  # free-form label from the model (object/location/crowd/…), cosmetic
+    note: str = ""  # what it is, in the content language, so the operator can review it
+    visual_prompt: str = ""  # English tag descriptor injected into every shot naming it
+
+
 class Scene(BaseModel):
     text: str  # narration / voiceover (spoken); in drama it may quote characters
     keywords: list[str] = []
@@ -73,6 +96,7 @@ class VideoJob(BaseModel):
     topic: str = ""
     scenes: list[Scene] = []
     cast_prompts: dict[str, str] = Field(default_factory=dict)  # drama: name → visual_prompt
+    entities: list[Entity] = Field(default_factory=list)  # drama: recurring non-cast visuals
     ass_path: Path | None = None
     part_ass_paths: list[Path] = Field(default_factory=list)
     final_path: Path | None = None

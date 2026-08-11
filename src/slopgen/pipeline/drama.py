@@ -108,3 +108,29 @@ def plan_slots(
 def word_budget(seconds: float, lang: str) -> int:
     """Roughly how many spoken words fit in `seconds` of narration for `lang`."""
     return max(3, round(seconds * _WORDS_PER_SEC.get(lang, _DEFAULT_WPS)))
+
+
+# How many beats one LLM call handles. A whole feature-length script asked for in a
+# single response is where detail goes to die: the model has one budget for the whole
+# plot and spends it front-loaded, so the opening beats track the premise sentence by
+# sentence and everything after is summary. Splitting the work gives each call a small,
+# stated slice of the story and enough room to actually spend on it.
+BEATS_PER_WINDOW = 14
+
+
+def plan_windows(total: int, size: int = BEATS_PER_WINDOW) -> list[tuple[int, int]]:
+    """Split `total` beats into consecutive ``[start, end)`` windows of at most
+    `size`. The windows are balanced rather than greedy — 30 beats become 15+15,
+    not 14+14+2 — because a stub last window is a whole LLM call asked to write the
+    ending in two beats, which is exactly where a rushed payoff comes from."""
+    if total <= 0:
+        return []
+    count = -(-total // max(size, 1))  # ceil
+    base, extra = divmod(total, count)
+    out: list[tuple[int, int]] = []
+    start = 0
+    for i in range(count):
+        end = start + base + (1 if i < extra else 0)
+        out.append((start, end))
+        start = end
+    return out

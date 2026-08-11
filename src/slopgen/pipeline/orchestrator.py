@@ -34,6 +34,7 @@ from .stages import (
     assemble,
     drama_footage,
     drama_script,
+    entities,
     footage,
     idea,
     metadata,
@@ -43,8 +44,9 @@ from .stages import (
 )
 
 # (stage name, callable(job, ctx)). The drama chain drops idea (the premise IS the
-# input) and swaps in the drama script/footage stages; stage NAMES are shared with
-# the info chain so checkpoints/resume stay uniform (the mode lives in the params).
+# input), swaps in the drama script/footage stages and adds `entities` (the visual
+# registry, which only exists for drama); the names it shares with the info chain
+# are shared exactly so checkpoints/resume stay uniform (the mode lives in params).
 STAGES_INFO: list[tuple[str, Callable]] = [
     ("idea", idea.run),
     ("script", script.run),
@@ -56,6 +58,7 @@ STAGES_INFO: list[tuple[str, Callable]] = [
 ]
 STAGES_DRAMA: list[tuple[str, Callable]] = [
     ("script", drama_script.run),
+    ("entities", entities.run),
     ("tts", tts.run),
     ("footage", drama_footage.run),
     ("subtitles", subtitles.run),
