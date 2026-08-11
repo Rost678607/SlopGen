@@ -9,8 +9,13 @@ walks every key on a limit, ``single`` uses one and then falls back. If every ke
 and Space fails, the scene falls back to a stock image so the run still completes.
 
 The clip length is authoritative: the scene's narration (already synthesized in
-the tts stage, stored scene-relative) is time-stretched with atempo to fit, and
-the word timings are rebuilt into absolute, stretched positions for subtitles.
+the tts stage, stored scene-relative) is time-stretched with atempo to fit. The word
+timings stay scene-relative — the subtitles stage lays them out, one episode at a time.
+
+Only the episodes whose hand-made clips have all arrived are shot; the rest are left
+for a later resume, and a scene already carrying a background is never re-shot. That
+is what lets episode 1 be cut and published while episode 2 is still being made by
+hand (see :mod:`..parts`).
 """
 
 from __future__ import annotations
@@ -34,9 +39,9 @@ from ...media.generate import (
     wan_video,
 )
 from ...media.stock import VIDEO_EXTS, FootageError, find_image
-from .. import manual
+from .. import manual, parts
 from ..context import AppContext
-from ..job import BgAsset, VideoJob, Word
+from ..job import BgAsset, VideoJob
 
 log = logging.getLogger(__name__)
 
@@ -111,8 +116,8 @@ _POSSESSIVE = "(?:'s|’s)\\s*"
 
 def _tags(look: str, limit: int | None = None) -> str:
     """The look as descriptor tags, optionally capped to the first `limit` of them."""
-    parts = [t.strip() for t in look.split(",") if t.strip()]
-    return ", ".join(parts[:limit] if limit else parts)
+    tags = [t.strip() for t in look.split(",") if t.strip()]
+    return ", ".join(tags[:limit] if limit else tags)
 
 
 def _short_tag(look: str) -> str:
@@ -209,8 +214,8 @@ def _shot_prompt(
     # the run's visual constraints ride along on every prompt, so a hand-edited or
     # AI-rewritten one cannot quietly drop them. Non-Latin words are stripped below,
     # so a constraint written in Russian only reaches the generator via the writer.
-    parts = ([text] if text.strip() else []) + absent + ([notes.strip()] if notes.strip() else []) + [SINGLE_FRAME]
-    return _drop_foreign(", ".join(p for p in parts if p.strip()))
+    bits = ([text] if text.strip() else []) + absent + ([notes.strip()] if notes.strip() else []) + [SINGLE_FRAME]
+    return _drop_foreign(", ".join(b for b in bits if b.strip()))
 
 
 def _key_candidates(scene, keys: list[str], cursors: dict[str, int]) -> list[str | None]:
@@ -339,35 +344,24 @@ def _sync(scene, source_len: float, is_photo: bool) -> None:
     scene.duration = natural / audio
 
 
-def _rebuild_words(job: VideoJob) -> None:
-    """Turn each scene's scene-relative word timings into absolute, stretched
-    positions on the final timeline (drama tts stores them scene-relative)."""
-    offset = 0.0
-    for scene in job.scenes:
-        factor = (scene.duration / scene.audio_src_duration) if scene.audio_src_duration else 1.0
-        scene.words = [
-            Word(text=w.text, start=offset + w.start * factor, end=offset + w.end * factor)
-            for w in scene.words
-        ]
-        offset += scene.duration
-
-
 def _entity_prompts(job: VideoJob) -> dict[str, str]:
     """name → look for every registered entity that actually carries a descriptor
     (the operator may have blanked one out at the `entities` breakpoint)."""
     return {e.name: e.visual_prompt for e in job.entities if e.name.strip() and e.visual_prompt.strip()}
 
 
-def _collect_manual(job: VideoJob, ctx: AppContext) -> dict[int, Path]:
-    """Register a manual shot per user-assisted scene and gather the operator's
-    clips. Returns {scene_index: clip} once all are delivered; otherwise raises
-    ManualInputPending so the orchestrator parks the job as `paused`."""
+def _collect_manual(job: VideoJob, ctx: AppContext) -> tuple[dict[int, Path], manual.ManualManifest]:
+    """Register a manual shot per user-assisted scene and gather the operator's clips.
+
+    Returns ``({scene_index: clip}, the manifest)``. Nothing is raised for a missing
+    clip: a drama is finished an episode at a time, so it is :func:`run` that decides
+    whether any episode can be got on with."""
     manual_idx = [
         i for i, scene in enumerate(job.scenes)
         if not scene.is_ad and is_manual_model(scene.gen_model or "wan2.1")
     ]
     if not manual_idx:
-        return {}
+        return {}, manual.ManualManifest()
     entity_prompts = _entity_prompts(job)
     specs = [
         manual.ShotSpec(
@@ -382,8 +376,9 @@ def _collect_manual(job: VideoJob, ctx: AppContext) -> dict[int, Path]:
         )
         for i in manual_idx
     ]
-    idmap = manual.collect_or_pause(job.workdir, specs, ctx.g.video.width, ctx.g.video.height)
-    return {i: idmap[f"shot_{i:02d}"] for i in manual_idx}
+    m = manual.collect(job.workdir, specs, ctx.g.video.width, ctx.g.video.height)
+    idmap = m.delivered_map()
+    return {i: idmap[f"shot_{i:02d}"] for i in manual_idx if f"shot_{i:02d}" in idmap}, m
 
 
 def run(job: VideoJob, ctx: AppContext) -> None:
@@ -396,9 +391,17 @@ def run(job: VideoJob, ctx: AppContext) -> None:
     for d in dirs.values():
         d.mkdir(parents=True, exist_ok=True)
 
-    # user-assisted scenes: gather their hand-made clips first. This raises
-    # ManualInputPending (→ a clean `paused` checkpoint) until every one is in.
-    delivered = _collect_manual(job, ctx)
+    # User-assisted scenes: gather their hand-made clips first. An episode whose clips
+    # are all in can be shot now even if the rest of the drama's are not — that is the
+    # whole point of cutting part by part — so the stage works the ready episodes and
+    # leaves the others for a later resume. Only when NOTHING is ready is there no work
+    # to do, and the job parks (a clean `paused` checkpoint, not a failure).
+    delivered, manifest = _collect_manual(job, ctx)
+    pending = manifest.pending_parts()
+    ready = {p.number for p in parts.sync(job)} - pending
+    if not ready:
+        raise manual.ManualInputPending(job.workdir, len(manifest.pending()), len(manifest.shots))
+    job.pending_parts = sorted(pending)
     entity_prompts = _entity_prompts(job)
 
     # A shot description that reads as a cut list makes generators render every shot
@@ -416,7 +419,11 @@ def run(job: VideoJob, ctx: AppContext) -> None:
 
     cursors: dict[str, int] = {}  # rotating key index, shared across scenes
     want_video = fell_back = 0
-    for i, scene in enumerate(job.scenes):
+    # a scene that already carries its background was shot on an earlier pass — the
+    # clip is on disk and re-generating it would spend quota to get the same thing
+    todo = [i for i, s in enumerate(job.scenes) if int(s.part or 1) in ready and not s.bg_assets]
+    for n, i in enumerate(todo, start=1):
+        scene = job.scenes[i]
         if scene.is_ad:
             clip, is_photo, source_len = _ad_clip(scene, ctx)
             scene.clip = clip
@@ -432,7 +439,7 @@ def run(job: VideoJob, ctx: AppContext) -> None:
         _sync(scene, source_len, is_photo)
         scene.bg_assets = [BgAsset(path=clip, duration=scene.duration, is_photo=is_photo,
                                    speed=scene.video_tempo)]
-        ctx.progress("footage", i + 1, len(job.scenes))
+        ctx.progress("footage", n, len(todo))
 
     if want_video and fell_back:
         level = log.error if fell_back == want_video else log.warning
@@ -441,5 +448,3 @@ def run(job: VideoJob, ctx: AppContext) -> None:
             "quota exhausted). The result will be a slideshow for those scenes.",
             fell_back, want_video,
         )
-
-    _rebuild_words(job)

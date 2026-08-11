@@ -4,6 +4,15 @@ Three styles:
   word_pop — one big word at a time, popping in sync with the voice (default)
   phrases  — classic 3-5 word blocks at the bottom
   karaoke  — full phrase visible, words highlighted as spoken (\\k tags)
+
+One file per part, because a part is one publishable video and its subtitles must
+start at 0:00. This is also the stage that lays the drama's timeline out: the tts
+stage voices each line at its natural speed and times the words relative to that
+line, since the clip the line has to fit is not known yet, so the stretch onto the
+clip (``duration`` against ``audio_src_duration``) is applied here. Doing it here
+rather than in the footage stage is what makes it repeatable — a drama is subtitled
+one episode at a time, over several resumes, and rewriting positions in place would
+compound the stretch on the second pass.
 """
 
 from __future__ import annotations
@@ -12,8 +21,8 @@ import re
 
 from ...llm import censor
 from ..context import AppContext
-from ..job import VideoJob, Word
-from ..parts import part_start_offsets, requested_parts, scenes_by_part
+from ..job import Part, VideoJob, Word
+from ..parts import ready, scenes_by_part, sync
 
 HEADER = """[Script Info]
 ScriptType: v4.00+
@@ -118,11 +127,20 @@ def _ass_text(words: list[Word], ctx: AppContext, style: str) -> str:
     return header + "\n".join(events) + "\n"
 
 
-def _shift_words(words: list[Word], offset: float) -> list[Word]:
-    return [
-        Word(text=w.text, start=w.start - offset, end=w.end - offset)
-        for w in words
-    ]
+def _lay_out(scenes: list, per_scene: list[list[Word]]) -> list[Word]:
+    """Put one part's scene-relative word timings onto its own timeline.
+
+    Each scene contributes its words stretched by however much the voice was retimed
+    to meet its clip, placed after everything before it IN THIS PART. The part starts
+    at 0:00 because it is a video of its own."""
+    out: list[Word] = []
+    at = 0.0
+    for scene, words in zip(scenes, per_scene):
+        factor = (scene.duration / scene.audio_src_duration) if scene.audio_src_duration else 1.0
+        out += [Word(text=w.text, start=at + w.start * factor, end=at + w.end * factor)
+                for w in words]
+        at += scene.duration
+    return out
 
 
 def _retime(words: list[Word], text: str) -> list[Word]:
@@ -150,42 +168,50 @@ def _retime(words: list[Word], text: str) -> list[Word]:
     return out
 
 
-def _cleaned_words(job: VideoJob, ctx: AppContext) -> list[list[Word]]:
+def _cleaned_words(job: VideoJob, ctx: AppContext, wanted: set[int]) -> list[list[Word]]:
     """Per-scene subtitle words, with the profane lines rewritten when the run asks
     for it. The job itself is left alone: the voice keeps every word it was given, and
-    only what gets burned onto the picture is sanitised."""
+    only what gets burned onto the picture is sanitised.
+
+    Only the scenes of `wanted` are sent to the rewriter. The stage is re-entered once
+    per batch of finished episodes, and cleaning the whole drama every time would pay
+    for the same lines again on each pass."""
     per_scene = [list(scene.words) for scene in job.scenes]
     if not ctx.params.clean_subtitles:
         return per_scene
-    lines = [" ".join(w.text for w in words) for words in per_scene]
-    clean = censor.clean_lines(ctx.llm, lines, ctx.params.lang)
-    return [
-        _retime(words, new) if new != old else words
-        for words, old, new in zip(per_scene, lines, clean)
-    ]
+    idx = sorted(wanted)
+    lines = [" ".join(w.text for w in per_scene[i]) for i in idx]
+    for i, old, new in zip(idx, lines, censor.clean_lines(ctx.llm, lines, ctx.params.lang)):
+        if new != old:
+            per_scene[i] = _retime(per_scene[i], new)
+    return per_scene
+
+
+def _ass_path(job: VideoJob, part: Part, multi: bool):
+    return job.workdir / (f"subs_part_{part.number:02d}.ass" if multi else "subs.ass")
 
 
 def run(job: VideoJob, ctx: AppContext) -> None:
-    sc = ctx.g.subtitles
-    style = ctx.params.subtitle_style or sc.style
-    per_scene = _cleaned_words(job, ctx)
+    style = ctx.params.subtitle_style or ctx.g.subtitles.style
+    sync(job)
+    # an episode already subtitled keeps its file: re-entering the stage is how the
+    # LATER episodes get theirs, not a reason to rewrite what is already cut
+    todo = [p for p in ready(job) if p.ass is None]
     at = {id(scene): i for i, scene in enumerate(job.scenes)}
-    words = [w for words in per_scene for w in words]
+    groups = [(part, scenes_by_part(job.scenes, part.number)) for part in todo]
+    per_scene = _cleaned_words(
+        job, ctx, {at[id(s)] for _, scenes in groups for s in scenes})
 
-    path = job.workdir / "subs.ass"
-    path.write_text(_ass_text(words, ctx, style), encoding="utf-8")
-    job.ass_path = path
-
-    parts = requested_parts(ctx.params)
-    job.part_ass_paths = []
-    if not ctx.is_drama or parts <= 1:
-        return
-
-    starts = part_start_offsets(job.scenes, parts)
-    for i, scenes in enumerate(scenes_by_part(job.scenes, parts), start=1):
+    multi = len(job.parts) > 1
+    for part, scenes in groups:
         if not scenes:
             continue
-        part_words = [w for scene in scenes for w in per_scene[at[id(scene)]]]
-        part_path = job.workdir / f"subs_part_{i:02d}.ass"
-        part_path.write_text(_ass_text(_shift_words(part_words, starts[i - 1]), ctx, style), encoding="utf-8")
-        job.part_ass_paths.append(part_path)
+        per = [per_scene[at[id(s)]] for s in scenes]
+        # info already has its timeline: a scene there simply lasts as long as its
+        # voice, so tts could place the words outright — and the foreground anchoring
+        # reads those absolute positions. Drama could not: a line's length only
+        # settles once it has been stretched onto the clip it has to fit.
+        words = _lay_out(scenes, per) if ctx.is_drama else [w for ws in per for w in ws]
+        path = _ass_path(job, part, multi)
+        path.write_text(_ass_text(words, ctx, style), encoding="utf-8")
+        part.ass = path

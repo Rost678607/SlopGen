@@ -16,9 +16,13 @@ and info footage stages:
   ``shot_NN.<ext>``) or attached by path in the TUI — either way they land in the
   manifest as ``delivered``.
 
-The footage stage calls :func:`collect_or_pause`. While any shot is undelivered it
-raises :class:`ManualInputPending`, which the orchestrator turns into a clean
-``paused`` checkpoint (not a failure) so the run resumes once the clips arrive.
+Both footage stages call :func:`collect`; what they do about the shots still missing
+differs. An info clip is one indivisible video, so :func:`collect_or_pause` waits for
+every last shot and raises :class:`ManualInputPending` until then — which the
+orchestrator turns into a clean ``paused`` checkpoint (not a failure) so the run
+resumes once the clips arrive. A drama is published an episode at a time, so it asks
+which *parts* are short (:meth:`ManualManifest.pending_parts`) and gets on with the
+ones that are not; see :mod:`.parts`.
 """
 
 from __future__ import annotations
@@ -115,6 +119,19 @@ class ManualManifest(BaseModel):
 
     def delivered_map(self) -> dict[str, Path]:
         return {s.id: s.clip for s in self.shots if s.status == "delivered" and s.clip}
+
+    def pending_parts(self) -> set[int]:
+        """Episodes still short of a clip. An episode nobody has to hand-make a shot
+        for never appears here, so it counts as ready the moment it is asked about."""
+        return {int(s.part or 1) for s in self.pending()}
+
+    def parts_ready(self) -> list[int]:
+        """Episodes this manifest has every clip for — the ones worth resuming on."""
+        pending = self.pending_parts()
+        return sorted({int(s.part or 1) for s in self.shots} - pending)
+
+    def shots_left(self, part: int) -> int:
+        return sum(1 for s in self.pending() if int(s.part or 1) == part)
 
 
 class ManualInputPending(Exception):
@@ -218,15 +235,32 @@ def attach(shot: ManualShot, clip: Path) -> None:
     shot.status = "delivered"
 
 
-def collect_or_pause(
+def collect(
     workdir: Path, specs: list[ShotSpec], width: int, height: int
-) -> dict[str, Path]:
-    """The DRY entry both footage stages call. Build/refresh the manifest, pick up
-    any inbox drops, and either return {shot_id: clip} once every shot is
-    delivered, or raise ManualInputPending so the run parks in a `paused` state."""
+) -> ManualManifest:
+    """The DRY entry both footage stages call: build/refresh the manifest from the
+    stage's specs and pick up whatever has been dropped into the inbox since.
+
+    What to do about the shots still missing is the caller's to decide, because the
+    two modes want different answers — an info clip is one indivisible video and has
+    to wait for all of them, while a drama can get on with the episodes that are
+    ready (see :func:`pause_unless_delivered` and :mod:`.parts`)."""
     manifest = build_or_update(workdir, specs, width, height)
     if scan_inbox(manifest, workdir):
         manifest.save(workdir)
+    return manifest
+
+
+def pause_unless_delivered(workdir: Path, manifest: ManualManifest) -> dict[str, Path]:
+    """All-or-nothing: {shot_id: clip} once every shot is in, else ManualInputPending
+    so the orchestrator parks the run in a clean `paused` state."""
     if not manifest.all_delivered():
         raise ManualInputPending(workdir, len(manifest.pending()), len(manifest.shots))
     return manifest.delivered_map()
+
+
+def collect_or_pause(
+    workdir: Path, specs: list[ShotSpec], width: int, height: int
+) -> dict[str, Path]:
+    """Collect, and refuse to go on until every shot has a clip."""
+    return pause_unless_delivered(workdir, collect(workdir, specs, width, height))

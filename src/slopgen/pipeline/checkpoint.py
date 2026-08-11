@@ -115,7 +115,11 @@ class Checkpoint:
 
     def paused(self, job: VideoJob, done: list[str], stage: str, message: str) -> None:
         """Park a job that needs operator input (manual clips). Not a failure: the
-        stage is left unfinished so a plain --resume re-runs it once clips arrive."""
+        stage is left unfinished so a plain --resume re-runs it once clips arrive.
+
+        A drama parks here between episodes too — with the parts it has already cut
+        and published saved on the job — because the rest of it is waiting on exactly
+        the same thing (see parts.py)."""
         self._put(job, done, "paused", failed_stage=None, error=None, manual_msg=message)
 
     def awaiting_review(self, job: VideoJob, done: list[str], stage: str) -> None:

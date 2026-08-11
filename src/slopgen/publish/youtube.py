@@ -10,7 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..pipeline.context import AppContext
-from ..pipeline.job import VideoJob
+from ..pipeline.job import Part, VideoJob
 
 SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
 
@@ -39,36 +39,31 @@ def _credentials(client_secret: Path, token_path: Path):
 
 
 class YouTubePublisher:
-    def publish(self, job: VideoJob, ctx: AppContext) -> str:
+    def publish(self, job: VideoJob, part: Part, ctx: AppContext) -> str:
         from googleapiclient.discovery import build
         from googleapiclient.http import MediaFileUpload
 
+        if not part.file:
+            raise ValueError(f"part {part.number} has no cut video to upload")
         yt_cfg = ctx.account.youtube
         creds = _credentials(yt_cfg.client_secret, yt_cfg.token)
         service = build("youtube", "v3", credentials=creds)
 
-        paths = job.final_paths or ([job.final_path] if job.final_path else [])
-        urls = []
-        total = len(paths)
-        for i, path in enumerate(paths, start=1):
-            title = job.metadata["title"]
-            description = job.metadata["description"]
-            if total > 1:
-                title = f"{title} · Part {i}/{total}"
-                description = f"Part {i}/{total}\n\n{description}"
-            body = {
-                "snippet": {
-                    "title": title[:100],
-                    "description": description,
-                    "tags": job.metadata["tags"],
-                    "categoryId": yt_cfg.category_id,
-                },
-                "status": {"privacyStatus": yt_cfg.privacy, "selfDeclaredMadeForKids": False},
-            }
-            media = MediaFileUpload(str(path), mimetype="video/mp4", resumable=True)
-            request = service.videos().insert(part="snippet,status", body=body, media_body=media)
-            response = None
-            while response is None:
-                _, response = request.next_chunk()
-            urls.append(f"https://youtube.com/shorts/{response['id']}")
-        return "\n".join(urls)
+        # the episode number is already in the title: the metadata stage writes one
+        # set per part and is told which episode it is describing
+        meta = part.metadata
+        body = {
+            "snippet": {
+                "title": meta["title"][:100],
+                "description": meta["description"],
+                "tags": meta["tags"],
+                "categoryId": yt_cfg.category_id,
+            },
+            "status": {"privacyStatus": yt_cfg.privacy, "selfDeclaredMadeForKids": False},
+        }
+        media = MediaFileUpload(str(part.file), mimetype="video/mp4", resumable=True)
+        request = service.videos().insert(part="snippet,status", body=body, media_body=media)
+        response = None
+        while response is None:
+            _, response = request.next_chunk()
+        return f"https://youtube.com/shorts/{response['id']}"

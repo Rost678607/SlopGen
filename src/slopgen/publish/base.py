@@ -5,12 +5,17 @@ from __future__ import annotations
 from typing import Protocol
 
 from ..pipeline.context import AppContext
-from ..pipeline.job import VideoJob
+from ..pipeline.job import Part, VideoJob
 
 
 class Publisher(Protocol):
-    def publish(self, job: VideoJob, ctx: AppContext) -> str:
-        """Upload/save the finished video(s); return URL(s) or local path(s)."""
+    def publish(self, job: VideoJob, part: Part, ctx: AppContext) -> str:
+        """Upload/save ONE finished part; return its URL or local path.
+
+        A part at a time, not a whole job: a drama's episodes are cut days apart as
+        the operator hand-makes their clips, and each goes out the moment it is
+        ready. `job` comes along for the context an uploader may want (the topic,
+        the cast); what to upload is `part`."""
         ...
 
 

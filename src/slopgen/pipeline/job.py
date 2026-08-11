@@ -65,6 +65,28 @@ class Entity(BaseModel):
     visual_prompt: str = ""  # English tag descriptor injected into every shot naming it
 
 
+class Part(BaseModel):
+    """One publishable episode of a drama, and the unit the pipeline finishes work in.
+
+    WHICH scenes belong to an episode is written on the scenes themselves
+    (``Scene.part``), because that is what the writer authors and what the operator
+    moves around at a breakpoint. What lives here is everything the pipeline
+    *derives* per episode — its subtitle file, its cut video, its metadata, where it
+    was published — and it lives here rather than on the job because each of these
+    appears at a different moment: a drama shot with hand-made clips is finished one
+    episode at a time, so part 1 can be cut and published while part 2 is still
+    waiting for its clips.
+
+    An info clip is simply a drama with one part, so the whole pipeline has one shape.
+    """
+
+    number: int
+    ass: Path | None = None  # burned-in subtitles for this episode alone
+    file: Path | None = None  # the cut video
+    metadata: dict = Field(default_factory=dict)  # title/description/tags of this episode
+    published: str = ""  # URL or local path once it has gone out
+
+
 class Scene(BaseModel):
     text: str  # narration / voiceover (spoken); in drama it may quote characters
     keywords: list[str] = []
@@ -97,13 +119,27 @@ class VideoJob(BaseModel):
     scenes: list[Scene] = []
     cast_prompts: dict[str, str] = Field(default_factory=dict)  # drama: name → visual_prompt
     entities: list[Entity] = Field(default_factory=list)  # drama: recurring non-cast visuals
-    ass_path: Path | None = None
-    part_ass_paths: list[Path] = Field(default_factory=list)
-    final_path: Path | None = None
-    final_paths: list[Path] = Field(default_factory=list)
-    metadata: dict = Field(default_factory=dict)
-    published: str = ""  # URL or local path after publish
+    parts: list[Part] = Field(default_factory=list)  # the episodes, in order (see pipeline/parts.py)
+    # episodes still short of a hand-made clip, so the tail stages must skip them and
+    # run again on the next resume. Recomputed by the footage stage on every pass.
+    pending_parts: list[int] = Field(default_factory=list)
 
     @property
     def total_duration(self) -> float:
         return sum(s.duration for s in self.scenes)
+
+    # -- what the run produced, read across the parts -----------------------
+
+    @property
+    def final_paths(self) -> list[Path]:
+        return [p.file for p in self.parts if p.file]
+
+    @property
+    def final_path(self) -> Path | None:
+        files = self.final_paths
+        return files[0] if files else None
+
+    @property
+    def published(self) -> str:
+        """Where the finished episodes went, one per line — empty until one has."""
+        return "\n".join(p.published for p in self.parts if p.published)

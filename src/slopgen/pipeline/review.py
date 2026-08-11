@@ -32,8 +32,12 @@ from .job import Entity, Scene, VideoJob
 # Stages that can carry a breakpoint, in pipeline order. Drama has no idea stage —
 # its premise is the input, not something the pipeline invents.
 _INFO_STAGES = ["idea", "script", "tts", "footage", "subtitles", "assemble", "metadata"]
-# drama drops idea and gains `entities` (the visual registry) right after the script
-_DRAMA_STAGES = ["script", "entities"] + [s for s in _INFO_STAGES if s not in ("idea", "script")]
+# drama drops idea and gains two of its own: `entities` (the visual registry) right
+# after the script, and `cut` (the episode boundaries) right before anything is generated
+_DRAMA_STAGES = (
+    ["script", "entities", "tts", "cut"]
+    + [s for s in _INFO_STAGES if s not in ("idea", "script", "tts")]
+)
 
 
 def available(mode: str) -> list[str]:
@@ -79,6 +83,10 @@ class Doc:
     stage: str
     rows: list[Row] = dc_field(default_factory=list)
     variable: bool = False  # operator may add/remove/reorder items
+    # operator may add/remove/move the PART separators, i.e. re-cut the drama into a
+    # different number of episodes. Separate from `variable`: the cut breakpoint lets
+    # the boundaries move while the scenes themselves stay put.
+    cuttable: bool = False
     subject: str = "lines"  # what the AI rewrite line is editing (goes into the prompt)
     note_key: str = ""  # i18n key of the hint shown under the list
     note_extra: str = ""  # run-specific hint appended to it (e.g. the cast roster)
@@ -106,7 +114,66 @@ class Group:
 # item actually IS — a scene is its spoken "text", a registry entry is its "name" —
 # because the TUI labels each row from its field, and a registry entry headed "text"
 # would be captioned "voiceover".
-HEAD_FIELDS = frozenset({"text", "name"})
+HEAD_FIELDS = frozenset({"text", "name", "part"})
+
+# The field of a part separator: the marker that one episode ends here and the next
+# begins. It is a head field, so a separator is an item of its own — which is what
+# makes the existing move/add/drop machinery re-cut the drama for free.
+PART_FIELD = "part"
+
+
+def part_row(number: int) -> Row:
+    """A separator opening episode `number`.
+
+    Its value is never edited: which episode a scene belongs to is decided by WHERE
+    the separator sits, not by a number typed into it, and renumbering after a move
+    is the pipeline's job (see :func:`..parts.renumber`). What the operator does to
+    it is move it, add one, or drop one — and dropping one merges two episodes.
+    """
+    return Row(label="bp.f.part", value=str(number), field=PART_FIELD, readonly=True)
+
+
+def with_part_rows(rows: list[Row], scenes: list[Scene], *, always: bool) -> list[Row]:
+    """Interleave separators into a per-scene document, one opening each episode.
+
+    `rows` must be in scene order; a scene's rows are found by their ``src``. With
+    ``always`` false the separators only appear once the drama really is split —
+    there is nothing to show a reader about a boundary that does not exist. The
+    editable documents pass true, because being able to CREATE the first boundary is
+    the point of them.
+    """
+    labels = [int(s.part or 1) for s in scenes]
+    if not labels or (not always and len(set(labels)) < 2):
+        return rows
+    out: list[Row] = []
+    seen: set[int] = set()
+    for row in rows:
+        label = labels[row.src] if row.src is not None and row.src < len(labels) else None
+        if label is not None and label not in seen:
+            seen.add(label)
+            out.append(part_row(len(seen)))
+        out.append(row)
+    return out
+
+
+def parts_from_rows(rows: list[Row]) -> list[int]:
+    """Read the episode each item belongs to back off the separators' positions.
+
+    Returns one number per non-separator item, in order. Items before the first
+    separator belong to episode 1: a document may legitimately open with a scene
+    (nothing has been cut yet), and an episode with no scenes is not an episode.
+    """
+    out: list[int] = []
+    current = 1
+    started = False
+    for group in group_rows(rows):
+        if group.head.field == PART_FIELD:
+            current = current + 1 if started else 1
+            started = True
+            continue
+        started = True
+        out.append(current)
+    return out
 
 
 def group_rows(rows: list[Row]) -> list[Group]:
@@ -194,10 +261,13 @@ def _script_doc(job: VideoJob, mode: str) -> Doc:
             ))
         else:
             rows.append(Row(label=label, value=", ".join(s.keywords), src=i, field="keywords"))
+    if mode == "drama":
+        rows = with_part_rows(rows, job.scenes, always=True)
     return Doc(
         stage="script",
         rows=rows,
         variable=True,
+        cuttable=mode == "drama",
         subject="a drama script: spoken narration lines and the English shot prompt of each scene"
         if mode == "drama" else "a voiceover script: spoken lines and each scene's stock-search keywords",
         note_key="bp.note.script",
@@ -242,7 +312,7 @@ def _tts_doc(job: VideoJob, mode: str) -> Doc:
 
     return Doc(
         stage="tts",
-        rows=_scene_rows(job, info),
+        rows=with_part_rows(_scene_rows(job, info), job.scenes, always=False),
         variable=True,
         subject="spoken narration lines",
         note_key="bp.note.tts",
@@ -264,53 +334,106 @@ def _footage_doc(job: VideoJob, mode: str) -> Doc:
 
     return Doc(
         stage="footage",
-        rows=[
-            Row(label=_scene_label(i, s), value=_footage_query(s, mode), src=i,
-                field="prompt" if mode == "drama" else "keywords", info=info(s))
-            for i, s in enumerate(job.scenes)
-        ],
+        rows=with_part_rows(
+            [
+                Row(label=_scene_label(i, s), value=_footage_query(s, mode), src=i,
+                    field="prompt" if mode == "drama" else "keywords", info=info(s))
+                for i, s in enumerate(job.scenes)
+            ],
+            job.scenes, always=False,
+        ),
         subject="visual prompts / search queries, one per scene",
         note_key="bp.note.footage",
     )
 
 
-def _ass_paths(job: VideoJob) -> list[Path]:
-    return [Path(p) for p in (job.part_ass_paths or ([job.ass_path] if job.ass_path else []))]
+def _cut_doc(job: VideoJob, mode: str) -> Doc:
+    """Where one episode ends and the next begins, over the finished voiceover.
+
+    The scenes are here to be read, not rewritten — by this point they have been
+    voiced, and this breakpoint exists for one decision only: the boundaries. Each
+    line carries what it actually runs to, so the cut can be made on real minutes
+    instead of the writer's estimate.
+    """
+    def info(s: Scene) -> str:
+        secs = s.audio_src_duration or s.duration
+        return f"{secs:.1f}s" if secs else "—"
+
+    rows = [
+        Row(label=_scene_label(i, s), value=s.text, src=i, info=info(s), readonly=True)
+        for i, s in enumerate(job.scenes)
+    ]
+    return Doc(
+        stage="cut",
+        rows=with_part_rows(rows, job.scenes, always=True),
+        cuttable=True,
+        subject="",  # no AI edit line: this is a structural decision, not a rewrite
+        note_key="bp.note.cut",
+    )
+
+
+def _part_label(job: VideoJob, part) -> str:
+    """"#2" when the video really is a serial, else nothing to say."""
+    return f"#{part.number}" if len(job.parts) > 1 else ""
 
 
 def _subtitles_doc(job: VideoJob, mode: str) -> Doc:
     rows: list[Row] = []
-    for i, p in enumerate(_ass_paths(job)):
+    for i, part in enumerate(job.parts):
+        if part.ass is None:
+            continue
         try:
-            text = p.read_text(encoding="utf-8")
+            text = Path(part.ass).read_text(encoding="utf-8")
         except OSError:
             continue
-        rows.append(Row(label=p.name, value=text, src=i, info=f"{len(text.splitlines())} lines", path=p))
+        rows.append(Row(
+            label=_part_label(job, part) or Path(part.ass).name, value=text, src=i,
+            info=f"{Path(part.ass).name} · {len(text.splitlines())} lines", path=Path(part.ass),
+        ))
     # no AI edit line here on purpose: an .ass file is timing-critical and a model
     # rewriting it wholesale would silently mangle the cue times.
     return Doc(stage="subtitles", rows=rows, subject="", note_key="bp.note.subtitles")
 
 
 def _assemble_doc(job: VideoJob, mode: str) -> Doc:
-    files = job.final_paths or ([job.final_path] if job.final_path else [])
-    rows = [
-        Row(label=f"#{i + 1}", value=str(p), src=i, readonly=True,
-            info=f"{Path(p).stat().st_size / 1e6:.1f} MB" if Path(p).exists() else "missing")
-        for i, p in enumerate(files)
-    ]
+    """One row per episode — cut, or still waiting for its hand-made clips."""
+    rows: list[Row] = []
+    pending = set(job.pending_parts)
+    for i, part in enumerate(job.parts):
+        if part.file and Path(part.file).exists():
+            info = f"{Path(part.file).stat().st_size / 1e6:.1f} MB"
+        elif part.number in pending:
+            info = "awaiting clips"
+        else:
+            info = "missing"
+        rows.append(Row(label=_part_label(job, part) or "#1", value=str(part.file or ""),
+                        src=i, readonly=True, info=info))
     return Doc(stage="assemble", rows=rows, note_key="bp.note.assemble")
 
 
 _META_FIELDS = ("title", "description", "tags")
 
 
+def _meta_slots(job: VideoJob) -> list[tuple[int, str]]:
+    """(part index, field) in document order — a row's ``src`` is a position in here.
+
+    Metadata is written per episode, so the flat row list the breakpoint edits has to
+    say which episode each field belongs to; the position does that, and both reading
+    and writing walk the same list."""
+    return [(i, key) for i in range(len(job.parts)) for key in _META_FIELDS]
+
+
 def _metadata_doc(job: VideoJob, mode: str) -> Doc:
-    meta = job.metadata or {}
-    rows = []
-    for i, key in enumerate(_META_FIELDS):
-        raw = meta.get(key, "")
+    rows: list[Row] = []
+    multi = len(job.parts) > 1
+    shown: set[int] = set()
+    for src, (pi, key) in enumerate(_meta_slots(job)):
+        if multi and pi not in shown:
+            shown.add(pi)
+            rows.append(part_row(job.parts[pi].number))
+        raw = (job.parts[pi].metadata or {}).get(key, "")
         value = ", ".join(str(x) for x in raw) if isinstance(raw, list) else str(raw)
-        rows.append(Row(label=f"bp.f.{key}", value=value, src=i))
+        rows.append(Row(label=f"bp.f.{key}", value=value, src=src))
     return Doc(stage="metadata", rows=rows, subject="video title, description and tags",
                note_key="bp.note.metadata")
 
@@ -320,6 +443,7 @@ _READERS = {
     "script": _script_doc,
     "entities": _entities_doc,
     "tts": _tts_doc,
+    "cut": _cut_doc,
     "footage": _footage_doc,
     "subtitles": _subtitles_doc,
     "assemble": _assemble_doc,
@@ -370,6 +494,7 @@ def _apply_scene_texts(job: VideoJob, rows: list[Row], *, resync: bool) -> bool:
     (their absolute word timings would otherwise still describe the old order)."""
     old = job.scenes
     out: list[Scene] = []
+    rows = [r for r in rows if r.field != PART_FIELD]  # separators are read-only here
     changed = [r.src for r in rows] != list(range(len(old)))
     for row in rows:
         text = row.value.strip()
@@ -408,7 +533,8 @@ def _apply_script(job: VideoJob, rows: list[Row], mode: str) -> bool:
     line or the footage stage's fallback then fills."""
     old = job.scenes
     out: list[Scene] = []
-    for group in group_rows(rows):
+    labels = parts_from_rows(rows)  # where the separators now sit
+    for n, group in enumerate(g for g in group_rows(rows) if g.head.field != PART_FIELD):
         head = group.head
         extras = {r.field: r for r in group.extras}
         text = head.value.strip()
@@ -430,10 +556,26 @@ def _apply_script(job: VideoJob, rows: list[Row], mode: str) -> bool:
                 scene.clip_target_s = max(float(extras["clip_s"].value or 0), 0.0)
             except ValueError:
                 pass
+        scene.part = labels[n] if n < len(labels) else 1
         out.append(scene)
     if out:
         job.scenes = out
     return False  # re-running the writer would discard exactly these edits
+
+
+def _apply_cut(job: VideoJob, rows: list[Row], mode: str) -> bool:
+    """Move the episode boundaries. The scenes themselves are read-only here, so all
+    that is folded back is which episode each one now belongs to.
+
+    Returns True: the stage has to run again, and that is the cheap half of the point
+    — `cut` is what renumbers the labels and rebuilds the episode list from them."""
+    scenes = [g.head for g in group_rows(rows) if g.head.field != PART_FIELD]
+    labels = parts_from_rows(rows)
+    before = [int(s.part or 1) for s in job.scenes]
+    for row, label in zip(scenes, labels):
+        if row.src is not None and row.src < len(job.scenes):
+            job.scenes[row.src].part = label
+    return [int(s.part or 1) for s in job.scenes] != before
 
 
 def _apply_entities(job: VideoJob, rows: list[Row], mode: str) -> bool:
@@ -501,17 +643,18 @@ def _apply_assemble(job: VideoJob, rows: list[Row], mode: str) -> bool:
 
 
 def _apply_metadata(job: VideoJob, rows: list[Row], mode: str) -> bool:
-    meta = dict(job.metadata or {})
+    slots = _meta_slots(job)
     for row in rows:
-        if row.src is None or row.src >= len(_META_FIELDS):
+        if row.src is None or row.src >= len(slots):
             continue
-        key = _META_FIELDS[row.src]
+        pi, key = slots[row.src]
+        meta = dict(job.parts[pi].metadata or {})
         if key == "tags":
             meta[key] = [t.strip() for t in row.value.split(",") if t.strip()]
         else:
             meta[key] = row.value.strip()
-    job.metadata = meta
-    return False  # publish reads the job, not a re-run of the stage
+        job.parts[pi].metadata = meta
+    return False  # publish reads the part, not a re-run of the stage
 
 
 _WRITERS = {
@@ -519,6 +662,7 @@ _WRITERS = {
     "script": _apply_script,
     "entities": _apply_entities,
     "tts": _apply_tts,
+    "cut": _apply_cut,
     "footage": _apply_footage,
     "subtitles": _apply_subtitles,
     "assemble": _apply_assemble,

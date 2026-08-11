@@ -8,14 +8,12 @@ by hand, or implement `publish` here.
 from __future__ import annotations
 
 from ..pipeline.context import AppContext
-from ..pipeline.job import VideoJob
+from ..pipeline.job import Part, VideoJob
 
 
 class TikTokPublisher:
-    def publish(self, job: VideoJob, ctx: AppContext) -> str:
-        paths = job.final_paths or ([job.final_path] if job.final_path else [])
+    def publish(self, job: VideoJob, part: Part, ctx: AppContext) -> str:
         raise NotImplementedError(
             "TikTok upload is not implemented yet — video saved locally at:\n"
-            + "\n".join(str(p) for p in paths)
-            + "\nupload it manually"
+            f"{part.file}\nupload it manually"
         )

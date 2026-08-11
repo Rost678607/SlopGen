@@ -255,7 +255,7 @@ I18N: dict[str, dict[str, str]] = {
         "help.ad_mode": "overlay = corner banner; native = spoken mention; both.",
         "help.push": "A saved account to publish to, or just save the file locally.",
         "help.count": "How many videos to generate in this run.",
-        "help.parts": "How many publishable parts to split one AI drama into. Parts end on script-planned cliffhangers.",
+        "help.parts": "How many publishable parts to ask the writer to split one AI drama into. Parts end on script-planned cliffhangers, and the boundaries are yours to move at the script and cut breakpoints. Each part is cut, described and published on its own, as soon as its clips are in.",
         "help.subs": "Subtitle animation style: word-pop, phrases, or karaoke.",
         "help.drama_scenario": "The drama's premise/plot. Empty or thin is fine — it's improvised at generation.",
         "help.drama_prompt": "Optional steer for '✨ AI fill / add cast': fill or rewrite the plot, create local characters, or add saved global characters.",
@@ -462,7 +462,11 @@ I18N: dict[str, dict[str, str]] = {
         "gather.none": "No shots awaiting manual clips.",
         "gather.attach_prompt": "Path to the clip file:",
         "gather.bad_clip": "not a readable video file",
-        "gather.incomplete": "some shots still need clips",
+        "gather.incomplete": "no part has all of its clips yet — finish one and it can be cut",
+        "gather.col.part": "part",
+        "gather.part_ready": "part {n} ✔ ready to cut",
+        "gather.part_left": "part {n}: {k} left",
+        "gather.will_cut": "Continuing cuts and publishes the ready part(s); the rest waits for you here.",
         # breakpoints: picking them (Summary step) and the review screen
         "bp_head": "— Breakpoints —",
         "bp_hint": "Pause the run after these stages to check — and edit — what came out.",
@@ -470,6 +474,7 @@ I18N: dict[str, dict[str, str]] = {
         "bp.stage.script": "Script (raw text the LLM wrote)",
         "bp.stage.entities": "Visual registry (recurring things and how they look)",
         "bp.stage.tts": "Voiceover (line-by-line narration)",
+        "bp.stage.cut": "Episodes (where each part ends)",
         "bp.stage.footage": "Footage (shot prompts / search queries)",
         "bp.stage.subtitles": "Subtitles (the .ass files)",
         "bp.stage.assemble": "Assembly (the rendered file)",
@@ -525,6 +530,8 @@ I18N: dict[str, dict[str, str]] = {
         "unit.assemble": "scenes assembled",
         "unit.join": "scenes joined",
         "unit.finalize": "files rendered",
+        "unit.cut": "parts",
+        "unit.metadata": "parts described",
         "bp.up": "▲",
         "bp.down": "▼",
         "bp.f.topic": "topic",
@@ -539,6 +546,14 @@ I18N: dict[str, dict[str, str]] = {
         "bp.note.subtitles": "The generated ASS files, as text. Edits are written straight to disk.",
         "bp.note.assemble": "The rendered file(s) — play them, then continue or press Esc to abandon the run.",
         "bp.note.metadata": "What gets published with the video.",
+        "bp.note.cut": "Drag the part markers to decide where each episode ends — every part becomes a video of its own, published separately. Add a marker to split the drama further, drop one to merge two episodes. The scenes are already voiced, so the seconds on each are what it really runs to. This is the last free moment to re-cut: after it, clips are generated (or hand-made) against these boundaries.",
+        "bp.f.part": "Part",
+        "bp.field.part": "part break",
+        "bp.cut": "＋ Part break",
+        "bp.sep": "── part {n} starts here ──",
+        "bp.sep_hint": "Everything below this marker belongs to part {n}, until the next marker. Move it with ▲▼, drop it to merge this part into the one above.",
+        "bp.cut_min": "a video needs at least one part",
+        "bp.cut_locked": "only the part markers can be moved at this breakpoint",
     },
     "ru": {
         "subtitle": "промышленный конвейер нейрослопа",
@@ -614,7 +629,7 @@ I18N: dict[str, dict[str, str]] = {
         "help.ad_mode": "overlay = баннер в углу; native = устное упоминание; both — оба.",
         "help.push": "Аккаунт для публикации или просто локальное сохранение файла.",
         "help.count": "Сколько видео сгенерировать за этот прогон.",
-        "help.parts": "На сколько публикуемых частей разбить одну ИИ-дораму. Обрывы планируются в сценарии как клиффхэнгеры.",
+        "help.parts": "На сколько публикуемых частей просить сценариста разбить ИИ-дораму. Обрывы планируются как клиффхэнгеры, а границы потом двигаются на брейкпоинтах script и cut. Каждая часть монтируется, описывается и публикуется сама по себе — как только собраны её клипы.",
         "help.subs": "Стиль субтитров: word-pop, phrases или karaoke.",
         "help.drama_scenario": "Замысел/сюжет дорамы. Можно пусто или частично — додумается при генерации.",
         "help.drama_prompt": "Опциональная подсказка для «✨ ИИ заполнит / добавит каст»: как заполнить или переписать сюжет, создать локальных персонажей или добавить сохранённых глобальных.",
@@ -821,7 +836,11 @@ I18N: dict[str, dict[str, str]] = {
         "gather.none": "Нет кадров, ожидающих ручных клипов.",
         "gather.attach_prompt": "Путь к файлу клипа:",
         "gather.bad_clip": "не читается как видеофайл",
-        "gather.incomplete": "для части кадров ещё нужны клипы",
+        "gather.incomplete": "ни одна часть ещё не собрана целиком — добей любую, и её можно монтировать",
+        "gather.col.part": "часть",
+        "gather.part_ready": "часть {n} ✔ можно монтировать",
+        "gather.part_left": "часть {n}: осталось {k}",
+        "gather.will_cut": "Продолжение смонтирует и опубликует готовые части; остальные подождут тебя здесь.",
         # брейкпоинты: выбор (шаг «Итог») и экран разбора
         "bp_head": "— Брейкпоинты —",
         "bp_hint": "Остановить конвейер после этих этапов, чтобы проверить и поправить результат.",
@@ -829,6 +848,7 @@ I18N: dict[str, dict[str, str]] = {
         "bp.stage.script": "Сценарий (сырой текст от нейронки)",
         "bp.stage.entities": "Реестр визуала (что повторяется и как выглядит)",
         "bp.stage.tts": "Озвучка (построчно, по фрагментам)",
+        "bp.stage.cut": "Части (где кончается каждая серия)",
         "bp.stage.footage": "Видеоряд (промпты кадров / поисковые запросы)",
         "bp.stage.subtitles": "Субтитры (файлы .ass)",
         "bp.stage.assemble": "Сборка (готовый файл)",
@@ -884,6 +904,8 @@ I18N: dict[str, dict[str, str]] = {
         "unit.assemble": "сцен смонтировано",
         "unit.join": "сцен склеено",
         "unit.finalize": "файлов собрано",
+        "unit.cut": "частей",
+        "unit.metadata": "частей описано",
         "bp.up": "▲",
         "bp.down": "▼",
         "bp.f.topic": "тема",
@@ -898,6 +920,14 @@ I18N: dict[str, dict[str, str]] = {
         "bp.note.subtitles": "Сгенерированные ASS-файлы как текст. Правки пишутся прямо на диск.",
         "bp.note.assemble": "Готовые файлы — посмотри их и продолжай, либо Esc, чтобы бросить запуск.",
         "bp.note.metadata": "То, с чем видео уйдёт в публикацию.",
+        "bp.note.cut": "Двигай маркеры частей, решая, где кончается каждая серия — часть становится отдельным видео и публикуется сама по себе. Добавь маркер, чтобы разрезать дораму дальше, убери — чтобы склеить две серии. Сцены уже озвучены, так что секунды у каждой настоящие. Это последний бесплатный момент для перекройки: дальше клипы генерируются (или делаются руками) уже под эти границы.",
+        "bp.f.part": "Часть",
+        "bp.field.part": "разрыв части",
+        "bp.cut": "＋ Разрыв части",
+        "bp.sep": "── здесь начинается часть {n} ──",
+        "bp.sep_hint": "Всё ниже этого маркера относится к части {n} — до следующего маркера. Двигай его на ▲▼, убери — и часть склеится с предыдущей.",
+        "bp.cut_min": "в видео должна быть хотя бы одна часть",
+        "bp.cut_locked": "на этом брейкпоинте двигаются только маркеры частей",
     },
 }
 
@@ -2710,7 +2740,8 @@ class ProgressScreen(Screen):
         orch = Orchestrator(ctx, on_event=self._on_event_threadsafe)
         jobs = orch.run(resume_dir=self.resume_dir)
         self.run_dir = orch.run_dir
-        done = [j for j in jobs if j.published]
+        # a drama parked between episodes has published something and is still not done
+        done = [j for j in jobs if j.published and not j.pending_parts]
         self.app.call_from_thread(self._finish, done, len(jobs))
 
     def _on_event_threadsafe(self, i: int, stage: str, status: str, message: str) -> None:
@@ -2829,6 +2860,7 @@ class ManualGatherScreen(Screen):
         self.run_dir = Path(run_dir)
         self.manifests: dict[int, manual.ManualManifest] = {}
         self.rows: list[tuple[int, str]] = []  # (job_index, shot_id) parallel to the table
+        self.show_parts = False  # the part column earns its width only on a real serial
 
     # -- data --------------------------------------------------------------
 
@@ -2848,6 +2880,27 @@ class ManualGatherScreen(Screen):
         shots = [s for m in self.manifests.values() for s in m.shots]
         return sum(1 for s in shots if s.status == "delivered"), len(shots)
 
+    def _multi_part(self) -> bool:
+        return any(s.part != 1 for m in self.manifests.values() for s in m.shots)
+
+    def _ready_parts(self) -> list[tuple[int, int]]:
+        """(job index, part) for every episode whose clips are all in — what pressing
+        Continue would actually cut."""
+        return [(i, n) for i, m in self.manifests.items() for n in m.parts_ready()]
+
+    def _part_status(self) -> str:
+        """One line per episode: ready to cut, or how many clips it is still short."""
+        bits: list[str] = []
+        t = lambda k: _label(self.app, k)  # noqa: E731
+        for m in self.manifests.values():
+            pending = m.pending_parts()
+            for n in sorted({s.part for s in m.shots}):
+                bits.append(
+                    t("gather.part_left").format(n=n, k=m.shots_left(n)) if n in pending
+                    else t("gather.part_ready").format(n=n)
+                )
+        return "  ·  ".join(bits)
+
     # -- layout ------------------------------------------------------------
 
     def compose(self) -> ComposeResult:
@@ -2865,11 +2918,22 @@ class ManualGatherScreen(Screen):
     def on_mount(self) -> None:
         table = self.query_one("#shots", DataTable)
         table.cursor_type = "row"
-        table.add_columns(
-            _label(self.app, "gather.col.shot"), _label(self.app, "gather.col.status"),
-            _label(self.app, "gather.col.target"), _label(self.app, "gather.col.prompt"),
-        )
+        self._load()  # the part column only exists when the drama actually has parts
+        self.show_parts = self._multi_part()
+        cols = [_label(self.app, "gather.col.shot")]
+        if self.show_parts:
+            cols.append(_label(self.app, "gather.col.part"))
+        cols += [
+            _label(self.app, "gather.col.status"), _label(self.app, "gather.col.target"),
+            _label(self.app, "gather.col.prompt"),
+        ]
+        table.add_columns(*cols)
         self.action_rescan()  # loads, scans the inbox once, and paints
+
+    def on_screen_resume(self) -> None:
+        """Coming back from a run: clips may have been delivered while it went."""
+        if self.is_mounted:
+            self.action_rescan()
 
     # -- rendering ---------------------------------------------------------
 
@@ -2882,13 +2946,22 @@ class ManualGatherScreen(Screen):
             for s in m.shots:
                 self.rows.append((job_index, s.id))
                 prompt = (s.prompt[:48] + "…") if len(s.prompt) > 49 else s.prompt
-                table.add_row(s.id, _STATUS_BADGE.get(s.status, s.status), f"{s.target_s:.0f}s", prompt)
+                cells = [s.id] + ([str(s.part)] if self.show_parts else [])
+                cells += [_STATUS_BADGE.get(s.status, s.status), f"{s.target_s:.0f}s", prompt]
+                table.add_row(*cells)
         done, total = self._totals()
         t = lambda k: _label(self.app, k)  # noqa: E731
-        self.query_one("#gather-progress", Static).update(
+        line = (
             f"[bold]{done}/{total}[/bold] {t('gather.delivered')} · {t('gather.inbox')}: "
             f"{manual.inbox_dir(self._workdir(self.rows[0][0])) if self.rows else self.run_dir}"
         )
+        if self.show_parts:
+            # a drama is cut part by part, so what matters is not the grand total but
+            # whether any ONE episode is complete — that is what Continue would render
+            line += f"\n{self._part_status()}"
+            if self._ready_parts():
+                line += f"\n[dim]{t('gather.will_cut')}[/dim]"
+        self.query_one("#gather-progress", Static).update(line)
         if self.rows:
             table.move_cursor(row=min(prev, len(self.rows) - 1))
             self._show_detail()
@@ -2907,8 +2980,9 @@ class ManualGatherScreen(Screen):
             return
         t = lambda k: _label(self.app, k)  # noqa: E731
         clip = f"\n\n[dim]{t('gather.clip')}: {shot.clip}[/dim]" if shot.clip else ""
+        part = f"  ·  {t('gather.col.part')} {shot.part}" if self.show_parts else ""
         self.query_one("#shot-detail", Static).update(
-            f"[b]{shot.id}[/b]  ·  {_STATUS_BADGE.get(shot.status, shot.status)}  ·  "
+            f"[b]{shot.id}[/b]{part}  ·  {_STATUS_BADGE.get(shot.status, shot.status)}  ·  "
             f"~{shot.target_s:.0f}s  ·  {shot.width}×{shot.height}\n\n{shot.prompt}{clip}\n\n"
             f"[dim]{t('gather.drop_hint')} {shot.id}.mp4[/dim]"
         )
@@ -2961,8 +3035,10 @@ class ManualGatherScreen(Screen):
 
     @on(Button.Pressed, "#g-finish")
     def action_finish(self) -> None:
+        """Resume the run. It does not need every clip — only one complete episode,
+        which it cuts and publishes while the rest stays parked here."""
         done, total = self._totals()
-        if total == 0 or done < total:
+        if total == 0 or (done < total and not self._ready_parts()):
             self.notify(_label(self.app, "gather.incomplete"), severity="warning", timeout=6)
             return
         try:
@@ -3003,6 +3079,7 @@ class BreakpointScreen(Screen):
         # an in-place edit or re-voicing already applied to the job; Continue must
         # still mark the stage for a re-run, which the final apply can no longer tell
         self._forced_rerun = False
+        self._ai_anchors: list[int | None] = []  # part markers held across an AI restructure
 
     # -- data --------------------------------------------------------------
 
@@ -3021,7 +3098,12 @@ class BreakpointScreen(Screen):
         stage = self.cp.review_stage(i)
         self.doc = review.read(stage, self.job, self.mode) if self.job else review.Doc(stage=stage)
 
+    def _is_sep(self, group: review.Group) -> bool:
+        return group.head.field == review.PART_FIELD
+
     def _item_label(self, head: review.Row) -> str:
+        if head.field == review.PART_FIELD:  # a part marker, not an item of its own
+            return f"{_label(self.app, 'bp.f.part')} {head.value}"
         if head.label.startswith("bp."):  # a named field (title, topic, …)
             return _label(self.app, head.label)
         # "#3" / "#3 · AD" — a scene; say so, the number alone reads as nothing
@@ -3062,6 +3144,7 @@ class BreakpointScreen(Screen):
             with Vertical(id="bp-list-pane"):
                 with Horizontal(classes="entity-actions"):
                     yield Button(t("bp.add"), id="bp-add", variant="success")
+                    yield Button(t("bp.cut"), id="bp-cut", variant="success")
                     yield Button(t("bp.up"), id="bp-up")
                     yield Button(t("bp.down"), id="bp-down")
                     yield Button(t("bp.remove"), id="bp-del", variant="error")
@@ -3105,7 +3188,10 @@ class BreakpointScreen(Screen):
         groups = self._groups()
         items = []
         for gi, group in enumerate(groups):
-            head = " ".join(group.head.value.split())
+            if self._is_sep(group):
+                head = _label(self.app, "bp.sep").format(n=group.head.value)
+            else:
+                head = " ".join(group.head.value.split())
             items.append(ListItem(
                 Vertical(
                     Static(f"[b]{self._item_label(group.head)}[/b]  [dim]{group.head.info}[/dim]",
@@ -3169,8 +3255,16 @@ class BreakpointScreen(Screen):
         if self._sel is None or self._sel >= len(groups):
             return
         group = groups[self._sel]
-        start = self._first_index(self._sel)
         widgets: list = [Static(f"[b]{self._item_label(group.head)}[/b]", classes="group-head")]
+        if self._is_sep(group):
+            # a marker has nothing to type into: where it SITS is its whole content
+            widgets.append(Static(
+                _label(self.app, "bp.sep_hint").format(n=group.head.value),
+                classes="bp-field-label",
+            ))
+            await pane.mount(*widgets)
+            return
+        start = self._first_index(self._sel)
         for n, row in enumerate(group.rows):
             widgets.extend(self._field_widgets(start + n, row))
         widgets.extend(self._card_actions())
@@ -3198,7 +3292,12 @@ class BreakpointScreen(Screen):
         self._sync()
         if review.apply(self.doc.stage, self.job, self.doc.rows, self.mode):
             self._forced_rerun = True  # the edit outdated the stage; remember for Continue
-        return self._sel if self._sel < len(self.job.scenes) else None
+        groups = self._groups()
+        if self._sel >= len(groups) or self._is_sep(groups[self._sel]):
+            return None
+        # cards and scenes only line up one to one once the part markers are discounted
+        index = sum(1 for g in groups[:self._sel] if not self._is_sep(g))
+        return index if index < len(self.job.scenes) else None
 
     @on(Button.Pressed, "#bp-regen")
     def _regen(self) -> None:
@@ -3267,7 +3366,7 @@ class BreakpointScreen(Screen):
         note = t(self.doc.note_key) if self.doc.note_key else ""
         if self.doc.note_extra:
             note += f"\n{t('bp.cast_known')}: {self.doc.note_extra}"
-        if not self.doc.editable:
+        if not self.doc.editable and not self.doc.cuttable:
             note = f"{note}\n{t('bp.readonly')}" if note else t("bp.readonly")
         self.query_one("#bp-note", Static).update(note)
         ai_box = self.query_one("#bp-ai-box", Horizontal)
@@ -3275,8 +3374,12 @@ class BreakpointScreen(Screen):
         self.query_one("#bp-ai-prompt", FieldTextArea).placeholder = t(
             "bp.ai_ph_script" if self.doc.stage == "script" else "bp.ai_ph"
         )
-        for wid in ("#bp-add", "#bp-up", "#bp-down", "#bp-del"):
+        # a cuttable document has movable part markers even when its items are fixed
+        for wid in ("#bp-add",):
             self.query_one(wid, Button).display = self.doc.variable
+        self.query_one("#bp-cut", Button).display = self.doc.cuttable
+        for wid in ("#bp-up", "#bp-down", "#bp-del"):
+            self.query_one(wid, Button).display = self.doc.variable or self.doc.cuttable
 
     # -- editing -----------------------------------------------------------
 
@@ -3305,16 +3408,52 @@ class BreakpointScreen(Screen):
         self.doc.rows.append(review.Row(label=f"#{len(groups) + 1}", value=""))
         await self._rebuild(keep=len(groups))
 
-    @on(Button.Pressed, "#bp-del")
-    async def _del_item(self) -> None:
-        """Remove the open card — its line, its shot, its cast, all of it."""
+    @on(Button.Pressed, "#bp-cut")
+    async def _add_cut(self) -> None:
+        """Start a new part at the open card: everything from here down moves into it.
+
+        The marker is inserted BEFORE the selected card because that is what the card
+        list shows — a marker followed by the scenes it owns."""
         self._sync()
         groups = self._groups()
         if self._sel is None or self._sel >= len(groups):
             return
+        if self._is_sep(groups[self._sel]):  # already a boundary here
+            return
+        groups.insert(self._sel, review.Group(head=review.part_row(0)))
+        self.doc.rows = review.flatten(groups)
+        self._renumber_seps()
+        await self._rebuild(keep=self._sel)
+
+    def _renumber_seps(self) -> None:
+        """Number the markers by their order, so the cards read 1, 2, 3 after a move."""
+        n = 0
+        for row in self.doc.rows:
+            if row.field == review.PART_FIELD:
+                n += 1
+                row.value = str(n)
+
+    @on(Button.Pressed, "#bp-del")
+    async def _del_item(self) -> None:
+        """Remove the open card — its line, its shot, its cast, all of it. On a part
+        marker it removes the boundary instead, merging that part into the one above."""
+        self._sync()
+        groups = self._groups()
+        if self._sel is None or self._sel >= len(groups):
+            return
+        sep = self._is_sep(groups[self._sel])
+        if sep and not self.doc.cuttable:  # markers are read-only on this breakpoint
+            return
+        if sep and sum(1 for g in groups if self._is_sep(g)) <= 1:
+            self.notify(_label(self.app, "bp.cut_min"), severity="warning", timeout=5)
+            return
+        if not sep and not self.doc.variable:
+            self.notify(_label(self.app, "bp.cut_locked"), severity="warning", timeout=5)
+            return
         gone = self._sel
         del groups[gone]
         self.doc.rows = review.flatten(groups)
+        self._renumber_seps()
         await self._rebuild(keep=max(0, gone - 1))
 
     @on(Button.Pressed, "#bp-up")
@@ -3329,10 +3468,21 @@ class BreakpointScreen(Screen):
         if self._sel is None:
             return
         self._sync()
+        groups = self._groups()
+        if self._sel >= len(groups):
+            return
+        sep = self._is_sep(groups[self._sel])
+        if sep and not self.doc.cuttable:  # markers are read-only on this breakpoint
+            return
+        # on a cut-only document the scenes are fixed; the boundaries are the edit
+        if not sep and not self.doc.variable:
+            self.notify(_label(self.app, "bp.cut_locked"), severity="warning", timeout=5)
+            return
         moved = review.move_group(self.doc.rows, self._sel, delta)
         if moved is self.doc.rows:  # already at the end
             return
         self.doc.rows = moved
+        self._renumber_seps()
         await self._rebuild(keep=self._sel + delta)
 
     @on(Button.Pressed, ".bp-chip")
@@ -3373,9 +3523,15 @@ class BreakpointScreen(Screen):
     # -- AI edit line ------------------------------------------------------
 
     def _scene_payload(self) -> list[dict]:
-        """The whole document as structured scenes for the AI (id + every field)."""
+        """The whole document as structured scenes for the AI (id + every field).
+
+        Part markers are left out: they are structure, not content, and a model asked
+        to rewrite them would happily invent some. They are put back afterwards by
+        :meth:`_restore_seps`."""
         payload = []
         for group in self._groups():
+            if self._is_sep(group):
+                continue
             item: dict = {"id": group.head.src}
             for row in group.rows:
                 item[row.field] = (
@@ -3384,6 +3540,40 @@ class BreakpointScreen(Screen):
                 )
             payload.append(item)
         return payload
+
+    def _sep_anchors(self) -> list[int | None]:
+        """For each part marker, the source scene it currently sits in front of.
+
+        That scene is the marker's anchor: wherever the AI moves the scene to, the
+        boundary follows it, which is the only reading of "this part starts here" that
+        survives a restructure. A marker anchored to a scene the AI dropped is lost
+        with it, and one that trailed the whole list (``None``) is dropped too — an
+        episode with no scenes is not an episode."""
+        anchors: list[int | None] = []
+        groups = self._groups()
+        for gi, group in enumerate(groups):
+            if not self._is_sep(group):
+                continue
+            after = next((g.head.src for g in groups[gi + 1:] if not self._is_sep(g)), None)
+            anchors.append(after)
+        return anchors
+
+    def _restore_seps(self, rows: list[review.Row], anchors: list[int | None]) -> list[review.Row]:
+        """Put the markers back in front of the scenes they were anchored to."""
+        wanted = [a for a in anchors if a is not None]
+        if not wanted:
+            return rows
+        out: list[review.Row] = []
+        placed: set[int] = set()
+        for group in review.group_rows(rows):
+            src = group.head.src
+            if src in wanted and src not in placed:
+                placed.add(src)
+                out.append(review.part_row(0))
+            out.extend(group.rows)
+        if not any(r.field == review.PART_FIELD for r in out):  # nothing anchored survived
+            out.insert(0, review.part_row(0))
+        return out
 
     def _rows_from_scenes(self, items: list[dict]) -> list[review.Row]:
         """Rebuild the rows from what the AI returned. A scene carrying a known id
@@ -3423,6 +3613,7 @@ class BreakpointScreen(Screen):
         self._sync()
         if self.doc.stage == "script":  # structured: the AI may restructure the whole list
             self.notify(_label(self.app, "bp.ai_working"), timeout=3)
+            self._ai_anchors = self._sep_anchors()
             payload = self._scene_payload()
             self.run_worker(
                 lambda: self._ai_scenes_worker(payload, instruction), thread=True, exclusive=False
@@ -3463,7 +3654,8 @@ class BreakpointScreen(Screen):
         if not rows:
             self.notify(_label(self.app, "bp.ai_nothing"), timeout=5)
             return
-        self.doc.rows = rows
+        self.doc.rows = self._restore_seps(rows, getattr(self, "_ai_anchors", []))
+        self._renumber_seps()
         self.notify(_label(self.app, "bp.ai_done"), timeout=6)
         self.run_worker(self._rebuild(keep=0))
 

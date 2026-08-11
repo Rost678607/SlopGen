@@ -13,6 +13,8 @@ A mode is chosen first (before the language), and it shapes the rest of the line
     slopgen --preset daily_en                   -> everything from a preset (info)
     slopgen --resume output/20260709_...        -> continue a crashed run
     slopgen gather [output/2026...]             -> add user-assisted clips, then resume
+                                                   (one finished part is enough — it gets cut and published,
+                                                    the rest of the drama waits for its clips)
     slopgen review [output/2026...]             -> inspect/edit a breakpoint, then resume
     slopgen --list-types / --list-ads / --list-accounts / --list-presets
             / --list-visuals / --list-characters / --list-orchestrations
@@ -90,14 +92,28 @@ def _review_indices(run_dir: Optional[Path]) -> list[int]:
     return _indices_with_status(run_dir, "review")
 
 
+def _paused_note(run_dir: Optional[Path], index: int) -> str:
+    """What a parked job is waiting for, as the checkpoint recorded it."""
+    if run_dir is None:
+        return ""
+    from ..pipeline.checkpoint import Checkpoint
+
+    try:
+        return Checkpoint.load(run_dir).manual_msg(index)
+    except Exception:
+        return ""
+
+
 def _report(jobs, orch) -> None:
     """Print the run summary; point at `gather` for paused jobs and `--resume` for
     failed ones."""
     from rich import print as rprint
 
-    ok = [j for j in jobs if j.published]
+    # a drama that has published its first episode is NOT done — it still owes the
+    # ones whose clips have not arrived. Its links are printed all the same.
+    ok = [j for j in jobs if j.published and not j.pending_parts]
     rprint(f"\n[bold]{len(ok)}/{len(jobs)} videos done[/bold]")
-    for j in ok:
+    for j in jobs:
         for line in str(j.published).splitlines():
             rprint(f"  {line}")
 
@@ -113,6 +129,11 @@ def _report(jobs, orch) -> None:
             f"\n[yellow]{len(paused)} video(s) need hand-made clips.[/yellow] "
             f"Add them, then it resumes: [bold]slopgen gather {orch.run_dir}[/bold]"
         )
+        # a drama parks between episodes too, and what it already cut is listed above
+        for i in paused:
+            note = _paused_note(orch.run_dir, i)
+            if note:
+                rprint(f"  [dim]video {i}: {note}[/dim]")
     failed = len(jobs) - len(ok) - len(paused) - len(parked)
     if failed > 0:
         if orch.run_dir is not None:
@@ -292,7 +313,7 @@ def drama(
     duration_min: float = typer.Option(2.0, "--duration-min", help="target length in minutes"),
     tol: float = typer.Option(15.0, "--tol", help="allowed over/under-run, seconds"),
     clip_s: float = typer.Option(0.0, "--clip-s", help="average length of ONE generated clip, seconds (0 = each generator's own); clips of 8s+ are written as multi-scene sequences"),
-    parts: int = typer.Option(1, "--parts", min=1, help="split one drama into this many cliffhanger parts"),
+    parts: int = typer.Option(1, "--parts", min=1, help="ask the writer for this many cliffhanger parts; the boundaries are then movable at the script/cut breakpoints"),
     voice: Optional[str] = typer.Option(None, "--voice", help="edge-tts narrator voice id (default per language)"),
     ad: Optional[str] = typer.Option(None, "--ad", help="ad contract name from configs/ads/"),
     ad_mode: str = typer.Option("both", "--ad-mode", help="overlay | native | both"),
@@ -301,7 +322,7 @@ def drama(
     count: int = typer.Option(1, "--count", "-n", help="videos to generate"),
     out: Optional[Path] = typer.Option(None, "--out", help="output dir override"),
     subs: Optional[str] = typer.Option(None, "--subs", help="subtitle style: word_pop | phrases | karaoke"),
-    breaks: Optional[list[str]] = typer.Option(None, "--break", "-b", help="stop for review after this stage (repeatable): script | tts | footage | subtitles | assemble | metadata"),
+    breaks: Optional[list[str]] = typer.Option(None, "--break", "-b", help="stop for review after this stage (repeatable): script | entities | tts | cut | footage | subtitles | assemble | metadata"),
     clean_subs: bool = typer.Option(False, "--clean-subs", help="swap profanity out of the burned-in subtitles; the voiceover keeps every word"),
     visual_notes: Optional[str] = typer.Option(None, "--visual-notes", help="constraints on what the shots may SHOW, never on the story: \"all weapons are toy ones\", \"no blood\""),
     dry_run: bool = typer.Option(False, "--dry-run", help="generate everything but skip publishing"),

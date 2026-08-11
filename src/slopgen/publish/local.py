@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 from ..pipeline.context import AppContext
-from ..pipeline.job import VideoJob
+from ..pipeline.job import Part, VideoJob
 
 
 class LocalPublisher:
-    def publish(self, job: VideoJob, ctx: AppContext) -> str:
-        paths = job.final_paths or ([job.final_path] if job.final_path else [])
-        return "\n".join(str(p) for p in paths)
+    def publish(self, job: VideoJob, part: Part, ctx: AppContext) -> str:
+        return str(part.file) if part.file else ""
