@@ -195,7 +195,7 @@ Stock-footage API keys (Pexels, Pixabay) can also be pasted in the TUI under **C
 
 Everything is hand-editable TOML; a new file in the folder = a new entity, no code changes.
 
-- `slopgen.toml` — global: video size/fps, target duration, subtitle style/font/colors, music volume, active LLM profile, footage provider order, UI language/theme, defaults.
+- `slopgen.toml` — global: video size/fps, target duration, subtitle style/font/colors, music volume, active LLM profile, footage provider order, UI language/theme, defaults, and `[tts.pronounce.<lang>]` (below).
 - `content/*.toml` — content types: per-language creative briefs (`idea_brief`, `script_brief`), edge-tts `voices`, `fallback_keywords` for stock search.
 - `ads/*.toml` — ad contracts: `url`, overlay section (assets dir, caption `text`, `position`, `start_s`, `duration_s`, `width`), native section (assets dir, `talking_points` the LLM weaves into the script), description `snippet` (`{url}` is substituted).
 - `accounts/*.toml` — publishing targets: `platform`, YouTube OAuth paths/privacy/category, optional `defaults` (lang/type/ad).
@@ -223,6 +223,15 @@ assets/
 **Bring your own content.** `assets/music/`, `assets/footage/`, `assets/ads/` and the personal `configs/` (`characters/`, `ads/*.toml` except the example, `accounts/`) are git-ignored on purpose — drop your own (copyright-cleared) tracks, clips and cast in. The repo ships only neutral templates: `configs/characters/example.toml`, `configs/ads/example_vpn.toml`, and a few demo images.
 
 Subtitles default to the **DejaVu Sans** font. It's preinstalled on most Linux distros; on Windows/macOS either install it or drop any `.ttf`/`.otf` into `assets/fonts/` and set `[subtitles] font` in `configs/slopgen.toml` to its family name.
+
+**Pronunciation** (`[tts.pronounce.<lang>]` in `configs/slopgen.toml`). A few words come out wrong however they are spelled in the script: edge-tts reads a Cyrillic acronym as a word whenever its letters happen to form a pronounceable syllable, so «НЛО» is said "нло" instead of being spelled out. It has to be an explicit list, because no rule separates the cases — the same reading is correct for «ВУЗ» and wrong for «НЛО». Everything else its Russian normalizer already handles (measured: «Лада-2107» and «18-летие» both come out fully expanded), so the table stays short and is yours to extend.
+
+```toml
+[tts.pronounce.ru]
+"НЛО" = "эн эл о"
+```
+
+Separate the parts with **spaces**; hyphens do not work. Measured in running speech, «эн-эл-о» takes 0.26s — exactly as long as the broken «НЛО» — because the normalizer collapses a hyphenated run back into one syllable, while the spaced «эн эл о» takes 0.62s and is genuinely spelled out. Which spaced form reads best is per-word: bare letters «Н Л О» run 1.10s here, yet beat the phonetic names on other acronyms, so try both. Only the voice sees the respelling: the subtitles keep the original word, merged back from the pieces it was spoken as, with its exact start and end — so nothing is re-spread or estimated. This is the mirror of `--clean-subs`, where the voice keeps every word and only the burned-in text changes.
 
 ## YouTube setup
 
@@ -371,7 +380,7 @@ slopgen --resume output/<время>_<тип|режим>_<язык>   # прод
 
 Всё — редактируемый руками TOML; новый файл в папке = новая сущность без кода:
 
-- `slopgen.toml` — глобальный (видео, целевая длительность, сабы, музыка, активный LLM-профиль, порядок провайдеров футажа, язык/тема интерфейса);
+- `slopgen.toml` — глобальный (видео, целевая длительность, сабы, музыка, активный LLM-профиль, порядок провайдеров футажа, язык/тема интерфейса) и `[tts.pronounce.<язык>]` (см. ниже);
 - `content/*.toml` — типы контента: брифы промптов по языкам, голоса edge-tts, fallback-ключевые слова;
 - `ads/*.toml` — рекламные контракты: ссылка, секция overlay (ассеты, подпись, позиция, тайминг), секция native (ассеты, talking points для вплетения в озвучку), сниппет для описания;
 - `accounts/*.toml` — площадки публикации + их дефолты;
@@ -384,6 +393,17 @@ slopgen --resume output/<время>_<тип|режим>_<язык>   # прод
 ## Ассеты (`assets/`)
 
 `ads/<контракт>/overlay/` — угловые анимации (.webm с альфой, .gif, .png); `ads/<контракт>/native/` — готовые рекламные вставки; `music/` — фоновые треки (берётся случайный, тихо подмешивается); `fonts/` — шрифты сабов; `footage/` — локальные клипы для провайдера `local`; `footage/gameplay/` — фоновые лупы для профиля `gameplay`; `images/` — локальные картинки для фото-фона и вставок. Текущие демо-файлы — заглушки для теста, замени их настоящими.
+
+## Произношение (`[tts.pronounce.<язык>]`)
+
+Несколько слов озвучка произносит неправильно, как их в сценарии ни напиши: edge-tts читает кириллическую аббревиатуру словом всякий раз, когда её буквы складываются в произносимый слог, — и «НЛО» звучит как «нло» вместо чтения по буквам. Список обязан быть явным, потому что правило тут не поможет: то же самое чтение правильно для «ВУЗ» и неправильно для «НЛО». Всё остальное русский нормализатор уже умеет (замерено: «Лада-2107» и «18-летие» разворачиваются сами), так что таблица короткая, и дополняешь её ты.
+
+```toml
+[tts.pronounce.ru]
+"НЛО" = "эн эл о"
+```
+
+Части разделяются **пробелами**; дефисы не работают. В связной речи «эн-эл-о» занимает 0.26s — ровно столько же, сколько сломанное «НЛО», потому что нормализатор схлопывает дефисную цепочку обратно в один слог; «эн эл о» через пробелы занимает 0.62s и действительно читается по частям. Какая из пробельных форм лучше — зависит от слова: голые буквы «Н Л О» здесь дают 1.10s, но на других аббревиатурах наоборот выигрывают у названий букв, так что пробуй обе. Замену видит только голос: в субтитрах остаётся исходное слово, склеенное обратно из кусков, с точными началом и концом — ничего не пересчитывается на глазок. Это зеркало `--clean-subs`, где наоборот: голос сохраняет всё, а меняется только текст на картинке.
 
 ## Настройка YouTube
 

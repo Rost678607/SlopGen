@@ -97,6 +97,29 @@ class DefaultsConfig(BaseModel):
     profanity: int = 0  # 0 = clean … 100 = constant swearing
 
 
+class TTSConfig(BaseModel):
+    """[tts] in slopgen.toml. `pronounce` is a per-language table of words the voice
+    says wrong, mapped to a spelling that makes it say them right.
+
+    It has to be an explicit list, because the failure cannot be detected by rule:
+    edge-tts reads a Cyrillic acronym as a word whenever the letters happen to form
+    a pronounceable syllable, and that is correct for «ВУЗ» and wrong for «НЛО» —
+    two strings a regex cannot tell apart. Everything else its Russian normalizer
+    already handles (measured: «Лада-2107» and «18-летие» both come out fully
+    expanded), so this table stays short and is yours to extend.
+
+    Separate the parts with SPACES. Hyphens do not work: measured in running speech,
+    «эн-эл-о» takes 0.26s — exactly as long as the broken «НЛО» — because the
+    normalizer collapses a hyphenated run back into one syllable, while the spaced
+    «эн эл о» takes 0.62s. Which spaced form reads best is per-word (bare letters
+    «Н Л О» run 1.10s here, but beat the phonetic names on other acronyms), so it is
+    worth trying both. The voice returns several word boundaries where the script had
+    one word; stages/tts.py merges them back so the subtitles show the original
+    spelling with exact timings."""
+
+    pronounce: dict[str, dict[str, str]] = {}  # lang -> {as written: as spoken}
+
+
 class GlobalConfig(BaseModel):
     paths: PathsConfig = PathsConfig()
     video: VideoConfig = VideoConfig()
@@ -106,6 +129,7 @@ class GlobalConfig(BaseModel):
     ui: UIConfig = UIConfig()
     footage: FootageConfig = FootageConfig()
     defaults: DefaultsConfig = DefaultsConfig()
+    tts: TTSConfig = TTSConfig()
 
 
 # --- configs/content/*.toml -----------------------------------------------

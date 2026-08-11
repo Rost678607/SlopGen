@@ -20,6 +20,21 @@ outline = 8
 [audio]
 music_volume = 0.12
 
+# Words edge-tts says wrong, and the spelling that makes it say them right. Only
+# needed where no rule could help: a Cyrillic acronym is read as a word whenever its
+# letters form a pronounceable syllable — correct for «ВУЗ», wrong for «НЛО». The
+# subtitles keep the original spelling either way.
+#
+# Separate the parts with SPACES. Hyphens do not work: measured in running speech,
+# «эн-эл-о» takes 0.26s — exactly as long as the broken «НЛО» — because the
+# normalizer collapses a hyphenated run back into one syllable, while the spaced
+# «эн эл о» takes 0.62s and is genuinely spelled out. Whether bare letters or their
+# phonetic names read better varies by word (for «НЛО» the names are twice as quick),
+# so try both and keep what sounds right.
+[tts.pronounce.ru]
+"НЛО" = "эн эл о"
+"ВОЗ" = "В О З"
+
 [llm]
 profile = "deepseek"
 

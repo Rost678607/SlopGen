@@ -7,6 +7,17 @@ Each line's raw (scene-relative) timings are cached next to its mp3 as
 ``scene_NN.json``, keyed by the exact text that produced them. A re-run — after a
 crash, or after the operator edited the narration at the TTS breakpoint — then
 re-synthesizes only the lines whose text actually changed and reuses the rest.
+
+**What is spoken is not always what is written.** A few words come out wrong no
+matter how they are spelled in the script — a Cyrillic acronym whose letters form
+a pronounceable syllable gets read as that syllable, so «НЛО» is said "нло"
+instead of spelled out. The run's `pronounce` table (config `[tts.pronounce.<lang>]`)
+respells those for the synthesizer only; the subtitles keep the original, because
+the picture should read «НЛО». That mirrors what `--clean-subs` does in the other
+direction, where the voice keeps every word and only the burned-in text changes.
+The respelling is one token by construction (see `TTSConfig`), so the word timings
+line up with the original and nothing has to be re-spread — the display text is
+simply swapped back on the way out.
 """
 
 from __future__ import annotations
@@ -15,6 +26,7 @@ import asyncio
 import json
 import logging
 import random
+import re
 import time
 from pathlib import Path
 
@@ -64,6 +76,75 @@ async def _synth(text: str, voice: str, out_path, rate: str = "+0%") -> list[dic
     return words
 
 
+def _boundaries(word: str) -> str:
+    """Match `word` only as a whole word. `\\w` is Unicode-aware here, so this also
+    keeps «ВОЗ» from firing inside «ВОЗДУХ»."""
+    return rf"(?<!\w){re.escape(word)}(?!\w)"
+
+
+def _spoken(text: str, table: dict[str, str]) -> str:
+    """The line as the synthesizer must see it. Case-sensitive on purpose: «ВОЗ» is
+    the acronym, «воз» in running text is a cart."""
+    for written, said in table.items():
+        if written.strip() and said.strip():
+            text = re.sub(_boundaries(written), said, text)
+    return text
+
+
+_PUNCT = "«»\"'“”„.,!?;:—–-…()"
+
+
+def _bare(token: str) -> str:
+    return token.strip(_PUNCT).casefold()
+
+
+def _tail(token: str) -> str:
+    """The punctuation clinging to the end of a token, which the merged word keeps."""
+    stripped = token.rstrip(_PUNCT)
+    return token[len(stripped):]
+
+
+def _as_written(raw: list[dict], table: dict[str, str]) -> list[dict]:
+    """Undo :func:`_spoken` in the word timings, so subtitles show what the script
+    wrote rather than the phonetic crutch fed to the voice.
+
+    A respelling has to be several whitespace-separated tokens to be spelled out at
+    all — measured in running speech, «эн эл о» takes 0.62s, while «эн-эл-о» takes
+    0.26s, exactly as long as the broken «НЛО»: the normalizer collapses a hyphenated
+    run back into one syllable. So the voice returns several
+    WordBoundary events where the script had one word, and they are merged back into
+    that word here. Because we know what was substituted, the merge is exact — the
+    restored word spans from the first letter's start to the last one's end, and no
+    timing is estimated (contrast :func:`~.subtitles._retime`, which has to re-spread
+    a line whose new wording it cannot align)."""
+    if not table:
+        return raw
+    # longest replacement first, so a three-token one is matched before any prefix of it
+    subs = sorted(
+        ((said.split(), written) for written, said in table.items() if said.split() and written.strip()),
+        key=lambda s: -len(s[0]),
+    )
+    out: list[dict] = []
+    i = 0
+    while i < len(raw):
+        for said_tokens, written in subs:
+            window = raw[i:i + len(said_tokens)]
+            if len(window) == len(said_tokens) and all(
+                _bare(w["text"]) == _bare(t) for w, t in zip(window, said_tokens)
+            ):
+                out.append({
+                    "text": written + _tail(window[-1]["text"]),
+                    "start": window[0]["start"],
+                    "end": window[-1]["end"],
+                })
+                i += len(said_tokens)
+                break
+        else:
+            out.append(raw[i])
+            i += 1
+    return out
+
+
 def _cache_path(audio: Path) -> Path:
     return audio.with_suffix(".json")
 
@@ -95,6 +176,11 @@ def _store_words(audio: Path, text: str, voice: str, rate: str, words: list[dict
         pass
 
 
+def _pronounce(ctx: AppContext) -> dict[str, str]:
+    """The run language's respelling table, or an empty one."""
+    return ctx.g.tts.pronounce.get(ctx.params.lang, {})
+
+
 def _voice_settings(ctx: AppContext) -> tuple[str, str]:
     """(voice, rate) for this run. Drama keeps natural speed — the footage stage
     time-stretches the voice to the generated clip — while info mode honours the
@@ -104,10 +190,15 @@ def _voice_settings(ctx: AppContext) -> tuple[str, str]:
 
 
 def _synth_scene(scene, index: int, path: Path, voice: str, rate: str,
-                 use_cache: bool = True) -> list[dict]:
-    """Voice ONE line, with retries, and return its raw word timings. A cached
-    result (same text, voice and rate) is reused unless the caller forbids it."""
-    raw_words: list[dict] = (_cached_words(path, scene.text, voice, rate) or []) if use_cache else []
+                 use_cache: bool = True, table: dict[str, str] | None = None) -> list[dict]:
+    """Voice ONE line, with retries, and return its raw word timings — carrying the
+    text as WRITTEN, not as respelled for the voice. A cached result (same spoken
+    text, voice and rate) is reused unless the caller forbids it; keying the cache on
+    the spoken form means editing the pronounce table re-voices exactly the lines it
+    touches, and nothing else."""
+    table = table or {}
+    spoken = _spoken(scene.text, table)
+    raw_words: list[dict] = (_cached_words(path, spoken, voice, rate) or []) if use_cache else []
     last_exc: Exception | None = None
     for attempt in range(_MAX_ATTEMPTS if not raw_words else 0):
         if attempt:
@@ -120,8 +211,10 @@ def _synth_scene(scene, index: int, path: Path, voice: str, rate: str,
             # hard timeout: a throttled connection can hang far beyond edge-tts'
             # own socket timeouts and stall the whole batch
             raw_words = asyncio.run(
-                asyncio.wait_for(_synth(scene.text, voice, path, rate=rate), timeout=90)
+                asyncio.wait_for(_synth(spoken, voice, path, rate=rate), timeout=90)
             )
+            # the picture shows the script's spelling, not the crutch fed to the voice
+            raw_words = _as_written(raw_words, table)
             if not raw_words:
                 log.warning("TTS scene %d attempt %d: connection OK but no word boundaries returned",
                             index, attempt + 1)
@@ -131,7 +224,7 @@ def _synth_scene(scene, index: int, path: Path, voice: str, rate: str,
                         index, attempt + 1, _MAX_ATTEMPTS, type(exc).__name__, exc)
             raw_words = []
         if raw_words:
-            _store_words(path, scene.text, voice, rate, raw_words)
+            _store_words(path, spoken, voice, rate, raw_words)
             break
     if not raw_words:
         detail = f" — last error: {last_exc}" if last_exc else " — server returned empty audio"
@@ -157,7 +250,7 @@ def resynth_one(job: VideoJob, ctx: AppContext, index: int) -> float:
     voice, rate = _voice_settings(ctx)
     path = audio_path(job, index)
     path.parent.mkdir(parents=True, exist_ok=True)
-    raw = _synth_scene(scene, index, path, voice, rate, use_cache=False)
+    raw = _synth_scene(scene, index, path, voice, rate, use_cache=False, table=_pronounce(ctx))
     scene.audio = path
     src = duration_of(path)
     # timings stay scene-relative here; whichever stage lays the timeline out
@@ -176,6 +269,7 @@ def run(job: VideoJob, ctx: AppContext) -> None:
     # stage stretches (atempo) the voice to the generated clip and finalizes both
     # scene.duration and the absolute word positions.
     drama = ctx.is_drama
+    table = _pronounce(ctx)
     audio_dir = job.workdir / "tts"
     audio_dir.mkdir(parents=True, exist_ok=True)
 
@@ -183,7 +277,7 @@ def run(job: VideoJob, ctx: AppContext) -> None:
     total = len(job.scenes)
     for i, scene in enumerate(job.scenes):
         path = audio_dir / f"scene_{i:02d}.mp3"
-        raw_words = _synth_scene(scene, i, path, voice, rate)
+        raw_words = _synth_scene(scene, i, path, voice, rate, table=table)
         scene.audio = path
         src = duration_of(path)
         if drama:
