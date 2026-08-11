@@ -99,6 +99,25 @@ def autofill_one(llm, char: dict, lang: str = "en", user_prompt: str = "") -> di
     return out
 
 
+# What comes back in "scenario" lands in the operator's plot field and is read by the
+# script writer as its brief. Told only "return an updated scenario", the model would
+# answer the user instead of writing: the plot came back as a note to the writer
+# ("сделай финал резким", "добавь драмы во втором акте") or as a synopsis of the plot
+# it was about to write. The instruction is something to APPLY, not to pass along.
+SCENARIO_RULE = (
+    'The "scenario" you return is the FINISHED PLOT itself, written as story prose in {lang}: '
+    "what happens, to whom, in what order. Another model turns it into a script, so it must hold "
+    "the story and nothing else — never an instruction, note or request addressed to that model "
+    "or to the user ('write it darker', 'end it abruptly', 'add more drama', 'make sure that…'), "
+    "never a description of the plot you would write instead of the plot. A user instruction is "
+    "something you APPLY: it changes the story you write, and is never copied into it. When it "
+    "concerns the shape or the ending, write that as a fact of the story — 'end it abruptly' "
+    "means the plot itself stops at that moment and says nothing after it is shown, not the words "
+    "'end it abruptly'. Keep whatever the instruction does not touch, and return the whole plot, "
+    "not just the changed part.\n"
+)
+
+
 def autofill_all(
     llm, cast: list[dict], lang: str = "en", scenario: str = "", user_prompt: str = "",
     tropes: list[str] | None = None, protagonist: str = "",
@@ -168,7 +187,9 @@ def autofill_all(
         "You are casting a short dramatic anime-style web drama. `appearance` = "
         "looks/clothing/build. Improvise freely where the premise or characters are thin. "
         f"{edit_rule}Write values in {lang}.{extras_str}\n"
-        'Respond with JSON only: {"cast": [{"age": "...", "appearance": "..."}, ...], '
+        # only the prompted call may return a plot at all (see the guard below)
+        + (SCENARIO_RULE.format(lang=lang) if user_prompt else "")
+        + 'Respond with JSON only: {"cast": [{"age": "...", "appearance": "..."}, ...], '
         '"add_global": ["Exact Saved Name"], '
         '"new_characters": [{"name": "...", "age": "...", "appearance": "..."}], '
         '"scenario": "...", "recommended_duration_min": 2.0}.\n'

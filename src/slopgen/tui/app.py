@@ -328,7 +328,7 @@ I18N: dict[str, dict[str, str]] = {
         "rate_normal": "normal",
         "rate_fast": "fast",
         "rate_very_fast": "very fast",
-        "help.tts_rate": "Speech speed. ←/→ to adjust: −50 = slowest … 0 = normal … +50 = fastest.",
+        "help.tts_rate": "Speech speed. ←/→ to adjust: −50 = slowest … 0 = normal … +50 = fastest. In a drama the writer counts on it: a faster voice fits more story into a clip of the same length, so each beat is written longer. A single fragment can be re-voiced at another speed later, at the voiceover breakpoint.",
         "vis_profile": "Visuals profile",
         "duration": "Duration",
         "bg_head": "— Background —",
@@ -523,8 +523,9 @@ I18N: dict[str, dict[str, str]] = {
         "bp.scene": "Scene",
         "bp.regen": "🔊 Re-voice",
         "bp.play": "▶ Listen",
+        "bp.rate": "Voicing speed (←/→; applies to the fragment you re-voice)",
         "bp.regen_working": "voicing this line…",
-        "bp.regen_done": "new take: {s:.1f}s",
+        "bp.regen_done": "new take: {s:.1f}s at {r:+d}%",
         "bp.regen_err": "could not voice it",
         "bp.play_none": "this line has no audio yet — re-voice it first",
         "bp.play_err": "ffplay not found (it ships with ffmpeg)",
@@ -545,7 +546,7 @@ I18N: dict[str, dict[str, str]] = {
         "bp.note.idea": "The topic the whole script is written from.",
         "bp.note.script": "Cards are the scenes; open one to edit its spoken line, its shot, who is in it, the generator and the clip length. This is the ONLY place to fix a shot before it is generated.",
         "bp.note.entities": "Things that recur across shots and are not cast — a machine, a location, a prop, a nameless regular, an unusual crowd. Each card is one thing: the name the shot prompts use for it, a note, and the English description the generator gets. Editing a description restyles every shot showing it at once; the name must stay spelled exactly as the prompts spell it, or nothing is substituted.",
-        "bp.note.tts": "One card per voiced fragment, with the length of what was synthesized. Editing a line re-voices exactly that one; adding, dropping or reordering cards changes the fragments themselves.",
+        "bp.note.tts": "One card per voiced fragment, with the length of what was synthesized. Editing a line re-voices exactly that one; adding, dropping or reordering cards changes the fragments themselves. The speed slider is one for the whole screen and applies only to the fragment you re-voice with it — that line then keeps the speed, the rest of the video keeps the run's.",
         "bp.note.footage": "What each scene is rendered/searched from. Changed scenes get their footage remade.",
         "bp.note.subtitles": "The generated ASS files, as text. Edits are written straight to disk.",
         "bp.note.assemble": "The rendered file(s) — play them, then continue or press Esc to abandon the run.",
@@ -706,7 +707,7 @@ I18N: dict[str, dict[str, str]] = {
         "rate_normal": "нормально",
         "rate_fast": "быстро",
         "rate_very_fast": "очень быстро",
-        "help.tts_rate": "Скорость речи. ←/→ для настройки: −50 = медленно … 0 = норма … +50 = быстро.",
+        "help.tts_rate": "Скорость речи. ←/→ для настройки: −50 = медленно … 0 = норма … +50 = быстро. В дораме сценарист на неё рассчитывает: чем быстрее голос, тем больше сюжета влезает в клип той же длины, поэтому реплики пишутся длиннее. Отдельный фрагмент потом можно переозвучить на другой скорости — на брейкпоинте озвучки.",
         "vis_profile": "Профиль видеоряда",
         "duration": "Длительность",
         "bg_head": "— Фон —",
@@ -901,8 +902,9 @@ I18N: dict[str, dict[str, str]] = {
         "bp.scene": "Сцена",
         "bp.regen": "🔊 Переозвучить",
         "bp.play": "▶ Прослушать",
+        "bp.rate": "Скорость озвучки (←/→; применится к переозвучиваемому фрагменту)",
         "bp.regen_working": "озвучиваю эту строку…",
-        "bp.regen_done": "новый дубль: {s:.1f}с",
+        "bp.regen_done": "новый дубль: {s:.1f}с на {r:+d}%",
         "bp.regen_err": "не смог озвучить",
         "bp.play_none": "у строки ещё нет озвучки — сначала переозвучь",
         "bp.play_err": "ffplay не найден (он идёт вместе с ffmpeg)",
@@ -923,7 +925,7 @@ I18N: dict[str, dict[str, str]] = {
         "bp.note.idea": "Тема, из которой пишется весь сценарий.",
         "bp.note.script": "Карточки — это сцены; открой любую, чтобы поправить реплику, кадр, кто в нём, нейронку и длину клипа. Это единственное место, где кадр правится ДО генерации.",
         "bp.note.entities": "То, что повторяется в кадрах и не входит в каст: техника, локация, реквизит, безымянный завсегдатай, необычная массовка. Карточка — одна вещь: имя, которым её называют промпты, заметка и английское описание, которое уходит генератору. Правка описания меняет вид вещи сразу во всех кадрах; имя должно остаться написанным ровно так, как в промптах, иначе подстановки не будет.",
-        "bp.note.tts": "Карточка на озвученный фрагмент, с длительностью того, что синтезировалось. Правка реплики переозвучивает только её; добавление, удаление и перестановка карточек меняют сами фрагменты.",
+        "bp.note.tts": "Карточка на озвученный фрагмент, с длительностью того, что синтезировалось. Правка реплики переозвучивает только её; добавление, удаление и перестановка карточек меняют сами фрагменты. Ползунок скорости один на весь экран и применяется только к тому фрагменту, который ты им переозвучил — эта строка дальше живёт со своей скоростью, остальное видео остаётся на скорости запуска.",
         "bp.note.footage": "Из чего рисуется/ищется каждая сцена. Изменённым сценам видеоряд соберут заново.",
         "bp.note.subtitles": "Сгенерированные ASS-файлы как текст. Правки пишутся прямо на диск.",
         "bp.note.assemble": "Готовые файлы — посмотри их и продолжай, либо Esc, чтобы бросить запуск.",
@@ -1767,6 +1769,10 @@ class DramaScreen(_CharEditAI, GenerateScreen):
                    value=voice_opts[0][1] if voice_opts else None),
             Range("profanity", "profanity", value=store.global_cfg.defaults.profanity,
                   lo=0, hi=100, step=5, labels=PROFANITY_LABELS),
+            # speed is authored BEFORE the script here: the writer sizes each beat's
+            # narration to how many words fit one clip at this rate
+            Range("tts_rate", "tts_rate", value=0,
+                  lo=-50, hi=50, step=5, labels=TTS_RATE_LABELS),
             Number("duration_min", "drama_duration_min", value="2", default=2.0),
             Number("duration_tol", "drama_duration_tol", value="15", default=15.0),
             Number("clip_s", "drama_clip_s", value="0", default=0.0),
@@ -2548,6 +2554,7 @@ class DramaScreen(_CharEditAI, GenerateScreen):
         return {
             "lang": c["lang"], "voice": c["voice"], "ctype": "", "idea": "",
             "profanity": c["profanity"],
+            "tts_rate": c.get("tts_rate", 0),
             "duration": dur_min * 60.0,
             "duration_tol": float(c.get("duration_tol") or 15.0),
             "clip_s": max(float(c.get("clip_s") or 0.0), 0.0),
@@ -2580,7 +2587,8 @@ class DramaScreen(_CharEditAI, GenerateScreen):
             + (f"      {t('parts')}: [b]{g['parts']}[/b]"
                + ("" if g["parts_iterative"] else f" ({t('parts_batch')})")
                if g["parts"] != 1 else ""),
-            f"  {t('drama_clip_s').split(',')[0]}: [b]{clip}[/b]",
+            f"  {t('drama_clip_s').split(',')[0]}: [b]{clip}[/b]"
+            f"      {t('tts_rate').split(' (')[0]}: [b]{g['tts_rate']:+d}%[/b]",
             f"  {t('drama_plot_head')}: {plot}",
             f"  {t('drama_cast_head')}: [b]{cast}[/b]",
             f"  ★ {t('cfg.characters')}: {glob}",
@@ -2612,6 +2620,8 @@ class DramaScreen(_CharEditAI, GenerateScreen):
             cmd += f" --ad {g['ad_src']} --ad-mode {g['ad_mode']}"
         if g["profanity"]:
             cmd += f" --profanity {g['profanity']}"
+        if g["tts_rate"]:
+            cmd += f" --tts-rate {g['tts_rate']}"
         if g["push"]:
             cmd += f" --push {g['push']}"
         if g["count"] != 1:
@@ -2661,7 +2671,8 @@ class DramaScreen(_CharEditAI, GenerateScreen):
                 manual_ad=self._manual_ad_config(g["ad_src"]),
                 ad_mode=g["ad_mode"],
                 push=g["push"], count=g["count"],
-                voice_override=g["voice"], subtitle_style=g["subs"],
+                voice_override=g["voice"], tts_rate=g["tts_rate"],
+                subtitle_style=g["subs"],
                 breakpoints=g["breakpoints"],
                 clean_subtitles=g["clean_subs"],
                 visual_notes=g["visual_notes"],
@@ -3104,6 +3115,11 @@ class BreakpointScreen(Screen):
         # still mark the stage for a re-run, which the final apply can no longer tell
         self._forced_rerun = False
         self._ai_anchors: list[int | None] = []  # part markers held across an AI restructure
+        # Speed of the next take at the voiceover breakpoint. ONE slider for the whole
+        # screen, not a field of every card: it is a knob on the ACTION, applying to
+        # whichever fragment is re-voiced next — which then keeps that speed while the
+        # rest of the video stays at the run's. Starts where the run stands.
+        self._rate = int(self.cp.params.tts_rate)
 
     # -- data --------------------------------------------------------------
 
@@ -3136,6 +3152,7 @@ class BreakpointScreen(Screen):
     def _sync(self) -> None:
         """Pull what is on screen back into the rows. Only the open card's fields are
         mounted, so the rest simply keep the value they already hold."""
+        self._sync_rate()
         for i, row in enumerate(self.doc.rows):
             if row.readonly or row.kind == "chips":  # chips are edited on the row itself
                 continue
@@ -3300,17 +3317,35 @@ class BreakpointScreen(Screen):
 
     def _card_actions(self) -> list:
         """Stage-specific buttons for the open card. At the voiceover breakpoint the
-        operator can re-voice this one line and listen to it without leaving."""
+        operator can re-voice this one line and listen to it without leaving — at the
+        speed the slider above the buttons is set to."""
         t = lambda k: _label(self.app, k)  # noqa: E731
         if self.doc.stage != "tts" or not self.doc.variable:
             return []
-        return [Horizontal(
+        return self._rate_field().build(self._rate_ns, t) + [Horizontal(
             Button(t("bp.regen"), id="bp-regen", variant="primary"),
             Button(t("bp.play"), id="bp-play"),
             classes="entity-actions",
         )]
 
     # -- re-voicing one line -----------------------------------------------
+
+    @property
+    def _rate_ns(self) -> str:
+        return f"bp-{self._rev}"  # same revision dance as the field pane's ids
+
+    def _rate_field(self) -> Range:
+        return Range("rate", "bp.rate", value=self._rate,
+                     lo=-50, hi=50, step=5, labels=TTS_RATE_LABELS)
+
+    def _sync_rate(self) -> None:
+        """Remember where the speed slider stands. It is mounted with the open card, so
+        it has to be read back before the pane is torn down — the value belongs to the
+        screen, not to the card that happened to be showing it."""
+        try:
+            self._rate = int(self._rate_field().read(self, self._rate_ns))
+        except Exception:  # not mounted (another stage's breakpoint) — keep it as is
+            pass
 
     def _scene_index(self) -> int | None:
         """The open card's scene, once the pending edits are folded into the job so
@@ -3329,16 +3364,17 @@ class BreakpointScreen(Screen):
 
     @on(Button.Pressed, "#bp-regen")
     def _regen(self) -> None:
-        index = self._scene_index()
+        index = self._scene_index()  # syncs the pane, so the slider is read by now
         if index is None:
             return
         self.notify(_label(self.app, "bp.regen_working"), timeout=4)
-        self.run_worker(lambda: self._regen_worker(index), thread=True, exclusive=False)
+        rate = self._rate
+        self.run_worker(lambda: self._regen_worker(index, rate), thread=True, exclusive=False)
 
-    def _regen_worker(self, index: int) -> None:
+    def _regen_worker(self, index: int, rate: int) -> None:
         try:
             ctx = AppContext(store=self.app.store, params=self.cp.params)
-            secs = tts_stage.resynth_one(self.job, ctx, index)
+            secs = tts_stage.resynth_one(self.job, ctx, index, rate=rate)
         except Exception as e:
             self.app.call_from_thread(self._regen_done, index, None, str(e))
             return
@@ -3352,7 +3388,8 @@ class BreakpointScreen(Screen):
         # it costs nothing — the sidecar cache we just wrote is what it will read
         self._forced_rerun = True
         self.doc = review.read(self.doc.stage, self.job, self.mode)  # picks up the new length
-        self.notify(_label(self.app, "bp.regen_done").format(s=secs or 0.0), timeout=6)
+        self.notify(_label(self.app, "bp.regen_done").format(s=secs or 0.0, r=self._rate),
+                    timeout=6)
         self.run_worker(self._rebuild(keep=index))
 
     @on(Button.Pressed, "#bp-play")

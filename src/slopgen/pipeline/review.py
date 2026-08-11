@@ -308,6 +308,10 @@ def _tts_doc(job: VideoJob, mode: str) -> Doc:
     def info(s: Scene) -> str:
         secs = s.audio_src_duration or s.duration
         got = f"{secs:.1f}s" if secs else "—"
+        # a line re-voiced at its own speed says so: the length alone would not tell
+        # the operator why one card runs shorter than its neighbours
+        if s.tts_rate is not None:
+            got += f" · {s.tts_rate:+d}%"
         return f"{got} · {Path(s.audio).name}" if s.audio else got
 
     return Doc(

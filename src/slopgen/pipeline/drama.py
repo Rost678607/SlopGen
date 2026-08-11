@@ -27,8 +27,9 @@ from dataclasses import dataclass
 from ..config.models import OrchestrationConfig, OrchestrationStage
 from ..media.generate import is_video_model, model_clip_seconds
 
-# rough speaking rate (words per second) used to size a beat's narration to its
-# clip length; the per-scene atempo stretch later absorbs the residual error.
+# rough speaking rate (words per second) at the voice's NATURAL speed, used to size a
+# beat's narration to its clip length; the per-scene atempo stretch later absorbs the
+# residual error.
 _WORDS_PER_SEC: dict[str, float] = {"en": 2.3, "ru": 2.0}
 _DEFAULT_WPS = 2.2
 
@@ -105,9 +106,22 @@ def plan_slots(
     ]
 
 
-def word_budget(seconds: float, lang: str) -> int:
-    """Roughly how many spoken words fit in `seconds` of narration for `lang`."""
-    return max(3, round(seconds * _WORDS_PER_SEC.get(lang, _DEFAULT_WPS)))
+def speech_scale(rate: int) -> float:
+    """edge-tts' ``rate`` percentage as a factor on how fast the voice speaks.
+    ``+25%`` says a quarter more words in the same second; ``-50%`` half as many."""
+    return max(1.0 + rate / 100.0, 0.25)
+
+
+def word_budget(seconds: float, lang: str, rate: int = 0) -> int:
+    """Roughly how many spoken words fit in `seconds` of narration for `lang`, at the
+    run's speech `rate`.
+
+    The rate is what the operator set for the voiceover, and it belongs here because it
+    changes how much STORY a clip of fixed length can hold: a beat voiced at +30% takes
+    a third more words to fill the same shot. Sizing the writer's beats without it is
+    what makes a fast run come out with a silent tail on every clip (the voice ends
+    early) and a slow run come out clipped."""
+    return max(3, round(seconds * _WORDS_PER_SEC.get(lang, _DEFAULT_WPS) * speech_scale(rate)))
 
 
 # How many beats one LLM call handles. A whole feature-length script asked for in a

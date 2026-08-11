@@ -11,7 +11,9 @@ their compiled visual prompts).
 
 Beat count and each beat's length come from the orchestration plan (see
 pipeline/drama.py): the timeline is authored in minutes ± a tolerance, and the
-narration for a beat is sized to the seconds of the clip that will carry it. Clip
+narration for a beat is sized to the seconds of the clip that will carry it — at the
+speech rate the run voices it with, since a faster voice fits more story into the same
+shot (see `..drama.word_budget`). Clip
 length is authored too, and it changes what a beat IS: a short clip is one framing,
 while a long one is written as a sequence of several scenes (see `shot_rule`).
 
@@ -21,6 +23,10 @@ front-loaded — the opening beats track the premise sentence by sentence and th
 turns to summary, dropping named props, sub-plots and reversals the operator wrote
 down. Each window instead gets a stated slice of the premise to cover, the tail of
 what came before, and enough room to spend on it (see `ARC_WINDOW`).
+
+The premise is a BRIEF rather than source text: next to the plot the operator writes
+directions to the writer ("break it off with no ending", "don't explain the letter"),
+which are to be followed and never voiced (see `PREMISE_RULE`).
 
 A native ad, when enabled, is woven into the plot at the scenario level — a
 natural in-story lead-in that culminates in one spoken ad beat — rather than a
@@ -71,6 +77,7 @@ SYSTEM = (
     "and looks — never contradict it, in the narration or in video_prompt, pronouns included (a girl "
     "on the sheet is never 'he'). Two characters in one shot must stay visually distinct.\n"
     "{part_rule}"
+    "{premise_rule}"
     'Respond with JSON only: {{"title": "<short title in {lang}>", "scenes": [{{"part": 1, "narration": "...", '
     '"video_prompt": "...", "characters": ["..."], "is_ad": false}}, ...]}}.'
 )
@@ -134,11 +141,35 @@ ARC_WINDOW = (
     "an earlier one already told. {tail_rule}{end_rule}"
 )
 
+# The premise field is where the operator talks TO the writer — "оборви резко, без
+# концовки", "не объясняй письмо", "он старше, чем ты написал". Handed that as plain
+# plot text, the model either voiced it back (the narrator announcing that the story
+# ends abruptly) or treated it as an event to dramatise. So the premise is declared
+# for what it is: a brief, part story and part direction, and direction wins over the
+# defaults below it without ever reaching the page.
+PREMISE_RULE = (
+    "\nTHE PREMISE IS A BRIEF WRITTEN TO YOU, THE WRITER — never source text to be voiced. It "
+    "mixes story material (what happens, to whom, where) with direct instructions about how to "
+    "write it: how to end it, what to keep or leave out, how to pace it, which detail to correct. "
+    "Those instructions are often addressed to you in the second person ('cut it off abruptly with "
+    "no ending', \"don't explain the letter\", 'make him colder than you did'). Obey them, then "
+    "write only the story they ask for. NEVER voice, quote, paraphrase, answer or acknowledge "
+    "them: no narration, no title and no video_prompt may carry a word the operator was saying to "
+    "YOU rather than about the story, and the narrator never remarks on how the story is being "
+    "told. An instruction about the story's shape, opening, ending, tone or content OVERRIDES the "
+    "arc, opening and part rules above; it never overrides the output format, the language, or "
+    "one continuous shot per beat.\n"
+)
+
 CONTINUE_RULE = (
     "Your first beat continues straight on from the last beat already written (shown below) — "
     "no recap, no re-introduction, no repeating what it said. "
 )
-FINAL_RULE = "This is the LAST window: your final beat is the story's payoff and must resolve it. "
+FINAL_RULE = (
+    "This is the LAST window: your final beat is the story's payoff and must resolve it — unless "
+    "the premise asks you to end otherwise (to break off unresolved, to stop mid-scene), in which "
+    "case do exactly that and never say that you are doing it. "
+)
 
 
 DRAMA_PROFANITY = (
@@ -280,11 +311,12 @@ def run(job: VideoJob, ctx: AppContext) -> None:
                 end_rule=FINAL_RULE if wi == len(windows) - 1 else "",
             )
         system = SYSTEM.format(
-            lang=lang, words=word_budget(win_clip_s, p.lang),
+            lang=lang, words=word_budget(win_clip_s, p.lang, p.tts_rate),
             shot_rule=shot_rule(win_clip_s),
             open_rule=OPEN_RULE if wi == 0 else "",
             arc_rule=arc,
             part_rule=PART_RULES.format(parts=parts) if parts > 1 else "",
+            premise_rule=PREMISE_RULE,
         )
         system += profanity_rule(p.profanity, p.lang)
         if p.profanity > 0:
@@ -294,7 +326,11 @@ def run(job: VideoJob, ctx: AppContext) -> None:
         if ctx.native_ad_on and wi == ad_window:
             system += AD_RULES.format(points=ctx.ad.native.talking_points)
 
-        user = f"Premise / plot:\n{scenario}\n\nCast:\n{roster}\n\n"
+        user = (
+            "Premise / plot — the operator's brief to you: story material and, where they address "
+            f"you directly, instructions to follow rather than to write down.\n{scenario}\n\n"
+            f"Cast:\n{roster}\n\n"
+        )
         if scenes:
             user += f"The beats already written end like this:\n{_tail(scenes)}\n\n"
         user += f"Write the narration in {lang}; keep every video_prompt in English."

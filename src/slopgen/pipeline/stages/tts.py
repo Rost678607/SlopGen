@@ -8,6 +8,11 @@ Each line's raw (scene-relative) timings are cached next to its mp3 as
 crash, or after the operator edited the narration at the TTS breakpoint — then
 re-synthesizes only the lines whose text actually changed and reuses the rest.
 
+**Speed is per line, not per run.** The run's ``tts_rate`` is what every line is
+voiced at by default, in both modes; a line the operator re-voiced at the breakpoint's
+speed slider carries its own ``Scene.tts_rate`` and keeps it. Since the cache is keyed
+on the rate as well, changing a line's speed re-synthesizes that line and nothing else.
+
 **What is spoken is not always what is written.** A few words come out wrong no
 matter how they are spelled in the script — a Cyrillic acronym whose letters form
 a pronounceable syllable gets read as that syllable, so «НЛО» is said "нло"
@@ -181,12 +186,23 @@ def _pronounce(ctx: AppContext) -> dict[str, str]:
     return ctx.g.tts.pronounce.get(ctx.params.lang, {})
 
 
-def _voice_settings(ctx: AppContext) -> tuple[str, str]:
-    """(voice, rate) for this run. Drama keeps natural speed — the footage stage
-    time-stretches the voice to the generated clip — while info mode honours the
-    user's tts_rate."""
-    rate = "+0%" if ctx.is_drama else f"{ctx.params.tts_rate:+d}%"
-    return _resolve_voice(ctx), rate
+def rate_str(percent: int) -> str:
+    """A speech rate as edge-tts wants it: ``"+20%"``, ``"-15%"``, ``"+0%"``."""
+    return f"{int(percent):+d}%"
+
+
+def _scene_rate(scene, ctx: AppContext) -> int:
+    """The percent THIS line is voiced at.
+
+    A scene the operator re-voiced at another speed from the breakpoint carries its own
+    rate; every other line takes the run's, so the stage's re-run reproduces the takes
+    that were listened to rather than flattening them back to one speed.
+
+    Both modes honour the run's rate. In drama it is not merely cosmetic: the
+    scriptwriter sized every beat's narration to the words that fit one clip AT THIS
+    SPEED (see `..drama.word_budget`), so the footage stage is left with only the
+    residual mismatch to stretch away."""
+    return int(scene.tts_rate) if scene.tts_rate is not None else int(ctx.params.tts_rate)
 
 
 def _synth_scene(scene, index: int, path: Path, voice: str, rate: str,
@@ -238,19 +254,29 @@ def audio_path(job: VideoJob, index: int) -> Path:
     return job.workdir / "tts" / f"scene_{index:02d}.mp3"
 
 
-def resynth_one(job: VideoJob, ctx: AppContext, index: int) -> float:
+def resynth_one(job: VideoJob, ctx: AppContext, index: int, rate: int | None = None) -> float:
     """Re-voice a single line right now, ignoring the cache, and write the result
     back into the scene. Used by the voiceover breakpoint, where the operator edits
     a line and wants to hear the new take without leaving the screen. Returns the
     fresh audio length.
 
+    `rate` re-voices this ONE fragment at another speed and PINS it there
+    (``scene.tts_rate``): the breakpoint's speed slider is a property of the take being
+    made, not of the run, so a line the operator slowed down keeps its speed while the
+    rest of the video keeps the run's. Pass None to voice it at whatever the line
+    already uses.
+
     The sidecar cache is refreshed too, so the stage's own re-run on resume picks
     this take up instead of paying for the same synthesis twice."""
     scene = job.scenes[index]
-    voice, rate = _voice_settings(ctx)
+    voice = _resolve_voice(ctx)
+    if rate is not None:
+        scene.tts_rate = int(rate)
+    rate_pct = _scene_rate(scene, ctx)
     path = audio_path(job, index)
     path.parent.mkdir(parents=True, exist_ok=True)
-    raw = _synth_scene(scene, index, path, voice, rate, use_cache=False, table=_pronounce(ctx))
+    raw = _synth_scene(scene, index, path, voice, rate_str(rate_pct),
+                       use_cache=False, table=_pronounce(ctx))
     scene.audio = path
     src = duration_of(path)
     # timings stay scene-relative here; whichever stage lays the timeline out
@@ -263,10 +289,10 @@ def resynth_one(job: VideoJob, ctx: AppContext, index: int) -> float:
 
 
 def run(job: VideoJob, ctx: AppContext) -> None:
-    voice, rate = _voice_settings(ctx)
-    # drama: one clip per scene is the master timeline — keep the voice at natural
-    # speed here and record its length + scene-relative word timings; the footage
-    # stage stretches (atempo) the voice to the generated clip and finalizes both
+    voice = _resolve_voice(ctx)
+    # drama: one clip per scene is the master timeline — record each line's length at
+    # the speed it is spoken at + its scene-relative word timings; the footage stage
+    # stretches (atempo) the voice to the generated clip and finalizes both
     # scene.duration and the absolute word positions.
     drama = ctx.is_drama
     table = _pronounce(ctx)
@@ -277,7 +303,8 @@ def run(job: VideoJob, ctx: AppContext) -> None:
     total = len(job.scenes)
     for i, scene in enumerate(job.scenes):
         path = audio_dir / f"scene_{i:02d}.mp3"
-        raw_words = _synth_scene(scene, i, path, voice, rate, table=table)
+        raw_words = _synth_scene(scene, i, path, voice, rate_str(_scene_rate(scene, ctx)),
+                                 table=table)
         scene.audio = path
         src = duration_of(path)
         if drama:

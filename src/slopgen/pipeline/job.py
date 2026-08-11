@@ -107,6 +107,10 @@ class Scene(BaseModel):
     key: str = ""  # pinned key index for key_mode="single" (label); "" = first
     clip_target_s: float = 0.0  # planned shot length (drives word budget + stretch)
     audio_src_duration: float = 0.0  # natural TTS length before the atempo stretch
+    # speech rate this ONE line is voiced at, in percent (None = the run's rate). Set
+    # when the operator re-voices a fragment at another speed from the TTS breakpoint,
+    # so a later re-run of the stage reproduces that take instead of the run's.
+    tts_rate: int | None = None
     audio_tempo: float = 1.0  # atempo factor applied so the voice fits the clip
     video_tempo: float = 1.0  # setpts factor applied to the clip for the same reason
     part: int = 1  # drama: output part number; cuts happen after the last scene in a part
