@@ -101,13 +101,19 @@ def shot_rule(clip_s: float) -> str:
     return SHOT_RULE.format(avg=clip_s)
 
 
-# The cold open belongs to the video, so only the window that owns beat 0 is told
-# about it — every window given the rule would open with its own hook.
+# The opening belongs to the video, so only the window that owns beat 0 is told
+# about it — every window given the rule would open with its own first beat.
+# It used to ask for a flash-forward to the peak, which is a spoiler: the viewer was
+# handed the turn before the story earned it, and the beats in between played out as
+# a foregone conclusion. The story now runs in order, and the hook is the opening
+# situation itself.
 OPEN_RULE = (
-    "FIRST BEAT — COLD OPEN HOOK: drop the viewer into the most dramatic or surprising moment of the "
-    "story (1-2 punchy sentences; tease, don't resolve). Its video_prompt must be visually arresting — "
-    "dynamic framing, high contrast, peak-tension action. After this beat, the story unfolds from the "
-    "beginning and builds toward that moment.\n"
+    "FIRST BEAT — START AT THE BEGINNING: open where the story actually begins and let it run "
+    "forward in order. Never flash forward to a later moment, never tease, hint at or show a "
+    "fragment of what is coming — the viewer must learn nothing the narrator does not know yet. "
+    "The hook is the opening situation itself: begin at the moment the ordinary breaks, already "
+    "inside the action (1-2 punchy sentences; no scene-setting preamble, no 'it all started when'). "
+    "Its video_prompt must still be visually arresting — dynamic framing, high contrast.\n"
 )
 
 ARC_WHOLE = (
