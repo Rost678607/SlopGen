@@ -3166,12 +3166,16 @@ class BreakpointScreen(Screen):
         yield Static("", id="bp-head")
         with Horizontal(id="bp-body"):
             with Vertical(id="bp-list-pane"):
-                with Horizontal(classes="entity-actions"):
+                # two rows on purpose: the pane is a fixed 48 columns and five
+                # labelled buttons do not fit across it — what is edited above, how
+                # it is arranged below
+                with Horizontal(id="bp-row-item", classes="entity-actions"):
                     yield Button(t("bp.add"), id="bp-add", variant="success")
-                    yield Button(t("bp.cut"), id="bp-cut", variant="success")
+                    yield Button(t("bp.remove"), id="bp-del", variant="error")
+                with Horizontal(id="bp-row-order", classes="entity-actions"):
                     yield Button(t("bp.up"), id="bp-up")
                     yield Button(t("bp.down"), id="bp-down")
-                    yield Button(t("bp.remove"), id="bp-del", variant="error")
+                    yield Button(t("bp.cut"), id="bp-cut", variant="success")
                 yield ListView(id="bp-list")
             yield VerticalScroll(id="bp-detail")
         with Horizontal(id="bp-ai-box"):
@@ -3399,11 +3403,15 @@ class BreakpointScreen(Screen):
             "bp.ai_ph_script" if self.doc.stage == "script" else "bp.ai_ph"
         )
         # a cuttable document has movable part markers even when its items are fixed
-        for wid in ("#bp-add",):
-            self.query_one(wid, Button).display = self.doc.variable
+        actionable = self.doc.variable or self.doc.cuttable
+        self.query_one("#bp-add", Button).display = self.doc.variable
         self.query_one("#bp-cut", Button).display = self.doc.cuttable
         for wid in ("#bp-up", "#bp-down", "#bp-del"):
-            self.query_one(wid, Button).display = self.doc.variable or self.doc.cuttable
+            self.query_one(wid, Button).display = actionable
+        # hide the rows themselves as well: each is a fixed three lines tall, and an
+        # inspect-only stage would otherwise show two empty bars above the list
+        for wid in ("#bp-row-item", "#bp-row-order"):
+            self.query_one(wid, Horizontal).display = actionable
 
     # -- editing -----------------------------------------------------------
 
@@ -4447,7 +4455,7 @@ class SlopgenApp(App):
     #bp-list-pane { width: 48; }
     #bp-list-pane .entity-actions { height: 3; margin-top: 0; }
     #bp-list-pane .entity-actions Button { margin-right: 1; }
-    #bp-add { width: auto; }
+    #bp-add, #bp-cut { width: auto; }
     #bp-up, #bp-down, #bp-del { width: auto; min-width: 5; }
     #bp-list { height: 1fr; }
     #bp-detail { width: 1fr; padding: 0 2; border-left: solid $primary 30%; }
