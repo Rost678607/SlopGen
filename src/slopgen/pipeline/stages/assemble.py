@@ -92,6 +92,8 @@ def run(job: VideoJob, ctx: AppContext) -> None:
                 music=music,
                 overlay=build_overlay_spec(part_job, ctx),
                 fonts_dir=fonts,
+                tmp=tmp,
+                on_progress=ctx.progress,
             )
             finals.append(final)
             ctx.progress("finalize", part, parts)
@@ -109,6 +111,8 @@ def run(job: VideoJob, ctx: AppContext) -> None:
             music=music,
             overlay=build_overlay_spec(job, ctx),
             fonts_dir=fonts,
+            tmp=tmp,
+            on_progress=ctx.progress,
         )
         job.final_path = final
         job.final_paths = [final]

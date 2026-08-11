@@ -6,18 +6,30 @@ import json
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from ..config.models import GlobalConfig
 
 
 class FFmpegError(Exception):
-    pass
+    def __init__(self, message: str, signal: int = 0):
+        super().__init__(message)
+        # non-zero when ffmpeg was killed outright instead of reporting a fault,
+        # which is how running out of memory arrives. Callers that can retry
+        # smaller (see _fold_segments) tell the two apart by this.
+        self.signal = signal
 
 
 def _run(cmd: list[str]) -> None:
     proc = subprocess.run(cmd, capture_output=True, text=True)
-    if proc.returncode != 0:
-        raise FFmpegError(f"{' '.join(cmd[:2])} failed:\n{proc.stderr[-2000:]}")
+    if proc.returncode == 0:
+        return
+    detail = proc.stderr[-2000:]
+    if proc.returncode < 0:
+        # Killed by a signal, so ffmpeg never got to print a reason. Usually the
+        # OOM killer on a heavy filtergraph.
+        detail = f"killed by signal {-proc.returncode} (out of memory?)\n{detail}"
+    raise FFmpegError(f"{' '.join(cmd[:2])} failed:\n{detail}", max(0, -proc.returncode))
 
 
 def probe(path: Path) -> dict:
@@ -205,27 +217,157 @@ def _overlay_input_args(asset: Path) -> list[str]:
     return ["-stream_loop", "-1", "-i", str(asset)]
 
 
-def finalize(
+# --- joining scenes in batches ---------------------------------------------
+#
+# ffmpeg reads ahead on every input of a filtergraph in parallel, but the concat
+# filter consumes them strictly in order, so every scene still waiting its turn
+# sits in memory decoded. The bill is one read-ahead buffer per waiting scene,
+# which scales with the frame size and not with the encode settings, so joining a
+# long video in a single pass needs gigabytes and ends with the OOM killer.
+#
+# Scenes are therefore folded together in batches, sized from what this machine
+# actually has free right now. The estimate below is a starting point, not a
+# promise: a pass that gets killed anyway halves the batch and tries again, so a
+# wrong guess costs one pass rather than the whole run.
+
+# read-ahead buffered per waiting input, in frames. Measured at ~110 MB per
+# 1080x1920 input, i.e. about this many raw yuv420p frames.
+CONCAT_READAHEAD_FRAMES = 40
+# what a pass needs before any input is counted: filters, encoder, lookahead. The
+# delivery pass pays for libass' glyph cache, loudnorm's window and a slower
+# x264 preset, so it can afford noticeably fewer open inputs than a fold pass.
+FOLD_PASS_OVERHEAD = 1_600_000_000
+DELIVERY_PASS_OVERHEAD = 3_400_000_000
+# share of free memory a join may claim. Swap is deliberately left out of the
+# budget: a filtergraph that spills into it thrashes long before it finishes.
+MEMORY_HEADROOM = 0.6
+CONCAT_MIN_INPUTS = 2
+CONCAT_MAX_INPUTS = 48  # past this the command line, not the memory, is the problem
+CONCAT_DEFAULT_INPUTS = 12  # fallback when free memory can't be read
+
+
+def _free_memory() -> int:
+    """Bytes the kernel reports as available right now, 0 if it will not say."""
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemAvailable:"):
+                return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        return 0
+    return 0
+
+
+def _concat_capacity(cfg: GlobalConfig, overhead: int) -> int:
+    """How many inputs one concat pass can hold open here and now: what is left of
+    the memory budget once the pass's own filters and encoder are paid for, over
+    what one waiting input costs at this frame size."""
+    free = _free_memory()
+    if not free:
+        return CONCAT_DEFAULT_INPUTS
+    frame = cfg.video.width * cfg.video.height * 3 // 2  # yuv420p
+    spare = int(free * MEMORY_HEADROOM) - overhead
+    fits = spare // (frame * CONCAT_READAHEAD_FRAMES)
+    return max(CONCAT_MIN_INPUTS, min(CONCAT_MAX_INPUTS, fits))
+
+
+def _join_total(n: int, batch: int, target: int) -> int:
+    """How many join passes it takes to fold `n` files down to `target`, joining
+    `batch` of them at a time. Mirrors the loop in :func:`_fold_segments`."""
+    total = 0
+    while n > target:
+        folded = k = 0
+        while k < n:
+            group = min(batch, n - k)
+            if group == 1:  # a lone tail file is carried, not joined
+                folded += 1
+                break
+            total += 1
+            folded += 1
+            k += group
+        n = folded
+    return total
+
+
+def _concat_pass(segments: list[Path], out: Path) -> None:
+    """Join `segments` with the concat filter onto one continuous clock. This is
+    plumbing between :func:`finalize`'s batches, so it stays visually transparent
+    and leaves the audio uncompressed — only finalize encodes for delivery."""
+    cmd: list[str] = ["ffmpeg", "-y"]
+    for seg in segments:
+        cmd += ["-i", str(seg)]
+    n = len(segments)
+    concat_in = "".join(f"[{i}:v][{i}:a]" for i in range(n))
+    _run(cmd + [
+        "-filter_complex",
+        f"{concat_in}concat=n={n}:v=1:a=1[cv][ca];"
+        "[cv]setpts=PTS-STARTPTS[v];[ca]asetpts=PTS-STARTPTS[a]",
+        "-map", "[v]", "-map", "[a]",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+        "-c:a", "pcm_s16le",
+        str(out),
+    ])
+
+
+def _fold_segments(
+    segments: list[Path],
+    tmp: Path,
+    prefix: str,
+    batch: int,
+    target: int,
+    on_progress: Callable[[str, int, int], None] | None = None,
+) -> tuple[list[Path], int]:
+    """Join `segments` `batch` at a time until at most `target` are left for the
+    delivery pass to hold open. A fold pass carries none of that pass's filters,
+    so it affords a bigger batch — which is the point of the two numbers: folding
+    wide keeps the tree one level deep, and every level is a re-encode.
+
+    Every batch is itself a concat-filter join, so the re-timing that
+    :func:`finalize` relies on carries through the folding.
+
+    A batch the machine could not afford after all comes back killed rather than
+    failed; that halves it and retries, so the fold settles on a size that works
+    instead of taking the run down. Returns the files left to join and the batch
+    size that survived, for the caller to reuse."""
+    current, level = list(segments), 0
+    done, total = 0, _join_total(len(segments), batch, target)
+    while len(current) > target:
+        folded, k = [], 0
+        while k < len(current):
+            group = current[k:k + batch]
+            if len(group) == 1:  # odd one out: carry it to the next round as is
+                folded.append(group[0])
+                break
+            part = tmp / f"{prefix}_join{level}_{len(folded):02d}.mkv"
+            while True:
+                try:
+                    _concat_pass(group, part)
+                    break
+                except FFmpegError as e:
+                    if not e.signal or len(group) <= CONCAT_MIN_INPUTS:
+                        raise
+                    batch = max(CONCAT_MIN_INPUTS, len(group) // 2)
+                    group = current[k:k + batch]
+                    total = done + _join_total(len(current) - k + len(folded), batch, target)
+            folded.append(part)
+            k += len(group)
+            done += 1
+            if on_progress:
+                on_progress("join", done, max(done, total))
+        current, level = folded, level + 1
+    return current, batch
+
+
+def _delivery_cmd(
     segments: list[Path],
     out: Path,
     cfg: GlobalConfig,
-    ass: Path | None = None,
-    music: Path | None = None,
-    overlay: OverlaySpec | None = None,
-    fonts_dir: Path | None = None,
-) -> None:
-    """Final pass: join the scene ``segments``, burn subtitles, mix background
-    music, stamp the ad overlay — all in ONE re-encode.
-
-    The join uses the concat *filter*, not the concat demuxer: the demuxer
-    stream-copies and merely re-stamps each piece's timestamps, so per-scene
-    audio/video length mismatches (frame vs. AAC-frame quantisation) and each
-    piece's encoder delay pile up into growing drift and, at a join, an abrupt
-    cut where the next scene's sound starts against the previous scene's tail.
-    The filter decodes every piece and re-times them onto one continuous clock,
-    so audio and video stay locked end-to-end regardless of per-piece rounding."""
-    if not segments:
-        raise FFmpegError("finalize: no segments to assemble")
+    ass: Path | None,
+    music: Path | None,
+    overlay: OverlaySpec | None,
+    fonts_dir: Path | None,
+) -> list[str]:
+    """The one delivery pass: join what is left, burn subtitles, mix background
+    music, stamp the ad overlay, encode."""
     cmd: list[str] = ["ffmpeg", "-y"]
     for seg in segments:
         cmd += ["-i", str(seg)]
@@ -289,4 +431,50 @@ def finalize(
         "-movflags", "+faststart",
         str(out),
     ]
-    _run(cmd)
+    return cmd
+
+
+def finalize(
+    segments: list[Path],
+    out: Path,
+    cfg: GlobalConfig,
+    ass: Path | None = None,
+    music: Path | None = None,
+    overlay: OverlaySpec | None = None,
+    fonts_dir: Path | None = None,
+    tmp: Path | None = None,
+    on_progress: Callable[[str, int, int], None] | None = None,
+) -> None:
+    """Join the scene ``segments``, burn subtitles, mix background music and stamp
+    the ad overlay onto the delivered file.
+
+    The join uses the concat *filter*, not the concat demuxer: the demuxer
+    stream-copies and merely re-stamps each piece's timestamps, so per-scene
+    audio/video length mismatches (frame vs. AAC-frame quantisation) and each
+    piece's encoder delay pile up into growing drift and, at a join, an abrupt
+    cut where the next scene's sound starts against the previous scene's tail.
+    The filter decodes every piece and re-times them onto one continuous clock,
+    so audio and video stay locked end-to-end regardless of per-piece rounding.
+
+    Only so many scenes fit in one such pass, though (see :func:`_fold_segments`),
+    so a long video is folded down in batches first and the last pass does the
+    delivery encode. If even that pass is killed for its size, the fold tightens
+    and it is retried, so the join adapts to the machine instead of dying on it."""
+    if not segments:
+        raise FFmpegError("finalize: no segments to assemble")
+    tmp = tmp or out.parent
+    target = _concat_capacity(cfg, DELIVERY_PASS_OVERHEAD)
+    batch = max(_concat_capacity(cfg, FOLD_PASS_OVERHEAD), target)
+    attempt = 0
+    while True:
+        ready, batch = _fold_segments(segments, tmp, f"{out.stem}_p{attempt}", batch, target, on_progress)
+        try:
+            _run(_delivery_cmd(ready, out, cfg, ass, music, overlay, fonts_dir))
+            return
+        except FFmpegError as e:
+            if not e.signal or len(ready) <= CONCAT_MIN_INPUTS:
+                raise
+            # killed for its size after all: fold what is left down further
+            segments, attempt = ready, attempt + 1
+            target = max(CONCAT_MIN_INPUTS, len(ready) // 2)
+            batch = max(batch, target)
