@@ -396,11 +396,20 @@ def run(job: VideoJob, ctx: AppContext) -> None:
     # whole point of cutting part by part — so the stage works the ready episodes and
     # leaves the others for a later resume. Only when NOTHING is ready is there no work
     # to do, and the job parks (a clean `paused` checkpoint, not a failure).
+    #
+    # In `batch` mode the operator has asked for the opposite: nothing moves until the
+    # whole drama's clips are in. Refusing here is the entire difference — with no part
+    # ever left pending, every stage downstream behaves as if parts were never separable.
     delivered, manifest = _collect_manual(job, ctx)
-    pending = manifest.pending_parts()
-    ready = {p.number for p in parts.sync(job)} - pending
-    if not ready:
-        raise manual.ManualInputPending(job.workdir, len(manifest.pending()), len(manifest.shots))
+    numbers = {p.number for p in parts.sync(job)}
+    if parts.iterative(ctx.params):
+        pending = manifest.pending_parts()
+        ready = numbers - pending
+        if not ready:
+            raise manual.ManualInputPending(job.workdir, len(manifest.pending()), len(manifest.shots))
+    else:
+        manual.pause_unless_delivered(job.workdir, manifest)
+        pending, ready = set(), numbers
     job.pending_parts = sorted(pending)
     entity_prompts = _entity_prompts(job)
 

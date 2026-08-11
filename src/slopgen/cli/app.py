@@ -6,6 +6,7 @@ A mode is chosen first (before the language), and it shapes the rest of the line
     slopgen info ru story                       -> the minute-of-info clip
     slopgen info en cyber --ad example_vpn --ad-mode overlay --push yt_main -n 5
     slopgen drama ru --scenario "..." --cast example --duration-min 2 --tol 20 --parts 3
+    slopgen drama ru --parts 3 --parts-at-once   -> cut all three only when every clip is in
     slopgen drama en --orchestration my_chain --ad example_vpn
 
     slopgen info ru facts --break script --break tts   -> stop for review after those stages
@@ -314,6 +315,7 @@ def drama(
     tol: float = typer.Option(15.0, "--tol", help="allowed over/under-run, seconds"),
     clip_s: float = typer.Option(0.0, "--clip-s", help="average length of ONE generated clip, seconds (0 = each generator's own); clips of 8s+ are written as multi-scene sequences"),
     parts: int = typer.Option(1, "--parts", min=1, help="ask the writer for this many cliffhanger parts; the boundaries are then movable at the script/cut breakpoints"),
+    parts_at_once: bool = typer.Option(False, "--parts-at-once", help="cut every part together at the end instead of finishing each one as soon as its own clips are in"),
     voice: Optional[str] = typer.Option(None, "--voice", help="edge-tts narrator voice id (default per language)"),
     ad: Optional[str] = typer.Option(None, "--ad", help="ad contract name from configs/ads/"),
     ad_mode: str = typer.Option("both", "--ad-mode", help="overlay | native | both"),
@@ -365,6 +367,7 @@ def drama(
             duration_tol_s=max(tol, 0.0),
             clip_seconds=max(clip_s, 0.0),
             parts=max(1, parts),
+            parts_iterative=not parts_at_once,
             profanity=profanity,
             ad=ad or "", ad_mode=ad_mode,
             push=push or "", count=max(1, count),
@@ -381,6 +384,7 @@ def drama(
         f" ~{params.duration_s / 60:.1f}min ±{params.duration_tol_s:.0f}s"
         + (f" clip~{params.clip_seconds:g}s" if params.clip_seconds else "")
         + (f" parts={params.parts}" if params.parts != 1 else "")
+        + ("" if params.parts_iterative else " [dim](all at the end)[/dim]")
         + f" cast=[{', '.join(names) or '—'}] orch={orchestration or 'default'}"
         f" ad={params.ad or '-'}({params.ad_mode}) push={params.push or 'local'}"
         + (" [yellow]\\[dry-run][/yellow]" if params.dry_run else "")

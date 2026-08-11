@@ -21,6 +21,14 @@ How many parts there are is read off the scenes, not off ``params.parts``: the f
 is what was *asked* of the writer, while the labels on the scenes are what the script
 actually says — and what the operator may re-cut at the ``script`` and ``cut``
 breakpoints by dragging the separators about.
+
+All of the above is ``parts_iterative``, which is on by default. Turn it off and the
+pipeline does what it did before episodes could be finished separately: nothing is cut
+until the whole drama's clips are in, and then all of it goes at once. That is one
+refusal in the footage stage — with no part ever left pending, every stage here
+behaves as if parts were never separable — and it is the right choice when the
+episodes are meant to land together, or when you would rather watch the whole thing
+before any of it is published. See :func:`iterative`.
 """
 
 from __future__ import annotations
@@ -41,6 +49,13 @@ def requested_parts(params) -> int:
     if getattr(params, "mode", "info") != "drama":
         return 1
     return max(1, int(getattr(params, "parts", 1) or 1))
+
+
+def iterative(params) -> bool:
+    """Whether an episode may be finished on its own, or all of them wait for each
+    other (``parts_iterative``). Waiting is what the pipeline did before episodes could
+    be finished separately: nothing is cut until every last hand-made clip is in."""
+    return bool(getattr(params, "parts_iterative", True))
 
 
 def count(scenes: Iterable[Scene]) -> int:

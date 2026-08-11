@@ -374,6 +374,13 @@ class RunParams(BaseModel):
     # -- drama mode --------------------------------------------------------
     scenario: str = ""  # the drama's premise/plot; empty = the LLM invents one
     parts: int = 1  # drama only: split one drama into this many cliffhanger parts
+    # WHEN an episode is finished, once there is more than one of them. On: as soon as
+    # its OWN clips are in — it is cut, subtitled, described and published while the
+    # later episodes are still being made, and the run parks between them. That is what
+    # the user-assisted path wants, since free daily generator limits run out long
+    # before a story does. Off: nothing is cut until every episode's clips are in, then
+    # all of them at once. A one-part video is the same either way.
+    parts_iterative: bool = True
     # average length of ONE generated clip, in seconds (0 = each generator's nominal).
     # It sets how many clips the story is cut into and how much narration each carries;
     # long clips are written as multi-shot sequences instead of a single framing.

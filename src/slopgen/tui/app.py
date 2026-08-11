@@ -61,7 +61,7 @@ from ..llm import rewrite as bp_ai
 from ..media.generate import PHOTO_MODELS, VIDEO_MODELS
 from ..media.generate import env_keys as gen_keys
 from ..media.generate import key_var_for_model
-from ..pipeline import Orchestrator, VideoJob, manual, review
+from ..pipeline import Orchestrator, VideoJob, manual, parts, review
 from ..pipeline.checkpoint import Checkpoint
 from ..pipeline.context import AppContext
 from ..pipeline.stages import tts as tts_stage
@@ -361,6 +361,9 @@ I18N: dict[str, dict[str, str]] = {
         "push_local": "— save locally —",
         "count": "Videos count",
         "parts": "Drama parts",
+        "parts_iterative": "Finish parts one at a time",
+        "parts_batch": "all at the end",
+        "help.parts_iterative": "ON: a part is cut, described and published as soon as ITS OWN clips are in, while the later parts are still being made — the run parks between them and `slopgen gather` picks it up where it left off. OFF: nothing is cut until the whole drama's clips are in, then every part goes at once (what it did before). One part behaves the same either way.",
         "subs": "Subtitle style",
         "next": "Next  →",
         "prev": "←  Prev",
@@ -467,6 +470,7 @@ I18N: dict[str, dict[str, str]] = {
         "gather.part_ready": "part {n} ✔ ready to cut",
         "gather.part_left": "part {n}: {k} left",
         "gather.will_cut": "Continuing cuts and publishes the ready part(s); the rest waits for you here.",
+        "gather.wait_all": "This run cuts every part at the end, so all of the clips are needed before it can go on.",
         # breakpoints: picking them (Summary step) and the review screen
         "bp_head": "— Breakpoints —",
         "bp_hint": "Pause the run after these stages to check — and edit — what came out.",
@@ -735,6 +739,9 @@ I18N: dict[str, dict[str, str]] = {
         "push_local": "— сохранить локально —",
         "count": "Количество роликов",
         "parts": "Частей в дораме",
+        "parts_iterative": "Доводить части по одной",
+        "parts_batch": "все в конце",
+        "help.parts_iterative": "ВКЛ: часть монтируется, описывается и публикуется, как только собраны клипы именно ЕЁ, пока следующие ещё делаются, — прогон встаёт между ними, а `slopgen gather` подхватывает с того же места. ВЫКЛ: ничего не режется, пока не собраны клипы всей дорамы, потом всё уходит разом (как было раньше). С одной частью разницы нет.",
         "subs": "Стиль субтитров",
         "next": "Далее  →",
         "prev": "←  Назад",
@@ -841,6 +848,7 @@ I18N: dict[str, dict[str, str]] = {
         "gather.part_ready": "часть {n} ✔ можно монтировать",
         "gather.part_left": "часть {n}: осталось {k}",
         "gather.will_cut": "Продолжение смонтирует и опубликует готовые части; остальные подождут тебя здесь.",
+        "gather.wait_all": "Этот прогон режет все части в конце, так что дальше он пойдёт только со всеми клипами.",
         # брейкпоинты: выбор (шаг «Итог») и экран разбора
         "bp_head": "— Брейкпоинты —",
         "bp_hint": "Остановить конвейер после этих этапов, чтобы проверить и поправить результат.",
@@ -1112,6 +1120,7 @@ FIELD_HELP = {
     "w-fg-pos": "help.fg_pos", "w-fg-ai-vmodel": "help.ai_model", "w-fg-ai-pmodel": "help.ai_model",
     "w-ad-src": "help.ad_src", "w-ad-mode": "help.ad_mode",
     "w-push": "help.push", "w-count": "help.count", "w-parts": "help.parts", "w-subs": "help.subs",
+    "w-parts_iterative": "help.parts_iterative",
     "drama-scenario": "help.drama_scenario", "drama-prompt": "help.drama_prompt",
     "e-characters-name": "help.char_name", "e-characters-age": "help.char_age",
     "e-characters-appearance": "help.char_appearance",
@@ -1746,6 +1755,7 @@ class DramaScreen(_CharEditAI, GenerateScreen):
     def _make_forms(self, t, store: ConfigStore, vis0: VisualsConfig) -> None:
         super()._make_forms(t, store, vis0)
         self.f_publish.fields.insert(2, Number("parts", "parts", value="1", default=1, integer=True))
+        self.f_publish.fields.insert(3, Toggle("parts_iterative", "parts_iterative", value=True))
 
     def _content_form(self, store: ConfigStore) -> Form:
         # drama: no content-type / idea — the premise lives in the Story step
@@ -2547,6 +2557,7 @@ class DramaScreen(_CharEditAI, GenerateScreen):
             "clean_subs": bool(p.get("clean_subs")),
             "visual_notes": c.get("visual_notes", ""),
             "parts": max(1, int(p.get("parts", 1) or 1)),
+            "parts_iterative": bool(p.get("parts_iterative", True)),
             "breakpoints": self._breakpoints(),
         }
 
@@ -2566,7 +2577,9 @@ class DramaScreen(_CharEditAI, GenerateScreen):
             "",
             f"  {t('lang')}: [b]{g['lang']}[/b]      {t('duration')}: "
             f"~{g['duration'] / 60:.1f} min ±{g['duration_tol']:.0f}s"
-            + (f"      {t('parts')}: [b]{g['parts']}[/b]" if g["parts"] != 1 else ""),
+            + (f"      {t('parts')}: [b]{g['parts']}[/b]"
+               + ("" if g["parts_iterative"] else f" ({t('parts_batch')})")
+               if g["parts"] != 1 else ""),
             f"  {t('drama_clip_s').split(',')[0]}: [b]{clip}[/b]",
             f"  {t('drama_plot_head')}: {plot}",
             f"  {t('drama_cast_head')}: [b]{cast}[/b]",
@@ -2590,6 +2603,8 @@ class DramaScreen(_CharEditAI, GenerateScreen):
             cmd += f' --visual-notes "{note}…"'
         if g["parts"] != 1:
             cmd += f" --parts {g['parts']}"
+            if not g["parts_iterative"]:
+                cmd += " --parts-at-once"
         glob = [m["name"] for m in self._cast if m["glob"]]
         if glob:
             cmd += f" --cast {','.join(glob)}"
@@ -2640,6 +2655,7 @@ class DramaScreen(_CharEditAI, GenerateScreen):
                 manual_orchestration=orch,
                 duration_s=g["duration"], duration_tol_s=g["duration_tol"],
                 clip_seconds=g["clip_s"], parts=g["parts"],
+                parts_iterative=g["parts_iterative"],
                 profanity=g["profanity"],
                 ad=g["ad_src"] if g["ad_src"] not in (NONE, MANUAL) else "",
                 manual_ad=self._manual_ad_config(g["ad_src"]),
@@ -2861,6 +2877,7 @@ class ManualGatherScreen(Screen):
         self.manifests: dict[int, manual.ManualManifest] = {}
         self.rows: list[tuple[int, str]] = []  # (job_index, shot_id) parallel to the table
         self.show_parts = False  # the part column earns its width only on a real serial
+        self.iterative = True  # whether one finished episode is enough to resume on
 
     # -- data --------------------------------------------------------------
 
@@ -2871,6 +2888,10 @@ class ManualGatherScreen(Screen):
         self.manifests = {}
         for i in _paused_jobs(self.run_dir):
             self.manifests[i] = manual.ManualManifest.load(self._workdir(i))
+        try:  # the run decided at launch whether an episode may go out on its own
+            self.iterative = parts.iterative(Checkpoint.load(self.run_dir).params)
+        except Exception:
+            self.iterative = True
 
     def _shot(self, job_index: int, shot_id: str) -> manual.ManualShot | None:
         m = self.manifests.get(job_index)
@@ -2885,7 +2906,11 @@ class ManualGatherScreen(Screen):
 
     def _ready_parts(self) -> list[tuple[int, int]]:
         """(job index, part) for every episode whose clips are all in — what pressing
-        Continue would actually cut."""
+        Continue would actually cut. Empty when the run was told to cut all parts at
+        the end: a finished episode buys nothing there, so offering to resume on one
+        would only park the job straight back."""
+        if not self.iterative:
+            return []
         return [(i, n) for i, m in self.manifests.items() for n in m.parts_ready()]
 
     def _part_status(self) -> str:
@@ -2959,8 +2984,7 @@ class ManualGatherScreen(Screen):
             # a drama is cut part by part, so what matters is not the grand total but
             # whether any ONE episode is complete — that is what Continue would render
             line += f"\n{self._part_status()}"
-            if self._ready_parts():
-                line += f"\n[dim]{t('gather.will_cut')}[/dim]"
+            line += f"\n[dim]{t('gather.will_cut' if self.iterative else 'gather.wait_all')}[/dim]"
         self.query_one("#gather-progress", Static).update(line)
         if self.rows:
             table.move_cursor(row=min(prev, len(self.rows) - 1))
