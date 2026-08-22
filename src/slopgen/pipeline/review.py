@@ -555,9 +555,12 @@ def _apply_script(job: VideoJob, rows: list[Row], mode: str) -> bool:
             scene.characters = [c.strip() for c in extras["cast"].value.split(",") if c.strip()]
         if "model" in extras and extras["model"].value.strip():
             scene.gen_model = extras["model"].value.strip()
-        if "clip_s" in extras:
+        # an EMPTY length means "as it was" — a scene the AI or the operator added
+        # carries no number yet, and reading that as 0 would strip the clip length it
+        # just inherited from its neighbour
+        if extras.get("clip_s") and extras["clip_s"].value.strip():
             try:
-                scene.clip_target_s = max(float(extras["clip_s"].value or 0), 0.0)
+                scene.clip_target_s = max(float(extras["clip_s"].value), 0.0)
             except ValueError:
                 pass
         scene.part = labels[n] if n < len(labels) else 1

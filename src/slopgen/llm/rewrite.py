@@ -135,12 +135,18 @@ def rewrite_scenes(
         return None
     known = {s.get("id") for s in scenes}
     clean: list[dict] = []
+    taken: set = set()
     for item in out:
         if not isinstance(item, dict):
             continue
         sid = item.get("id")
         # an id the operator's list never had would silently graft one scene's audio
-        # onto another's text — treat it as a new scene instead
-        item["id"] = sid if sid in known and sid is not None else None
+        # onto another's text — treat it as a new scene instead. So is a REPEATED id:
+        # a split scene comes back as two entries both claiming the original, and only
+        # the first of them is that scene; the other is new and says so.
+        keep = sid is not None and sid in known and sid not in taken
+        if keep:
+            taken.add(sid)
+        item["id"] = sid if keep else None
         clean.append(item)
     return clean or None

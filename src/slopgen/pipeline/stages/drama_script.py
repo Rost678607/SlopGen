@@ -21,8 +21,28 @@ The script is written a WINDOW of beats at a time rather than all at once. Asked
 a whole feature-length script in one response, a model spends its attention
 front-loaded — the opening beats track the premise sentence by sentence and the rest
 turns to summary, dropping named props, sub-plots and reversals the operator wrote
-down. Each window instead gets a stated slice of the premise to cover, the tail of
-what came before, and enough room to spend on it (see `ARC_WINDOW`).
+down.
+
+Windows alone were not enough, and this is where a long drama used to fall apart
+after the middle. A window told only that its beats sit "about 55% of the way through
+the premise" has to eyeball which sentences of a two-thousand-word brief that is, and
+it eyeballs badly: the middle windows re-tell what an earlier one already covered,
+skip the props and sub-plots in between, and by the back half the story is running on
+whatever the model remembers rather than on the brief. So the premise is cut up FIRST,
+by an OUTLINE pass that reads all of it at once (see `OUTLINE_SYSTEM`): per window it
+says what happens in that stretch, which concrete details of the brief that stretch is
+responsible for spending, and where the story stands when it ends. Each window then
+writes its own stretch against that plan, with the whole outline in front of it so it
+can see where it is (see `ARC_PLAN`). The percentage windows are still there as the
+fallback for when the outline call comes back unusable (see `ARC_WINDOW`).
+
+Episode boundaries are planned in the same pass, as beat numbers, and each window is
+told which of ITS beats close an episode — so the beat before a cut is written as a
+cliffhanger and the beat after it as the fallout (see `_part_rule`). They used to be
+asked of every window at once: each of eighteen windows was told to "split the story
+into exactly 10 parts", which is how a drama ended up with a cliffhanger every few
+beats and an arc nowhere. Which episode a beat ends up in is decided by the plan; the
+writer is not asked to label its beats at all, only to write the right one at a cut.
 
 The premise is a BRIEF rather than source text: next to the plot the operator writes
 directions to the writer ("break it off with no ending", "don't explain the letter"),
@@ -34,6 +54,8 @@ bolted-on interruption.
 """
 
 from __future__ import annotations
+
+from dataclasses import dataclass, field
 
 from ...llm.characters import recompile_if_dirty
 from ..context import AppContext
@@ -59,7 +81,6 @@ SYSTEM = (
     "NEVER narrate the MC in third person ('Юки был лузером' ❌ → 'Я был лузером' ✅). "
     "NEVER tag a line with who said it. One unbroken first-person voice — never a screenplay. "
     "Break the story into BEATS. {shot_rule} For each beat give:\n"
-    '  • "part": the output part number for this shot (1 if there is only one part);\n'
     '  • "narration": the spoken text for this shot, in {lang} (~{words} words), advancing the plot;\n'
     '  • "video_prompt": an ENGLISH text-to-image/video prompt describing THIS shot — the setting, '
     "which characters are on screen and what they are doing, camera framing and mood. Token-dense, "
@@ -78,7 +99,7 @@ SYSTEM = (
     "on the sheet is never 'he'). Two characters in one shot must stay visually distinct.\n"
     "{part_rule}"
     "{premise_rule}"
-    'Respond with JSON only: {{"title": "<short title in {lang}>", "scenes": [{{"part": 1, "narration": "...", '
+    'Respond with JSON only: {{"title": "<short title in {lang}>", "scenes": [{{"narration": "...", '
     '"video_prompt": "...", "characters": ["..."], "is_ad": false}}, ...]}}.'
 )
 
@@ -141,6 +162,36 @@ ARC_WINDOW = (
     "an earlier one already told. {tail_rule}{end_rule}"
 )
 
+# What a window gets INSTEAD of the percentage above once the outline pass has run:
+# not "you are somewhere around the middle" but the actual events of this stretch, the
+# actual details of the brief it owns, and the actual state it has to leave the story
+# in. The whole outline goes in too (see PLAN_MAP) — a writer that cannot see the
+# stretches on either side of it has no way to tell what is already told from what is
+# still to come, which is exactly how the back half of a long drama used to drift.
+ARC_PLAN = (
+    "You are writing beats {first}-{last} of {beats_total} — stretch {win} of {wins} of ONE "
+    "continuous drama, not a story of its own. Write EXACTLY {beats} beats.\n"
+    "YOUR STRETCH, as the story editor planned it. This, and nothing outside it, is what you "
+    "dramatise:\n{covers}\n"
+    "{details}"
+    "By your last beat the story must stand exactly here: {ends_on}\n"
+    "Never tell material another stretch owns — not the ones behind you (already written) and "
+    "not the ones ahead (they are waiting for it). {tail_rule}{end_rule}"
+)
+
+# Cheap, and it is what keeps eighteen separate calls writing the same story: one line
+# per stretch, so every writer sees the shape of the whole drama and where in it its
+# own beats sit.
+PLAN_MAP = (
+    "\nTHE WHOLE DRAMA, one line per stretch — where the story stands at the end of each:\n"
+    "{lines}\n"
+)
+
+DETAILS_RULE = (
+    "These concrete details from the brief belong to YOUR stretch and to no other. Every one of "
+    "them must appear in your beats — spend them all:\n{items}\n"
+)
+
 # The premise field is where the operator talks TO the writer — "оборви резко, без
 # концовки", "не объясняй письмо", "он старше, чем ты написал". Handed that as plain
 # plot text, the model either voiced it back (the narrator announcing that the story
@@ -195,14 +246,279 @@ AD_RULES = (
     'Give the ad beat a normal "video_prompt" and "characters" too.'
 )
 
+# Episode boundaries reach the writer as BEAT NUMBERS of its own window, never as
+# "split the story into 10 parts". Handed the latter, each of eighteen windows dutifully
+# split ITS beats into ten parts, so the drama came out with a cliffhanger every few
+# beats, no arc, and part labels so scrambled that the pipeline threw them away and cut
+# the episodes evenly anyway.
+# The writer is not asked to LABEL anything either, only to write the right beat at the
+# cut. Asked for a part number per beat, it reads the field as "beat number" and counts
+# 1, 2, 3 … through a window that is wholly inside one episode; the labels the pipeline
+# actually keeps come from the plan (see `_label_parts`).
 PART_RULES = (
-    "\nMULTI-PART OUTPUT: split the story into exactly {parts} ordered parts. "
-    'Every scene must have integer "part" from 1 to {parts}; part numbers never go backwards. '
-    "The final beat of every non-final part MUST be the strongest unresolved moment available: "
-    "a revelation, betrayal, discovery, threat, impossible choice, or emotional reversal that cuts at peak tension. "
-    "Do not resolve that moment inside the same part. The next part starts with the immediate fallout, "
-    "not a recap. Make each part feel publishable on its own while still demanding the next part.\n"
+    "\nEPISODE CUTS: this drama is published as {parts} separate episodes cut out of the same "
+    "continuous run of beats. The story is never restarted, recapped or summarised at a cut, and "
+    "you never label, number or announce an episode — where the cuts fall is already decided, and "
+    "your job is only to write the beats they fall between. {spans}\n{cliffs}"
 )
+
+PART_CLIFF = (
+    "Your beat {beat} is the LAST beat of episode {part}: end it on the strongest unresolved "
+    "moment your material holds — a revelation, a betrayal, a threat, an impossible choice, an "
+    "emotional reversal — cut at peak tension and do NOT resolve it. Your beat {next_beat} opens "
+    "episode {next_part} on the immediate fallout, mid-situation, with no recap of any kind.\n"
+)
+
+
+# --------------------------------------------------------------------------
+# The outline pass: cut the brief up once, before a single beat is written.
+# --------------------------------------------------------------------------
+
+OUTLINE_SYSTEM = (
+    "You are the STORY EDITOR of a narrated vertical web drama. You do not write the drama — you "
+    "cut the operator's brief into exactly {wins} consecutive STRETCHES, which {wins} different "
+    "writers then write. Each writer sees only its own stretch, this outline, and the last few "
+    "lines written before it, so whatever you leave out of the outline never reaches the page.\n"
+    "Read the WHOLE brief and plan the WHOLE story before you write stretch 1. The stretches are "
+    "slices of ONE story, in order, and together they must use the brief up completely: every "
+    "event, character, place, object, number and spoken line in it belongs to exactly ONE "
+    "stretch. Nothing may be dropped, nothing may be told twice, nothing may be moved out of the "
+    "order the brief puts it in. Give each stretch its fair share of the material — a stretch is "
+    "the same length as every other, so do not pack half the brief into the first two and leave "
+    "the rest to stretch a single scene across a dozen beats.\n"
+    "If the brief is short and leaves the story to be invented, invent it — and the same rule "
+    "then holds: each stretch owns its own material and no other stretch's.\n"
+    "For each stretch give:\n"
+    '  • "covers": what happens in it, in order — 2-5 concrete sentences about events, not '
+    "themes or mood. Written in {lang}.\n"
+    '  • "details": the concrete things from the brief this stretch is responsible for — names, '
+    "numbers, objects, places, revelations, lines that are actually spoken. Short items, in the "
+    "brief's own wording. This is the checklist its writer must spend; put each detail in the one "
+    "stretch it belongs to and nowhere else.\n"
+    '  • "ends_on": ONE sentence — where the story stands when this stretch ends. The next '
+    "stretch begins from exactly there.\n"
+    "The last stretch ends the story, unless the brief directs the writer to end it otherwise, in "
+    "which case plan for that instead.\n"
+    "{part_rule}"
+    "The rule below is addressed to the writers, and it binds you first: an instruction the "
+    "operator wrote TO them is never material to plan a stretch around.\n"
+    "{premise_rule}"
+    'Respond with JSON only: {{"title": "<short title in {lang}>", "stretches": [{{"covers": "...", '
+    '"details": ["...", "..."], "ends_on": "..."}}, ...]{part_json}}}.'
+)
+
+OUTLINE_PARTS = (
+    "\nEPISODE CUTS: the drama is published as {parts} episodes cut out of its {beats} beats — "
+    "beat 1 opens episode 1, and each cut opens the next one. Choose where the {cuts} cut(s) "
+    'fall: "part_breaks", the beat numbers that OPEN an episode, strictly increasing, between 2 '
+    "and {beats}, and close to an even split (about {even} beats per episode). Put each cut on "
+    "the beat straight AFTER the strongest unresolved moment available near that point — a "
+    "revelation, a betrayal, a threat, an impossible choice — so the episode before it ends at "
+    "peak tension and stays unresolved until the next one. Make sure the stretch a cut falls in "
+    "really does have that moment in it.\n"
+    'Beat numbers belong in "part_breaks" and NOWHERE else: never write one into "covers", '
+    '"details" or "ends_on", and never mention episodes, cuts or the plan there. Those fields are '
+    "read by a writer who is told about its own cut separately, in its own beat numbering — a "
+    '"detail" reading \'beat 49\' is one it will dutifully try to put on screen.\n'
+)
+
+
+@dataclass
+class Stretch:
+    """One window's slice of the story, as the outline pass planned it."""
+
+    covers: str
+    details: list[str] = field(default_factory=list)
+    ends_on: str = ""
+
+
+def _even_breaks(beats: int, parts: int) -> list[int]:
+    """Beat numbers (1-based) that open each episode after the first, split evenly.
+
+    The fallback when there is no outline to ask, and the sanity check on the one it
+    gives back. Strictly increasing for any ``beats >= parts``."""
+    return [1 + round(beats * k / parts) for k in range(1, max(parts, 1))]
+
+
+def _clean_breaks(raw, beats: int, parts: int) -> list[int]:
+    """Validate the outline's episode cuts, falling back to an even split.
+
+    A cut outside the beat range, a repeated one, the wrong number of them, or a split
+    so lopsided that one episode is a third of the length of another are all rejected
+    wholesale: the point of letting the editor choose is a better cut than an even one,
+    and a broken list is not that."""
+    breaks = sorted({n for n in _ints(raw) if 2 <= n <= beats})
+    if len(breaks) != max(parts - 1, 0):
+        return _even_breaks(beats, parts)
+    spans = [b - a for a, b in zip([1] + breaks, breaks + [beats + 1])]
+    if min(spans) * 3 < beats / parts:
+        return _even_breaks(beats, parts)
+    return breaks
+
+
+def _ints(raw) -> list[int]:
+    out: list[int] = []
+    for v in raw if isinstance(raw, list) else []:
+        try:
+            out.append(int(v))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _parse_stretches(data: dict, wins: int) -> list[Stretch]:
+    """The outline's stretches, one per window — or nothing, which puts the stage back
+    on the percentage windows. A short or long list is nothing: a stretch matched to
+    the wrong window would send that window off to write the wrong part of the story,
+    which is worse than no plan at all."""
+    raw = data.get("stretches") or data.get("windows") or []
+    if not isinstance(raw, list) or len(raw) != wins:
+        return []
+    out: list[Stretch] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            return []
+        covers = str(item.get("covers") or item.get("summary") or "").strip()
+        if not covers:
+            return []
+        details = item.get("details") or []
+        out.append(Stretch(
+            covers=covers,
+            details=[str(d).strip() for d in details if str(d).strip()]
+            if isinstance(details, list) else [],
+            ends_on=str(item.get("ends_on") or "").strip(),
+        ))
+    return out
+
+
+def _outline(
+    ctx: AppContext, *, scenario: str, roster: str, lang: str,
+    windows: list[tuple[int, int]], beats: int, parts: int,
+) -> tuple[list[Stretch], list[int], str]:
+    """Plan the whole drama once: (stretches, episode-cut beats, title).
+
+    One LLM call, and the only one that ever sees the entire brief against the entire
+    beat budget. Returns no stretches when there is nothing to plan (a single window
+    already sees everything) or when the answer came back unusable — the caller then
+    writes the way it did before, a percentage of the premise at a time."""
+    cuts = max(parts - 1, 0)
+    if len(windows) < 2:
+        return [], _even_breaks(beats, parts), ""
+    system = OUTLINE_SYSTEM.format(
+        wins=len(windows), lang=lang,
+        part_rule=OUTLINE_PARTS.format(
+            parts=parts, beats=beats, cuts=cuts, even=round(beats / parts)
+        ) if cuts else "",
+        part_json=', "part_breaks": [<beat numbers>]' if cuts else "",
+        premise_rule=PREMISE_RULE,
+    )
+    user = (
+        "The operator's brief — story material and, where they address you directly, "
+        f"instructions to follow rather than to write down.\n{scenario}\n\n"
+        f"Cast:\n{roster}\n\n"
+        f"The drama runs {beats} beats, cut into {len(windows)} stretches of "
+        f"{', '.join(str(b - a) for a, b in windows)} beats."
+    )
+    data = ctx.llm.complete_json("drama_outline", system, user)
+    stretches = _parse_stretches(data, len(windows))
+    breaks = _clean_breaks(data.get("part_breaks"), beats, parts) if cuts else []
+    return stretches, breaks, str(data.get("title", "")).strip()
+
+
+def _plan_map(stretches: list[Stretch], current: int) -> str:
+    """The whole outline as one line per stretch, with the reader's own marked."""
+    lines = "\n".join(
+        f"  {i + 1}. {st.ends_on or st.covers.split('.')[0]}"
+        + ("   ◀ YOURS" if i == current else "")
+        for i, st in enumerate(stretches)
+    )
+    return PLAN_MAP.format(lines=lines)
+
+
+def _details(stretch: Stretch) -> str:
+    if not stretch.details:
+        return ""
+    return DETAILS_RULE.format(items="\n".join(f"  - {d}" for d in stretch.details))
+
+
+# --------------------------------------------------------------------------
+# Episode cuts
+# --------------------------------------------------------------------------
+
+
+def _part_rule(parts: int, breaks: list[int], first: int, last: int, beats: int) -> str:
+    """What one window is told about episodes: which of ITS beats belong to which one,
+    and which of them ends an episode.
+
+    `first`/`last` are the window's half-open range of 0-based planned beats and
+    `breaks` the 1-based beat numbers that open an episode; the beat numbers that come
+    out are local to the window, because that is the only numbering its writer has.
+    A window that owns no cut is simply told which episode its beats are, and a
+    single-episode drama is told nothing at all."""
+    if parts <= 1:
+        return ""
+    edges = [1] + list(breaks) + [beats + 1]
+    spans: list[str] = []
+    cliffs: list[str] = []
+    for i in range(len(edges) - 1):
+        a, b = edges[i], edges[i + 1]  # episode i+1 runs over global beats a … b-1
+        lo, hi = max(a, first + 1), min(b - 1, last)  # its overlap with this window
+        if lo > hi:
+            continue
+        spans.append(
+            f"your beats {lo - first}-{hi - first} fall in episode {i + 1}"
+            if hi > lo else f"your beat {lo - first} falls in episode {i + 1}"
+        )
+        if b - 1 == hi and i + 2 < len(edges):  # the cut itself falls inside this window
+            cliffs.append(PART_CLIFF.format(
+                beat=hi - first, part=i + 1, next_beat=hi - first + 1, next_part=i + 2,
+            ))
+    if not spans:
+        return ""
+    text = "; ".join(spans) + "."
+    return PART_RULES.format(
+        parts=parts, spans=text[0].upper() + text[1:], cliffs="".join(cliffs)
+    )
+
+
+def _cut_index(planned: int, windows: list[tuple[int, int]], counts: list[int]) -> int:
+    """Where a PLANNED beat number lands in the scenes actually written.
+
+    A window asked for thirteen beats does not always return thirteen, so a cut planned
+    at beat 40 cannot simply be applied at scene 40. It is applied at the same offset
+    inside the same window instead, which keeps every cut on the moment its writer was
+    told to end an episode on."""
+    beat = planned - 1  # 0-based
+    base = 0
+    for (a, b), n in zip(windows, counts):
+        if beat < b:
+            return base + min(max(beat - a, 0), n)
+        base += n
+    return base
+
+
+def _label_parts(
+    scenes: list[Scene], breaks: list[int], windows: list[tuple[int, int]], counts: list[int]
+) -> None:
+    """Stamp the episode number on every scene from the planned cuts.
+
+    The writer is not asked for these labels and could not give good ones: it never saw
+    more than its own stretch. The cuts, by contrast, are what its beats were WRITTEN to
+    — the beat before one is a cliffhanger because the writer was told to make it one.
+    The operator moves them at the ``cut`` breakpoint.
+
+    Two planned cuts can land on the same scene when a window comes back much shorter
+    than it was asked for. They are nudged apart rather than merged, because an episode
+    with no scenes at all is what sends the whole cut back to an even split (see
+    :func:`..parts.normalize_scene_parts`) — losing every good boundary over one."""
+    total = len(scenes)
+    edges: list[int] = []
+    for k, planned in enumerate(breaks):
+        lo = edges[-1] + 1 if edges else 1  # never empty the episode this cut closes
+        hi = total - (len(breaks) - k)  # leave a scene for every cut still to come
+        edges.append(min(max(_cut_index(planned, windows, counts), lo), max(hi, lo)))
+    for i, scene in enumerate(scenes):
+        scene.part = 1 + sum(1 for e in edges if e <= i)
 
 
 def _roster(cast) -> str:
@@ -230,12 +546,9 @@ def _parse_scenes(data: dict) -> list[Scene]:
         narration = str(s.get("narration") or s.get("text") or "").strip()
         if not narration:
             continue
-        try:
-            part = int(s.get("part", 1) or 1)
-        except (TypeError, ValueError):
-            part = 1
+        # no `part` is read: which episode a beat belongs to is the plan's to decide
+        # (see `_label_parts`), and the writer is not asked for it
         out.append(Scene(
-            part=part,
             text=narration,
             video_prompt=str(s.get("video_prompt", "")).strip(),
             characters=[str(c).strip() for c in s.get("characters", []) if str(c).strip()],
@@ -282,6 +595,11 @@ def run(job: VideoJob, ctx: AppContext) -> None:
     slots = plan_slots(ctx.orchestration, p.duration_s, p.clip_seconds)
     beats = len(slots)
     parts = requested_parts(p)
+    if parts > beats:
+        raise ValueError(
+            f"a {beats}-beat drama cannot be cut into {parts} episodes — lengthen the "
+            f"video, shorten the clips, or ask for fewer parts"
+        )
     scenario = p.scenario.strip() or "(invent a compelling premise that fits the cast)"
     roster = _roster(cast)
 
@@ -293,29 +611,46 @@ def run(job: VideoJob, ctx: AppContext) -> None:
         (i for i, (a, b) in enumerate(windows) if a <= int(beats * 0.65) < b), len(windows) - 1
     )
 
+    # plan the whole story (and where the episodes are cut) before writing any of it
+    stretches, breaks, title = _outline(
+        ctx, scenario=scenario, roster=roster, lang=lang,
+        windows=windows, beats=beats, parts=parts,
+    )
+    if stretches:
+        ctx.progress("outline", 1, 1)
+
     scenes: list[Scene] = []
-    title = ""
+    counts: list[int] = []  # beats each window actually returned, for the episode cuts
     for wi, (first, last) in enumerate(windows):
         win_beats = last - first
         # clip length can differ per window under a hybrid orchestration, so the
         # narration budget is taken from the slots this window actually writes to
         win_clip_s = sum(s.clip_seconds for s in slots[first:last]) / win_beats
-        if len(windows) == 1:
+        tail_rule = CONTINUE_RULE if wi else ""
+        end_rule = FINAL_RULE if wi == len(windows) - 1 else ""
+        if stretches:
+            st = stretches[wi]
+            arc = ARC_PLAN.format(
+                first=first + 1, last=last, beats_total=beats, beats=win_beats,
+                win=wi + 1, wins=len(windows), covers=st.covers, details=_details(st),
+                ends_on=st.ends_on or "at the end of the stretch above",
+                tail_rule=tail_rule, end_rule=end_rule,
+            ) + _plan_map(stretches, wi)
+        elif len(windows) == 1:
             arc = ARC_WHOLE.format(beats=beats, duration=p.duration_s, tol=p.duration_tol_s)
         else:
             arc = ARC_WINDOW.format(
                 first=first + 1, last=last, beats_total=beats, beats=win_beats,
                 win=wi + 1, wins=len(windows),
                 from_pct=100.0 * first / beats, to_pct=100.0 * last / beats,
-                tail_rule=CONTINUE_RULE if wi else "",
-                end_rule=FINAL_RULE if wi == len(windows) - 1 else "",
+                tail_rule=tail_rule, end_rule=end_rule,
             )
         system = SYSTEM.format(
             lang=lang, words=word_budget(win_clip_s, p.lang, p.tts_rate),
             shot_rule=shot_rule(win_clip_s),
             open_rule=OPEN_RULE if wi == 0 else "",
             arc_rule=arc,
-            part_rule=PART_RULES.format(parts=parts) if parts > 1 else "",
+            part_rule=_part_rule(parts, breaks, first, last, beats),
             premise_rule=PREMISE_RULE,
         )
         system += profanity_rule(p.profanity, p.lang)
@@ -342,6 +677,7 @@ def run(job: VideoJob, ctx: AppContext) -> None:
                 f"LLM returned no beats for window {wi + 1}/{len(windows)} of the drama script"
             )
         scenes.extend(got)
+        counts.append(len(got))
         title = title or str(data.get("title", "")).strip()
         ctx.progress("script", wi + 1, len(windows))
 
@@ -364,6 +700,8 @@ def run(job: VideoJob, ctx: AppContext) -> None:
             s.is_ad = False
         seen_ad = seen_ad or s.is_ad
 
+    if breaks:
+        _label_parts(scenes, breaks, windows, counts)
     normalize_scene_parts(scenes, parts)
     if parts > 1:
         missing = set(range(1, parts + 1)) - {s.part for s in scenes}
@@ -374,5 +712,6 @@ def run(job: VideoJob, ctx: AppContext) -> None:
             )
     _assign_slots(scenes, slots)
     job.scenes = scenes
-    # the title comes from the first window — it is the one that saw the story open
+    # the title comes from the outline, which is the only pass that read the whole
+    # story; failing that, from the first window — the one that saw it open
     job.topic = title or (p.scenario.strip()[:80] or "AI drama")

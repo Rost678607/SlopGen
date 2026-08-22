@@ -530,6 +530,9 @@ I18N: dict[str, dict[str, str]] = {
         "bp.play_none": "this line has no audio yet — re-voice it first",
         "bp.play_err": "ffplay not found (it ships with ffmpeg)",
         "bp.ai_ph_script": "anything: rewrite, reorder, merge, split, add or drop scenes, recast, change generators",
+        "unit.outline": "story outline",
+        "unit.script": "script windows",
+        "unit.entities": "registry passes",
         "unit.tts": "voiceover fragments",
         "unit.footage": "video fragments",
         "unit.assemble": "scenes assembled",
@@ -909,6 +912,9 @@ I18N: dict[str, dict[str, str]] = {
         "bp.play_none": "у строки ещё нет озвучки — сначала переозвучь",
         "bp.play_err": "ffplay не найден (он идёт вместе с ffmpeg)",
         "bp.ai_ph_script": "что угодно: переписать, переставить, склеить, разбить, добавить или убрать сцены, сменить каст и нейронки",
+        "unit.outline": "план истории",
+        "unit.script": "окон сценария",
+        "unit.entities": "проходов по реестру",
         "unit.tts": "фрагментов озвучки",
         "unit.footage": "видеофрагментов",
         "unit.assemble": "сцен смонтировано",
@@ -3470,11 +3476,37 @@ class BreakpointScreen(Screen):
         self._sel = gi
         await self._show_detail()
 
+    def _proto(self) -> review.Group | None:
+        """The card a NEW item is shaped like: the first real item of the document.
+
+        Never a part separator. A separator is not an item of the stage's own kind —
+        it is one read-only marker row — so a new scene cut from it comes out as
+        another part break instead of a scene, which is what the drama script
+        document (it always opens with the marker of part 1) used to do to every
+        scene the AI invented."""
+        return next((g for g in self._groups() if not self._is_sep(g)), None)
+
+    def _blank_group(self, label: str) -> list[review.Row]:
+        """The rows one empty item is made of, shaped like the items already there.
+
+        A card is more than its opening line — the shot prompt, the cast, the
+        generator and the clip length are rows of the SAME scene — so an added scene
+        has to carry them all, or it lands in the document as a line with nothing to
+        say how it is filmed."""
+        proto = self._proto()
+        if proto is None:
+            return [review.Row(label=label, value="")]
+        return [
+            review.Row(label=label, value="", field=r.field, kind=r.kind,
+                       options=list(r.options), readonly=r.readonly)
+            for r in proto.rows
+        ]
+
     @on(Button.Pressed, "#bp-add")
     async def _add_item(self) -> None:
         self._sync()
         groups = self._groups()
-        self.doc.rows.append(review.Row(label=f"#{len(groups) + 1}", value=""))
+        self.doc.rows.extend(self._blank_group(f"#{len(groups) + 1}"))
         await self._rebuild(keep=len(groups))
 
     @on(Button.Pressed, "#bp-cut")
@@ -3648,10 +3680,11 @@ class BreakpointScreen(Screen):
         """Rebuild the rows from what the AI returned. A scene carrying a known id
         keeps that source — and with it the audio and clip already made for it — while
         one with a null id becomes new. The field set, kinds and options are taken from
-        the scene it came from, or from the first existing one for a brand-new scene."""
+        the scene it came from, or from the first existing SCENE for a brand-new one
+        (see :meth:`_proto` — taking the first card would take the part marker)."""
         groups = self._groups()
         by_src = {g.head.src: g for g in groups if g.head.src is not None}
-        proto = groups[0] if groups else None
+        proto = self._proto()  # never the part marker groups[0] usually is
         rows: list[review.Row] = []
         for n, item in enumerate(items):
             sid = item.get("id")
@@ -3667,6 +3700,7 @@ class BreakpointScreen(Screen):
                     src=base.head.src if base else None,
                     info=old.info if base else "",
                     field=old.field, kind=old.kind, options=list(old.options),
+                    readonly=old.readonly,
                 ))
         return rows
 
@@ -4483,7 +4517,8 @@ class SlopgenApp(App):
         width: 52; height: 100%; padding: 1 2; margin-left: 2;
         border: round $primary; background: $surface;
     }
-    #gather-progress { height: 1; padding: 0 2; background: $surface; }
+    /* auto, not 1: a drama adds a line per episode's readiness under the tally */
+    #gather-progress { height: auto; padding: 0 2; background: $surface; }
     #gather-row { height: 3; align: center middle; padding: 0 2; }
     #gather-row Button { margin: 0 1; }
 
