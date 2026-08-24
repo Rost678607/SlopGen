@@ -283,7 +283,7 @@ def resynth_one(job: VideoJob, ctx: AppContext, index: int, rate: int | None = N
     # (tts for info, footage for drama) converts them to absolute positions.
     scene.words = [Word(text=w["text"], start=w["start"], end=w["end"]) for w in raw]
     scene.audio_src_duration = src
-    if not ctx.is_drama:
+    if not ctx.is_beats:
         scene.duration = src
     return src
 
@@ -294,7 +294,7 @@ def run(job: VideoJob, ctx: AppContext) -> None:
     # the speed it is spoken at + its scene-relative word timings; the footage stage
     # stretches (atempo) the voice to the generated clip and finalizes both
     # scene.duration and the absolute word positions.
-    drama = ctx.is_drama
+    drama = ctx.is_beats
     table = _pronounce(ctx)
     audio_dir = job.workdir / "tts"
     audio_dir.mkdir(parents=True, exist_ok=True)

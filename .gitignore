@@ -35,6 +35,12 @@ configs/characters/*.toml
 configs/accounts/*.toml
 configs/ads/*.toml
 !configs/ads/example_vpn.toml
+# Personal fandoms — a world is a folder of lore, its own cast and a compiled canon
+# sheet. The shipped "example" world doubles as the documentation of what good lore
+# looks like, so it stays.
+configs/fandoms/*
+!configs/fandoms/example/
+!configs/fandoms/example/**
 
 # Media libraries are copyright-sensitive — supply your own.
 assets/music/*

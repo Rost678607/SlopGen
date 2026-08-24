@@ -13,14 +13,17 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shutil
 import subprocess
 import tomllib
+import zlib
 from pathlib import Path
 
 import tomli_w
 from dotenv import load_dotenv
 from textual import events, on
 from textual.app import App, ComposeResult
+from textual.color import Color
 from textual.containers import Center, Horizontal, Vertical, VerticalScroll
 from textual.coordinate import Coordinate
 from textual.screen import ModalScreen, Screen
@@ -33,6 +36,7 @@ from textual.widgets import (
     Label,
     ListItem,
     ListView,
+    Markdown,
     ProgressBar,
     RichLog,
     Select,
@@ -43,12 +47,14 @@ from textual.widgets import (
 
 from ..config import ConfigError, ConfigStore, RunParams, VisualsConfig
 from ..config.envfile import set_env_var
+from ..config.loader import fandom_docs, lore_sha, read_lore, write_fandom
 from ..config.models import (
     AdConfig,
     AdDescriptionConfig,
     AdNativeConfig,
     AdOverlayConfig,
     CharacterConfig,
+    FandomConfig,
     LLMProfile,
     OrchestrationConfig,
     OrchestrationStage,
@@ -57,6 +63,7 @@ from ..config.models import (
 )
 from ..llm import MODEL_PRESETS, PROVIDERS, ChatLLM, resolve_provider
 from ..llm import characters as char_ai
+from ..llm import lore as lore_ai
 from ..llm import rewrite as bp_ai
 from ..media.generate import PHOTO_MODELS, VIDEO_MODELS
 from ..media.generate import env_keys as gen_keys
@@ -178,7 +185,253 @@ MINECRAFT_THEME = Theme(
     warning="#FFAA00",  # gold
     error="#FF5555",  # redstone
     dark=True,
+    # The identity palette — colours that mean NOTHING, used to tell peers apart (see
+    # "Identity colour" below). It lives with the theme because a colour that sits well
+    # beside grass and deepslate sits badly beside something else. These six are ore and
+    # block colours chosen to satisfy `palette_faults` against this theme: none of them
+    # comes near grass, gold, redstone or diamond, none of them looks like another, and
+    # each lifts into readable text without going chalky. Change one and run
+    # `palette_faults` — it is what stops a pretty colour that reads as a warning.
+    variables={
+        "identity": "#3B62C4,#B26A3C,#CBB47A,#B9BCC6,#B5486B,#8A6A8C",
+        # lapis · terracotta · sandstone · iron · crimson stem · mushroom stem
+    },
 )
+
+# --------------------------------------------------------------------------
+# Identity colour
+# --------------------------------------------------------------------------
+#
+# A stable colour per name, meaning NOTHING. It is not decoration for its own sake:
+# a colour the eye can rely on turns a list of peers into things you recognise
+# instead of read — "Марта is the blue one" works on a cast of fifteen even though
+# blue says nothing about her. Avatar colours, essentially.
+#
+# The palette BELONGS TO THE THEME (`Theme.variables["identity"]`), because a colour
+# that is right next to grass and deepslate is wrong next to something else — and
+# because a theme that ships no palette should fall back, not look broken.
+#
+# The rules below are code rather than prose, so a palette cannot quietly drift out
+# of them: `palette_faults` returns what is wrong with one, and the test at the bottom
+# of this module's docstring is simply that it returns nothing for every theme we ship.
+
+
+def _lab(color: Color) -> tuple[float, float, float]:
+    """CIE L*a*b* for a colour, so "how different do these look" is a distance rather
+    than a difference in numbers that happen to be stored next to each other."""
+    def _lin(c: float) -> float:
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+    r, g, b = (_lin(v / 255) for v in (color.r, color.g, color.b))
+    x = (0.4124 * r + 0.3576 * g + 0.1805 * b) / 0.95047
+    y = 0.2126 * r + 0.7152 * g + 0.0722 * b
+    z = (0.0193 * r + 0.1192 * g + 0.9505 * b) / 1.08883
+
+    def _f(t: float) -> float:
+        return t ** (1 / 3) if t > 0.008856 else 7.787 * t + 16 / 116
+
+    fx, fy, fz = _f(x), _f(y), _f(z)
+    return 116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)
+
+
+def color_distance(a: str | Color, b: str | Color) -> float:
+    """How far apart two colours look (CIE76). Under ~20 most people call them the
+    same colour at a glance; under ~10 they are the same colour."""
+    la, aa, ba = _lab(Color.parse(a))
+    lb, ab, bb = _lab(Color.parse(b))
+    return ((la - lb) ** 2 + (aa - ab) ** 2 + (ba - bb) ** 2) ** 0.5
+
+
+def _contrast(a: str | Color, b: str | Color) -> float:
+    """WCAG contrast ratio, 1 (identical) to 21 (black on white)."""
+    def _l(c: Color) -> float:
+        def _lin(v: float) -> float:
+            v /= 255
+            return v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4
+        r, g, b = (_lin(v) for v in (c.r, c.g, c.b))
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+    x, y = sorted((_l(Color.parse(a)), _l(Color.parse(b))), reverse=True)
+    return (x + 0.05) / (y + 0.05)
+
+
+# The rules, as numbers. Each one is a way an earlier attempt went wrong: a palette
+# that borrowed the theme's gold made a decorative button look like a warning, one
+# picked by eye gave two neighbours in a cast the same blue, and one picked to be
+# readable as text came out pastel and had nothing to do with a world of grass and
+# deepslate.
+#
+# That last failure is why a palette entry is a BASE colour that `identity_ink` lifts
+# until it reads, rather than a colour used as-is. Deep lapis is a fine base and
+# illegible as a word on deepslate; requiring the base itself to be readable is what
+# forced the palette pale in the first place. The rules below are therefore checked
+# against both the base and the ink derived from it.
+SEMANTIC_GAP = 30.0   # from any colour the theme uses to MEAN something
+PEER_GAP = 25.0       # from every other colour in the palette, in BOTH roles
+TEXT_CONTRAST = 4.0   # what `identity_ink` lifts a colour until it reaches
+MAX_LIFT = 0.86       # ...but never past this lightness, or every hue turns to chalk
+
+
+def identity_ink(color: str | Color, ground: str | Color = "#1D1D21") -> str:
+    """The palette colour as TEXT on `ground`: the same hue, moved until it reads.
+
+    AWAY from the ground, which is the whole point and the thing the first version got
+    wrong: it always lightened, so on a light theme it walked every colour towards the
+    background it was supposed to stand out from and the palette came back empty.
+
+    Returns the original when it already reads. A hue that cannot reach the contrast
+    before it runs out of room stops there — `palette_faults` is what catches those,
+    rather than letting them ship as unreadable."""
+    c = Color.parse(color)
+    if _contrast(c, ground) >= TEXT_CONTRAST:
+        return c.hex
+    h, sat, lum = c.hsl
+    _, _, ground_lum = Color.parse(ground).hsl
+    step = -0.02 if ground_lum > 0.5 else 0.02  # dark ink on a light ground, and back
+    limit = 1.0 - MAX_LIFT if step < 0 else MAX_LIFT
+    while (lum > limit) if step < 0 else (lum < limit):
+        lum = min(max(lum + step, 0.0), 1.0)
+        c = Color.from_hsl(h, sat, lum)
+        if _contrast(c, ground) >= TEXT_CONTRAST:
+            break
+    return c.hex
+
+
+# The bevel, measured off the app's own buttons rather than guessed. A `success`
+# button renders body #63BC34 between a top edge of #89E555 and a bottom of #0C7E00 —
+# which is `lighten(0.15)` and `darken(0.25)`, Textual's own colour maths. Using the
+# same two calls is what makes an identity-coloured button look like it was cut from
+# the same sheet as the rest, instead of merely beveled by something.
+#
+# Textual applies this to its VARIANTS. It does not apply it to a border colour set
+# directly: an inline `border: tall <colour>` paints both edges in that one colour,
+# which is a flat rectangle. Hence computing it here — and only for top and bottom,
+# because that is all the real buttons have. Adding left and right (the obvious
+# spelling of "give it a border") turns the edges into a frame, which is the other
+# half of why these looked wrong.
+BEVEL_LIGHTEN, BEVEL_DARKEN = 0.15, 0.25
+
+
+def identity_bevel(color: str | Color) -> tuple[str, str, str, str]:
+    """A button face in this colour: (body, text, top edge, bottom edge)."""
+    c = Color.parse(color)
+    return (c.hex, c.get_contrast_text().hex,
+            c.lighten(BEVEL_LIGHTEN).hex, c.darken(BEVEL_DARKEN).hex)
+
+
+def palette_faults(palette: list[str], theme: Theme) -> list[str]:
+    """Everything wrong with `palette` under this theme — empty when it is sound."""
+    faults: list[str] = []
+    ground = theme.background or "#000000"
+    semantic = {"primary": theme.primary, "success": theme.success,
+                "warning": theme.warning, "error": theme.error, "accent": theme.accent}
+    inks = [identity_ink(c, ground) for c in palette]
+    for c, ink in zip(palette, inks):
+        # the base is not the only thing that reaches the screen: a filled surface shows
+        # a LIT edge too, and a lifted teal lands squarely on the diamond accent — which
+        # is how a decorative button came to wear the colour that means "focused"
+        _, _, lit, _ = identity_bevel(c)
+        for label, shown in (("", c), (" lit", lit)):
+            for name, sem in semantic.items():
+                if sem and color_distance(shown, sem) < SEMANTIC_GAP:
+                    faults.append(
+                        f"{c}{label} reads as {name} ({sem}): {color_distance(shown, sem):.0f}"
+                    )
+        if _contrast(ink, ground) < TEXT_CONTRAST:
+            faults.append(f"{c} cannot be lifted into readable text on {ground}")
+        for surf in (theme.surface,):
+            if surf and _contrast(ink, surf) < TEXT_CONTRAST - 0.7:
+                faults.append(f"{c} is thin on {surf}: {_contrast(ink, surf):.1f}:1")
+    for role, values in (("as bases", palette), ("as text", inks)):
+        for i, a in enumerate(values):
+            for b in values[i + 1:]:
+                if color_distance(a, b) < PEER_GAP:
+                    faults.append(f"{a} and {b} look alike {role}: {color_distance(a, b):.0f}")
+    return faults
+
+
+IDENTITY_COUNT = 6  # more than a list usually needs; enough that peers rarely collide
+
+
+def derive_identity(theme: Theme, count: int = IDENTITY_COUNT) -> list[str]:
+    """Build an identity palette out of the theme itself.
+
+    A hardcoded list is the same list under every theme, which is exactly the thing an
+    identity colour must not be: it is supposed to live inside the theme's world, and a
+    theme changes that world. So the hues are spread around the wheel and dressed in
+    the theme's OWN saturation and lightness — taken from its primary, the colour it
+    considers normal — and then put through `palette_faults`, which throws out whatever
+    lands on a colour that already means something here. What survives is a palette in
+    the theme's key that cannot be mistaken for its semantics.
+
+    Walking the wheel in a wide, odd-numbered step rather than in order is what keeps
+    the first few (the ones a short list actually uses) from being neighbours."""
+    base = Color.parse(theme.primary or "#808080")
+    start, sat, lum = base.hsl
+    sat = min(max(sat, 0.35), 0.75)   # a grey theme still needs to tell peers apart
+    lum = min(max(lum, 0.35), 0.62)   # and a very pale or very dark one still needs ink
+    wheel = 24
+    out: list[str] = []
+    # Two passes. The first holds every rule; the second, only if the theme is so
+    # crowded that the first could not fill the palette, relaxes how far a colour must
+    # sit from the theme's semantics — a cramped palette is a real cost, while a
+    # slightly-near colour is a small one, and an EMPTY palette is not an option at all
+    # (identity_colors would have nothing to hand out).
+    for relax in (1.0, 0.6):
+        global SEMANTIC_GAP
+        keep, SEMANTIC_GAP = SEMANTIC_GAP, SEMANTIC_GAP * relax
+        try:
+            for i in range(wheel):
+                if len(out) >= count:
+                    break
+                hue = (start + 0.5 + (i * 11 / wheel)) % 1.0  # opposite primary, wide stride
+                cand = Color.from_hsl(hue, sat, lum).hex
+                if not palette_faults(out + [cand], theme):
+                    out.append(cand)
+        finally:
+            SEMANTIC_GAP = keep
+        if len(out) >= max(3, count // 2):
+            break
+    return out or [Color.from_hsl((start + 0.5) % 1.0, sat, lum).hex]
+
+
+def theme_identity(theme: Theme | None) -> list[str]:
+    """This theme's identity palette: the one it declares, else one derived from it.
+
+    A theme that has an opinion states it in `variables["identity"]` — the shipped one
+    does, because ore colours say "Minecraft" in a way an evenly-spaced wheel cannot.
+    Everything else gets a palette built from its own primary."""
+    if theme is None:
+        return derive_identity(MINECRAFT_THEME)
+    raw = (theme.variables or {}).get("identity", "")
+    declared = [c.strip() for c in raw.split(",") if c.strip()]
+    return declared or derive_identity(theme)
+
+
+def identity_colors(keys: list[str], palette: list[str] | None = None) -> dict[str, str]:
+    """Identity colours for a whole list, with collisions pushed apart.
+
+    A plain hash is stable but clumps: five characters over six colours will routinely
+    give three of them the same one, and a colour two neighbours share is worse than no
+    colour at all — it says "these two go together" when nothing does. So each key takes
+    its own colour when free and the next free one otherwise.
+
+    `crc32` rather than `hash()`: Python randomizes string hashing per process, so the
+    obvious spelling would give a character a different colour on every launch, which is
+    precisely the one property this must not have."""
+    pal = [c for c in (palette or []) if c] or ["#808080"]
+    used: set[str] = set()
+    out: dict[str, str] = {}
+    for key in keys:
+        start = zlib.crc32(str(key).encode("utf-8")) % len(pal)
+        for step in range(len(pal)):
+            colour = pal[(start + step) % len(pal)]
+            if colour not in used or step == len(pal) - 1:
+                out[key] = colour
+                used.add(colour)
+                break
+    return out
+
 
 I18N: dict[str, dict[str, str]] = {
     "en": {
@@ -188,15 +441,89 @@ I18N: dict[str, dict[str, str]] = {
         "menu.quit": "✖  Quit",
         "step.content": "Content",
         "step.characters": "Story",
+        "step.fandom": "World",
         "step.visuals": "Visuals",
         "step.ads": "Ads",
         "step.publish": "Publish",
         "step.summary": "Summary",
         "mode_head": "What are we generating?",
+        "fandom_duration_s": "Length, sec",
+        "fandom_medium": "Made of",
+        "fandom_medium_video": "🎬 video clips",
+        "fandom_medium_photo": "🖼 photo slideshow",
+        "help.fandom_duration_s": "How long the finished video runs, in seconds. There is no tolerance and no clip-length field: the writer sizes every shot itself to fit this, whatever the shots are made of.",
+        "help.fandom_medium": "What the picture is made of. Clips play; stills are held and slowly panned. It also decides what can make them — a slideshow is drawn by an image generator, found as photographs, or drawn by hand as images — so the list below changes with it.",
+        "fandom_source_note": "🙋 and 🔍 are you: with the first slopgen writes a prompt per shot and you generate it in an external tool, with the second it says what to find and hands you ready-made search queries. Either way the run pauses at the footage stage and `slopgen gather` resumes it once the files are in the inbox. `flux` and `turbo` make stills instead of clips; a still is held and panned to length, and one you supply yourself counts the same — deliver a .jpg or .png and it is treated as a photo.",
+        "fandom_source_head": "— Where the shots come from —",
+        "fandom_source": "Source",
+        "help.fandom_source": "Where every shot in this video comes from. AI generation is unattended and free but slow and often off-model. Generating them yourself means pasting each prompt into Kling/Veo/Pika and handing the file back — the best picture, at the cost of your evening. Finding them yourself means slopgen briefs you per shot and you bring back real footage of real things, which is what a world of ordinary places usually wants.",
+        "help.fandom_clip_s": "How long ONE shot runs on average. It decides how many shots the piece is cut into and how much narration each carries.",
+        "bg_manual": "I supply the background myself",
+        "fg_manual": "I supply the inserts myself",
+        "help.bg_manual": "You provide the material instead of slopgen fetching it, and what that means follows from the source above. A stock source becomes a SEARCH: slopgen tells you what each shot needs and hands you ready-made queries, you find the file. An AI source becomes GENERATION: slopgen writes the prompt, you make the clip in an external tool. Either way the run pauses at the footage stage and `slopgen gather` picks it up.",
+        "help.fg_manual": "Same as for the background, applied to each narration-anchored insert: you find or generate it, slopgen tells you what it needs.",
+        "gather.kind.search": "find it yourself",
+        "gather.want.photo": "photo",
+        "gather.want.video": "video",
+        "gather.queries": "Search queries — try them in order:",
+        "gather.drop_hint_search": "Drop what you find into the inbox as {id}.<ext> — a photo (.jpg/.png) is as good as a clip; a still is held and panned to length.",
+        "fandom_add_person": "＋ Add a character",
+        "fandom_person_head": "— A character of this world —",
+        "fandom_person_blank": "(nothing written down yet)",
+        "fandom_remove_person": "🗑 Remove from the world",
+        "fandom_fill_person": "✨ AI: fill in from the world",
+        "help.fandom_world": "The world this video happens in. Pick a fandom, edit its characters (they belong to the world, so an edit here changes the world itself — as it should: a character is in it or is not), and write its lore. The canon sheet under the lore is what the writer actually holds; it is rebuilt whenever the lore changes.",
+        "fandom_soon_note": "Ready to generate: a video from inside this world, with its own characters.",
+        "fandom_brief_none": "The model returned nothing usable — your text is untouched.",
+        "fandom_brief_written": "Brief written from the world.",
+        "fandom_write_brief": "✨ AI: write the brief",
+        "cast_st_world": "world",
+        "fandom_step_brief": "Brief",
+        "help.fandom_brief": "What this video is about. Name the thing in this world worth an account of its own — a custom, a place, someone or something, an event nobody has explained — or set out a theory you want argued from its records. Thin or empty is fine: the writer will pick something itself. Directions to the writer belong here too (\"break it off without an answer\", \"don't explain the ninth marker\") — they are obeyed and never spoken aloud.",
+        "fandom_plot_head": "— What to tell —",
+        "fandom_ai_head": "— AI help —",
+        "fandom_prompt_ph": "optional: how to change the brief — 'a custom, not an event', 'argue the opposite'",
+        "fandom_cast_head": "The world's characters",
+        "fandom_cast_hint2": "Everyone and everything this world can put on screen — people, but also a creature, a machine, a ship, a place that behaves like one. They are edited where they live, in the world's own folder: click one to edit it on the right, 💾 writes it into the world, 🗑 takes it out. A character is in the world or is not; there is no adding one for a single video. Empty fields are improvised at generation time.",
+        "help.fandom_duration_min": "Target length in minutes. The piece may run a little over or under (see Tolerance).",
+        "help.fandom_scenario": "What to tell about this world, or which theory to argue from its records. Empty or thin is fine — the writer picks something itself.",
+        "help.fandom_visuals": "The AI-generator pipeline for this video. Stages run top→bottom; each produces its share, then hands off. Move stages with ▲/▼, click one to configure it.",
+        "help.fandom_visuals_step": "Which neural nets draw this world, and in what order. Each stage produces its share of the video, then hands off to the next.",
+        "help.fandom_tts_rate": "Speech speed. ←/→ to adjust: −50 = slowest … 0 = normal … +50 = fastest. The writer counts on it: a faster voice fits more into a clip of the same length, so each beat is written longer. A single fragment can be re-voiced at another speed later, at the voiceover breakpoint.",
         "mode_info": "⚡  Minute of useless info",
         "mode_info_desc": "the current mode — narrated facts over stock / AI b-roll",
         "mode_drama": "🎭  AI drama",
         "mode_drama_desc": "narrated anime-style story with a recurring cast + AI-generated shots",
+        "mode_fandom": "🌍  Fandom",
+        "mode_fandom_desc": "a narrated story set in a world you wrote down — told from inside it as fact",
+        # --- fandom mode: the world, its lore documents and its canon sheet ---
+        "fandom_pick": "Fandom",
+        "fandom_none": "no fandoms yet — create one in Config → Fandoms",
+        "fandom_pick_first": "pick a fandom first",
+        "fandom_lore_head": "— Lore —",
+        "fandom_doc": "Document",
+        "fandom_edit": "✎ Edit",
+        "fandom_preview": "👁 Preview",
+        "fandom_canon_head": "— Canon sheet —",
+        "fandom_canon_stale": "the lore changed since this sheet was compiled",
+        "fandom_recompile": "Recompile canon",
+        "fandom_compiling": "Compiling the canon sheet…",
+        "fandom_compiled": "canon sheet rebuilt",
+        "fandom_compile_err": "Could not compile the canon sheet — the lore is saved, the sheet is stale",
+        "fandom_saved": "lore saved",
+        "fandom_voice": "Narrator",
+        "fandom_voice_resident": "someone who lives there",
+        "fandom_voice_chronicler": "a chronicler of that world",
+        "fandom_tone": "Tone / register note (optional)",
+        "fandom_docs": "Documents, in reading order (comma-separated; empty = every *.md)",
+        "fandom_lore_tool": "Let the writer query the full lore (librarian tool)",
+        "fandom_new": "New fandom",
+        "fandom_summary_head": "Fandom — ready:",
+        "fandom_soon": "Starting fandom generation — world: {name}, cast: {n}.",
+        "help.step.fandom": "The world this story happens in. Pick a fandom, edit its lore documents, and choose who is telling it. The canon sheet below is what the writer actually holds while writing — rebuild it after you change the lore.",
+        "help.fandom_pick": "Which world to narrate. Fandoms are folders under configs/fandoms/ — a fandom.toml, one or more markdown lore documents, and the world's own cast.",
+        "help.fandom_lore": "The world's lore, in markdown. This is the source of truth: the canon sheet is compiled from it, and the librarian tool reads it. Save to write the file and rebuild the sheet.",
+        "help.fandom_voice": "Who is telling it. A resident speaks in first person and treats the world as daily life; a chronicler researches its records and builds theories out of them. Either way the world is real to them — never a story, never someone's invention.",
         "drama_cast_head": "Cast",
         "drama_add": "＋ Add character",
         "drama_plot_head": "— Plot —",
@@ -306,7 +633,7 @@ I18N: dict[str, dict[str, str]] = {
         "char_edit_head": "— Character —",
         "char_prompt_ph": "optional: tell the AI how to fill/rewrite this character",
         "char_autofill_all": "✨ AI fill / add cast",
-        "char_cfg_note": "Manual editor. AI help (photo → description, autofill) lives in the AI-drama wizard.",
+        "char_cfg_note": "Manual editor. AI help (photo → description, autofill) lives in the drama and fandom wizards — and, for a world's own people, in Fandoms.",
         "cast_save_global": "★ Save to library",
         "cast_remove": "🗑 Remove",
         "cast_empty": "add a character, write a plot, or enter an AI prompt first",
@@ -372,6 +699,7 @@ I18N: dict[str, dict[str, str]] = {
         "cfg.llm": "LLM profiles",
         "cfg.footage": "Footage API keys",
         "cfg.characters": "Characters",
+        "cfg.fandoms": "Fandoms",
         "cfg.ads": "Ad contracts",
         "cfg.accounts": "Accounts",
         "cfg.presets": "Presets",
@@ -475,6 +803,7 @@ I18N: dict[str, dict[str, str]] = {
         "bp_head": "— Breakpoints —",
         "bp_hint": "Pause the run after these stages to check — and edit — what came out.",
         "bp.stage.idea": "Idea (the chosen topic)",
+        "bp.stage.canon": "Canon sheet (the world, as the writer will hold it)",
         "bp.stage.script": "Script (raw text the LLM wrote)",
         "bp.stage.entities": "Visual registry (recurring things and how they look)",
         "bp.stage.tts": "Voiceover (line-by-line narration)",
@@ -543,10 +872,12 @@ I18N: dict[str, dict[str, str]] = {
         "bp.up": "▲",
         "bp.down": "▼",
         "bp.f.topic": "topic",
+        "bp.f.canon": "canon sheet",
         "bp.f.title": "title",
         "bp.f.description": "description",
         "bp.f.tags": "tags (comma-separated)",
         "bp.note.idea": "The topic the whole script is written from.",
+        "bp.note.canon": "The world's canon sheet, as compiled from your lore. Fix anything the compiler got wrong or missed — the writer holds this sheet for every scene, and what is not here effectively does not exist in the world.",
         "bp.note.script": "Cards are the scenes; open one to edit its spoken line, its shot, who is in it, the generator and the clip length. This is the ONLY place to fix a shot before it is generated.",
         "bp.note.entities": "Things that recur across shots and are not cast — a machine, a location, a prop, a nameless regular, an unusual crowd. Each card is one thing: the name the shot prompts use for it, a note, and the English description the generator gets. Editing a description restyles every shot showing it at once; the name must stay spelled exactly as the prompts spell it, or nothing is substituted.",
         "bp.note.tts": "One card per voiced fragment, with the length of what was synthesized. Editing a line re-voices exactly that one; adding, dropping or reordering cards changes the fragments themselves. The speed slider is one for the whole screen and applies only to the fragment you re-voice with it — that line then keeps the speed, the rest of the video keeps the run's.",
@@ -554,7 +885,7 @@ I18N: dict[str, dict[str, str]] = {
         "bp.note.subtitles": "The generated ASS files, as text. Edits are written straight to disk.",
         "bp.note.assemble": "The rendered file(s) — play them, then continue or press Esc to abandon the run.",
         "bp.note.metadata": "What gets published with the video.",
-        "bp.note.cut": "Drag the part markers to decide where each episode ends — every part becomes a video of its own, published separately. Add a marker to split the drama further, drop one to merge two episodes. The scenes are already voiced, so the seconds on each are what it really runs to. This is the last free moment to re-cut: after it, clips are generated (or hand-made) against these boundaries.",
+        "bp.note.cut": "Drag the part markers to decide where each episode ends — every part becomes a video of its own, published separately. Add a marker to split it further, drop one to merge two episodes. The scenes are already voiced, so the seconds on each are what it really runs to. This is the last free moment to re-cut: after it, clips are generated (or hand-made) against these boundaries.",
         "bp.f.part": "Part",
         "bp.field.part": "part break",
         "bp.cut": "＋ Part break",
@@ -570,15 +901,89 @@ I18N: dict[str, dict[str, str]] = {
         "menu.quit": "✖  Выход",
         "step.content": "Контент",
         "step.characters": "Сюжет",
+        "step.fandom": "Мир",
         "step.visuals": "Видеоряд",
         "step.ads": "Реклама",
         "step.publish": "Публикация",
         "step.summary": "Итог",
         "mode_head": "Что генерируем?",
+        "fandom_duration_s": "Длина, сек",
+        "fandom_medium": "Из чего",
+        "fandom_medium_video": "🎬 видеоклипы",
+        "fandom_medium_photo": "🖼 слайд-шоу из фото",
+        "help.fandom_duration_s": "Сколько идёт готовое видео, в секундах. Допуска и поля длины клипа нет: сценарист сам подбирает длину каждого кадра под это число, из чего бы кадры ни были.",
+        "help.fandom_medium": "Из чего складывается картинка. Клипы играют, неподвижные кадры держатся с медленным наездом. От этого же зависит, чем их делать — слайд-шоу рисует генератор картинок, или ты находишь фотографии, или рисуешь их сам, — поэтому список ниже меняется вместе с выбором.",
+        "fandom_source_note": "🙋 и 🔍 — это ты: в первом случае слопген пишет промпт на каждый кадр, и ты генерируешь его во внешнем сервисе, во втором — говорит, что найти, и выдаёт готовые поисковые запросы. И там и там прогон встаёт на этапе видеоряда, а `slopgen gather` продолжает, когда файлы окажутся в инбоксе. `flux` и `turbo` делают неподвижные кадры вместо клипов; кадр растягивается на нужную длину с лёгким наездом, и принесённый тобой считается так же — положи .jpg или .png, и он будет обработан как фото.",
+        "fandom_source_head": "— Откуда берутся кадры —",
+        "fandom_source": "Источник",
+        "help.fandom_source": "Откуда берётся каждый кадр этого видео. ИИ-генерация идёт без тебя, бесплатно, но медленно и часто мимо. Генерировать самому — вставлять каждый промпт в Kling/Veo/Pika и приносить файл: лучшая картинка ценой вечера. Искать самому — слопген пишет задание на каждый кадр, а ты приносишь настоящие съёмки настоящих вещей, чего мир обычных мест обычно и просит.",
+        "help.fandom_clip_s": "Сколько в среднем длится ОДИН кадр. От этого зависит, на сколько кадров нарезан ролик и сколько текста несёт каждый.",
+        "bg_manual": "Фон беру на себя",
+        "fg_manual": "Вставки беру на себя",
+        "help.bg_manual": "Материал даёшь ты, а не слопген, и что именно это значит — следует из источника выше. Сток превращается в ПОИСК: слопген говорит, что нужно на каждый кадр, и выдаёт готовые запросы, ты находишь файл. ИИ превращается в ГЕНЕРАЦИЮ: слопген пишет промпт, ты делаешь клип во внешнем сервисе. И там и там прогон встаёт на этапе видеоряда, а `slopgen gather` его подхватывает.",
+        "help.fg_manual": "То же, что и для фона, но на каждую вставку, привязанную к словам: находишь или генерируешь её сам, а слопген говорит, что нужно.",
+        "gather.kind.search": "найти самому",
+        "gather.want.photo": "фото",
+        "gather.want.video": "видео",
+        "gather.queries": "Поисковые запросы — пробуй по порядку:",
+        "gather.drop_hint_search": "Положи найденное в инбокс как {id}.<расш> — фото (.jpg/.png) годится не хуже клипа: неподвижный кадр растянется на нужную длину с лёгким наездом.",
+        "fandom_add_person": "＋ Добавить персонажа",
+        "fandom_person_head": "— Персонаж этого мира —",
+        "fandom_person_blank": "(пока ничего не записано)",
+        "fandom_remove_person": "🗑 Убрать из мира",
+        "fandom_fill_person": "✨ ИИ: дописать по миру",
+        "help.fandom_world": "Мир, в котором происходит это видео. Выбери фандом, отредактируй его персонажей (они принадлежат миру, поэтому правка здесь меняет сам мир — так и должно быть: персонаж в нём либо есть, либо нет) и напиши его лор. Канон-справка под лором — это то, что реально держит перед собой сценарист; она пересобирается при изменении лора.",
+        "fandom_soon_note": "Готово к генерации: видео изнутри этого мира, с его персонажами.",
+        "fandom_brief_none": "Модель не вернула ничего пригодного — твой текст не тронут.",
+        "fandom_brief_written": "Замысел написан по миру.",
+        "fandom_write_brief": "✨ ИИ: написать замысел",
+        "cast_st_world": "мира",
+        "fandom_step_brief": "Замысел",
+        "help.fandom_brief": "О чём это видео. Назови то в этом мире, что стоит отдельного рассказа, — обычай, место, кого-то или что-то, случай, который никто не объяснил, — или изложи теорию, которую надо доказать по его записям. Можно пусто или в двух словах: сценарист выберет сам. Указания сценаристу тоже сюда (\"оборви без ответа\", \"не объясняй девятую вешку\") — их исполнят и вслух не произнесут.",
+        "fandom_plot_head": "— О чём рассказать —",
+        "fandom_ai_head": "— Помощь ИИ —",
+        "fandom_prompt_ph": "опционально: как изменить замысел — «про обычай, а не про случай», «докажи обратное»",
+        "fandom_cast_head": "Персонажи мира",
+        "fandom_cast_hint2": "Все, кого и что этот мир может показать: люди, но и существо, машина, корабль, место, которое ведёт себя как персонаж. Правятся там, где живут, — в папке самого мира: клик по персонажу открывает правку справа, 💾 записывает его в мир, 🗑 убирает оттуда. Персонаж в мире либо есть, либо его нет; добавить кого-то на одно видео нельзя. Пустые поля додумываются при генерации.",
+        "help.fandom_duration_min": "Целевая длина в минутах. Может немного выйти за рамки (см. Допуск).",
+        "help.fandom_scenario": "О чём рассказать в этом мире или какую теорию доказать по его записям. Можно пусто или частично — сценарист выберет сам.",
+        "help.fandom_visuals": "Конвейер ИИ-генераторов для этого видео. Этапы идут сверху вниз; каждый делает свою долю и передаёт дальше. Двигай этапы ▲/▼, клик по этапу — настройка.",
+        "help.fandom_visuals_step": "Какие нейронки рисуют этот мир и в каком порядке. Каждый этап делает свою долю видео и передаёт следующему.",
+        "help.fandom_tts_rate": "Скорость речи. ←/→ для настройки: −50 = медленно … 0 = норма … +50 = быстро. Сценарист на неё рассчитывает: чем быстрее голос, тем больше влезает в клип той же длины, поэтому реплики пишутся длиннее. Отдельный фрагмент можно переозвучить на другой скорости позже, на брейкпоинте озвучки.",
         "mode_info": "⚡  Минута бесполезной инфы",
         "mode_info_desc": "текущий режим — факты под сток/ИИ-видеоряд",
         "mode_drama": "🎭  ИИ-дорама",
         "mode_drama_desc": "озвученная аниме-история с постоянными персонажами + ИИ-кадры",
+        "mode_fandom": "🌍  Фандом",
+        "mode_fandom_desc": "озвученная история в мире, который ты описал — рассказанная изнутри него как факт",
+        # --- режим фандома: мир, его документы лора и канон-справка ---
+        "fandom_pick": "Фандом",
+        "fandom_none": "фандомов пока нет — заведи его в Конфигурации → Фандомы",
+        "fandom_pick_first": "сначала выбери фандом",
+        "fandom_lore_head": "— Лор —",
+        "fandom_doc": "Документ",
+        "fandom_edit": "✎ Правка",
+        "fandom_preview": "👁 Просмотр",
+        "fandom_canon_head": "— Канон-справка —",
+        "fandom_canon_stale": "лор изменился с момента сборки справки",
+        "fandom_recompile": "Перекомпилировать канон",
+        "fandom_compiling": "Собираю канон-справку…",
+        "fandom_compiled": "канон-справка пересобрана",
+        "fandom_compile_err": "Не удалось собрать канон-справку — лор сохранён, справка устарела",
+        "fandom_saved": "лор сохранён",
+        "fandom_voice": "Рассказчик",
+        "fandom_voice_resident": "житель этого мира",
+        "fandom_voice_chronicler": "летописец этого мира",
+        "fandom_tone": "Тон / манера речи (опционально)",
+        "fandom_docs": "Документы в порядке чтения (через запятую; пусто = все *.md)",
+        "fandom_lore_tool": "Разрешить сценаристу запрашивать полный лор (инструмент-архивариус)",
+        "fandom_new": "Новый фандом",
+        "fandom_summary_head": "Фандом — готово:",
+        "fandom_soon": "Запускаю генерацию фандома — мир: {name}, каст: {n}.",
+        "help.step.fandom": "Мир, в котором происходит история. Выбери фандом, поправь его документы лора и реши, кто рассказывает. Канон-справка ниже — это то, что реально держит перед собой сценарист; пересобери её после правок лора.",
+        "help.fandom_pick": "Какой мир рассказываем. Фандом — это папка в configs/fandoms/: fandom.toml, один или несколько markdown-документов лора и собственный каст мира.",
+        "help.fandom_lore": "Лор мира в markdown. Это первоисточник: из него собирается канон-справка, его же читает инструмент-архивариус. Сохранение записывает файл и пересобирает справку.",
+        "help.fandom_voice": "Кто рассказывает. Житель говорит от первого лица и воспринимает мир как быт; летописец копается в записях и строит из них теории. В обоих случаях мир для них настоящий — не история и не чья-то выдумка.",
         "drama_cast_head": "Каст",
         "drama_add": "＋ Добавить персонажа",
         "drama_plot_head": "— Сюжет —",
@@ -688,7 +1093,7 @@ I18N: dict[str, dict[str, str]] = {
         "char_edit_head": "— Персонаж —",
         "char_prompt_ph": "опционально: как ИИ должен заполнить/переписать персонажа",
         "char_autofill_all": "✨ ИИ заполнит / добавит каст",
-        "char_cfg_note": "Ручной редактор. ИИ-помощь (фото → описание, автозаполнение) — в визарде ИИ-дорам.",
+        "char_cfg_note": "Ручной редактор. ИИ-помощь (фото → описание, автозаполнение) — в визардах дорамы и фандома, а для людей мира — в разделе Фандомы.",
         "cast_save_global": "★ Сохранить в библиотеку",
         "cast_remove": "🗑 Убрать",
         "cast_empty": "сначала добавь персонажа, впиши сюжет или промпт для ИИ",
@@ -754,6 +1159,7 @@ I18N: dict[str, dict[str, str]] = {
         "cfg.llm": "Профили нейронок",
         "cfg.footage": "Ключи API футажа",
         "cfg.characters": "Персонажи",
+        "cfg.fandoms": "Фандомы",
         "cfg.ads": "Рекламные контракты",
         "cfg.accounts": "Аккаунты",
         "cfg.presets": "Пресеты",
@@ -857,6 +1263,7 @@ I18N: dict[str, dict[str, str]] = {
         "bp_head": "— Брейкпоинты —",
         "bp_hint": "Остановить конвейер после этих этапов, чтобы проверить и поправить результат.",
         "bp.stage.idea": "Идея (выбранная тема)",
+        "bp.stage.canon": "Канон-справка (мир таким, каким его увидит сценарист)",
         "bp.stage.script": "Сценарий (сырой текст от нейронки)",
         "bp.stage.entities": "Реестр визуала (что повторяется и как выглядит)",
         "bp.stage.tts": "Озвучка (построчно, по фрагментам)",
@@ -925,10 +1332,12 @@ I18N: dict[str, dict[str, str]] = {
         "bp.up": "▲",
         "bp.down": "▼",
         "bp.f.topic": "тема",
+        "bp.f.canon": "канон-справка",
         "bp.f.title": "заголовок",
         "bp.f.description": "описание",
         "bp.f.tags": "теги (через запятую)",
         "bp.note.idea": "Тема, из которой пишется весь сценарий.",
+        "bp.note.canon": "Канон-справка мира, собранная из твоего лора. Поправь всё, что компилятор понял неверно или упустил: сценарист держит эту справку перед собой в каждой сцене, и чего здесь нет — того в мире фактически не существует.",
         "bp.note.script": "Карточки — это сцены; открой любую, чтобы поправить реплику, кадр, кто в нём, нейронку и длину клипа. Это единственное место, где кадр правится ДО генерации.",
         "bp.note.entities": "То, что повторяется в кадрах и не входит в каст: техника, локация, реквизит, безымянный завсегдатай, необычная массовка. Карточка — одна вещь: имя, которым её называют промпты, заметка и английское описание, которое уходит генератору. Правка описания меняет вид вещи сразу во всех кадрах; имя должно остаться написанным ровно так, как в промптах, иначе подстановки не будет.",
         "bp.note.tts": "Карточка на озвученный фрагмент, с длительностью того, что синтезировалось. Правка реплики переозвучивает только её; добавление, удаление и перестановка карточек меняют сами фрагменты. Ползунок скорости один на весь экран и применяется только к тому фрагменту, который ты им переозвучил — эта строка дальше живёт со своей скоростью, остальное видео остаётся на скорости запуска.",
@@ -936,7 +1345,7 @@ I18N: dict[str, dict[str, str]] = {
         "bp.note.subtitles": "Сгенерированные ASS-файлы как текст. Правки пишутся прямо на диск.",
         "bp.note.assemble": "Готовые файлы — посмотри их и продолжай, либо Esc, чтобы бросить запуск.",
         "bp.note.metadata": "То, с чем видео уйдёт в публикацию.",
-        "bp.note.cut": "Двигай маркеры частей, решая, где кончается каждая серия — часть становится отдельным видео и публикуется сама по себе. Добавь маркер, чтобы разрезать дораму дальше, убери — чтобы склеить две серии. Сцены уже озвучены, так что секунды у каждой настоящие. Это последний бесплатный момент для перекройки: дальше клипы генерируются (или делаются руками) уже под эти границы.",
+        "bp.note.cut": "Двигай маркеры частей, решая, где кончается каждая серия — часть становится отдельным видео и публикуется сама по себе. Добавь маркер, чтобы разрезать дальше, убери — чтобы склеить две серии. Сцены уже озвучены, так что секунды у каждой настоящие. Это последний бесплатный момент для перекройки: дальше клипы генерируются (или делаются руками) уже под эти границы.",
         "bp.f.part": "Часть",
         "bp.field.part": "разрыв части",
         "bp.cut": "＋ Разрыв части",
@@ -1111,6 +1520,10 @@ class HomeScreen(Screen):
 
 STEP_KEYS = ["step.content", "step.visuals", "step.ads", "step.publish", "step.summary"]
 DRAMA_STEP_KEYS = ["step.content", "step.characters", "step.visuals", "step.ads", "step.publish", "step.summary"]
+# fandom = the drama wizard with the world in front of the story: which fandom, its
+# lore, and who is telling it are settled before a plot is written for that world.
+FANDOM_STEP_KEYS = ["step.content", "step.fandom", "step.characters", "step.visuals",
+                    "step.ads", "step.publish", "step.summary"]
 
 # widget id -> i18n key for the field's description, shown in the inspector top
 # when that setting is focused. Fields absent here fall back to the step blurb.
@@ -1130,10 +1543,15 @@ FIELD_HELP = {
     "w-push": "help.push", "w-count": "help.count", "w-parts": "help.parts", "w-subs": "help.subs",
     "w-parts_iterative": "help.parts_iterative",
     "drama-scenario": "help.drama_scenario", "drama-prompt": "help.drama_prompt",
+    "wf-fandom": "help.fandom_pick", "wf-voice": "help.fandom_voice",
+    "wlore-area": "help.fandom_lore", "wlore-doc": "help.fandom_lore",
     "e-characters-name": "help.char_name", "e-characters-age": "help.char_age",
     "e-characters-appearance": "help.char_appearance",
     "char-prompt": "help.char_prompt", "char-photo-path": "help.char_photo",
     "orch-profile": "help.orch_profile",
+    "ws-medium": "help.fandom_medium", "ws-vsrc": "help.fandom_source",
+    "ws-psrc": "help.fandom_source", "w-duration_s": "help.fandom_duration_s",
+    "w-bg-manual": "help.bg_manual", "w-fg-manual": "help.fg_manual",
     "e-orch-model": "help.orch_model", "e-orch-key_mode": "help.orch_key_mode",
     "e-orch-key": "help.orch_key", "e-orch-metric": "help.orch_metric",
     "e-orch-amount": "help.orch_amount", "e-orch-clip_seconds": "help.orch_clip_s",
@@ -1143,13 +1561,28 @@ BG_SOURCES = ["stock_video", "stock_photo", "local_video", "local_photo", "ai_vi
 FG_SOURCES = ["stock_photo", "stock_video", "local_photo", "local_video", "ai_photo", "ai_video"]
 
 # friendlier labels for a few generator keys; everything else shows its raw key.
-MODEL_LABELS = {"manual": "🙋 user-assisted"}
+MODEL_LABELS = {"manual": "🙋 you generate it", "search": "🔍 you find it"}
+# Not generators: the material comes from the operator (see media/generate). In the
+# visuals profile that is the `manual` toggle, so they must not appear in the
+# ai_model picker next to it; a chain stage names them like any other source.
+OPERATOR_SOURCES = ("manual", "search")
+
+
 def _model_opt(m: str) -> tuple[str, str]:  # (label, value) for a Select
     return (MODEL_LABELS.get(m, m), m)
 
-AI_VIDEO_MODELS = [_model_opt(m) for m in VIDEO_MODELS]  # (label, value) for the picker
-AI_PHOTO_MODELS = [_model_opt(m) for m in PHOTO_MODELS]
-ORCH_MODEL_OPTS = [_model_opt(m) for m in list(VIDEO_MODELS) + list(PHOTO_MODELS)]  # orchestration stages
+AI_VIDEO_MODELS = [_model_opt(m) for m in VIDEO_MODELS if m not in OPERATOR_SOURCES]
+AI_PHOTO_MODELS = [_model_opt(m) for m in PHOTO_MODELS if m not in OPERATOR_SOURCES]
+ALL_SOURCES = list(VIDEO_MODELS) + list(PHOTO_MODELS)
+# A drama's chain may NOT search. Its beats are scripted moments with named characters
+# doing specific things — "Марта отталкивает Ефима у сортировочного стола" — which no
+# stock library holds, and the cast machinery (name→appearance substitution, the entity
+# registry) means nothing for found footage. Generating it by hand still makes sense,
+# so `manual` stays.
+ORCH_MODEL_OPTS = [_model_opt(m) for m in ALL_SOURCES if m != "search"]
+# every source a mode may offer, split by what it puts on screen (see FandomScreen)
+VIDEO_SOURCES = [_model_opt(m) for m in VIDEO_MODELS]
+PHOTO_SOURCES = [_model_opt(m) for m in list(PHOTO_MODELS) + list(OPERATOR_SOURCES)]
 ORCH_FIELDS = ("model", "key_mode", "key", "metric", "amount", "clip_seconds")
 
 
@@ -1179,6 +1612,7 @@ def _visuals_values(prof: VisualsConfig) -> dict:
     fg_ai = prof.foreground.ai_model
     return {
         "bg-src": prof.background.source,
+        "bg-manual": prof.background.manual,
         "bg-link": prof.background.linkage,
         "bg-dir": str(prof.background.assets_dir),
         "bg-ai-vmodel": bg_ai if bg_ai in VIDEO_MODELS else "auto",
@@ -1188,6 +1622,7 @@ def _visuals_values(prof: VisualsConfig) -> dict:
         "bg-cont": prof.background.continuous,
         "fg-on": prof.foreground.enabled,
         "fg-src": prof.foreground.source,
+        "fg-manual": prof.foreground.manual,
         "fg-ai-vmodel": fg_ai if fg_ai in VIDEO_MODELS else "auto",
         "fg-ai-pmodel": fg_ai if fg_ai in PHOTO_MODELS else "flux",
         "fg-width": prof.foreground.width_pct,
@@ -1239,12 +1674,17 @@ class GenerateScreen(Screen):
                    value=f"{store.global_cfg.video.target_duration_s:.0f}", default=45.0),
             Heading("bg_head"),
             Choice("bg-src", "bg_source", options=[(s, s) for s in BG_SOURCES], value=bg.source),
+            # what it MEANS depends on the source above: find it yourself for stock_*,
+            # generate it yourself for ai_* (see config.models.manual_kind)
+            Group("bg-man", [
+                Toggle("bg-manual", "bg_manual", value=bg.manual),
+            ], visible_when=lambda v: str(v["bg-src"]).startswith(("stock", "ai"))),
             Group("bg-ai-vid", [
                 Choice("bg-ai-vmodel", "ai_model", options=AI_VIDEO_MODELS, value="auto"),
-            ], visible_when=lambda v: v["bg-src"] == "ai_video"),
+            ], visible_when=lambda v: v["bg-src"] == "ai_video" and not v["bg-manual"]),
             Group("bg-ai-img", [
                 Choice("bg-ai-pmodel", "ai_model", options=AI_PHOTO_MODELS, value="flux"),
-            ], visible_when=lambda v: v["bg-src"] == "ai_photo"),
+            ], visible_when=lambda v: v["bg-src"] == "ai_photo" and not v["bg-manual"]),
             Choice("bg-link", "bg_link",
                    options=[("narration", "narration"), ("neutral", "neutral")], value=bg.linkage),
             Text("bg-dir", "bg_dir", value=str(bg.assets_dir)),
@@ -1257,6 +1697,7 @@ class GenerateScreen(Screen):
             Group("fg-box", [
                 Note("fg_auto_note"),
                 Choice("fg-src", "fg_source", options=[(s, s) for s in FG_SOURCES], value=fg.source),
+                Toggle("fg-manual", "fg_manual", value=fg.manual),
                 Number("fg-width", "fg_width", value=str(fg.width_pct), default=78, integer=True),
                 Choice("fg-pos", "fg_pos",
                        options=[(p, p) for p in ("center", "top", "bottom")], value=fg.position),
@@ -1314,7 +1755,7 @@ class GenerateScreen(Screen):
         return [n for n in review.available(self.MODE) if values.get(f"bp-{n}")]
 
     def _nav_buttons(self, step: int):
-        t = lambda k: _label(self.app, k)  # noqa: E731
+        t = self._t
         with Horizontal(classes="nav-row"):
             yield Button(t("prev"), id=f"w-prev-{step}", classes="nav-btn")
             yield Button(t("next"), id=f"w-next-{step}", classes="nav-btn", variant="primary")
@@ -1340,7 +1781,7 @@ class GenerateScreen(Screen):
             yield Button(t("start"), id="w-start", variant="success")
 
     def compose(self) -> ComposeResult:
-        t = lambda k: _label(self.app, k)  # noqa: E731
+        t = self._t
         store: ConfigStore = self.app.store
         vis0 = store.visuals.get("classic") or VisualsConfig(name="classic")
         self._make_forms(t, store, vis0)
@@ -1368,6 +1809,19 @@ class GenerateScreen(Screen):
 
     _insp_mode = "help"  # help | picker | editor | stage — only 'help' shows field descriptions
 
+    # Keys this mode says differently. The wizard is one screen shared by three
+    # modes, so most of its labels are written once — but a handful name what is
+    # being made ("Drama parts", "the drama's cast"), and a fandom operator reading
+    # about a drama they are not making is exactly the kind of seam that makes a
+    # bolted-on mode feel bolted on. A subclass remaps those keys to its own; every
+    # other label resolves untouched.
+    LABELS: dict[str, str] = {}
+
+    def _t(self, key: str) -> str:
+        """Localized label for this mode. Use instead of `_label(self.app, …)`
+        anywhere inside the wizard, so LABELS above is honoured."""
+        return _label(self.app, self.LABELS.get(key, key))
+
     def _step_help_key(self, step_key: str) -> str:
         """i18n key for a step's blurb; DramaScreen overrides where a step differs."""
         return f"help.{step_key}"
@@ -1375,7 +1829,7 @@ class GenerateScreen(Screen):
     def _inspector_help(self, step_key: str):
         """Default right-panel content: description of the focused setting (top) and
         the keyboard controls (bottom)."""
-        t = lambda k: _label(self.app, k)  # noqa: E731
+        t = self._t
         yield Static(t("insp_help_head"), classes="group-head")
         yield Static(t(self._step_help_key(step_key)), id="insp-desc", classes="insp-desc")
         yield Static(t("insp_keys"), id="insp-keys", classes="insp-keys")
@@ -1399,7 +1853,7 @@ class GenerateScreen(Screen):
             return
         key = FIELD_HELP.get(event.widget.id or "")
         step = getattr(self, "_help_step", self.STEPS[0])
-        text = _label(self.app, key) if key else _label(self.app, self._step_help_key(step))
+        text = self._t(key) if key else self._t(self._step_help_key(step))
         try:
             self.query_one("#insp-desc", Static).update(text)
         except Exception:
@@ -1465,7 +1919,11 @@ class GenerateScreen(Screen):
         self.f_ads.refresh_visibility(self)
 
     @on(Switch.Changed, "#w-fg-on")
+    @on(Switch.Changed, "#w-bg-manual")
+    @on(Switch.Changed, "#w-fg-manual")
     def _fg_on(self, event: Switch.Changed) -> None:
+        # the manual toggles matter here too: material the operator supplies has no
+        # generator to name, so the ai_model picker goes away with them
         self.f_visuals.refresh_visibility(self)
 
     @on(Select.Changed, "#w-bg-src")
@@ -1502,6 +1960,7 @@ class GenerateScreen(Screen):
                 source=bg_src,
                 linkage=v["bg-link"] or "narration",
                 assets_dir=Path(v["bg-dir"] or "assets/footage"),
+                manual=bool(v.get("bg-manual")),
                 ai_model=self._ai_model(v, bg_src, "bg"),
                 interval_s=v["bg-int"],
                 motion=v["bg-motion"] or "subtle",
@@ -1510,6 +1969,7 @@ class GenerateScreen(Screen):
             foreground=VisualsForeground(
                 enabled=v["fg-on"],
                 source=fg_src,
+                manual=bool(v.get("fg-manual")),
                 ai_model=self._ai_model(v, fg_src, "fg"),
                 width_pct=int(v["fg-width"]),
                 position=v["fg-pos"] or "center",
@@ -1581,7 +2041,7 @@ class GenerateScreen(Screen):
         return cmd
 
     def _render_summary(self) -> None:
-        t = lambda k: _label(self.app, k)  # noqa: E731
+        t = self._t
         g = self._gather()
         vis_name, vis_manual = self._visuals_selection()
         ad_label = {NONE: t("ad_none"), MANUAL: t("ad_manual")}.get(g["ad_src"], g["ad_src"])
@@ -1668,10 +2128,22 @@ class GenerateScreen(Screen):
 CHAR_FIELD_KEYS = ("name", "age", "appearance")
 
 
-def _write_character(store: ConfigStore, name: str, vals: dict) -> Path:
+def _write_character(
+    store: ConfigStore,
+    name: str,
+    vals: dict,
+    *,
+    directory: Path | None = None,
+    existing: CharacterConfig | None = None,
+) -> Path:
     """Persist a character to configs/characters/<name>.toml. Preserves any
-    previously compiled prompts but marks it dirty (structured fields changed)."""
-    existing = store.characters.get(name)
+    previously compiled prompts but marks it dirty (structured fields changed).
+
+    `directory`/`existing` point the same writer at a fandom's own cast folder
+    (configs/fandoms/<world>/characters/), which is a separate library — the world's
+    people are not in the global one."""
+    if existing is None:
+        existing = store.characters.get(name)
     # the file name IS the identity — the loader fills `name` from the stem, so we
     # don't duplicate it inside the file (avoids filename/inner-name divergence).
     data = {
@@ -1680,11 +2152,263 @@ def _write_character(store: ConfigStore, name: str, vals: dict) -> Path:
         "visual_prompt": existing.visual_prompt if existing else "",
         "dirty": True,
     }
-    path = Path("configs/characters") / f"{name}.toml"
+    path = (directory or Path("configs/characters")) / f"{name}.toml"
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "wb") as f:
         tomli_w.dump(data, f)
     return path
+
+
+FANDOMS_DIR = Path("configs/fandoms")
+
+
+class LoreEditor(Vertical):
+    """A fandom's lore documents, edited in place — used by both the wizard's World
+    step and Config → Fandoms, so the world is authored wherever the operator
+    happens to be standing.
+
+    Markdown is the format the lore is written in, so the editor shows it twice: as
+    highlighted source while typing, and as rendered markdown behind the ✎/👁 toggle,
+    where heading levels are actual sizes instead of `#` marks. Saving is two steps
+    on purpose — the FILE is written first and the canon sheet recompiled after, so a
+    failed LLM call costs the sheet's freshness and never the operator's text."""
+
+    def __init__(self, fandom: str = "", *, prefix: str = "lore", **kwargs):
+        super().__init__(**kwargs)
+        self._fandom = fandom
+        self._prefix = prefix  # id prefix: two editors may live in one app
+        self._doc = ""  # file name of the document being edited — the single source
+        # of truth for "which document is open", because the picker's Changed events
+        # are POSTED: repopulating it emits a blank and then the value, both of which
+        # arrive long after the flag that was supposed to hide them was lowered
+        self._preview = False
+
+    # -- data ---------------------------------------------------------------
+
+    def _cfg(self) -> FandomConfig | None:
+        return self.app.store.fandoms.get(self._fandom)
+
+    def _docs(self) -> list[Path]:
+        cfg = self._cfg()
+        return fandom_docs(cfg) if cfg else []
+
+    def _path(self) -> Path | None:
+        return next((p for p in self._docs() if p.name == self._doc), None)
+
+    def _llm(self):
+        return ChatLLM(self.app.store.active_llm_profile())
+
+    # -- layout -------------------------------------------------------------
+
+    def compose(self) -> ComposeResult:
+        t = lambda k: _label(self.app, k)  # noqa: E731
+        p = self._prefix
+        yield Static(t("fandom_lore_head"), classes="group-head")
+        yield Label(t("fandom_doc"), classes="lore-doc-label")
+        yield Select([], id=f"{p}-doc", classes="lore-doc")
+        with Horizontal(classes="entity-actions"):
+            yield Button(t("fandom_preview"), id=f"{p}-toggle", classes="lore-toggle")
+            yield Button(t("save"), id=f"{p}-save", classes="lore-save", variant="success")
+            yield Button(t("fandom_recompile"), id=f"{p}-recompile",
+                         classes="lore-recompile", variant="primary")
+        yield TextArea(text="", language="markdown", id=f"{p}-area", classes="lore-area")
+        # Markdown lays its blocks out but does not scroll them; taller-than-the-box
+        # lore was clipped with no way to reach the rest. It scrolls in a container,
+        # the same way the canon sheet below does.
+        yield VerticalScroll(Markdown("", id=f"{p}-view"),
+                             id=f"{p}-viewbox", classes="lore-viewbox")
+        yield Static(t("fandom_canon_head"), classes="group-head")
+        # a compiled sheet runs to a couple of hundred lines; it scrolls in its own
+        # box rather than pushing everything else off the bottom of the pane
+        yield VerticalScroll(Static("", id=f"{p}-canon", classes="lore-canon"),
+                             classes="lore-canon-box")
+
+    def on_mount(self) -> None:
+        self.reload()
+
+    # -- state --------------------------------------------------------------
+
+    def set_fandom(self, name: str) -> None:
+        """Point the editor at another world (a tab click, or the wizard's picker)."""
+        if name == self._fandom:
+            return
+        self._write_file(if_changed=True)  # the world being left keeps its edits
+        self._fandom = name
+        self._doc = ""
+        self.reload()
+
+    def reload(self) -> None:
+        """Repopulate everything from the store: document list, text, canon sheet."""
+        try:
+            sel = self.query_one(".lore-doc", Select)
+        except Exception:  # not composed yet — on_mount will call us again
+            return
+        names = [p.name for p in self._docs()]
+        # set `_doc` FIRST: the Changed events this repopulation posts are matched
+        # against it when they arrive, and that is what tells them apart from a real
+        # pick by the operator
+        self._doc = self._doc if self._doc in names else (names[0] if names else "")
+        sel.set_options([(n, n) for n in names])
+        if self._doc:
+            sel.value = self._doc
+        # one document is the common case; a picker over a list of one is noise
+        many = len(names) > 1
+        sel.display = many
+        self.query_one(".lore-doc-label", Label).display = many
+        self._load_text()
+        self._show_canon()
+
+    def _load_text(self) -> None:
+        path = self._path()
+        text = ""
+        if path is not None:
+            try:
+                text = path.read_text(encoding="utf-8")
+            except OSError:
+                text = ""
+        self.query_one(".lore-area", TextArea).text = text
+        self._apply_mode()
+
+    def _apply_mode(self) -> None:
+        area = self.query_one(".lore-area", TextArea)
+        box = self.query_one(".lore-viewbox", VerticalScroll)  # the scroller, not the
+        view = box.query_one(Markdown)                         # widget inside it
+        area.display = not self._preview
+        box.display = self._preview
+        self.query_one(".lore-toggle", Button).label = _label(
+            self.app, "fandom_edit" if self._preview else "fandom_preview"
+        )
+        if self._preview:
+            view.update(area.text)
+            box.scroll_home(animate=False)  # a re-render starts at the top, not where
+            box.can_focus = True            # the last document happened to be left
+
+    def _show_canon(self) -> None:
+        """The compiled sheet as it stands, plus a warning when the lore has moved
+        under it — a stale sheet is what the writer would otherwise be handed."""
+        cfg = self._cfg()
+        canon = (cfg.canon if cfg else "").strip()
+        text = canon or "—"
+        if cfg and canon and cfg.docs_sha != lore_sha(read_lore(cfg)):
+            text = f"[yellow]⚠ {_label(self.app, 'fandom_canon_stale')}[/yellow]\n\n{text}"
+        try:
+            self.query_one(".lore-canon", Static).update(text)
+        except Exception:  # not composed yet
+            pass
+
+    # -- writing ------------------------------------------------------------
+
+    def _write_file(self, *, if_changed: bool = False) -> Path | None:
+        """Write the open document to disk. Returns the path, or None when there is
+        no world to write into (or nothing changed, under ``if_changed``)."""
+        cfg = self._cfg()
+        if cfg is None or cfg.root is None:
+            return None
+        try:
+            text = self.query_one(".lore-area", TextArea).text
+        except Exception:  # not mounted yet
+            return None
+        path = self._path()
+        if path is None:
+            # a world with no document yet — an explicit save starts one, but an
+            # incidental flush must never invent a file (and never out of a text area
+            # that has already been cleared for another world)
+            if if_changed:
+                return None
+            path = cfg.root / "lore.md"
+        elif if_changed:
+            try:
+                if path.read_text(encoding="utf-8") == text:
+                    return None
+            except OSError:
+                pass
+        created = not path.exists()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        self._doc = path.name
+        if created:  # the document list grew — the store has to see the new file
+            self.app.store = ConfigStore()
+            self.reload()
+        return path
+
+    def flush(self) -> None:
+        """Write pending edits out (leaving the step/tab), without touching the LLM."""
+        self._write_file(if_changed=True)
+
+    @on(Select.Changed, ".lore-doc")
+    def _doc_changed(self, event: Select.Changed) -> None:
+        # a blank is only ever the picker being repopulated — the operator cannot
+        # choose one — and a value equal to `_doc` is this widget catching up with a
+        # switch it has already made
+        if event.value is Select.BLANK:
+            return
+        name = str(event.value)
+        if name == self._doc:
+            return
+        self._write_file(if_changed=True)  # the document being left keeps its edits
+        self._doc = name
+        self._load_text()
+
+    @on(Button.Pressed, ".lore-toggle")
+    def _toggle(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._preview = not self._preview
+        self._apply_mode()
+
+    @on(Button.Pressed, ".lore-save")
+    def _save_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        path = self._write_file()
+        if path is None:
+            self.notify(_label(self.app, "fandom_pick_first"), severity="warning")
+            return
+        self.notify(f"{_label(self.app, 'fandom_saved')}: {path}", timeout=5)
+        self._compile(force=False)
+
+    @on(Button.Pressed, ".lore-recompile")
+    def _recompile_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        if self._write_file() is None:
+            self.notify(_label(self.app, "fandom_pick_first"), severity="warning")
+            return
+        self._compile(force=True)
+
+    # -- compiling the canon sheet (LLM; off the UI thread) -----------------
+
+    def _compile(self, *, force: bool) -> None:
+        if self._cfg() is None:
+            self.notify(_label(self.app, "fandom_pick_first"), severity="warning")
+            return
+        self.notify(_label(self.app, "fandom_compiling"), timeout=6)
+        name, lang = self._fandom, self.app.store.global_cfg.ui.lang
+        self.run_worker(lambda: self._compile_worker(name, force, lang),
+                        thread=True, exclusive=False)
+
+    def _compile_worker(self, name: str, force: bool, lang: str) -> None:
+        try:
+            # re-read from disk: the markdown was written a moment ago, and the
+            # checksum has to be taken over what is really there now
+            cfg = ConfigStore().fandoms.get(name)
+            if cfg is None:
+                raise ConfigError(f"fandom '{name}' not found")
+            if force:  # a forced rebuild = pretend nothing was ever compiled
+                cfg = cfg.model_copy(update={"canon": "", "docs_sha": ""})
+            fresh = lore_ai.recompile_if_stale(self._llm(), cfg, read_lore(cfg), lang)
+            if fresh is not cfg:
+                write_fandom(fresh)
+        except Exception as e:  # LLM/network/disk — the markdown is already saved
+            self.app.call_from_thread(self._compile_done, str(e))
+            return
+        self.app.call_from_thread(self._compile_done, None)
+
+    def _compile_done(self, err: str | None) -> None:
+        self.app.store = ConfigStore()
+        self._show_canon()
+        if err is not None:
+            self.notify(f"{_label(self.app, 'fandom_compile_err')}: {err}",
+                        severity="error", timeout=12)
+        else:
+            self.notify(_label(self.app, "fandom_compiled"), timeout=5)
 
 
 class _CharEditAI:
@@ -1742,6 +2466,15 @@ class DramaScreen(_CharEditAI, GenerateScreen):
 
     STEPS = DRAMA_STEP_KEYS
     MODE = "drama"
+    # what the Summary step calls itself, and the toast on GENERATE — the fandom
+    # wizard is this same screen with another world in front of it
+    SUMMARY_HEAD = "drama_summary_head"
+    START_MSG = "drama_soon"
+    # whether this mode is published as a serial. Episodes are a drama's device: the
+    # story is cut where it hurts most and each piece goes out on its own. A mode with
+    # nothing to hang a cliffhanger on turns the whole apparatus off (field, toggle,
+    # summary line, CLI flags, the `cut` stage and its breakpoint).
+    HAS_PARTS = True
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -1762,8 +2495,9 @@ class DramaScreen(_CharEditAI, GenerateScreen):
 
     def _make_forms(self, t, store: ConfigStore, vis0: VisualsConfig) -> None:
         super()._make_forms(t, store, vis0)
-        self.f_publish.fields.insert(2, Number("parts", "parts", value="1", default=1, integer=True))
-        self.f_publish.fields.insert(3, Toggle("parts_iterative", "parts_iterative", value=True))
+        if self.HAS_PARTS:
+            self.f_publish.fields.insert(2, Number("parts", "parts", value="1", default=1, integer=True))
+            self.f_publish.fields.insert(3, Toggle("parts_iterative", "parts_iterative", value=True))
 
     def _content_form(self, store: ConfigStore) -> Form:
         # drama: no content-type / idea — the premise lives in the Story step
@@ -1779,11 +2513,29 @@ class DramaScreen(_CharEditAI, GenerateScreen):
             # narration to how many words fit one clip at this rate
             Range("tts_rate", "tts_rate", value=0,
                   lo=-50, hi=50, step=5, labels=TTS_RATE_LABELS),
+            *self._timing_fields(),
+            Text("visual_notes", "visual_notes", placeholder="visual_notes_ph", large=True),
+        ])
+
+    def _timing_fields(self) -> list:
+        """How long, and out of how many clips. A drama is authored in MINUTES with a
+        tolerance (it runs long and the story decides where it lands) and with an
+        average clip length, because the operator is buying that length from a
+        generator whose free tier they are rationing. A mode that buys neither asks
+        neither — see FandomScreen."""
+        return [
             Number("duration_min", "drama_duration_min", value="2", default=2.0),
             Number("duration_tol", "drama_duration_tol", value="15", default=15.0),
             Number("clip_s", "drama_clip_s", value="0", default=0.0),
-            Text("visual_notes", "visual_notes", placeholder="visual_notes_ph", large=True),
-        ])
+        ]
+
+    def _timing(self, c: dict) -> dict:
+        """The gathered timing, in the units the pipeline wants (seconds)."""
+        return {
+            "duration": float(c.get("duration_min") or 2.0) * 60.0,
+            "duration_tol": float(c.get("duration_tol") or 15.0),
+            "clip_s": max(float(c.get("clip_s") or 0.0), 0.0),
+        }
 
     def _step_help_key(self, step_key: str) -> str:
         if step_key == "step.visuals":  # drama Visuals step = orchestration, not stock/insert settings
@@ -1858,7 +2610,7 @@ class DramaScreen(_CharEditAI, GenerateScreen):
         ])
 
     async def _show_stage_editor(self, idx: int) -> None:
-        t = lambda k: _label(self.app, k)  # noqa: E731
+        t = self._t
         self._insp_mode = "stage"
         self._stage_sel = idx
         s = self._stages[idx]
@@ -2022,9 +2774,20 @@ class DramaScreen(_CharEditAI, GenerateScreen):
         if key != "step.characters":
             yield from super()._pane_body(key, t)
             return
+        yield from self._plot_block(t)
+        yield from self._ai_block(t)
+        yield from self._cast_block(t)
+
+    # The story step is three blocks, kept separate because the fandom wizard wants
+    # them in two different steps: a world's cast belongs with the world, not with
+    # the plot written for it.
+    def _plot_block(self, t):
         yield Static(t("drama_plot_head"), classes="group-head")
         yield from Text("scenario", "", large=True).build("drama", t)  # id: drama-scenario
-        # ── AI story polish block ──────────────────────────────────────────
+
+    def _ai_block(self, t):
+        """AI story polish. Protagonist and tropes are dorama furniture and are the
+        drama's alone — see FandomScreen for what a world gets instead."""
         yield Static(t("drama_ai_head"), classes="group-head")
         yield Label(t("drama_protagonist"))
         yield Select(
@@ -2033,10 +2796,14 @@ class DramaScreen(_CharEditAI, GenerateScreen):
         )
         with Horizontal(classes="entity-actions"):
             yield Button(t("drama_tropes_btn"), id="drama-tropes-btn")
+        yield from self._ai_prompt_block(t)
+
+    def _ai_prompt_block(self, t):
         yield from Text("prompt", "", placeholder="drama_prompt_ph").build("drama", t)
         with Horizontal(classes="entity-actions"):
             yield Button(t("char_autofill_all"), id="cast-fill-all", variant="primary")
-        # ── Cast ──────────────────────────────────────────────────────────
+
+    def _cast_block(self, t):
         yield Static(t("drama_cast_head"), classes="group-head")
         with Horizontal(classes="entity-actions"):
             yield Button(t("drama_add"), id="cast-add", variant="success")
@@ -2044,7 +2811,9 @@ class DramaScreen(_CharEditAI, GenerateScreen):
         yield Static(t("drama_cast_hint2"), classes="hint")
 
     def _member_status(self, m: dict) -> tuple[str, str]:
-        """(status label key, css class) for a cast item: local / global / global*."""
+        """(status label key, css class) for a cast item: world / local / global / global*."""
+        if m.get("world"):  # came with the fandom, not assembled by hand
+            return ("cast_st_world", "st-global")
         if not m.get("glob"):
             return ("cast_st_local", "st-local")
         fields = {k: m.get(k, "") for k in CHAR_FIELD_KEYS}
@@ -2057,7 +2826,7 @@ class DramaScreen(_CharEditAI, GenerateScreen):
             sel = self.query_one("#drama-protagonist", Select)
         except Exception:
             return
-        t = lambda k: _label(self.app, k)  # noqa: E731
+        t = self._t
         opts = [(t("drama_protagonist_none"), "")] + [
             (m["name"], m["name"]) for m in self._cast if m.get("name")
         ]
@@ -2111,7 +2880,7 @@ class DramaScreen(_CharEditAI, GenerateScreen):
 
     # -- tropes panel -------------------------------------------------------
     async def _show_tropes_panel(self) -> None:
-        t = lambda k: _label(self.app, k)  # noqa: E731
+        t = self._t
         self._insp_mode = "tropes"
         lang = self.app.store.global_cfg.ui.lang
         widgets: list = [Static(t("drama_tropes_head"), classes="group-head")]
@@ -2153,7 +2922,7 @@ class DramaScreen(_CharEditAI, GenerateScreen):
 
     # -- inspector: picker + editor -----------------------------------------
     async def _show_picker(self) -> None:
-        t = lambda k: _label(self.app, k)  # noqa: E731
+        t = self._t
         self._insp_mode = "picker"
         self._cast_form = None
         items = [ListItem(Label(n), id=f"pg-{i}") for i, n in enumerate(self.app.store.characters)]
@@ -2166,7 +2935,7 @@ class DramaScreen(_CharEditAI, GenerateScreen):
         await self._set_inspector(widgets)
 
     async def _show_editor(self, idx: int) -> None:
-        t = lambda k: _label(self.app, k)  # noqa: E731
+        t = self._t
         self._insp_mode = "editor"
         self._sel = idx
         m = self._cast[idx]
@@ -2437,7 +3206,7 @@ class DramaScreen(_CharEditAI, GenerateScreen):
         except Exception:
             pass
         if not self._cast and not scenario.strip() and not prompt:
-            self.notify(_label(self.app, "cast_empty"), severity="warning")
+            self.notify(self._t("cast_empty"), severity="warning")
             return
         lang = self.app.store.global_cfg.ui.lang
         cast_copy = [dict(m) for m in self._cast]
@@ -2449,7 +3218,8 @@ class DramaScreen(_CharEditAI, GenerateScreen):
         protagonist = self._protagonist
         self._start_thinking("drama-prompt")
         self.run_worker(
-            lambda: self._all_worker(cast_copy, lang, scenario, prompt, tropes, protagonist, library),
+            lambda: self._all_worker(cast_copy, lang, scenario, prompt, tropes,
+                                     protagonist, library),
             thread=True, exclusive=False,
         )
 
@@ -2556,14 +3326,11 @@ class DramaScreen(_CharEditAI, GenerateScreen):
         c = self.f_content.read(self)
         a = self.f_ads.read(self)
         p = self.f_publish.read(self)
-        dur_min = float(c.get("duration_min") or 2.0)
         return {
             "lang": c["lang"], "voice": c["voice"], "ctype": "", "idea": "",
             "profanity": c["profanity"],
             "tts_rate": c.get("tts_rate", 0),
-            "duration": dur_min * 60.0,
-            "duration_tol": float(c.get("duration_tol") or 15.0),
-            "clip_s": max(float(c.get("clip_s") or 0.0), 0.0),
+            **self._timing(c),
             "ad_src": a["ad-src"], "ad_mode": a["ad-mode"] or "both",
             "push": "" if p["push"] == NONE else p["push"],
             "subs": p["subs"], "count": max(1, int(p["count"])),
@@ -2575,7 +3342,7 @@ class DramaScreen(_CharEditAI, GenerateScreen):
         }
 
     def _render_summary(self) -> None:
-        t = lambda k: _label(self.app, k)  # noqa: E731
+        t = self._t
         self._save_editor()
         self._save_stage_editor()
         g = self._gather()
@@ -2586,8 +3353,23 @@ class DramaScreen(_CharEditAI, GenerateScreen):
         stages = " → ".join(s["model"] for s in self._stages) or "—"
         clip = f"{g['clip_s']:g}s" if g["clip_s"] else t("drama_clip_auto")
         lines = [
-            f"[b]{t('drama_summary_head')}[/b]",
+            f"[b]{t(self.SUMMARY_HEAD)}[/b]",
             "",
+            *self._summary_timing_lines(t, g, clip),
+            f"  {t('drama_plot_head')}: {plot}",
+            *self._summary_cast_lines(t, cast, glob),
+            *self._summary_source_lines(t, stages),
+            *self._summary_extra(g),
+            "",
+            f"  [dim]{t('drama_soon_note')}[/dim]",
+        ]
+        self.query_one("#w-summary", Static).update("\n".join(lines))
+        self.query_one("#w-cmd", Static).update(f"$ {self._drama_command(g)}")
+
+    def _summary_timing_lines(self, t, g: dict, clip: str) -> list[str]:
+        """How the summary reports length. Mirrors what the Content step asked for, so
+        a mode that never asked about tolerance or clip length does not report them."""
+        return [
             f"  {t('lang')}: [b]{g['lang']}[/b]      {t('duration')}: "
             f"~{g['duration'] / 60:.1f} min ±{g['duration_tol']:.0f}s"
             + (f"      {t('parts')}: [b]{g['parts']}[/b]"
@@ -2595,21 +3377,36 @@ class DramaScreen(_CharEditAI, GenerateScreen):
                if g["parts"] != 1 else ""),
             f"  {t('drama_clip_s').split(',')[0]}: [b]{clip}[/b]"
             f"      {t('tts_rate').split(' (')[0]}: [b]{g['tts_rate']:+d}%[/b]",
-            f"  {t('drama_plot_head')}: {plot}",
-            f"  {t('drama_cast_head')}: [b]{cast}[/b]",
-            f"  ★ {t('cfg.characters')}: {glob}",
-            f"  {t('orch_head')}: [b]{stages}[/b]",
-            "",
-            f"  [dim]{t('drama_soon_note')}[/dim]",
         ]
-        self.query_one("#w-summary", Static).update("\n".join(lines))
-        self.query_one("#w-cmd", Static).update(f"$ {self._drama_command(g)}")
+
+    def _summary_source_lines(self, t, stages: str) -> list[str]:
+        """How the summary names where the picture comes from — a chain, or one source."""
+        return [f"  {t('orch_head')}: [b]{stages}[/b]"]
+
+    def _summary_cast_lines(self, t, cast: str, glob: str) -> list[str]:
+        """How the summary reports who is in it. The drama names the run cast and,
+        separately, which of them came from the shared library — a distinction that
+        exists because its members are ad-hoc unless saved. A world's people have no
+        such split (see FandomScreen), so it overrides this with one line."""
+        return [f"  {t('drama_cast_head')}: [b]{cast}[/b]",
+                f"  ★ {t('cfg.characters')}: {glob}"]
+
+    def _summary_extra(self, g: dict) -> list[str]:
+        """Extra summary lines a mode adds (the fandom wizard names its world)."""
+        return []
+
+    def _mode_flags(self, g: dict) -> str:
+        """Extra CLI flags a mode contributes to the previewed command."""
+        return ""
+
+    def _timing_flags(self, g: dict) -> str:
+        return (f" --duration-min {g['duration'] / 60:g} --tol {g['duration_tol']:g}"
+                + (f" --clip-s {g['clip_s']:g}" if g["clip_s"] else ""))
 
     def _drama_command(self, g: dict) -> str:
-        cmd = f"slopgen drama {g['lang']}"
-        cmd += f" --duration-min {g['duration'] / 60:g} --tol {g['duration_tol']:g}"
-        if g["clip_s"]:
-            cmd += f" --clip-s {g['clip_s']:g}"
+        cmd = f"slopgen {self.MODE} {g['lang']}"
+        cmd += self._mode_flags(g)
+        cmd += self._timing_flags(g)
         if g["clean_subs"]:
             cmd += " --clean-subs"
         if g["visual_notes"]:
@@ -2665,7 +3462,7 @@ class DramaScreen(_CharEditAI, GenerateScreen):
         )
         try:
             params = RunParams(
-                lang=g["lang"], content_type="", mode="drama",
+                lang=g["lang"], content_type="", mode=self.MODE,
                 scenario=self._scenario_text().strip(),
                 manual_cast=cast,
                 manual_orchestration=orch,
@@ -2682,17 +3479,543 @@ class DramaScreen(_CharEditAI, GenerateScreen):
                 breakpoints=g["breakpoints"],
                 clean_subtitles=g["clean_subs"],
                 visual_notes=g["visual_notes"],
+                **self._extra_params(g),
             )
         except Exception as e:  # pydantic validation / bad field
             self.notify(str(e), severity="error", timeout=8)
             return
-        self.notify(_label(self.app, "drama_soon").format(n=len(cast)), timeout=4)
+        self.notify(
+            _label(self.app, self.START_MSG).format(n=len(cast), name=g.get("fandom", "")),
+            timeout=4,
+        )
         self.app.push_screen(ProgressScreen(params))
+
+    def _extra_params(self, g: dict) -> dict:
+        """RunParams fields only some modes have (the fandom's world + narrator)."""
+        return {}
+
+
+class FandomScreen(DramaScreen):
+    """Fandom wizard. It shares the drama's plumbing — length, orchestration, ads,
+    publishing — and nothing of its content model, because the two are not the same
+    kind of thing.
+
+    A drama's cast is assembled per run: members are ad-hoc unless you save them,
+    pulled from a shared library, toggled in and out for one video. A world's people
+    are not like that. They are IN the world or they are not; nobody appears for one
+    video and vanishes after it. So the World step edits the world's own character
+    files directly (the same editor as Configuration → Fandoms) — there is no run
+    cast, no global library to borrow from, and the run carries no `manual_cast` at
+    all: the pipeline reads the world's people straight off the fandom.
+
+    Episodes are gone for the same reason: a serial is cut where it hurts most, and an
+    account of a world has no cliffhanger to hang a break on (see HAS_PARTS).
+    """
+
+    STEPS = FANDOM_STEP_KEYS
+    MODE = "fandom"
+    SUMMARY_HEAD = "fandom_summary_head"
+    START_MSG = "fandom_soon"
+    HAS_PARTS = False
+
+    # Where this mode says something the drama's wording does not fit. Most of the
+    # wizard is genuinely the same machine, but a fandom operator should never be
+    # told about a drama they are not making — nor offered dorama furniture.
+    LABELS = {
+        "step.characters": "fandom_step_brief",
+        "help.step.characters": "help.fandom_brief",
+        "help.step.fandom": "help.fandom_world",
+        "help.step.visuals": "help.fandom_visuals_step",
+        "drama_plot_head": "fandom_plot_head",
+        "drama_ai_head": "fandom_ai_head",
+        "drama_cast_head": "fandom_cast_head",
+        "help.drama_duration_min": "help.fandom_duration_min",
+        "help.drama_scenario": "help.fandom_scenario",
+        "help.drama_visuals": "help.fandom_visuals",
+        "help.tts_rate": "help.fandom_tts_rate",
+        "drama_soon_note": "fandom_soon_note",
+    }
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._fandom = ""  # folder name of the picked world
+        self._person: int | None = None  # index into the world's people, or None
+        self._person_form: Form | None = None
+        self.f_fandom: Form | None = None
+        self.f_voice: Form | None = None
+
+    # -- forms ---------------------------------------------------------------
+
+    def _make_forms(self, t, store: ConfigStore, vis0: VisualsConfig) -> None:
+        super()._make_forms(t, store, vis0)
+        self._fandom = self._fandom or next(iter(store.fandoms), "")
+        self.f_fandom = Form("wf", [
+            Choice("fandom", "fandom_pick", options=[(n, n) for n in store.fandoms],
+                   value=self._fandom or None, allow_blank=True),
+        ])
+        # the narrator belongs with the brief, not with the world: it is a choice
+        # about THIS video (who tells it), while the world is the same whoever does
+        self.f_voice = Form("wv", [
+            Choice("voice", "fandom_voice",
+                   options=[(t("fandom_voice_resident"), "resident"),
+                            (t("fandom_voice_chronicler"), "chronicler")],
+                   value="resident"),
+        ])
+        # Where the shots come from: ONE list, the same one a drama's chain stage picks
+        # from. Splitting it into "source" + "generator" made the operator answer two
+        # questions to say one thing, and hid the photo generators behind a branch —
+        # `flux`/`turbo` are how you ask for stills, and they belong in plain sight next
+        # to the video ones. The two operator-supplied entries sit in the same list
+        # because that is what they are: another answer to "who makes this shot".
+        self.f_source = Form("ws", [
+            # What the video is MADE OF comes first, because it decides what can make
+            # it: a slideshow of stills and a run of clips are different pieces of work
+            # with different sources, and offering all of them at once was how the
+            # photo generators ended up invisible.
+            Choice("medium", "fandom_medium", options=[
+                (t("fandom_medium_video"), "video"),
+                (t("fandom_medium_photo"), "photo"),
+            ], value="video"),
+            Group("ws-vid", [
+                Choice("vsrc", "fandom_source", options=VIDEO_SOURCES, value="wan2.1"),
+            ], visible_when=lambda v: v["medium"] != "photo"),
+            Group("ws-img", [
+                Choice("psrc", "fandom_source", options=PHOTO_SOURCES, value="flux"),
+            ], visible_when=lambda v: v["medium"] == "photo"),
+            Note("fandom_source_note"),
+        ])
+
+    # -- the two steps that are this mode's own ------------------------------
+
+    def _pane_body(self, key: str, t):
+        if key == "step.fandom":
+            if not self.app.store.fandoms:
+                yield Static(t("fandom_none"), classes="hint")
+            yield from self.f_fandom.compose(t)
+            # The world's people, edited as what they are: files in the world's
+            # folder. Same widget as Configuration → Fandoms, so there is one way to
+            # author a world and it does not matter where you are standing.
+            yield Static(t("fandom_cast_head"), classes="group-head")
+            with Horizontal(classes="entity-actions"):
+                yield Button(t("fandom_add_person"), id="world-add", variant="success")
+            yield ListView(id="world-list")
+            yield Static(t("fandom_cast_hint2"), classes="hint")
+            yield LoreEditor(self._fandom, prefix="wlore", id="wizard-lore")
+            return
+        if key == "step.visuals":
+            yield Static(t("fandom_source_head"), classes="group-head")
+            yield from self.f_source.compose(t)
+            return
+        if key == "step.characters":
+            yield from self.f_voice.compose(t)
+            yield from self._plot_block(t)
+            yield Static(t("drama_ai_head"), classes="group-head")
+            yield from Text("prompt", "", placeholder="fandom_prompt_ph").build("drama", t)
+            with Horizontal(classes="entity-actions"):
+                yield Button(t("fandom_write_brief"), id="fandom-brief-ai", variant="primary")
+            return
+        yield from super()._pane_body(key, t)
+
+    # -- keeping the world's editors pointed at the picked world -------------
+
+    def on_mount(self) -> None:
+        super().on_mount()
+        self.call_after_refresh(self._point_at_world)
+        # this mode adds a form of its own, and a Group's visible_when is only ever
+        # evaluated when something asks (see GenerateScreen.on_mount)
+        self.call_after_refresh(self._refresh_source_form)
+
+    def _refresh_source_form(self) -> None:
+        try:
+            self.f_source.refresh_visibility(self)
+        except Exception:  # the step never composed
+            pass
+
+    @on(Select.Changed, "#ws-medium")
+    def _medium_changed(self, event: Select.Changed) -> None:
+        """Stills and clips are made by different things; show only the right ones."""
+        self._refresh_source_form()
+
+    def _point_at_world(self) -> None:
+        self._person = None
+        self._person_form = None
+        self._refresh_people()
+
+    # -- the world's people: a list here, the editor in the inspector --------
+    #
+    # The same shape every other wizard step has, and for the same reason: the middle
+    # column is forty characters wide and the panel on the right is otherwise showing
+    # nothing but help. What is NOT shared with the drama is what an edit means —
+    # every save here writes the world's own character file, because these people
+    # belong to the world and there is no run cast for them to live in.
+
+    def _people(self) -> list[CharacterConfig]:
+        cfg = self.app.store.fandoms.get(self._fandom)
+        return list(cfg.cast) if cfg else []
+
+    def _people_dir(self) -> Path:
+        return FANDOMS_DIR / self._fandom / "characters"
+
+    def _refresh_people(self) -> None:
+        try:
+            lv = self.query_one("#world-list", ListView)
+        except Exception:
+            return
+        self._rev += 1
+        lv.clear()
+        palette = theme_identity(self.app.current_theme)
+        colours = identity_colors([c.name for c in self._people()], palette)
+        ground = (self.app.current_theme.background if self.app.current_theme else "#1D1D21")
+        for i, c in enumerate(self._people()):
+            look = " ".join((c.appearance or "").split())
+            look = (look[:44] + "…") if len(look) > 44 else look
+            age = (c.age or "").strip()
+            sub = f"{age} · {look}" if age and look else (age or look)
+            name = Static(c.name or "—", classes="world-name")
+            # as TEXT, so the palette colour is lifted until it reads on the panel
+            name.styles.color = identity_ink(colours.get(c.name, palette[0]), ground)
+            lv.append(ListItem(
+                Vertical(
+                    name,
+                    Static(sub or _label(self.app, "fandom_person_blank"), classes="world-line"),
+                    classes="world-info",
+                ),
+                id=f"wp-{self._rev}-{i}",
+                classes="world-item",
+            ))
+
+    async def _show_person(self, idx: int) -> None:
+        t = self._t
+        people = self._people()
+        self._insp_mode = "editor"
+        self._person = idx
+        cur = people[idx] if 0 <= idx < len(people) else None
+        self._person_form = _entity_form("characters")
+        widgets = [Static(t("fandom_person_head"), classes="group-head")]
+        widgets += self._person_form.build(t)
+        widgets.append(Horizontal(Input(placeholder=t("char_photo_ph"), id="char-photo-path"),
+                                  Button(t("char_describe"), id="char-describe", variant="primary"),
+                                  id="char-photo-row"))
+        widgets.extend(Text("prompt", "", placeholder="char_prompt_ph").build("char", t))
+        widgets.append(Horizontal(Button(t("fandom_fill_person"), id="world-fill", variant="primary"),
+                                  classes="entity-actions"))
+        widgets.append(Horizontal(Button(t("save"), id="world-save", variant="success"),
+                                  Button(t("fandom_remove_person"), id="world-del", variant="error"),
+                                  classes="entity-actions"))
+        await self._set_inspector(widgets)
+        self._person_form.fill(self, {
+            "name": cur.name if cur else "", "age": cur.age if cur else "",
+            "appearance": cur.appearance if cur else "",
+        })
+
+    def _char_form(self) -> Form | None:
+        """What the shared photo→appearance helper writes into. On the World step it
+        is the person editor; the drama's own editor is never open here."""
+        return self._person_form
+
+    @on(ListView.Selected, "#world-list")
+    async def _person_selected(self, event: ListView.Selected) -> None:
+        if event.item is None:
+            return
+        await self._show_person(int(event.item.id.rsplit("-", 1)[1]))
+
+    @on(Button.Pressed, "#world-add")
+    async def _person_add(self, event: Button.Pressed) -> None:
+        event.stop()
+        if not self._fandom:
+            self.notify(self._t("fandom_none"), severity="warning")
+            return
+        await self._show_person(-1)  # a blank editor; the file appears on save
+
+    @on(Button.Pressed, "#world-save")
+    def _person_save(self, event: Button.Pressed) -> None:
+        """Write the person into the world. There is no 'save to library' step and no
+        unsaved run copy: the world's folder is the only place they exist."""
+        event.stop()
+        form = self._person_form
+        if form is None or not self._fandom:
+            return
+        vals = form.read(self)
+        name = str(vals.get("name", "")).strip()
+        if not name:
+            self.notify(_label(self.app, "name_req"), severity="warning")
+            return
+        people = self._people()
+        existing = people[self._person] if self._person is not None and 0 <= self._person < len(people) else None
+        try:
+            path = _write_character(self.app.store, name, vals,
+                                    directory=self._people_dir(), existing=existing)
+        except Exception as e:
+            self.notify(str(e), severity="error", timeout=8)
+            return
+        self.app.store = ConfigStore()
+        self._refresh_people()
+        names = [c.name for c in self._people()]
+        self._person = names.index(name) if name in names else None
+        self.notify(f"{_label(self.app, 'saved')}: {path}", timeout=5)
+
+    @on(Button.Pressed, "#world-del")
+    async def _person_del(self, event: Button.Pressed) -> None:
+        event.stop()
+        people = self._people()
+        if self._person is None or not (0 <= self._person < len(people)):
+            return
+        victim = people[self._person]
+
+        async def go(ok: bool) -> None:
+            if not ok:
+                return
+            path = self._people_dir() / f"{victim.name}.toml"
+            try:
+                path.unlink()
+            except OSError as e:
+                self.notify(str(e), severity="error", timeout=8)
+                return
+            self.app.store = ConfigStore()
+            self._person, self._person_form = None, None
+            self._refresh_people()
+            await self._show_help("step.fandom")
+
+        self.app.push_screen(ConfirmModal(_label(self.app, "confirm_del").format(name=victim.name)), go)
+
+    @on(Button.Pressed, "#world-fill")
+    def _person_fill(self, event: Button.Pressed) -> None:
+        """Fill this person's age and looks from the WORLD. The drama's cast fill
+        invents an ensemble to fit a plot; this one may invent only what this place
+        could already contain."""
+        event.stop()
+        form = self._person_form
+        if form is None or not self._fandom:
+            return
+        member = form.read(self)
+        if not str(member.get("name", "")).strip():
+            self.notify(_label(self.app, "name_req"), severity="warning")
+            return
+        try:
+            prompt = self.query_one("#char-prompt", TextArea).text.strip()
+        except Exception:
+            prompt = ""
+        lang = self.app.store.global_cfg.ui.lang
+        world = self._world_text()
+        self.notify(_label(self.app, "char_working"), timeout=3)
+        self.run_worker(lambda: self._person_worker(member, lang, prompt, world),
+                        thread=True, exclusive=False)
+
+    def _person_worker(self, member: dict, lang: str, prompt: str, world: str) -> None:
+        try:
+            changed = char_ai.autofill_one(self._llm(), member, lang, prompt, world=world)
+        except Exception as e:
+            self.app.call_from_thread(
+                self.notify, f"{_label(self.app, 'char_ai_err')}: {e}",
+                severity="error", timeout=10)
+            return
+        if not changed:
+            self.app.call_from_thread(self.notify, _label(self.app, "char_nothing"), timeout=5)
+            return
+        self.app.call_from_thread(self._apply, changed, "char_filled")
+
+    @on(Select.Changed, "#wf-fandom")
+    def _fandom_changed(self, event: Select.Changed) -> None:
+        name = "" if event.value is Select.BLANK else str(event.value)
+        if name == self._fandom:
+            return
+        self._fandom = name
+        try:
+            self.query_one("#wizard-lore", LoreEditor).set_fandom(name)
+        except Exception:
+            pass
+        self._point_at_world()
+
+    @on(ListView.Highlighted, "#wizard-nav")
+    def _world_required(self, event: ListView.Highlighted) -> None:
+        """Nothing past the World step means anything without a world, so bounce back
+        to it. ``prevent_default`` is what stops the base handler (further along the
+        MRO) from switching the pane under us."""
+        if event.item is None or self._fandom:
+            return
+        first = self.STEPS.index("step.fandom")
+        if int(event.item.id.split("-")[1]) <= first:
+            return
+        event.prevent_default()
+        self.notify(self._t("fandom_none"), severity="warning", timeout=8)
+        self.call_after_refresh(self._goto, first)
+
+    # -- AI help: the brief, and only the brief ------------------------------
+
+    def _world_text(self) -> str:
+        """The world as the AI sees it: the compiled sheet when there is one, else the
+        lore itself (a small world is never compiled — fandom_canon.SMALL_LORE_CHARS)."""
+        cfg = self.app.store.fandoms.get(self._fandom)
+        if not cfg:
+            return ""
+        return (cfg.canon or "").strip() or read_lore(cfg)
+
+    @on(Button.Pressed, "#fandom-brief-ai")
+    def _write_brief(self, event: Button.Pressed) -> None:
+        """Propose or rewrite what this video is about. It never touches the world's
+        people — they are the world's, and inventing one here would be inventing a
+        person into a place that does not have them."""
+        event.stop()
+        world = self._world_text()
+        if not world:
+            self.notify(self._t("fandom_none"), severity="warning")
+            return
+        current = self._scenario_text().strip()
+        try:
+            instruction = self.query_one("#drama-prompt", TextArea).text.strip()
+        except Exception:
+            instruction = ""
+        lang = self.app.store.global_cfg.ui.lang
+        self._start_thinking("drama-prompt")
+        self.run_worker(
+            lambda: self._brief_worker(world, current, instruction, lang),
+            thread=True, exclusive=False,
+        )
+
+    def _brief_worker(self, world: str, current: str, instruction: str, lang: str) -> None:
+        try:
+            brief = lore_ai.write_brief(self._llm(), world, current, instruction, lang)
+        except Exception as e:
+            self.app.call_from_thread(self._brief_done, "", str(e))
+            return
+        self.app.call_from_thread(self._brief_done, brief, "")
+
+    def _brief_done(self, brief: str, err: str) -> None:
+        self._stop_thinking("drama-prompt")
+        if err or not brief:
+            self.notify(err or self._t("fandom_brief_none"), severity="error", timeout=8)
+            return
+        try:
+            area = self.query_one("#drama-scenario", TextArea)
+            area.text = brief
+            area.add_class("ai-filled")
+        except Exception:
+            pass
+        self.notify(self._t("fandom_brief_written"), timeout=4)
+
+    # -- gathering / launch --------------------------------------------------
+
+    def _selected_cast(self) -> list[str]:
+        """The world's people, for the summary. There is no run cast to select from."""
+        cfg = self.app.store.fandoms.get(self._fandom)
+        return [c.name for c in cfg.cast] if cfg else []
+
+    def _gather(self) -> dict:
+        g = super()._gather()
+        try:
+            f = self.f_fandom.read(self)
+        except Exception:  # the World step never mounted
+            f = {}
+        try:
+            v = self.f_voice.read(self)
+        except Exception:
+            v = {}
+        g["fandom"] = f.get("fandom") or self._fandom
+        g["fandom_voice"] = v.get("voice") or "resident"
+        # the drama's stage editor never mounts here, so the chain the pipeline runs on
+        # is built from the single source this mode asks about instead
+        self._stages = [self._source_stage().model_dump()]
+        return g
+
+    # -- step 1: how long ----------------------------------------------------
+
+    def _timing_fields(self) -> list:
+        """Seconds, and nothing else. Minutes-with-a-tolerance is a drama's unit: a
+        story runs as long as it runs and the writer needs room to land it. A piece
+        about a world is cut to a length. And there is no average-clip field because
+        in this mode the writer sizes every shot itself, whatever the shots are made
+        of — see stages/fandom_script.SHOT_RULE."""
+        return [Number("duration_s", "fandom_duration_s", value="120", default=120.0)]
+
+    def _timing(self, c: dict) -> dict:
+        return {
+            "duration": max(float(c.get("duration_s") or 120.0), 5.0),
+            "duration_tol": 0.0,   # the length is the length
+            "clip_s": 0.0,         # the writer's to choose, per shot
+        }
+
+    # -- step 4: where the footage comes from --------------------------------
+    #
+    # The drama's step here is an ORCHESTRATION: an ordered chain of generators, each
+    # taking a share of the video, with API-key rotation per stage. That exists because
+    # a feature-length drama burns through free daily limits and has to hop between
+    # services mid-run. A fandom video is one piece of a few minutes; a chain of
+    # generators with key-rotation policies is machinery it does not need and framing
+    # that says nothing about what it is making. So it asks the one question that
+    # matters — where do the shots come from — and builds the chain itself.
+
+    def _source_stage(self) -> OrchestrationStage:
+        """The single source, as the one-stage chain the pipeline runs on. Everything
+        downstream (beats.plan_slots, drama_footage) speaks chains, so this is the only
+        place the fandom's simpler question is translated."""
+        try:
+            v = self.f_source.read(self)
+        except Exception:  # the step never mounted
+            v = {}
+        photo = v.get("medium") == "photo"
+        model = (v.get("psrc") or "flux") if photo else (v.get("vsrc") or "wan2.1")
+        return OrchestrationStage(model=model, key_mode="rotate", key="",
+                                  metric="percent", amount=100.0, clip_seconds=0.0)
+
+    def _medium(self) -> str:
+        try:
+            return self.f_source.read(self).get("medium") or "video"
+        except Exception:
+            return "video"
+
+    def _extra_params(self, g: dict) -> dict:
+        return {"fandom": g["fandom"], "fandom_voice": g["fandom_voice"],
+                "medium": self._medium()}
+
+    def _summary_timing_lines(self, t, g: dict, clip: str) -> list[str]:
+        medium = t(f"fandom_medium_{self._medium()}")
+        return [f"  {t('lang')}: [b]{g['lang']}[/b]      {t('fandom_duration_s')}: "
+                f"[b]{g['duration']:.0f}s[/b]      {t('fandom_medium')}: [b]{medium}[/b]"
+                f"      {t('tts_rate').split(' (')[0]}: [b]{g['tts_rate']:+d}%[/b]"]
+
+    def _summary_source_lines(self, t, stages: str) -> list[str]:
+        label = dict(ORCH_MODEL_OPTS + PHOTO_SOURCES).get(stages, stages)
+        return [f"  {t('fandom_source_head').strip('— ')}: [b]{label}[/b]"]
+
+    def _summary_cast_lines(self, t, cast: str, glob: str) -> list[str]:
+        return [f"  {t('fandom_cast_head')}: [b]{cast}[/b]"]
+
+    def _summary_extra(self, g: dict) -> list[str]:
+        t = self._t
+        voice = t(f"fandom_voice_{g['fandom_voice']}")
+        return [f"  {t('fandom_pick')}: [b]{g['fandom'] or '—'}[/b]"
+                f"      {t('fandom_voice')}: {voice}"]
+
+    def _timing_flags(self, g: dict) -> str:
+        return f" --duration {g['duration']:.0f}"
+
+    def _mode_flags(self, g: dict) -> str:
+        # the world is the command's SECOND POSITIONAL argument, not a flag:
+        # `slopgen fandom <lang> <fandom>` (see cli/app.py). _mode_flags is appended
+        # straight after the language, which is exactly where it belongs.
+        if not g["fandom"]:
+            return ""
+        name = g["fandom"]
+        quoted = f'"{name}"' if " " in name else name
+        st = self._source_stage()
+        return (f" {quoted} --narrator {g['fandom_voice']}"
+                f" --medium {self._medium()} --source {st.model}")
+
+
+def _paint_mode_button(btn: Button, color: str) -> None:
+    """Give one mode button its identity colour and the app's own bevel."""
+    body, ink, lit, shade = identity_bevel(color)
+    btn.styles.background = body
+    btn.styles.color = ink
+    # top and bottom only — see identity_bevel
+    btn.styles.border_top = ("tall", lit)
+    btn.styles.border_bottom = ("tall", shade)
 
 
 class ModeSelectScreen(Screen):
-    """Pick what to generate after pressing GENERATE: the existing minute-of-info
-    clip, or an AI drama (each opens its own settings wizard)."""
+    """Pick what to generate after pressing GENERATE: the minute-of-info clip, an AI
+    drama, or a fandom — a video set inside a world the operator wrote down. Each
+    opens its own settings wizard."""
 
     def compose(self) -> ComposeResult:
         t = lambda k: _label(self.app, k)  # noqa: E731
@@ -2700,14 +4023,47 @@ class ModeSelectScreen(Screen):
         with Center(id="home-center"):
             with Vertical(id="home-inner"):
                 yield Static(t("mode_head"), id="logo-sub")
+                # Three peers, so none of them is the special one. They were `success`,
+                # `primary` and `warning`, which said nothing and lied twice over: the
+                # first two are the SAME colour in this theme, so the modes read as
+                # "two of these and one odd", and the odd one wore the theme's warning
+                # gold. Identity colour says the true thing instead — three different,
+                # none privileged — and each button keeps the theme's own bevel, which
+                # is the part an inline border colour silently drops.
+                colours = identity_colors(
+                    ["info", "drama", "fandom"], theme_identity(self.app.current_theme)
+                )
                 with Vertical(id="home-menu"):
-                    yield Button(t("mode_info"), id="mode-info", variant="success")
-                    yield Static(t("mode_info_desc"), classes="hint")
-                    yield Button(t("mode_drama"), id="mode-drama", variant="primary")
-                    yield Static(t("mode_drama_desc"), classes="hint")
+                    for mode in ("info", "drama", "fandom"):
+                        btn = Button(t(f"mode_{mode}"), id=f"mode-{mode}",
+                                     classes="mode-btn")
+                        _paint_mode_button(btn, colours[mode])
+                        yield btn
+                        yield Static(t(f"mode_{mode}_desc"), classes="hint")
 
     def on_mount(self) -> None:
         self.query_one("#mode-info", Button).focus()
+
+    def _repaint(self) -> None:
+        """Re-colour from the current theme. The palette is the theme's (see
+        `theme_identity`), so switching themes has to actually move these — otherwise
+        the buttons are the one thing on screen that ignores the theme, which is worse
+        than not colouring them at all."""
+        colours = identity_colors(
+            ["info", "drama", "fandom"], theme_identity(self.app.current_theme)
+        )
+        for mode, colour in colours.items():
+            try:
+                _paint_mode_button(self.query_one(f"#mode-{mode}", Button), colour)
+            except Exception:
+                pass
+
+    def watch_theme(self, *_) -> None:  # noqa: D401 - Textual reactive hook name
+        self._repaint()
+
+    @on(events.Mount)
+    def _follow_theme(self) -> None:
+        self.watch(self.app, "theme", lambda *_: self._repaint(), init=False)
 
     @on(Button.Pressed, "#mode-info")
     def _info(self) -> None:
@@ -2716,6 +4072,10 @@ class ModeSelectScreen(Screen):
     @on(Button.Pressed, "#mode-drama")
     def _drama(self) -> None:
         self.app.push_screen(DramaScreen())
+
+    @on(Button.Pressed, "#mode-fandom")
+    def _fandom(self) -> None:
+        self.app.push_screen(FandomScreen())
 
 
 # --------------------------------------------------------------------------
@@ -2746,9 +4106,13 @@ class ProgressScreen(Screen):
         p = self.params
         ad = f"{(p.manual_ad.name if p.manual_ad else p.ad) or '—'} ({p.ad_mode})"
         push = f"push: {p.push or t('run.local')} · {t('run.subs')}: {p.subtitle_style}"
-        if p.mode == "drama":
+        if p.mode in ("drama", "fandom"):
+            # a fandom is the drama pipeline set in a named world — say which one
             parts = f" · {t('parts')}: {p.parts}" if p.parts != 1 else ""
-            head = f" {p.count}× 🎭 {p.lang} · ~{p.duration_s / 60:.1f} min ±{p.duration_tol_s:.0f}s{parts} · ad: "
+            icon = "🌍" if p.mode == "fandom" else "🎭"
+            world = f" · {p.fandom}" if p.mode == "fandom" and p.fandom else ""
+            head = (f" {p.count}× {icon} {p.lang}{world} · "
+                    f"~{p.duration_s / 60:.1f} min ±{p.duration_tol_s:.0f}s{parts} · ad: ")
         else:
             vis = (p.manual_visuals.name + "*") if p.manual_visuals else p.visuals
             head = f" {p.count}× {p.lang}/{p.content_type or 'auto'} · {t('run.vis')}: {vis} ~{p.duration_s:.0f}s · ad: "
@@ -2988,6 +4352,9 @@ class ManualGatherScreen(Screen):
             for s in m.shots:
                 self.rows.append((job_index, s.id))
                 prompt = (s.prompt[:48] + "…") if len(s.prompt) > 49 else s.prompt
+                if s.kind == "search":
+                    mark = _label(self.app, f"gather.want.{s.want}") if s.want else "?"
+                    prompt = f"[{mark}] {prompt}"
                 cells = [s.id] + ([str(s.part)] if self.show_parts else [])
                 cells += [_STATUS_BADGE.get(s.status, s.status), f"{s.target_s:.0f}s", prompt]
                 table.add_row(*cells)
@@ -3022,10 +4389,25 @@ class ManualGatherScreen(Screen):
         t = lambda k: _label(self.app, k)  # noqa: E731
         clip = f"\n\n[dim]{t('gather.clip')}: {shot.clip}[/dim]" if shot.clip else ""
         part = f"  ·  {t('gather.col.part')} {shot.part}" if self.show_parts else ""
-        self.query_one("#shot-detail", Static).update(
+        head = (
             f"[b]{shot.id}[/b]{part}  ·  {_STATUS_BADGE.get(shot.status, shot.status)}  ·  "
-            f"~{shot.target_s:.0f}s  ·  {shot.width}×{shot.height}\n\n{shot.prompt}{clip}\n\n"
-            f"[dim]{t('gather.drop_hint')} {shot.id}.mp4[/dim]"
+            f"~{shot.target_s:.0f}s  ·  {shot.width}×{shot.height}"
+        )
+        if shot.kind == "search":
+            # A search task is not a prompt to paste; it is an errand. The brief says
+            # what to come back with, and the queries are the words to type — kept on
+            # their own lines because they are copied one at a time until one hits.
+            want = t(f"gather.want.{shot.want}") if shot.want else ""
+            head += f"  ·  [b]{t('gather.kind.search')}[/b]" + (f" ({want})" if want else "")
+            body = f"{shot.prompt}\n\n[b]{t('gather.queries')}[/b]\n" + "\n".join(
+                f"  {q}" for q in shot.queries
+            ) if shot.queries else shot.prompt
+            hint = t("gather.drop_hint_search").format(id=shot.id)
+        else:
+            body = shot.prompt
+            hint = f"{t('gather.drop_hint')} {shot.id}.mp4"
+        self.query_one("#shot-detail", Static).update(
+            f"{head}\n\n{body}{clip}\n\n[dim]{hint}[/dim]"
         )
 
     @on(DataTable.RowHighlighted, "#shots")
@@ -3064,7 +4446,7 @@ class ManualGatherScreen(Screen):
             shot = self._selected()
             if shot is None:
                 return
-            if not manual._valid_clip(p):
+            if not manual._valid_asset(p):
                 self.notify(_label(self.app, "gather.bad_clip"), severity="error", timeout=6)
                 return
             job_index = self.rows[self.query_one("#shots", DataTable).cursor_row][0]
@@ -3268,7 +4650,11 @@ class BreakpointScreen(Screen):
         """One field, rendered the way its kind wants to be edited."""
         t = lambda k: _label(self.app, k)  # noqa: E731
         ns = f"bp-val-{self._rev}"  # Field.wid() then yields our positional id
-        key, label = str(index), f"bp.field.{row.field}"
+        # a row that names ITSELF (the canon sheet, the topic, a metadata field) is
+        # its own caption; only the rows of a repeated item — a scene's shot, cast,
+        # generator — are captioned by which field of that item they are
+        key = str(index)
+        label = row.label if row.label.startswith("bp.f.") else f"bp.field.{row.field}"
         if row.kind == "number":
             return Number(key, label, value=row.value, default=0.0).build(ns, t)
         if row.kind == "choice":
@@ -3835,7 +5221,8 @@ class BreakpointScreen(Screen):
 # tab-button row, one tab per existing config file plus "+ new"
 # --------------------------------------------------------------------------
 
-CFG_SECTIONS = ["cfg.llm", "cfg.footage", "cfg.characters", "cfg.ads", "cfg.accounts", "cfg.presets"]
+CFG_SECTIONS = ["cfg.llm", "cfg.footage", "cfg.characters", "cfg.fandoms",
+                "cfg.ads", "cfg.accounts", "cfg.presets"]
 
 def _entity_form(kind: str) -> Form:
     """Declarative field list for one config-entity kind (ns keeps the e-{kind}-{key} ids)."""
@@ -3844,6 +5231,12 @@ def _entity_form(kind: str) -> Form:
             Text("name", "f.name"),
             Text("age", "f.age"),
             Text("appearance", "f.appearance", large=True),
+        ],
+        "fandoms": [
+            Text("name", "f.name"),
+            Text("tone", "fandom_tone"),
+            Text("docs", "fandom_docs"),
+            Toggle("lore_tool", "fandom_lore_tool", value=True),
         ],
         "ads": [
             Text("name", "f.name"),
@@ -3889,6 +5282,15 @@ def _entity_values(store: ConfigStore, kind: str, name: str | None) -> dict[str,
             "name": c.name if c else "",
             "age": c.age if c else "",
             "appearance": c.appearance if c else "",
+        }
+    if kind == "fandoms":
+        f = store.fandoms.get(name) if name else None
+        return {
+            "name": f.name if f else "",
+            "tone": f.tone if f else "",
+            # authored as one line; the loader keeps them as a list in reading order
+            "docs": ", ".join(f.docs) if f else "",
+            "lore_tool": f.lore_tool if f else True,
         }
     if kind == "ads":
         ad = store.ads.get(name) if name else None
@@ -3943,6 +5345,7 @@ class EntityPane(Vertical):
         store: ConfigStore = self.app.store
         return {
             "characters": store.characters,
+            "fandoms": store.fandoms,
             "ads": store.ads,
             "accounts": store.accounts,
             "presets": store.presets,
@@ -3996,7 +5399,12 @@ class EntityPane(Vertical):
         await form.remove_children()
         self._form = _entity_form(self.kind)
         await form.mount(*self._form.build(lambda k: _label(self.app, k)))
-        self._form.fill(self, _entity_values(self.app.store, self.kind, name))
+        self._form.fill(self, self._values(name))
+
+    def _values(self, name: str | None) -> dict:
+        """Prefill for the form. Overridden where the entities do not live in the
+        store dict this kind normally reads (a fandom's own cast)."""
+        return _entity_values(self.app.store, self.kind, name)
 
     def _val(self, fid: str) -> str:
         return str(self._form.read(self).get(fid, "")).strip() if self._form else ""
@@ -4335,6 +5743,211 @@ class CharacterPane(EntityPane):
             yield Button(t("delete"), id="del-characters", variant="error")
 
 
+class FandomCharacterPane(_CharEditAI, CharacterPane):
+    """The cast that belongs to ONE world, written to
+    ``configs/fandoms/<world>/characters/`` instead of the global library.
+
+    Same editor, different shelf: a world's people are part of the world, so a run
+    set in it gets them without the operator adding them, and they never clutter the
+    library other modes pick from. The photo→appearance helper comes along because
+    this is where a world's cast is actually authored — there is no wizard step for
+    it to live in."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._fandom = ""
+
+    async def set_fandom(self, name: str) -> None:
+        self._fandom = name
+        await self._rebuild_tabs()
+
+    # -- pointed at the fandom's folder rather than the global library ------
+    def _store_dict(self) -> dict:
+        cfg = self.app.store.fandoms.get(self._fandom)
+        return {c.name: c for c in cfg.cast} if cfg else {}
+
+    def _config_dir(self) -> Path:
+        return FANDOMS_DIR / self._fandom / "characters"
+
+    def _values(self, name: str | None) -> dict:
+        c = self._store_dict().get(name) if name else None
+        return {"name": c.name if c else "", "age": c.age if c else "",
+                "appearance": c.appearance if c else ""}
+
+    def _write(self, name: str, vals: dict) -> Path:
+        return _write_character(self.app.store, name, vals, directory=self._config_dir(),
+                                existing=self._store_dict().get(name))
+
+    async def _save(self) -> None:
+        if not self._fandom:  # the "+ new" fandom tab: there is no folder to write to
+            self.notify(_label(self.app, "fandom_pick_first"), severity="warning")
+            return
+        await super()._save()
+
+    def compose(self) -> ComposeResult:
+        t = lambda k: _label(self.app, k)  # noqa: E731
+        yield Horizontal(id="tabs-characters", classes="tabbar")
+        yield VerticalScroll(id="form-characters", classes="entity-form")
+        yield Horizontal(Input(placeholder=t("char_photo_ph"), id="char-photo-path"),
+                         Button(t("char_describe"), id="char-describe", variant="primary"),
+                         id="char-photo-row")
+        yield from Text("prompt", "", placeholder="char_prompt_ph").build("char", t)
+        with Horizontal(classes="entity-actions"):
+            yield Button(t("fandom_fill_person"), id="world-autofill", variant="primary")
+        with Horizontal(classes="entity-actions"):
+            yield Button(t("save"), id="save-characters", variant="success")
+            yield Button(t("delete"), id="del-characters", variant="error")
+
+    # -- required by _CharEditAI --------------------------------------------
+    def _char_form(self) -> Form | None:
+        return self._form
+
+    @on(Button.Pressed, "#char-describe")
+    def _describe(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.do_describe()
+
+    # -- filling a person in, from the world they live in --------------------
+
+    def _world_text(self) -> str:
+        cfg = self.app.store.fandoms.get(self._fandom)
+        if not cfg:
+            return ""
+        return (cfg.canon or "").strip() or read_lore(cfg)
+
+    @on(Button.Pressed, "#world-autofill")
+    def _fill_person(self, event: Button.Pressed) -> None:
+        """Fill this person's age and looks. Unlike the drama's cast fill, which
+        invents an ensemble to fit a plot, this reads the WORLD: whatever it makes up
+        has to be something this place could contain."""
+        event.stop()
+        form = self._char_form()
+        if form is None or not self._fandom:
+            self.notify(_label(self.app, "fandom_pick_first"), severity="warning")
+            return
+        member = form.read(self)
+        if not str(member.get("name", "")).strip():
+            self.notify(_label(self.app, "name_req"), severity="warning")
+            return
+        try:
+            prompt = self.query_one("#char-prompt", TextArea).text.strip()
+        except Exception:
+            prompt = ""
+        lang = self.app.store.global_cfg.ui.lang
+        world = self._world_text()
+        self.notify(_label(self.app, "char_working"), timeout=3)
+        self.run_worker(lambda: self._person_worker(member, lang, prompt, world),
+                        thread=True, exclusive=False)
+
+    def _person_worker(self, member: dict, lang: str, prompt: str, world: str) -> None:
+        try:
+            changed = char_ai.autofill_one(self._llm(), member, lang, prompt, world=world)
+        except Exception as e:
+            self.app.call_from_thread(
+                self.notify, f"{_label(self.app, 'char_ai_err')}: {e}",
+                severity="error", timeout=10,
+            )
+            return
+        if not changed:
+            self.app.call_from_thread(self.notify, _label(self.app, "char_nothing"), timeout=5)
+            return
+        self.app.call_from_thread(self._apply, changed, "char_filled")
+
+
+class FandomPane(EntityPane):
+    """Config → Fandoms: one tab per world folder under ``configs/fandoms/``.
+
+    A fandom is a DIRECTORY, not a file (see ``config.loader._load_fandoms``), so
+    this pane departs from :class:`EntityPane` exactly where that matters — creating
+    one lays out the folder (``fandom.toml``, an empty ``lore.md``, ``characters/``),
+    renaming MOVES it, and deleting removes the tree. Everything the world is made of
+    is edited here: its settings, its lore (with the canon sheet compiled from it),
+    and its own cast."""
+
+    def __init__(self, **kwargs):
+        super().__init__("fandoms", **kwargs)
+
+    def _config_dir(self) -> Path:
+        return FANDOMS_DIR
+
+    def compose(self) -> ComposeResult:
+        t = lambda k: _label(self.app, k)  # noqa: E731
+        yield Horizontal(id="tabs-fandoms", classes="tabbar")
+        yield VerticalScroll(id="form-fandoms", classes="entity-form")
+        with Horizontal(classes="entity-actions"):
+            yield Button(t("save"), id="save-fandoms", variant="success")
+            yield Button(t("delete"), id="del-fandoms", variant="error")
+        yield LoreEditor(prefix="clore", id="cfg-lore")
+        yield Static(t("drama_cast_head"), classes="group-head")
+        yield FandomCharacterPane(id="cfg-fandom-cast")
+
+    async def on_mount(self) -> None:
+        await super().on_mount()
+        # the children compose after us, so the first tab is applied once laid out
+        self.call_after_refresh(lambda: self._retarget(self._current or ""))
+
+    def _retarget(self, name: str) -> None:
+        """Point the lore editor and the cast editor at the tab's world."""
+        for editor in self.query(LoreEditor):
+            editor.set_fandom(name)
+        for pane in self.query(FandomCharacterPane):
+            self.run_worker(pane.set_fandom(name), exclusive=False)
+
+    async def _fill_form(self, name: str | None) -> None:
+        await super()._fill_form(name)
+        self._retarget(name or "")
+
+    def _write(self, name: str, vals: dict) -> Path:
+        root = self._config_dir() / name
+        (root / "characters").mkdir(parents=True, exist_ok=True)
+        # the compiled sheet survives a settings edit or a rename: it belongs to the
+        # lore, and neither the tone nor the folder's name changed a word of it
+        prev = self.app.store.fandoms.get(self._current or name) or self.app.store.fandoms.get(name)
+        docs = [d.strip() for d in str(vals.get("docs", "")).replace("\n", ",").split(",") if d.strip()]
+        if not any(root.glob("*.md")):  # a brand-new world starts with a blank page
+            (root / "lore.md").write_text("", encoding="utf-8")
+        return write_fandom(FandomConfig(
+            name=name,
+            docs=docs,
+            tone=str(vals.get("tone", "")).strip(),
+            lore_tool=bool(vals.get("lore_tool", True)),
+            canon=prev.canon if prev else "",
+            docs_sha=prev.docs_sha if prev else "",
+            root=root,
+        ))
+
+    async def _save(self) -> None:
+        """Like :meth:`EntityPane._save`, except a rename moves the whole folder —
+        the lore, the cast and the compiled sheet come with the world."""
+        vals = self._form.read(self) if self._form else {}
+        name = str(vals.get("name", "")).strip()
+        if not name:
+            self.notify(_label(self.app, "name_req"), severity="error")
+            return
+        old = self._current
+        try:
+            if old and old != name:
+                src, dst = self._config_dir() / old, self._config_dir() / name
+                if dst.exists():
+                    raise ConfigError(f"fandom '{name}' already exists")
+                if src.is_dir():
+                    src.rename(dst)
+            path = self._write(name, vals)
+        except Exception as e:
+            self.notify(f"{_label(self.app, 'err.save')}: {e}", severity="error", timeout=8)
+            return
+        self.app.store = ConfigStore()
+        await self._rebuild_tabs(active=name)
+        self.notify(f"{_label(self.app, 'saved')}: {path}", timeout=6)
+
+    async def _delete(self, name: str) -> None:
+        path = self._config_dir() / name
+        shutil.rmtree(path, ignore_errors=True)
+        self.app.store = ConfigStore()
+        await self._rebuild_tabs()
+        self.notify(f"{_label(self.app, 'deleted')}: {path}", timeout=6)
+
+
 class ConfigScreen(Screen):
     def compose(self) -> ComposeResult:
         t = lambda k: _label(self.app, k)  # noqa: E731
@@ -4348,9 +5961,10 @@ class ConfigScreen(Screen):
                 yield LLMPane(id="cpane-0", classes="pane")
                 yield FootagePane(id="cpane-1", classes="pane")
                 yield CharacterPane(id="cpane-2", classes="pane")
-                yield EntityPane("ads", id="cpane-3", classes="pane")
-                yield EntityPane("accounts", id="cpane-4", classes="pane")
-                yield EntityPane("presets", id="cpane-5", classes="pane")
+                yield FandomPane(id="cpane-3", classes="pane")
+                yield EntityPane("ads", id="cpane-4", classes="pane")
+                yield EntityPane("accounts", id="cpane-5", classes="pane")
+                yield EntityPane("presets", id="cpane-6", classes="pane")
 
     def on_mount(self) -> None:
         self.query_one("#cfg-nav", ListView).focus()
@@ -4412,6 +6026,21 @@ class SlopgenApp(App):
     /* AI-filled fields are tinted so edits from the model stand out */
     .ai-filled { border: round $accent; background: $accent 15%; }
     #cast-list { height: 27; min-height: 27; margin-top: 1; border: round $secondary; }
+    /* the world's people, on the fandom wizard's World step. An explicit height for
+       the same reason #cast-list has one: a ListView defaults to height:1fr, and the
+       wizard pane sizes itself to its content, so 1fr of nothing collapses to a
+       single row. Shorter than the drama's list — the lore editor shares the step. */
+    #world-list { height: 18; min-height: 18; margin-top: 1; border: round $secondary; }
+    /* A character card of the fandom's own: two fixed lines, name over "age · look".
+       Every element is pinned, because a Static left to size itself inside a Vertical
+       that has no height makes the container claim 1fr and one card swallows the
+       whole list. Denser than the drama's three-line rows — there is no status
+       column to make room for, and the lore editor shares this step. */
+    .world-item { height: 2; padding: 0 1; margin: 0 1; }
+    .world-item.-highlight { background: $accent 18%; }
+    .world-info { height: 2; width: 1fr; }
+    .world-name { height: 1; text-style: bold; color: $primary; }
+    .world-line { height: 1; color: $text-muted; }
     /* cast rows: bordered 3-line cards, name/age/look left, status right at a fixed column */
     .cast-item { height: auto; padding: 0; margin: 0 1 0 1; border: round $secondary; }
     .cast-item.-highlight { border: round $accent; background: $accent 12%; }
@@ -4426,6 +6055,38 @@ class SlopgenApp(App):
     .cast-status.st-local { color: $text-muted; }
     #pick-global { height: auto; max-height: 60%; margin-top: 1; border: round $secondary; }
     #char-prompt { margin-top: 1; }
+
+    /* three modes + their blurbs do not fit the home menu's spacing */
+    ModeSelectScreen #logo-sub { margin-bottom: 1; }
+    ModeSelectScreen #home-menu Button { margin-bottom: 0; }
+    /* an identity-coloured button paints its own body and edges, so it has to say
+       where the keyboard is itself — the variants used to carry that */
+    .mode-btn { text-style: bold; }
+    .mode-btn:focus { text-style: bold underline; }
+    .mode-btn:hover { tint: $foreground 10%; }
+    /* identity-coloured buttons set their own background, so pin a dark foreground
+       that reads on every colour in the palette (they are all light-to-mid) */
+    ModeSelectScreen #home-menu .hint { margin-top: 0; margin-bottom: 1; }
+
+    /* the lore editor: source and rendered markdown share one slot, one visible
+       at a time; the compiled sheet sits under them as read-only text */
+    LoreEditor { height: auto; }
+    .lore-area, .lore-viewbox {
+        width: 100%; height: 24; margin: 0 1 1 1;
+        border: round $secondary; background: $surface;
+    }
+    .lore-area:focus { background: $panel; }
+    .lore-viewbox { overflow-y: auto; padding: 0 1; }
+    .lore-viewbox:focus { border: round $accent; }
+    .lore-viewbox Markdown { height: auto; background: transparent; }
+    .lore-canon-box {
+        width: 100%; height: 16; margin: 0 1 1 1;
+        border: round $secondary; background: $surface;
+    }
+    .lore-canon { height: auto; color: $text-muted; padding: 0 1; }
+    #cfg-fandom-cast { height: auto; }
+    FandomCharacterPane #char-photo-row { height: 3; margin-top: 1; }
+    FandomCharacterPane #char-photo-row Input { width: 1fr; }
 
     /* panes fill the body height so the VerticalScroll actually scrolls
        (auto/max-height + center alignment clipped the overflow instead) */

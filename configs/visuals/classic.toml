@@ -6,6 +6,7 @@ description = "Stock video b-roll matching the narration"
 source = "stock_video" # stock_video | stock_photo | local_video | local_photo | ai_video | ai_photo
 linkage = "narration"  # narration | neutral
 # ai_model = "auto"     # ai_video: auto|wan2.1|ltx-video|animatediff · ai_photo: flux|turbo
+# manual = true         # YOU supply it: stock_* = find it yourself, ai_* = generate it
 # continuous = true     # one long clip straight through (video sources only)
 
 [foreground]

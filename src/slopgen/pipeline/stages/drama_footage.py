@@ -33,15 +33,18 @@ from ...media.generate import (
     GenParams,
     env_keys,
     is_manual_model,
+    is_search_model,
     is_video_model,
     key_var_for_model,
     pollinations_image,
     wan_video,
 )
+from ...llm import lookup
 from ...media.stock import VIDEO_EXTS, FootageError, find_image
 from .. import manual, parts
 from ..context import AppContext
 from ..job import BgAsset, VideoJob
+from .idea import LANG_NAMES
 
 log = logging.getLogger(__name__)
 
@@ -350,6 +353,32 @@ def _entity_prompts(job: VideoJob) -> dict[str, str]:
     return {e.name: e.visual_prompt for e in job.entities if e.name.strip() and e.visual_prompt.strip()}
 
 
+def _brief_searches(specs: list[manual.ShotSpec], ctx: AppContext) -> None:
+    """Rewrite every SEARCH spec's prompt into a task a person can act on.
+
+    A generation spec is already what the operator needs — it is the prompt they paste.
+    A search spec is not: what it holds is a shot description written for a diffusion
+    model, and stock libraries index nothing of the sort. So the search specs (and only
+    those) go through the briefer, which says what to look for and in what words (see
+    llm/lookup). If that call fails the spec keeps the shot description, which is a
+    worse search but still a search."""
+    todo = [s for s in specs if s.kind == "search"]
+    if not todo:
+        return
+    tasks = lookup.search_tasks(
+        ctx.llm, [(s.id, s.prompt, s.target_s) for s in todo],
+        LANG_NAMES.get(ctx.params.lang, ctx.params.lang), on_progress=ctx.progress,
+        medium=ctx.params.medium,
+    )
+    for spec in todo:
+        task = tasks.get(spec.id)
+        if task is None:
+            continue
+        spec.prompt = task.brief or spec.prompt
+        spec.queries = task.queries
+        spec.want = task.want
+
+
 def _collect_manual(job: VideoJob, ctx: AppContext) -> tuple[dict[int, Path], manual.ManualManifest]:
     """Register a manual shot per user-assisted scene and gather the operator's clips.
 
@@ -373,9 +402,11 @@ def _collect_manual(job: VideoJob, ctx: AppContext) -> tuple[dict[int, Path], ma
             or "cinematic scene",
             target_s=job.scenes[i].clip_target_s,
             part=job.scenes[i].part,
+            kind="search" if is_search_model(job.scenes[i].gen_model or "") else "generate",
         )
         for i in manual_idx
     ]
+    _brief_searches(specs, ctx)
     m = manual.collect(job.workdir, specs, ctx.g.video.width, ctx.g.video.height)
     idmap = m.delivered_map()
     return {i: idmap[f"shot_{i:02d}"] for i in manual_idx if f"shot_{i:02d}" in idmap}, m
@@ -436,8 +467,12 @@ def run(job: VideoJob, ctx: AppContext) -> None:
         if scene.is_ad:
             clip, is_photo, source_len = _ad_clip(scene, ctx)
             scene.clip = clip
-        elif i in delivered:  # manual clip supplied by the operator
-            clip, is_photo, source_len = delivered[i], False, duration_of(delivered[i])
+        elif i in delivered:  # supplied by the operator — generated or found
+            clip = delivered[i]
+            # a SEARCH may legitimately come back with a still (a wax seal in close-up
+            # is a photograph, not a clip), so the file decides, not the source
+            is_photo = manual.is_photo_file(clip)
+            source_len = 0.0 if is_photo else duration_of(clip)
         else:
             if is_video_model(scene.gen_model or "wan2.1"):
                 want_video += 1

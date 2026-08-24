@@ -36,7 +36,7 @@ from ..job import Entity, VideoJob
 log = logging.getLogger(__name__)
 
 REGISTRY_SYSTEM = (
-    "You are the continuity supervisor for an AI-generated vertical drama. You get every shot "
+    "You are the continuity supervisor for an AI-generated vertical video. You get every shot "
     "prompt of one video, numbered, plus the cast whose looks are already pinned elsewhere.\n"
     "Find the things these shots REUSE and that nothing else pins down, and describe each one "
     "once so every shot showing it can be drawn the same way. Register a thing when it appears "

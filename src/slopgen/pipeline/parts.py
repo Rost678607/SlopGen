@@ -45,7 +45,11 @@ PART_STAGES = ("footage", "subtitles", "assemble", "metadata")
 
 def requested_parts(params) -> int:
     """How many episodes the writer was ASKED for. Only the script stage cares: from
-    then on the scene labels are the truth (see :func:`count`)."""
+    then on the scene labels are the truth (see :func:`count`).
+
+    Only the drama is ever cut into episodes: an info clip is one minute long, and a
+    fandom video is an account of a world rather than a serial, with no cliffhanger to
+    hang a break on."""
     if getattr(params, "mode", "info") != "drama":
         return 1
     return max(1, int(getattr(params, "parts", 1) or 1))
@@ -145,6 +149,6 @@ def pending_message(job: VideoJob) -> str:
     left = [str(n) for n in sorted(job.pending_parts)]
     have = f"part(s) {', '.join(cut)} cut" if cut else "nothing cut yet"
     return (
-        f"{have}; part(s) {', '.join(left)} still need hand-made clips — add them via "
+        f"{have}; part(s) {', '.join(left)} are still waiting on you — add them via "
         f"`slopgen gather` and the run picks up where it left off"
     )

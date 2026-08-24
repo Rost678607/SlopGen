@@ -155,12 +155,29 @@ FgSource = Literal["stock_photo", "stock_video", "local_photo", "local_video", "
 Motion = Literal["none", "subtle", "strong"]
 
 
+# Who actually fetches the material is a property ORTHOGONAL to what kind of material
+# it is, not a source of its own. The operator can step in on either family, and what
+# they do differs accordingly:
+#
+#   stock_video / stock_photo  + manual  ->  USER-ASSISTED SEARCH: slopgen writes what
+#       to look for and hands over ready search queries; the operator finds the file.
+#   ai_video / ai_photo        + manual  ->  USER-ASSISTED GENERATION: slopgen writes
+#       the prompt; the operator makes the clip in an external web tool.
+#
+# Both land in the same manual manifest and the same gather screen (see
+# pipeline/manual.py); only the instructions differ. `local_*` ignores the flag —
+# those files are already on disk.
+
+
 class VisualsBackground(BaseModel):
     source: BgSource = "stock_video"
     linkage: Literal["narration", "neutral"] = "narration"
     assets_dir: Path = Path("assets/footage")  # for local_* sources
+    # the operator supplies this material by hand (see the note above)
+    manual: bool = False
     # which AI generator to use for ai_video/ai_photo sources (name from
-    # generate.VIDEO_MODELS / PHOTO_MODELS); empty = provider/config default
+    # generate.VIDEO_MODELS / PHOTO_MODELS); empty = provider/config default.
+    # Ignored when `manual` is set — there is no generator to name.
     ai_model: str = ""
     interval_s: float = 3.5  # photo change cadence (photo sources only)
     motion: Motion = "subtle"  # Ken Burns strength (photo sources only)
@@ -175,12 +192,26 @@ class VisualsForeground(BaseModel):
     enabled: bool = False
     source: FgSource = "stock_photo"
     assets_dir: Path = Path("assets/images")  # for local_photo/local_video
+    manual: bool = False  # the operator supplies each insert by hand (see above)
     ai_model: str = ""  # AI generator for ai_photo/ai_video inserts; empty = default
     # Inserts are NOT placed on a fixed cadence — the LLM decides which spoken
     # phrases deserve a picture, and each insert shows exactly while that phrase
     # is spoken (timing derived from edge-tts word timings) and disappears after.
     width_pct: int = 78
     position: Literal["center", "top", "bottom"] = "center"
+
+
+def manual_kind(source: str, manual: bool) -> str:
+    """What the operator is being asked to do for this source: ``"search"`` (find
+    existing stock material), ``"generate"`` (make it in an external tool), or ``""``
+    when slopgen fetches it itself. See the note above VisualsBackground."""
+    if not manual:
+        return ""
+    if source.startswith("stock"):
+        return "search"
+    if source.startswith("ai"):
+        return "generate"
+    return ""  # local_*: the files are already there
 
 
 def _wants_query(source: str) -> bool:
@@ -294,6 +325,38 @@ class CharacterConfig(BaseModel):
     dirty: bool = True  # structured fields changed since last compile
 
 
+# --- configs/fandoms/<name>/ ----------------------------------------------
+
+
+class FandomConfig(BaseModel):
+    """A fictional world the fandom mode narrates from the INSIDE, and the folder
+    that holds it: `configs/fandoms/<name>/` with `fandom.toml`, one or more lore
+    documents in markdown, and the world's own cast under `characters/`.
+
+    `canon` is to the lore documents what `visual_prompt` is to a character (see
+    :class:`CharacterConfig`): an LLM-compiled, generation-ready digest, built once
+    and injected into every window of the script so the writer never pays tokens on
+    the raw documents. Freshness is a CHECKSUM rather than the character's `dirty`
+    flag, because lore is comfortably written in an outside markdown editor and
+    nothing there would raise a flag — `docs_sha` not matching the documents on disk
+    is what triggers a rebuild, however they were edited."""
+
+    name: str
+    # markdown files inside the fandom folder, in reading order. Empty = every *.md
+    # in the folder, sorted by name.
+    docs: list[str] = []
+    tone: str = ""  # optional register/delivery note for the writer
+    # offer the writer the `lore_lookup` tool (a librarian LLM that reads the whole
+    # document and answers questions). Off = the canon sheet is all it ever sees.
+    lore_tool: bool = True
+    # -- LLM-compiled, rebuilt when `docs_sha` stops matching (see above) --
+    canon: str = ""  # the canon sheet: rules, glossary, factions, timeline, taboos
+    docs_sha: str = ""  # sha1 of the documents `canon` was compiled from
+    # -- runtime only, filled by the loader; never written back to the TOML --
+    root: Path | None = Field(default=None, exclude=True)  # the fandom's folder
+    cast: list[CharacterConfig] = Field(default_factory=list, exclude=True)
+
+
 # --- configs/orchestration/*.toml -----------------------------------------
 
 
@@ -330,7 +393,12 @@ class OrchestrationConfig(BaseModel):
 # --- resolved parameters of a single run ----------------------------------
 
 
-Mode = Literal["info", "drama"]
+Mode = Literal["info", "drama", "fandom"]
+# fandom mode: WHO is telling it, both of them from inside the world.
+#   resident   — a person who lives there, first person, the world as daily life
+#   chronicler — a chronicler/researcher/theorist of that world, no "I" protagonist,
+#                building theories out of its records as if they were real documents
+FandomVoice = Literal["resident", "chronicler"]
 
 
 class RunParams(BaseModel):
@@ -339,8 +407,10 @@ class RunParams(BaseModel):
     lang: str
     content_type: str
     # what to generate: "info" = the minute-of-info clip; "drama" = the AI web
-    # drama (a narrated story with a recurring cast + AI-generated shots). The
-    # mode selects the stage chain in the orchestrator.
+    # drama (a narrated story with a recurring cast + AI-generated shots);
+    # "fandom" = the same shape as a drama, but set in a world the operator wrote
+    # down, narrated from INSIDE it as fact. The mode selects the stage chain in
+    # the orchestrator.
     mode: Mode = "info"
     idea: str = ""  # user-provided topic; empty = the LLM invents one
     visuals: str = "classic"  # visuals profile name from configs/visuals/
@@ -387,4 +457,16 @@ class RunParams(BaseModel):
     clip_seconds: float = 0.0
     manual_cast: list[CharacterConfig] = []  # resolved cast for the run (TUI/CLI)
     orchestration: str = ""  # orchestration profile name from configs/orchestration/
+    # -- fandom mode -------------------------------------------------------
+    # Everything the drama block above means the same here: `scenario` is the brief
+    # (what to tell about this world, or which theory to build out of its lore),
+    # and parts/clip_seconds/orchestration/cast work identically.
+    fandom: str = ""  # folder name under configs/fandoms/; the world being narrated
+    fandom_voice: FandomVoice = "resident"  # who is telling it (see FandomVoice)
+    # What the picture is made of, when the operator has said. Empty = whatever each
+    # source produces, decided per shot where that is a question (a search brief picks
+    # a still or a clip per beat; see llm/lookup). Set, it binds: the operator asked
+    # for a slideshow, so a search looks for photographs and a hand-made shot is a
+    # still, not merely a clip that happens to be short.
+    medium: Literal["", "video", "photo"] = ""
     manual_orchestration: OrchestrationConfig | None = None  # ad-hoc chain from the TUI

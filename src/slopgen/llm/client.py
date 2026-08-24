@@ -86,7 +86,7 @@ class ChatLLM:
 
     MAX_TOOL_ROUNDS = 5
 
-    def _post(self, messages: list[dict], tools: list | None) -> dict:
+    def _post(self, messages: list[dict], tools: list | None, json_mode: bool = True) -> dict:
         body: dict = {
             "model": self.model,
             "temperature": self.cfg.temperature,
@@ -94,15 +94,18 @@ class ChatLLM:
         }
         if tools:
             body["tools"] = tools
-        else:
+        elif json_mode:
             # response_format conflicts with tool use on most providers
             body["response_format"] = {"type": "json_object"}
         r = self.client.post("/chat/completions", json=body)
         r.raise_for_status()
         return r.json()["choices"][0]["message"]
 
-    def _run_tools(self, messages: list[dict], tools: list) -> str:
-        """Drive the tool-calling loop: let the model call tools until it answers."""
+    def _run_tools(self, messages: list[dict], tools: list, bound: dict | None = None) -> str:
+        """Drive the tool-calling loop: let the model call tools until it answers.
+
+        `bound` holds this call's own executors (a tool closed over run-specific data,
+        such as one fandom's lore); they take precedence over the stateless registry."""
         from .tools import TOOL_EXECUTORS
 
         for _ in range(self.MAX_TOOL_ROUNDS):
@@ -118,8 +121,18 @@ class ChatLLM:
                     args = json.loads(fn.get("arguments") or "{}")
                 except json.JSONDecodeError:
                     args = {}
-                executor = TOOL_EXECUTORS.get(name)
-                result = executor(**args) if executor else f"unknown tool '{name}'"
+                executor = (bound or {}).get(name) or TOOL_EXECUTORS.get(name)
+                if executor is None:
+                    result = f"unknown tool '{name}'"
+                else:
+                    # a model that mis-spells an argument must not take the stage down:
+                    # the error goes back as the tool's result, which is the one form of
+                    # feedback it can actually act on. Free-tier models do this often,
+                    # and a whole mode's script now depends on tool calls succeeding.
+                    try:
+                        result = executor(**args)
+                    except Exception as e:
+                        result = f"tool '{name}' failed: {e}. Check the arguments and try again."
                 messages.append({"role": "tool", "tool_call_id": call.get("id", ""), "content": str(result)})
         # ran out of rounds — force a final answer without tools
         return self._post(messages, None).get("content") or ""
@@ -143,17 +156,58 @@ class ChatLLM:
 
     ATTEMPTS = 3  # transient transport errors (connection reset) are common on free tiers
 
-    def complete_json(self, kind: str, system: str, user: str, web_search: bool = False) -> dict:
+    def complete_text(self, kind: str, system: str, user: str) -> str:
+        """One plain-prose chat completion — no JSON, no tools. For the callers whose
+        answer IS prose (the `lore_lookup` archivist), where JSON mode would only add
+        a wrapper to strip and one more way to fail."""
+        import time
+
+        last_err: Exception | None = None
+        for attempt in range(self.ATTEMPTS):
+            try:
+                return self._post(
+                    [
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ],
+                    None,
+                    json_mode=False,
+                ).get("content") or ""
+            except (httpx.HTTPError, KeyError) as e:
+                last_err = e
+                if attempt < self.ATTEMPTS - 1 and isinstance(e, httpx.TransportError):
+                    time.sleep(1.5 * (attempt + 1))
+        raise LLMError(f"LLM call '{kind}' failed: {last_err}")
+
+    def complete_json(
+        self,
+        kind: str,
+        system: str,
+        user: str,
+        web_search: bool = False,
+        tools: dict | None = None,
+    ) -> dict:
         """One JSON-mode chat completion; retries on bad JSON or transport errors.
 
         When `web_search` is on, the `web_search` tool is offered to the model
         (standard OpenAI function calling) — the model decides when to call it,
-        we execute the search and feed results back before it answers."""
+        we execute the search and feed results back before it answers.
+
+        `tools` adds this call's own function tools, as `{name: (schema, executor)}`,
+        for a tool that has to be closed over run-specific data (see
+        `llm.tools.make_lore_lookup`).
+
+        Careful: offering ANY tool costs JSON mode — `response_format` conflicts with
+        tool use on most providers (see `_post`), so the model is merely *asked* for
+        JSON. The retry loop below, with its fence-stripping, is what makes that safe;
+        a prompt used this way must state "JSON only" explicitly."""
         import time
 
         from .tools import WEB_SEARCH_TOOL
 
-        tools = [WEB_SEARCH_TOOL] if web_search else None
+        schemas = [WEB_SEARCH_TOOL] if web_search else []
+        bound = {name: ex for name, (_, ex) in (tools or {}).items()}
+        schemas += [schema for schema, _ in (tools or {}).values()]
         last_err: Exception | None = None
         for attempt in range(self.ATTEMPTS):
             try:
@@ -161,7 +215,11 @@ class ChatLLM:
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},
                 ]
-                content = self._run_tools(messages, tools) if tools else self._post(messages, None).get("content") or ""
+                content = (
+                    self._run_tools(messages, schemas, bound)
+                    if schemas
+                    else self._post(messages, None).get("content") or ""
+                )
                 # some free models wrap JSON in markdown fences despite json mode
                 content = content.strip().removeprefix("```json").removeprefix("```").removesuffix("```")
                 return json.loads(content)

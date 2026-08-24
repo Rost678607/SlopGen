@@ -1,9 +1,18 @@
-from .loader import ConfigError, ConfigStore
+from .loader import (
+    ConfigError,
+    ConfigStore,
+    fandom_docs,
+    lore_sha,
+    read_lore,
+    write_fandom,
+)
 from .models import (
     AccountConfig,
     AdConfig,
     CharacterConfig,
     ContentTypeConfig,
+    FandomConfig,
+    FandomVoice,
     GlobalConfig,
     LLMProfile,
     OrchestrationConfig,
@@ -15,10 +24,16 @@ from .models import (
 __all__ = [
     "ConfigError",
     "ConfigStore",
+    "fandom_docs",
+    "lore_sha",
+    "read_lore",
+    "write_fandom",
     "AccountConfig",
     "AdConfig",
     "CharacterConfig",
     "ContentTypeConfig",
+    "FandomConfig",
+    "FandomVoice",
     "GlobalConfig",
     "LLMProfile",
     "OrchestrationConfig",

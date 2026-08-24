@@ -43,6 +43,8 @@ from .stages import (
     drama_footage,
     drama_script,
     entities,
+    fandom_canon,
+    fandom_script,
     footage,
     idea,
     metadata,
@@ -54,8 +56,12 @@ from .stages import (
 # (stage name, callable(job, ctx)). The drama chain drops idea (the premise IS the
 # input), swaps in the drama script/footage stages and adds two of its own: `entities`
 # (the visual registry) and `cut` (where the episode boundaries settle, right before
-# anything is generated). The names it shares with the info chain are shared exactly
-# so checkpoints/resume stay uniform (the mode lives in params).
+# anything is generated). The fandom chain is the drama's, with its own writer and one
+# more stage in front: `canon`, which makes sure the world's compiled reference sheet
+# matches the lore on disk before a beat is written — and one fewer behind, since it is
+# never cut into episodes. The names shared with the info
+# chain are shared exactly so checkpoints/resume stay uniform (the mode lives in
+# params).
 STAGES_INFO: list[tuple[str, Callable]] = [
     ("idea", idea.run),
     ("script", script.run),
@@ -77,8 +83,26 @@ STAGES_DRAMA: list[tuple[str, Callable]] = [
 ]
 
 
+# No `cut`: a fandom video is one piece. Episodes are a serial's device — a story cut
+# where it hurts most — and an account of a world has no cliffhanger to hang them on.
+# Nothing downstream misses the stage: every later stage syncs the (single) part list
+# itself (see parts.sync in footage/subtitles/assemble/metadata).
+STAGES_FANDOM: list[tuple[str, Callable]] = [
+    ("canon", fandom_canon.run),
+    ("script", fandom_script.run),
+    ("entities", entities.run),
+    ("tts", tts.run),
+    ("footage", drama_footage.run),
+    ("subtitles", subtitles.run),
+    ("assemble", assemble.run),
+    ("metadata", metadata.run),
+]
+
+_CHAINS = {"drama": STAGES_DRAMA, "fandom": STAGES_FANDOM}
+
+
 def stages_for(params) -> list[tuple[str, Callable]]:
-    return STAGES_DRAMA if params.mode == "drama" else STAGES_INFO
+    return _CHAINS.get(params.mode, STAGES_INFO)
 
 
 # on_event(video_index, stage, status, message); status: start|done|error|skip|paused|review

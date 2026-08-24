@@ -38,11 +38,25 @@ _DRAMA_STAGES = (
     ["script", "entities", "tts", "cut"]
     + [s for s in _INFO_STAGES if s not in ("idea", "script", "tts")]
 )
+# fandom runs the drama's stages behind one of its own: `canon`, the world's compiled
+# reference sheet, which is the last chance to fix the world before it is written about.
+# It drops `cut`, having no episodes to cut (see orchestrator.STAGES_FANDOM).
+_FANDOM_STAGES = ["canon"] + [s for s in _DRAMA_STAGES if s != "cut"]
+
+_MODE_STAGES = {"drama": _DRAMA_STAGES, "fandom": _FANDOM_STAGES}
+
+
+def _beats(mode: str) -> bool:
+    """Whether this mode writes a script in beats — drama and fandom do, info does
+    not. Every document below that used to ask for drama by name was asking this: the
+    two modes differ only in who writes the script, never in what a reviewed scene is
+    (see `pipeline.context.AppContext.is_beats`)."""
+    return mode in ("drama", "fandom")
 
 
 def available(mode: str) -> list[str]:
     """Stage names that may hold a breakpoint in this mode."""
-    return list(_DRAMA_STAGES if mode == "drama" else _INFO_STAGES)
+    return list(_MODE_STAGES.get(mode, _INFO_STAGES))
 
 
 def wanted(breakpoints: list[str], mode: str) -> set[str]:
@@ -233,6 +247,25 @@ def _idea_doc(job: VideoJob, mode: str) -> Doc:
     )
 
 
+def _canon_doc(job: VideoJob, mode: str) -> Doc:
+    """The world's compiled canon sheet, as one editable block.
+
+    It is one row rather than one per line because the sheet is prose the compiler
+    wrote, not a list of items the pipeline tracks — the operator fixes a wrong date or
+    adds the custom the compiler missed by editing the text. This is the last moment
+    that is free: from the next stage on, every window of the script is written against
+    this sheet, and whatever is not in it effectively does not exist in the world."""
+    return Doc(
+        stage="canon",
+        rows=[Row(label="bp.f.canon", value=job.canon, src=0)],
+        subject=(
+            "the reference sheet describing a fictional world, which a writer will hold "
+            "while narrating that world as if it were real"
+        ),
+        note_key="bp.note.canon",
+    )
+
+
 def _script_doc(job: VideoJob, mode: str) -> Doc:
     """The script as written, not just what is spoken: every scene shows its
     narration AND what will be put on screen for it. The visual half is only
@@ -243,9 +276,9 @@ def _script_doc(job: VideoJob, mode: str) -> Doc:
         label = _scene_label(i, s)
         rows.append(Row(
             label=label, value=s.text, src=i, field="text",
-            info=", ".join(s.characters) if mode == "drama" else "",
+            info=", ".join(s.characters) if _beats(mode) else "",
         ))
-        if mode == "drama":
+        if _beats(mode):
             rows.append(Row(label=label, value=s.video_prompt, src=i, field="prompt"))
             rows.append(Row(
                 label=label, value=", ".join(s.characters), src=i, field="cast",
@@ -261,19 +294,22 @@ def _script_doc(job: VideoJob, mode: str) -> Doc:
             ))
         else:
             rows.append(Row(label=label, value=", ".join(s.keywords), src=i, field="keywords"))
-    if mode == "drama":
+    if _beats(mode):
         rows = with_part_rows(rows, job.scenes, always=True)
     return Doc(
         stage="script",
         rows=rows,
         variable=True,
-        cuttable=mode == "drama",
-        subject="a drama script: spoken narration lines and the English shot prompt of each scene"
-        if mode == "drama" else "a voiceover script: spoken lines and each scene's stock-search keywords",
+        cuttable=_beats(mode),
+        subject=(
+            "a narrated script: spoken narration lines and the English shot prompt of "
+            "each scene" if _beats(mode)
+            else "a voiceover script: spoken lines and each scene's stock-search keywords"
+        ),
         note_key="bp.note.script",
         # the cast row only works with names spelled as the run knows them — the
         # footage stage matches them to swap each name for that character's look
-        note_extra=(", ".join(job.cast_prompts) if mode == "drama" and job.cast_prompts else ""),
+        note_extra=(", ".join(job.cast_prompts) if _beats(mode) and job.cast_prompts else ""),
     )
 
 
@@ -324,14 +360,14 @@ def _tts_doc(job: VideoJob, mode: str) -> Doc:
 
 
 def _footage_query(scene: Scene, mode: str) -> str:
-    if mode == "drama":
+    if _beats(mode):
         return scene.video_prompt
     return ", ".join(scene.visual_queries or scene.keywords)
 
 
 def _footage_doc(job: VideoJob, mode: str) -> Doc:
     def info(s: Scene) -> str:
-        if mode == "drama":
+        if _beats(mode):
             return " · ".join(x for x in (s.gen_model, f"{s.clip_target_s:.0f}s" if s.clip_target_s else "") if x)
         assets = len(s.bg_assets) + len(s.fg_inserts)
         return f"{assets} assets · {s.duration:.1f}s" if assets else f"{s.duration:.1f}s"
@@ -341,7 +377,7 @@ def _footage_doc(job: VideoJob, mode: str) -> Doc:
         rows=with_part_rows(
             [
                 Row(label=_scene_label(i, s), value=_footage_query(s, mode), src=i,
-                    field="prompt" if mode == "drama" else "keywords", info=info(s))
+                    field="prompt" if _beats(mode) else "keywords", info=info(s))
                 for i, s in enumerate(job.scenes)
             ],
             job.scenes, always=False,
@@ -444,6 +480,7 @@ def _metadata_doc(job: VideoJob, mode: str) -> Doc:
 
 _READERS = {
     "idea": _idea_doc,
+    "canon": _canon_doc,
     "script": _script_doc,
     "entities": _entities_doc,
     "tts": _tts_doc,
@@ -528,6 +565,20 @@ def _apply_idea(job: VideoJob, rows: list[Row], mode: str) -> bool:
     if topic:
         job.topic = topic
     return False  # nothing downstream has run yet
+
+
+def _apply_canon(job: VideoJob, rows: list[Row], mode: str) -> bool:
+    """Keep the edited sheet on the job. It is deliberately NOT written back to the
+    fandom's folder: an edit here is this run's view of the world (a fix for one video,
+    a detail sharpened for one brief), while the folder holds the world itself. A fix
+    worth keeping belongs in the lore, where the next compile will pick it up.
+
+    Returns False: the edited sheet IS this stage's output, so re-running the stage
+    would only recompile the world and throw the operator's corrections away."""
+    if not rows:
+        return False
+    job.canon = rows[0].value.strip()
+    return False
 
 
 def _apply_script(job: VideoJob, rows: list[Row], mode: str) -> bool:
@@ -621,7 +672,7 @@ def _apply_footage(job: VideoJob, rows: list[Row], mode: str) -> bool:
         if value == _footage_query(scene, mode):
             continue
         changed = True
-        if mode == "drama":
+        if _beats(mode):
             scene.video_prompt = value
         else:
             queries = [q.strip() for q in value.split(",") if q.strip()]
@@ -666,6 +717,7 @@ def _apply_metadata(job: VideoJob, rows: list[Row], mode: str) -> bool:
 
 _WRITERS = {
     "idea": _apply_idea,
+    "canon": _apply_canon,
     "script": _apply_script,
     "entities": _apply_entities,
     "tts": _apply_tts,

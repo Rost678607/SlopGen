@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import hashlib
 import tomllib
 from pathlib import Path
+
+import tomli_w
 
 from .models import (
     AccountConfig,
     AdConfig,
     CharacterConfig,
     ContentTypeConfig,
+    FandomConfig,
     GlobalConfig,
     LLMProfile,
     OrchestrationConfig,
@@ -46,6 +50,73 @@ def _load_dir(subdir: str, model):
     return out
 
 
+FANDOM_TOML = "fandom.toml"  # the config file inside a fandom's folder
+
+
+def _load_fandoms(subdir: str = "fandoms") -> dict[str, FandomConfig]:
+    """Load every fandom folder under configs/fandoms/.
+
+    A fandom is a DIRECTORY rather than a single file (unlike every other config
+    kind, hence not :func:`_load_dir`): the lore documents and the world's own cast
+    live next to its TOML. The folder name is the fandom's identity, and the TOML
+    itself is optional — a folder holding nothing but markdown is a valid fandom
+    with every setting left at its default."""
+    out: dict[str, FandomConfig] = {}
+    d = CONFIGS_DIR / subdir
+    if not d.is_dir():
+        return out
+    for path in sorted(x for x in d.iterdir() if x.is_dir()):
+        toml = path / FANDOM_TOML
+        data = _read_toml(toml) if toml.exists() else {}
+        data["name"] = path.name  # the folder names it, whatever the TOML says
+        data["root"] = path
+        data["cast"] = list(_load_dir(f"{subdir}/{path.name}/characters", CharacterConfig).values())
+        out[path.name] = FandomConfig.model_validate(data)
+    return out
+
+
+def fandom_docs(cfg: FandomConfig) -> list[Path]:
+    """The fandom's lore documents, in reading order: the ones `docs` names, else
+    every markdown file in the folder. Names that point at nothing are skipped —
+    a stale entry must not take the whole world down."""
+    if not cfg.root:
+        return []
+    if cfg.docs:
+        return [cfg.root / name for name in cfg.docs if (cfg.root / name).is_file()]
+    return sorted(cfg.root.glob("*.md"))
+
+
+def read_lore(cfg: FandomConfig) -> str:
+    """Every lore document concatenated, each under its own filename heading so the
+    writer (and the librarian tool) can tell one document from another."""
+    parts = []
+    for path in fandom_docs(cfg):
+        try:
+            parts.append(f"=== {path.name} ===\n{path.read_text(encoding='utf-8')}")
+        except OSError:
+            continue
+    return "\n\n".join(parts)
+
+
+def lore_sha(lore: str) -> str:
+    """The checksum that decides whether the compiled canon sheet is still current.
+    It covers the documents' TEXT, so a rename, a reorder or a deletion invalidates
+    the sheet exactly like an edit does (see :class:`FandomConfig`)."""
+    return hashlib.sha1(lore.encode("utf-8")).hexdigest()
+
+
+def write_fandom(cfg: FandomConfig) -> Path:
+    """Persist a fandom's settings back to its `fandom.toml` (comments not preserved,
+    same caveat as the TUI's global-config writer). Runtime-only fields (`root`,
+    `cast`) are excluded by the model itself; the cast lives in its own files."""
+    if not cfg.root:
+        raise ConfigError(f"fandom '{cfg.name}' has no folder to write to")
+    cfg.root.mkdir(parents=True, exist_ok=True)
+    path = cfg.root / FANDOM_TOML
+    path.write_bytes(tomli_w.dumps(cfg.model_dump()).encode())
+    return path
+
+
 class ConfigStore:
     """All configs, loaded once. Reload by constructing a new instance."""
 
@@ -65,6 +136,7 @@ class ConfigStore:
         self.llm_profiles: dict[str, LLMProfile] = _load_dir("llm", LLMProfile)
         self.characters: dict[str, CharacterConfig] = _load_dir("characters", CharacterConfig)
         self.orchestrations: dict[str, OrchestrationConfig] = _load_dir("orchestration", OrchestrationConfig)
+        self.fandoms: dict[str, FandomConfig] = _load_fandoms()
 
     def active_llm_profile(self) -> LLMProfile:
         """Profile named in [llm].profile, else first profile, else a legacy

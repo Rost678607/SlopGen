@@ -211,7 +211,7 @@ def run(job: VideoJob, ctx: AppContext) -> None:
         # voice, so tts could place the words outright — and the foreground anchoring
         # reads those absolute positions. Drama could not: a line's length only
         # settles once it has been stretched onto the clip it has to fit.
-        words = _lay_out(scenes, per) if ctx.is_drama else [w for ws in per for w in ws]
+        words = _lay_out(scenes, per) if ctx.is_beats else [w for ws in per for w in ws]
         path = _ass_path(job, part, multi)
         path.write_text(_ass_text(words, ctx, style), encoding="utf-8")
         part.ass = path

@@ -123,6 +123,9 @@ class VideoJob(BaseModel):
     scenes: list[Scene] = []
     cast_prompts: dict[str, str] = Field(default_factory=dict)  # drama: name → visual_prompt
     entities: list[Entity] = Field(default_factory=list)  # drama: recurring non-cast visuals
+    # fandom: the world's compiled canon sheet, carried here so a resumed run writes
+    # against the same world the first pass did — even if the lore was edited since.
+    canon: str = ""
     parts: list[Part] = Field(default_factory=list)  # the episodes, in order (see pipeline/parts.py)
     # episodes still short of a hand-made clip, so the tail stages must skip them and
     # run again on the next resume. Recomputed by the footage stage on every pass.

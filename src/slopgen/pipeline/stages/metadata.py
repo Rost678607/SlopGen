@@ -23,7 +23,7 @@ SYSTEM = (
     '"description": "<2-3 sentences>", "tags": ["<tag>", ...max 12], "hashtags": ["#tag", ...max 4]}'
 )
 
-# Told to the writer only when the drama really is split. A one-part video must not be
+# Told to the writer only when the story really is split. A one-part video must not be
 # labelled "episode 1 of 1", and a serial's episode number belongs in the title where
 # the language wants it, so the instruction asks for it rather than prefixing it later.
 SERIAL_RULE = (

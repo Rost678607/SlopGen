@@ -13,11 +13,13 @@ from ..config import (
     CharacterConfig,
     ConfigStore,
     ContentTypeConfig,
+    FandomConfig,
     GlobalConfig,
     OrchestrationConfig,
     RunParams,
     VisualsConfig,
 )
+from ..config.loader import lore_sha, read_lore
 from ..llm import ChatLLM
 
 # Stand-in for the "no content type" ("auto") choice: empty briefs/voices/
@@ -78,16 +80,59 @@ class AppContext:
     def account(self) -> AccountConfig | None:
         return self.store.accounts.get(self.params.push) if self.params.push else None
 
-    # -- AI-drama mode -----------------------------------------------------
+    # -- the beat-based modes (drama, fandom) ------------------------------
 
     @property
     def is_drama(self) -> bool:
         return self.params.mode == "drama"
 
     @property
+    def is_fandom(self) -> bool:
+        return self.params.mode == "fandom"
+
+    @property
+    def is_beats(self) -> bool:
+        """Whether the run is built out of BEATS — a story cut into one-clip beats,
+        voiced per scene, cut into episodes and shot by AI generators. Both drama and
+        fandom are; info is not. Nearly everything that used to ask `is_drama` was
+        really asking this, since the two modes share the whole tail of the pipeline
+        and differ only in who writes the script and what it is written about."""
+        return self.params.mode in ("drama", "fandom")
+
+    @property
+    def fandom(self) -> FandomConfig | None:
+        """The world being narrated, or None outside fandom mode."""
+        if not self.params.fandom:
+            return None
+        return self.store.fandoms.get(self.params.fandom)
+
+    @property
+    def lore(self) -> str:
+        """The fandom's lore documents as one text (empty outside fandom mode)."""
+        f = self.fandom
+        return read_lore(f) if f else ""
+
+    @property
+    def lore_sha(self) -> str:
+        """Checksum of the lore as it is on disk right now — compared against the
+        fandom's `docs_sha` to decide whether its canon sheet is still current."""
+        lore = self.lore
+        return lore_sha(lore) if lore else ""
+
+    @property
     def cast(self) -> list[CharacterConfig]:
-        """The drama's cast for this run (ad-hoc from the TUI, or resolved from
-        the library by the CLI). Empty = no fixed cast (the writer improvises)."""
+        """Who may appear on screen.
+
+        In drama this is whatever the operator assembled for the run: members are
+        ad-hoc unless saved, pulled from the shared library, toggled in and out per
+        video. A fandom's people are not like that — they belong to the world, are in
+        it or are not, and nobody turns up for one video and vanishes after it. So
+        fandom takes the world's characters and nothing else: there is no run cast to
+        merge, no library to borrow from, and the TUI and CLI offer neither.
+        Empty = no fixed cast (the writer improvises)."""
+        f = self.fandom
+        if f:
+            return list(f.cast)
         return list(self.params.manual_cast)
 
     @property

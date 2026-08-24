@@ -1,0 +1,25 @@
+# User-assisted SEARCH: slopgen decides what each shot needs and hands you the words
+# to find it with — one line saying what to look for, whether a still or a clip suits
+# the moment, and three to five ready-made English queries for the stock sites (they
+# index English whatever your narration is in). You do the looking; slopgen cannot
+# judge whether a clip is usable and does not pretend to.
+#
+# The run pauses at the footage stage exactly as user-assisted generation does: read
+# the tasks with `slopgen gather` (or from the run's manual/prompts/*.txt), drop what
+# you find into manual/inbox/ named shot_NN.<ext>, and it resumes. A photo and a video
+# are both fine whatever the task suggested — the file you deliver decides, and a still
+# is held and panned to length.
+#
+# Free, no API key, and the only source that gets you real footage of real things.
+name = "search"
+description = "User-assisted search: slopgen briefs you, you find the footage"
+
+[background]
+source = "stock_video"  # stock_photo works the same; the per-shot advice is separate
+linkage = "narration"
+manual = true  # a stock_* source found by hand = user-assisted SEARCH
+interval_s = 3.5  # used by whatever you deliver as a still
+motion = "subtle"
+
+[foreground]
+enabled = false

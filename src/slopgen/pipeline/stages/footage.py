@@ -18,7 +18,8 @@ import random
 import re
 from pathlib import Path
 
-from ...config.models import VisualsConfig
+from ...config.models import VisualsConfig, manual_kind
+from ...llm import lookup
 from ...media.generate import (
     DEFAULT_VIDEO_SPACES,
     PHOTO_MODELS,
@@ -36,6 +37,7 @@ from ...media.stock import (
 from .. import manual
 from ..context import AppContext
 from ..job import BgAsset, FgInsert, Scene, VideoJob, Word
+from .idea import LANG_NAMES
 
 FG_PAD_S = 0.25  # breathing room around the anchored phrase
 FG_MIN_S = 1.2   # never flash an insert shorter than this
@@ -227,7 +229,10 @@ def _fill_foreground(
                 continue
         else:
             path = _fetch_insert(cue.query or " ".join(scene.keywords), fg, ctx, dirs)
-        inserts.append(FgInsert(path=path, start=start, duration=end - start, is_video=is_video))
+        # an operator-supplied insert may be a still even from a video source (a search
+        # is free to bring back the right picture), so trust the file over the setting
+        moving = (not manual.is_photo_file(path)) if delivered is not None else is_video
+        inserts.append(FgInsert(path=path, start=start, duration=end - start, is_video=moving))
 
     # keep inserts from stacking: clip each end to the next start
     inserts.sort(key=lambda x: x.start)
@@ -259,6 +264,7 @@ def _collect_manual(job: VideoJob, ctx: AppContext, manual_bg: bool, manual_fg: 
             specs.append(manual.ShotSpec(
                 id=f"shot_{i:02d}", scene_index=i,
                 prompt=_prompt(_queries(scene, 1, fallback)[0]), target_s=scene.duration,
+                kind=manual_bg,
             ))
         if manual_fg:
             for k, cue in enumerate(scene.insert_cues):
@@ -269,11 +275,35 @@ def _collect_manual(job: VideoJob, ctx: AppContext, manual_bg: bool, manual_fg: 
                     id=f"fg_{i:02d}_{k}", scene_index=i,
                     prompt=_prompt(cue.query or " ".join(scene.keywords)),
                     target_s=span[1] - span[0],
+                    kind=manual_fg,
                 ))
         scene_start += scene.duration
     if not specs:
         return {}
+    _brief_searches(specs, ctx)
     return manual.collect_or_pause(job.workdir, specs, ctx.g.video.width, ctx.g.video.height)
+
+
+def _brief_searches(specs: list[manual.ShotSpec], ctx: AppContext) -> None:
+    """Turn every SEARCH spec into a task a person can act on — what to look for and
+    the words to look with (see llm/lookup). Info mode's specs start out as stock-ish
+    keywords already, which is closer than a drama's shot prompt but still not a brief:
+    the operator is told nothing about framing, length or whether a still would do."""
+    todo = [s for s in specs if s.kind == "search"]
+    if not todo:
+        return
+    tasks = lookup.search_tasks(
+        ctx.llm, [(s.id, s.prompt, s.target_s) for s in todo],
+        LANG_NAMES.get(ctx.params.lang, ctx.params.lang), on_progress=ctx.progress,
+        medium=ctx.params.medium,
+    )
+    for spec in todo:
+        task = tasks.get(spec.id)
+        if task is None:
+            continue
+        spec.prompt = task.brief or spec.prompt
+        spec.queries = task.queries
+        spec.want = task.want
 
 
 def run(job: VideoJob, ctx: AppContext) -> None:
@@ -285,9 +315,12 @@ def run(job: VideoJob, ctx: AppContext) -> None:
         "footage": ctx.g.paths.assets / "footage",
         "images": ctx.g.paths.assets / "images",
     }
-    # user-assisted background/foreground: gather hand-made clips first (raises → `paused`).
-    manual_bg = bg.source == "ai_video" and bg.ai_model == "manual"
-    manual_fg = fg.enabled and fg.source == "ai_video" and fg.ai_model == "manual"
+    # Material the OPERATOR supplies, gathered first (raises → `paused`). What they are
+    # asked to do depends on the source family: generate it for an ai_* source, go and
+    # find it for a stock_* one (see config.models.manual_kind). Both are "" when
+    # slopgen fetches the material itself.
+    manual_bg = manual_kind(bg.source, bg.manual)
+    manual_fg = manual_kind(fg.source, fg.manual) if fg.enabled else ""
     delivered = _collect_manual(job, ctx, manual_bg, manual_fg) if (manual_bg or manual_fg) else {}
 
     # continuous background: pick the single clip once, then track a running
@@ -314,8 +347,11 @@ def run(job: VideoJob, ctx: AppContext) -> None:
             scene_start += scene.duration
             continue
         bg_id = f"shot_{i:02d}"
-        if manual_bg and bg_id in delivered:  # manual background clip
-            scene.bg_assets = [BgAsset(path=delivered[bg_id], duration=scene.duration, is_photo=False)]
+        if manual_bg and bg_id in delivered:  # background supplied by the operator
+            # a SEARCH may come back with a still; the file decides, not the source
+            path = delivered[bg_id]
+            scene.bg_assets = [BgAsset(path=path, duration=scene.duration,
+                                       is_photo=manual.is_photo_file(path))]
         else:
             _fill_background(scene, vis, ctx, dirs, cont)
         _fill_foreground(scene, vis, ctx, dirs, scene_start, i, delivered if manual_fg else None)

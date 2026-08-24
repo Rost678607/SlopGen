@@ -393,6 +393,122 @@ def drama(
     _execute(store, params)
 
 
+# -- fandom mode ------------------------------------------------------------
+
+
+@app.command()
+def fandom(
+    ctx: typer.Context,
+    lang: str = typer.Argument(..., help="narration language, e.g. ru / en"),
+    world: str = typer.Argument(..., metavar="FANDOM", help="folder name under configs/fandoms/"),
+    scenario: Optional[str] = typer.Option(None, "--scenario", help="what to tell about this world, or which theory to argue; omit to let the LLM pick"),
+    narrator: str = typer.Option("resident", "--narrator", help="who tells it: resident (lives there, first person) | chronicler (studies its records, builds theories)"),
+    medium: str = typer.Option("video", "--medium", help="what the picture is made of: video (clips) | photo (a slideshow of stills, held and slowly panned)"),
+    source: Optional[str] = typer.Option(None, "--source", help="what makes the shots: a generator (wan2.1 | ltx-video | animatediff for video, flux | turbo for photo), `manual` (you generate them) or `search` (you find them; slopgen briefs you per shot). Default: wan2.1 for video, flux for photo"),
+    orchestration: Optional[str] = typer.Option(None, "--orchestration", help="a full chain from configs/orchestration/, overriding --source when you want to mix"),
+    duration: float = typer.Option(120.0, "--duration", help="length of the finished video, in seconds"),
+    voice: Optional[str] = typer.Option(None, "--voice", help="edge-tts narrator voice id (default per language)"),
+    tts_rate: Optional[int] = typer.Option(None, "--tts-rate", min=-50, max=50, help="speech rate offset in percent (-50 = slowest, 0 = normal, +50 = fastest); the writer sizes each beat's narration to it"),
+    ad: Optional[str] = typer.Option(None, "--ad", help="ad contract name from configs/ads/"),
+    ad_mode: str = typer.Option("both", "--ad-mode", help="overlay | native | both"),
+    profanity: int = typer.Option(0, "--profanity", min=0, max=100, help="swearing level 0-100"),
+    push: Optional[str] = typer.Option(None, "--push", help="account from configs/accounts/; omit to save locally"),
+    count: int = typer.Option(1, "--count", "-n", help="videos to generate"),
+    out: Optional[Path] = typer.Option(None, "--out", help="output dir override"),
+    subs: Optional[str] = typer.Option(None, "--subs", help="subtitle style: word_pop | phrases | karaoke"),
+    breaks: Optional[list[str]] = typer.Option(None, "--break", "-b", help="stop for review after this stage (repeatable): canon | script | entities | tts | footage | subtitles | assemble | metadata"),
+    clean_subs: bool = typer.Option(False, "--clean-subs", help="swap profanity out of the burned-in subtitles; the voiceover keeps every word"),
+    visual_notes: Optional[str] = typer.Option(None, "--visual-notes", help="constraints on what the shots may SHOW, never on the story: \"no logos\", \"no blood\""),
+    dry_run: bool = typer.Option(False, "--dry-run", help="generate everything but skip publishing"),
+    keep_temp: bool = typer.Option(False, "--keep-temp", help="keep intermediate ffmpeg files"),
+) -> None:
+    """Generate a video set inside a world you wrote down: the narrator treats that
+    world as the real one they live in, never as fiction being described.
+
+    One video, not a serial — episodes are the drama's device."""
+    from rich import print as rprint
+
+    store: ConfigStore = ctx.obj
+    breakpoints = _check_breakpoints(breaks, "fandom")
+    if world not in store.fandoms:
+        typer.secho(
+            f"error: fandom '{world}' not found "
+            f"(available: {', '.join(store.fandoms) or 'none'}) — "
+            f"a fandom is a folder at configs/fandoms/<name>/ with markdown lore in it",
+            fg="red",
+        )
+        raise typer.Exit(1)
+    if narrator not in ("resident", "chronicler"):
+        typer.secho(f"error: --narrator must be 'resident' or 'chronicler', not '{narrator}'", fg="red")
+        raise typer.Exit(1)
+    if orchestration and orchestration not in store.orchestrations:
+        typer.secho(
+            f"error: orchestration '{orchestration}' not found "
+            f"(available: {', '.join(store.orchestrations) or 'none'})",
+            fg="red",
+        )
+        raise typer.Exit(1)
+    if ad and ad not in store.ads:
+        typer.secho(f"error: ad contract '{ad}' not found (available: {', '.join(store.ads)})", fg="red")
+        raise typer.Exit(1)
+    if medium not in ("video", "photo"):
+        typer.secho(f"error: --medium must be video or photo, not '{medium}'", fg="red")
+        raise typer.Exit(1)
+    # The chain is what the pipeline runs on; --source is the one question this mode
+    # asks instead of authoring one (see tui FandomScreen._source_stage). A named
+    # profile still wins, for the operator who does want to mix sources.
+    manual_orch = None
+    if not orchestration:
+        from ..config.models import OrchestrationConfig, OrchestrationStage
+        from ..media.generate import PHOTO_MODELS, VIDEO_MODELS
+
+        allowed = (set(PHOTO_MODELS) if medium == "photo" else set(VIDEO_MODELS)) | {"manual", "search"}
+        src = source or ("flux" if medium == "photo" else "wan2.1")
+        if src not in allowed:
+            typer.secho(
+                f"error: '{src}' cannot make {medium} (available: {', '.join(sorted(allowed))})",
+                fg="red",
+            )
+            raise typer.Exit(1)
+        manual_orch = OrchestrationConfig(name="source", stages=[OrchestrationStage(
+            model=src, metric="percent", amount=100.0,
+        )])
+
+    try:
+        params = RunParams(
+            lang=lang, content_type="", mode="fandom",
+            manual_orchestration=manual_orch, medium=medium,
+            fandom=world, fandom_voice=narrator,
+            scenario=scenario or "",
+            orchestration=orchestration or "",
+            duration_s=max(duration, 5.0),
+            duration_tol_s=0.0,   # the length is the length
+            clip_seconds=0.0,     # the writer sizes every shot (fandom_script.SHOT_RULE)
+            profanity=profanity,
+            ad=ad or "", ad_mode=ad_mode,
+            push=push or "", count=max(1, count),
+            voice_override=voice or "", tts_rate=tts_rate or 0,
+            out=out, dry_run=dry_run, keep_temp=keep_temp, subtitle_style=subs,
+            breakpoints=breakpoints, clean_subtitles=clean_subs,
+            visual_notes=visual_notes or "",
+        )
+    except Exception as e:
+        typer.secho(f"error: {e}", fg="red")
+        raise typer.Exit(1)
+    fandom_cfg = store.fandoms[world]
+    rprint(
+        f"[bold]slopgen[/bold] fandom '{world}': {params.count}× {params.lang}"
+        f" {params.duration_s:.0f}s {medium}"
+        + f" narrator={narrator}"
+        f" people=[{', '.join(c.name for c in fandom_cfg.cast) or '—'}]"
+        + (f" orch={orchestration}" if orchestration
+           else f" source={manual_orch.stages[0].model}")
+        + f" ad={params.ad or '-'}({params.ad_mode}) push={params.push or 'local'}"
+        + (" [yellow]\\[dry-run][/yellow]" if params.dry_run else "")
+    )
+    _execute(store, params)
+
+
 # -- user-assisted clip gathering -------------------------------------------
 
 
