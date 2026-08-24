@@ -88,7 +88,7 @@ def _gen(ctx: AppContext, ai_model: str = "") -> GenParams:
         height=ctx.g.video.height,
         pollinations_model=poll_model,
         video_spaces=spaces,
-        style_suffix=f.gen_style_suffix,
+        style_suffix=ctx.style_suffix,
         hf_token=os.environ.get("HF_TOKEN") or None,
         pollinations_token=os.environ.get("POLLINATIONS_TOKEN") or None,
     )
@@ -242,17 +242,22 @@ def _fill_foreground(
     scene.fg_inserts = inserts
 
 
-def _collect_manual(job: VideoJob, ctx: AppContext, manual_bg: bool, manual_fg: bool) -> dict[str, Path]:
+def _collect_manual(job: VideoJob, ctx: AppContext, manual_bg: str, manual_fg: str) -> dict[str, Path]:
     """Register a manual shot for every user-assisted asset — one background per
     non-ad scene (id ``shot_NN``) and/or one per anchored foreground cue (id
     ``fg_NN_K``) — and gather the operator's clips. Prompts are narration-derived
     (info mode has no authored video_prompt). Raises ManualInputPending until every
     clip is in; the assemble stage loops/crops each to its on-screen duration."""
-    suffix = ctx.g.footage.gen_style_suffix
+    # The run's look rides on a prompt the operator is going to PASTE into a generator,
+    # exactly as it rides on the ones slopgen sends itself. It has no business in a
+    # SEARCH task, though: a stock library indexes what a picture is of, not how it was
+    # drawn, so the look is handed to the briefer separately (see _brief_searches).
+    style = ctx.style_suffix
     fallback = ctx.content.fallback_keywords
 
-    def _prompt(q: str) -> str:
-        return ", ".join(p for p in (q, suffix) if p.strip()) or "cinematic scene"
+    def _prompt(q: str, kind: str) -> str:
+        bits = (q, style) if kind == "generate" else (q,)
+        return ", ".join(p for p in bits if p.strip()) or "cinematic scene"
 
     specs: list[manual.ShotSpec] = []
     scene_start = 0.0  # must mirror run()'s offset so fg anchoring lines up
@@ -263,7 +268,8 @@ def _collect_manual(job: VideoJob, ctx: AppContext, manual_bg: bool, manual_fg: 
         if manual_bg:
             specs.append(manual.ShotSpec(
                 id=f"shot_{i:02d}", scene_index=i,
-                prompt=_prompt(_queries(scene, 1, fallback)[0]), target_s=scene.duration,
+                prompt=_prompt(_queries(scene, 1, fallback)[0], manual_bg),
+                target_s=scene.duration,
                 kind=manual_bg,
             ))
         if manual_fg:
@@ -273,7 +279,7 @@ def _collect_manual(job: VideoJob, ctx: AppContext, manual_bg: bool, manual_fg: 
                     continue
                 specs.append(manual.ShotSpec(
                     id=f"fg_{i:02d}_{k}", scene_index=i,
-                    prompt=_prompt(cue.query or " ".join(scene.keywords)),
+                    prompt=_prompt(cue.query or " ".join(scene.keywords), manual_fg),
                     target_s=span[1] - span[0],
                     kind=manual_fg,
                 ))
@@ -295,7 +301,7 @@ def _brief_searches(specs: list[manual.ShotSpec], ctx: AppContext) -> None:
     tasks = lookup.search_tasks(
         ctx.llm, [(s.id, s.prompt, s.target_s) for s in todo],
         LANG_NAMES.get(ctx.params.lang, ctx.params.lang), on_progress=ctx.progress,
-        medium=ctx.params.medium,
+        medium=ctx.params.medium, style=ctx.style_suffix,
     )
     for spec in todo:
         task = tasks.get(spec.id)

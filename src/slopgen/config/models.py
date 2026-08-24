@@ -439,6 +439,20 @@ class RunParams(BaseModel):
     # are toy ones", "no logos", "no blood". Handed to the writer and appended to
     # every generated shot prompt.
     visual_notes: str = ""
+    # free-form description of the LOOK — "аниме", or three paragraphs about grainy
+    # 16mm and sodium street light. Compiled once per run into English prompt tags
+    # (llm/style.py) and appended to every generated shot prompt, in every mode and
+    # whether the shots are clips or stills. It binds the picture only, like
+    # `visual_notes`, and says nothing about what is IN it.
+    visual_style: str = ""
+    # the montage look, as {effect name: dose 0-100} — grain, crt, vhs, glitch and the
+    # rest of media/filters. Unlike `visual_style` this is not asked of a generator but
+    # applied to the finished picture in the delivery pass, so it holds in every mode,
+    # from every source, for the whole length of the video (and of every episode of a
+    # serial). Unknown names and out-of-range doses are dropped where the graph is
+    # built (media/filters.normalise), not here — a typo in a filter costs the effect,
+    # never the run.
+    filters: dict[str, int] = {}
     voice_override: str = ""  # edge-tts voice id; empty = use content config default
     tts_rate: int = 0  # speech rate offset in percent (-50 = half speed, +50 = 50% faster)
     # -- drama mode --------------------------------------------------------

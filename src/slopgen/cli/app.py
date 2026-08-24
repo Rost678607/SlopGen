@@ -30,6 +30,9 @@ import typer
 from dotenv import load_dotenv
 
 from ..config import ConfigError, ConfigStore, RunParams
+from ..media.filters import KEYS as FILTER_KEYS
+from ..media.filters import describe as describe_filters
+from ..media.filters import parse as parse_filters
 from ..pipeline import Orchestrator
 from ..pipeline.context import AppContext
 
@@ -39,6 +42,17 @@ STATUS_ICON = {
     "start": "…", "done": "[green]✔[/green]", "error": "[red]✘[/red]",
     "skip": "[yellow]↷[/yellow]", "paused": "[yellow]⏸[/yellow]", "review": "[yellow]⏸[/yellow]",
 }
+
+
+def _check_filters(items: Optional[list[str]]) -> dict[str, int]:
+    """Validate --filter and turn it into the run's {name: dose}. A misspelt effect
+    is refused here rather than silently dropped downstream: on the command line the
+    operator gets no second look at what they asked for."""
+    try:
+        return parse_filters(list(items or []))
+    except ValueError as e:
+        typer.secho(f"error: {e}", fg="red")
+        raise typer.Exit(1)
 
 
 def _check_breakpoints(names: Optional[list[str]], mode: str) -> list[str]:
@@ -273,6 +287,8 @@ def info(
     tts_rate: Optional[int] = typer.Option(None, "--tts-rate", min=-50, max=50, help="speech rate offset in percent (-50 = slowest, 0 = normal, +50 = fastest)"),
     breaks: Optional[list[str]] = typer.Option(None, "--break", "-b", help="stop for review after this stage (repeatable): idea | script | tts | footage | subtitles | assemble | metadata"),
     clean_subs: bool = typer.Option(False, "--clean-subs", help="swap profanity out of the burned-in subtitles; the voiceover keeps every word"),
+    visual_style: Optional[str] = typer.Option(None, "--visual-style", help="how the picture should LOOK, in your own words (\"anime\", \"grainy 16mm, sodium street light\"); compiled into tags glued onto every generated prompt"),
+    vfilter: Optional[list[str]] = typer.Option(None, "--filter", "-F", help="add a montage filter over the whole video (repeatable), name or name=dose 0-100: --filter crt --filter grain=30. Available: " + ", ".join(FILTER_KEYS)),
     dry_run: bool = typer.Option(False, "--dry-run", help="generate everything but skip publishing"),
     keep_temp: bool = typer.Option(False, "--keep-temp", help="keep intermediate ffmpeg files"),
 ) -> None:
@@ -281,6 +297,7 @@ def info(
 
     store: ConfigStore = ctx.obj
     breakpoints = _check_breakpoints(breaks, "info")
+    fx = _check_filters(vfilter)  # before the try: its own error is already reported
     try:
         params = store.resolve(
             lang=lang, content_type=content_type, ad=ad, ad_mode=ad_mode,
@@ -288,6 +305,7 @@ def info(
             push=push, count=count, preset=preset, idea=idea or "",
             out=out, dry_run=dry_run, keep_temp=keep_temp, subtitle_style=subs,
             tts_rate=tts_rate or 0, breakpoints=breakpoints, clean_subtitles=clean_subs,
+            visual_style=visual_style or "", filters=fx,
         )
     except (ConfigError, Exception) as e:
         typer.secho(f"error: {e}", fg="red")
@@ -296,6 +314,7 @@ def info(
         f"[bold]slopgen[/bold]: {params.count}× {params.lang}/{params.content_type or 'auto'}"
         f" visuals={params.visuals} ~{params.duration_s:.0f}s"
         f" ad={params.ad or '-'}({params.ad_mode}) push={params.push or 'local'}"
+        + (f" fx=\\[{describe_filters(params.filters)}]" if params.filters else "")
         + (" [yellow]\\[dry-run][/yellow]" if params.dry_run else "")
     )
     _execute(store, params)
@@ -328,6 +347,8 @@ def drama(
     breaks: Optional[list[str]] = typer.Option(None, "--break", "-b", help="stop for review after this stage (repeatable): script | entities | tts | cut | footage | subtitles | assemble | metadata"),
     clean_subs: bool = typer.Option(False, "--clean-subs", help="swap profanity out of the burned-in subtitles; the voiceover keeps every word"),
     visual_notes: Optional[str] = typer.Option(None, "--visual-notes", help="constraints on what the shots may SHOW, never on the story: \"all weapons are toy ones\", \"no blood\""),
+    visual_style: Optional[str] = typer.Option(None, "--visual-style", help="how the picture should LOOK, in your own words (\"anime\", \"grainy 16mm, sodium street light\"); compiled into tags glued onto every generated prompt"),
+    vfilter: Optional[list[str]] = typer.Option(None, "--filter", "-F", help="add a montage filter over the whole video (repeatable), name or name=dose 0-100: --filter crt --filter grain=30. Available: " + ", ".join(FILTER_KEYS)),
     dry_run: bool = typer.Option(False, "--dry-run", help="generate everything but skip publishing"),
     keep_temp: bool = typer.Option(False, "--keep-temp", help="keep intermediate ffmpeg files"),
 ) -> None:
@@ -337,6 +358,7 @@ def drama(
 
     store: ConfigStore = ctx.obj
     breakpoints = _check_breakpoints(breaks, "drama")
+    fx = _check_filters(vfilter)  # before the try: its own error is already reported
     # resolve the cast by name
     names = [n.strip() for n in (cast or "").split(",") if n.strip()]
     missing = [n for n in names if n not in store.characters]
@@ -375,7 +397,8 @@ def drama(
             voice_override=voice or "", tts_rate=tts_rate or 0,
             out=out, dry_run=dry_run, keep_temp=keep_temp, subtitle_style=subs,
             breakpoints=breakpoints, clean_subtitles=clean_subs,
-            visual_notes=visual_notes or "",
+            visual_notes=visual_notes or "", visual_style=visual_style or "",
+            filters=fx,
         )
     except Exception as e:
         typer.secho(f"error: {e}", fg="red")
@@ -388,6 +411,7 @@ def drama(
         + ("" if params.parts_iterative else " [dim](all at the end)[/dim]")
         + f" cast=[{', '.join(names) or '—'}] orch={orchestration or 'default'}"
         f" ad={params.ad or '-'}({params.ad_mode}) push={params.push or 'local'}"
+        + (f" fx=\\[{describe_filters(params.filters)}]" if params.filters else "")
         + (" [yellow]\\[dry-run][/yellow]" if params.dry_run else "")
     )
     _execute(store, params)
@@ -419,6 +443,8 @@ def fandom(
     breaks: Optional[list[str]] = typer.Option(None, "--break", "-b", help="stop for review after this stage (repeatable): canon | script | entities | tts | footage | subtitles | assemble | metadata"),
     clean_subs: bool = typer.Option(False, "--clean-subs", help="swap profanity out of the burned-in subtitles; the voiceover keeps every word"),
     visual_notes: Optional[str] = typer.Option(None, "--visual-notes", help="constraints on what the shots may SHOW, never on the story: \"no logos\", \"no blood\""),
+    visual_style: Optional[str] = typer.Option(None, "--visual-style", help="how the picture should LOOK, in your own words (\"anime\", \"grainy 16mm, sodium street light\"); compiled into tags glued onto every generated prompt"),
+    vfilter: Optional[list[str]] = typer.Option(None, "--filter", "-F", help="add a montage filter over the whole video (repeatable), name or name=dose 0-100: --filter crt --filter grain=30. Available: " + ", ".join(FILTER_KEYS)),
     dry_run: bool = typer.Option(False, "--dry-run", help="generate everything but skip publishing"),
     keep_temp: bool = typer.Option(False, "--keep-temp", help="keep intermediate ffmpeg files"),
 ) -> None:
@@ -430,6 +456,7 @@ def fandom(
 
     store: ConfigStore = ctx.obj
     breakpoints = _check_breakpoints(breaks, "fandom")
+    fx = _check_filters(vfilter)  # before the try: its own error is already reported
     if world not in store.fandoms:
         typer.secho(
             f"error: fandom '{world}' not found "
@@ -490,7 +517,8 @@ def fandom(
             voice_override=voice or "", tts_rate=tts_rate or 0,
             out=out, dry_run=dry_run, keep_temp=keep_temp, subtitle_style=subs,
             breakpoints=breakpoints, clean_subtitles=clean_subs,
-            visual_notes=visual_notes or "",
+            visual_notes=visual_notes or "", visual_style=visual_style or "",
+            filters=fx,
         )
     except Exception as e:
         typer.secho(f"error: {e}", fg="red")
@@ -504,6 +532,7 @@ def fandom(
         + (f" orch={orchestration}" if orchestration
            else f" source={manual_orch.stages[0].model}")
         + f" ad={params.ad or '-'}({params.ad_mode}) push={params.push or 'local'}"
+        + (f" fx=\\[{describe_filters(params.filters)}]" if params.filters else "")
         + (" [yellow]\\[dry-run][/yellow]" if params.dry_run else "")
     )
     _execute(store, params)

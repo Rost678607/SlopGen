@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Callable
 
 from ..config.models import GlobalConfig
+from .filters import graph as filter_graph
 
 
 class FFmpegError(Exception):
@@ -365,9 +366,10 @@ def _delivery_cmd(
     music: Path | None,
     overlay: OverlaySpec | None,
     fonts_dir: Path | None,
+    fx: dict[str, int] | None = None,
 ) -> list[str]:
-    """The one delivery pass: join what is left, burn subtitles, mix background
-    music, stamp the ad overlay, encode."""
+    """The one delivery pass: join what is left, run the montage filters over the
+    whole picture, burn subtitles, mix background music, stamp the ad overlay, encode."""
     cmd: list[str] = ["ffmpeg", "-y"]
     for seg in segments:
         cmd += ["-i", str(seg)]
@@ -388,7 +390,13 @@ def _delivery_cmd(
     # reorder delay otherwise leaves the video a frame behind, which players honour
     # inconsistently and read as a constant A/V offset).
     filters.append("[cv]setpts=PTS-STARTPTS[vbase]")
-    vtag = "[vbase]"
+    # The montage look (grain, CRT, VHS, glitch — see media/filters) goes on HERE,
+    # which is both the first moment the video exists as one continuous picture and
+    # the last one before anything meant to be READ is drawn onto it. Subtitles and
+    # the ad overlay follow, and stay out of the effect: hash over a caption costs
+    # legibility for nothing, and a partner's logo is not ours to run through a tube.
+    filters.extend(filter_graph(fx or {}, cfg, "[vbase]", "[vfx]"))
+    vtag = "[vfx]"
     if ass:
         sub = f"ass={ass}" + (f":fontsdir={fonts_dir}" if fonts_dir else "")
         filters.append(f"{vtag}{sub}[vs]")
@@ -442,11 +450,17 @@ def finalize(
     music: Path | None = None,
     overlay: OverlaySpec | None = None,
     fonts_dir: Path | None = None,
+    fx: dict[str, int] | None = None,
     tmp: Path | None = None,
     on_progress: Callable[[str, int, int], None] | None = None,
 ) -> None:
-    """Join the scene ``segments``, burn subtitles, mix background music and stamp
-    the ad overlay onto the delivered file.
+    """Join the scene ``segments``, lay the montage filters over the picture, burn
+    subtitles, mix background music and stamp the ad overlay onto the delivered file.
+
+    ``fx`` is the run's filters as ``{name: dose}`` (see :mod:`.filters`). They are
+    applied in this pass and nowhere else, so they cover the finished video end to
+    end — and, since a part is finalized on its own, every episode of a serial carries
+    the same look for its whole length.
 
     The join uses the concat *filter*, not the concat demuxer: the demuxer
     stream-copies and merely re-stamps each piece's timestamps, so per-scene
@@ -469,7 +483,7 @@ def finalize(
     while True:
         ready, batch = _fold_segments(segments, tmp, f"{out.stem}_p{attempt}", batch, target, on_progress)
         try:
-            _run(_delivery_cmd(ready, out, cfg, ass, music, overlay, fonts_dir))
+            _run(_delivery_cmd(ready, out, cfg, ass, music, overlay, fonts_dir, fx))
             return
         except FFmpegError as e:
             if not e.signal or len(ready) <= CONCAT_MIN_INPUTS:

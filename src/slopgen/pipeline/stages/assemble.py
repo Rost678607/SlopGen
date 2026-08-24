@@ -101,6 +101,8 @@ def run(job: VideoJob, ctx: AppContext) -> None:
             music=music,
             overlay=build_overlay_spec(part_job, ctx),
             fonts_dir=fonts,
+            # the run's montage filters, laid over this episode end to end
+            fx=ctx.params.filters,
             tmp=tmp,
             on_progress=ctx.progress,
         )

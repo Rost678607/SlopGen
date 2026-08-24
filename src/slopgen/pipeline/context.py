@@ -21,6 +21,7 @@ from ..config import (
 )
 from ..config.loader import lore_sha, read_lore
 from ..llm import ChatLLM
+from ..llm.style import compile_style
 
 # Stand-in for the "no content type" ("auto") choice: empty briefs/voices/
 # fallbacks so nothing about a niche leaks into the prompts.
@@ -37,6 +38,9 @@ class AppContext:
     # the orchestrator's event stream only fires between stages, which leaves the
     # long ones (voicing 40 lines, generating 40 clips) looking frozen.
     on_progress: Callable[[str, int, int], None] | None = None
+    # compiled look, filled on first use (see `style_suffix`); None = not yet compiled,
+    # "" = nothing to compile. Never set by the caller.
+    _style: str | None = None
 
     def __post_init__(self):
         self.llm = ChatLLM(self.store.active_llm_profile())
@@ -69,6 +73,48 @@ class AppContext:
         if self.params.manual_visuals:
             return self.params.manual_visuals
         return self.store.visuals.get(self.params.visuals) or VisualsConfig(name="classic")
+
+    @property
+    def medium(self) -> str:
+        """What the picture is made of — "photo", "video", or "" when the run mixes
+        the two. Only fandom asks the operator outright (`params.medium`); the other
+        modes answer it by what they were pointed at, an info clip through its visuals
+        profile and a beat mode through its generator chain."""
+        if self.params.medium:
+            return self.params.medium
+        if not self.is_beats:
+            src = self.visuals.background.source
+            return "photo" if src.endswith("_photo") else "video" if src.endswith("_video") else ""
+        orch = self.orchestration
+        if not orch or not orch.stages:
+            return ""
+        from ..media.generate import is_video_model
+
+        kinds = {"video" if is_video_model(s.model) else "photo" for s in orch.stages}
+        return kinds.pop() if len(kinds) == 1 else ""
+
+    @property
+    def style_suffix(self) -> str:
+        """Everything appended to EVERY generated prompt of this run: the operator's
+        look, compiled into English tags, plus the standing suffix from
+        `[footage] gen_style_suffix`.
+
+        It is compiled here rather than in a stage because it belongs to the run and
+        not to any one of them — all three modes want it, the info chain has nowhere
+        to put a drama-shaped stage, and both the automatic generators and the prompts
+        handed to an operator making shots by hand read the same string. The compile
+        is lazy and memoised (and cached on disk by `llm/style`), so a run that
+        generates nothing never pays for it and a resume never pays twice."""
+        if self._style is None:
+            self._style = compile_style(
+                self.llm,
+                self.params.visual_style,
+                cache_dir=self.g.paths.state / "cache" / "styles",
+                medium=self.medium,
+            )
+        return ", ".join(
+            s.strip() for s in (self._style, self.g.footage.gen_style_suffix) if s.strip()
+        )
 
     @property
     def ad(self) -> AdConfig | None:

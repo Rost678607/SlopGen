@@ -97,17 +97,32 @@ FORCED = (
     "otherwise — and every brief and query must be for {kind} material.\n"
 )
 
+# The run's look (see llm/style). It is NOT pasted into the queries — a stock index
+# knows what a picture is of, not how it was made, and "anime cel shading" in a search
+# box returns drawings of nothing in particular. It goes in as a preference the briefer
+# weighs where real material could plausibly have that look (black-and-white, archival,
+# neon night, shot on film) and ignores where it could not.
+LOOK = (
+    "\nThe finished video should look like this: {style}.\n"
+    "Where existing footage could plausibly have that look, say so in the brief and "
+    "let it shape the queries. Where it could not — no stock library holds real "
+    "footage of a drawn or rendered style — ignore it entirely rather than sending "
+    "the searcher after material that does not exist.\n"
+)
+
 
 def search_tasks(
     llm, shots: list[tuple[str, str, float]], lang: str = "English",
-    on_progress=None, medium: str = "",
+    on_progress=None, medium: str = "", style: str = "",
 ) -> dict[str, SearchTask]:
     """Brief the searcher on every shot: {shot_id: SearchTask}.
 
     `shots` is (id, what the shot shows, seconds). `medium` pins photo-or-video when the
-    operator has already decided; empty leaves the choice per shot. A shot the model
-    skips or mangles simply gets no entry, and the caller falls back to what it already
-    had — a missing brief costs the operator a worse search, never the run."""
+    operator has already decided; empty leaves the choice per shot. `style` is the run's
+    compiled look, weighed as a preference rather than typed into the queries (see
+    LOOK). A shot the model skips or mangles simply gets no entry, and the caller falls
+    back to what it already had — a missing brief costs the operator a worse search,
+    never the run."""
     out: dict[str, SearchTask] = {}
     batches = [shots[i:i + BATCH] for i in range(0, len(shots), BATCH)]
     for n, batch in enumerate(batches):
@@ -118,6 +133,8 @@ def search_tasks(
             system = SYSTEM.format(lang=lang)
             if medium in ("photo", "video"):
                 system += FORCED.format(kind=medium)
+            if style.strip():
+                system += LOOK.format(style=style.strip())
             data = llm.complete_json(
                 "search_tasks", system, f"Shots to brief:\n{listing}",
             )

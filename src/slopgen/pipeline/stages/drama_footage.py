@@ -68,16 +68,19 @@ _FALLBACK_KEYWORDS = ["anime scene", "cinematic portrait", "dramatic lighting"]
 
 def _genparams(ctx: AppContext, model: str, token: str | None) -> GenParams:
     f = ctx.g.footage
+    # the run's look is appended to whatever prompt goes out (media/generate._prompt),
+    # so a shot generated here and one the operator makes by hand carry the same tags
+    style = ctx.style_suffix
     if is_video_model(model):
         spaces = VIDEO_MODELS.get(model) or f.video_gen_spaces or list(DEFAULT_VIDEO_SPACES)
         return GenParams(
             width=ctx.g.video.width, height=ctx.g.video.height,
-            video_spaces=spaces, style_suffix=f.gen_style_suffix, hf_token=token,
+            video_spaces=spaces, style_suffix=style, hf_token=token,
         )
     return GenParams(
         width=ctx.g.video.width, height=ctx.g.video.height,
         pollinations_model=PHOTO_MODELS.get(model, f.pollinations_model),
-        style_suffix=f.gen_style_suffix, pollinations_token=token,
+        style_suffix=style, pollinations_token=token,
     )
 
 
@@ -368,7 +371,7 @@ def _brief_searches(specs: list[manual.ShotSpec], ctx: AppContext) -> None:
     tasks = lookup.search_tasks(
         ctx.llm, [(s.id, s.prompt, s.target_s) for s in todo],
         LANG_NAMES.get(ctx.params.lang, ctx.params.lang), on_progress=ctx.progress,
-        medium=ctx.params.medium,
+        medium=ctx.params.medium, style=ctx.style_suffix,
     )
     for spec in todo:
         task = tasks.get(spec.id)
@@ -392,20 +395,31 @@ def _collect_manual(job: VideoJob, ctx: AppContext) -> tuple[dict[int, Path], ma
     if not manual_idx:
         return {}, manual.ManualManifest()
     entity_prompts = _entity_prompts(job)
-    specs = [
-        manual.ShotSpec(
+    # A prompt the operator pastes into Kling has to say everything the one slopgen
+    # sends says, the run's look included — otherwise the hand-made half of a video
+    # comes back in a different style from the generated half. A SEARCH task is the
+    # exception: it is not a prompt at all, and the look reaches it through the briefer
+    # instead (see _brief_searches).
+    style = ctx.style_suffix
+    specs: list[manual.ShotSpec] = []
+    for i in manual_idx:
+        scene = job.scenes[i]
+        kind = "search" if is_search_model(scene.gen_model or "") else "generate"
+        prompt = (
+            _shot_prompt(scene, job.cast_prompts, ctx.params.visual_notes, entity_prompts)
+            or " ".join(scene.characters)
+            or "cinematic scene"
+        )
+        if kind == "generate" and style:
+            prompt = f"{prompt}, {style}"
+        specs.append(manual.ShotSpec(
             id=f"shot_{i:02d}",
             scene_index=i,
-            prompt=_shot_prompt(job.scenes[i], job.cast_prompts, ctx.params.visual_notes,
-                                entity_prompts)
-            or " ".join(job.scenes[i].characters)
-            or "cinematic scene",
-            target_s=job.scenes[i].clip_target_s,
-            part=job.scenes[i].part,
-            kind="search" if is_search_model(job.scenes[i].gen_model or "") else "generate",
-        )
-        for i in manual_idx
-    ]
+            prompt=prompt,
+            target_s=scene.clip_target_s,
+            part=scene.part,
+            kind=kind,
+        ))
     _brief_searches(specs, ctx)
     m = manual.collect(job.workdir, specs, ctx.g.video.width, ctx.g.video.height)
     idmap = m.delivered_map()

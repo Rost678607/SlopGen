@@ -65,6 +65,7 @@ from ..llm import MODEL_PRESETS, PROVIDERS, ChatLLM, resolve_provider
 from ..llm import characters as char_ai
 from ..llm import lore as lore_ai
 from ..llm import rewrite as bp_ai
+from ..media.filters import KEYS as FILTER_KEYS
 from ..media.generate import PHOTO_MODELS, VIDEO_MODELS
 from ..media.generate import env_keys as gen_keys
 from ..media.generate import key_var_for_model
@@ -849,6 +850,35 @@ I18N: dict[str, dict[str, str]] = {
         "visual_notes": "Visual constraints",
         "visual_notes_ph": "binds the picture only, not the plot: \"all weapons are toy ones\", \"no blood\", \"no logos\"",
         "help.visual_notes": "Constraints on what the shots may SHOW. The story is written as if they did not exist — only the picture obeys. English reaches the generator verbatim; other languages go through the writer.",
+        "look_head": "— How it all looks —",
+        "visual_style": "Art style",
+        "visual_style_ph": "in your own words: \"anime\", or \"grainy 16mm film, sodium street light, hand-held\"",
+        "help.visual_style": "How the whole video should LOOK. Any language, any length — one word or three paragraphs: it is compiled once into the English tags a generator actually answers to and appended to every shot prompt, both the ones slopgen sends itself and the ones you paste in by hand. It binds the look alone, never what is in the frame; on a search it only steers what material to prefer.",
+        "fx_head": "— Filters —",
+        "fx_on": "Filters over the finished video",
+        "help.fx_on": "Effects laid over the CUT video, in ffmpeg, after everything else — so they look the same whatever made the picture: a generator, a stock site, your own folder. Each one is a dose rather than a switch, they stack, and each covers the whole video from the first frame to the last (in a serial, every episode for its whole length). Subtitles and the ad overlay are drawn on top and stay out of it.",
+        "fx_hint": "0 = off. They are applied in the order they are listed — grade, optics, medium, signal — not in the order you switch them on.",
+        "fx_summary": "Filters",
+        "fxd_off": "off",
+        "fxd_light": "a hint",
+        "fxd_clear": "clear",
+        "fxd_heavy": "heavy",
+        "fx.bw": "Black and white",
+        "fx.film": "Old film",
+        "fx.bloom": "Glow",
+        "fx.vignette": "Vignette",
+        "fx.grain": "Grain",
+        "fx.vhs": "VHS tape",
+        "fx.crt": "CRT screen",
+        "fx.glitch": "Glitch",
+        "help.fx.bw": "Drains the colour. It is a dose, so 40 is a washed-out memory and 100 is monochrome; contrast is lifted along the way so the picture does not go flat with it.",
+        "help.fx.film": "Old stock: blacks that never reach black, a warm cast through the highlights, the projector's slow flicker, grain and a soft corner. Warm rather than the green of a bad scan — olive reads as a colour mistake, amber reads as age.",
+        "help.fx.bloom": "A blurred copy of the picture screened back over itself: the highlights bleed and the whole frame hazes over. Dreams, memories, heat.",
+        "help.fx.vignette": "Darkens the corners, which pulls the eye to the middle of a vertical frame. Cheap, and almost always flattering.",
+        "help.fx.grain": "Moving film grain — a fresh pattern every frame, so it crawls the way real grain does instead of sitting on the picture like dirt on the lens.",
+        "help.fx.vhs": "Tape: sharpness lost across the scanline and none down it, colour sliding off the edges, a flatter picture and hiss. The look of a fiftieth-generation copy.",
+        "help.fx.crt": "Tube: scanlines, colour that never registered quite right, phosphor contrast, the curve of the glass at the corners, and a flat, hard-edged band of light sliding down the picture — the beat between the tube's refresh and the camera filming it, which is the single thing that most says \"shot off a screen\" rather than \"graded to look like one\". The scanline spacing follows the frame height, so it stays a tube at any resolution.",
+        "help.fx.glitch": "The signal failing, in several ways on clocks that do not divide into each other. Rows of pixels tear sideways over and over, each row split into its colour channels and wrapped around the frame edge the way a broken scanline actually does; underneath, the whole picture's channels come apart, it fills with hash, the colour drops out, the hue swings, and once in a while a single frame inverts. The dose is both how hard a fault hits and how often one comes — at 10 the picture breaks up twice a minute, at 100 it can barely hold one.",
         "bp.scene": "Scene",
         "bp.regen": "🔊 Re-voice",
         "bp.play": "▶ Listen",
@@ -1309,6 +1339,35 @@ I18N: dict[str, dict[str, str]] = {
         "visual_notes": "Ограничения картинки",
         "visual_notes_ph": "связывают только картинку, не сюжет: «всё оружие игрушечное», «без крови», «без логотипов»",
         "help.visual_notes": "Ограничения на то, что можно ПОКАЗЫВАТЬ. Сюжет пишется так, будто их нет — подчиняется только картинка. Английский уходит в генератор дословно, остальные языки — через сценариста.",
+        "look_head": "— Как это всё выглядит —",
+        "visual_style": "Стиль графики",
+        "visual_style_ph": "своими словами: «аниме» или «зернистая 16-мм плёнка, натриевый свет фонарей, съёмка с рук»",
+        "help.visual_style": "Как должно ВЫГЛЯДЕТЬ всё видео. Любым языком и любой длины — хоть одно слово, хоть три абзаца: оно один раз компилируется в английские теги, на которые генератор реально отзывается, и дописывается к каждому промпту кадра — и к тем, что слопген отправляет сам, и к тем, что ты вставляешь руками. Связывает только вид, но не то, что в кадре; в режиме поиска лишь подсказывает, какой материал предпочесть.",
+        "fx_head": "— Фильтры —",
+        "fx_on": "Фильтры на готовое видео",
+        "help.fx_on": "Эффекты, наложенные на СМОНТИРОВАННОЕ видео, в ffmpeg, в самом конце — поэтому выглядят одинаково, чем бы картинка ни была сделана: нейронкой, стоком, твоей собственной папкой. Каждый — доза, а не выключатель; они складываются, и каждый идёт через всё видео от первого кадра до последнего (в сериале — через каждую серию целиком). Субтитры и рекламный оверлей рисуются поверх и под фильтр не попадают.",
+        "fx_hint": "0 — выключено. Применяются в том порядке, в каком перечислены — цвет, оптика, носитель, сигнал, — а не в том, в каком ты их включил.",
+        "fx_summary": "Фильтры",
+        "fxd_off": "выкл",
+        "fxd_light": "намёк",
+        "fxd_clear": "заметно",
+        "fxd_heavy": "сильно",
+        "fx.bw": "Ч/б",
+        "fx.film": "Плёнка",
+        "fx.bloom": "Свечение",
+        "fx.vignette": "Виньетка",
+        "fx.grain": "Зерно",
+        "fx.vhs": "Кассета VHS",
+        "fx.crt": "Экран ЭЛТ",
+        "fx.glitch": "Глитч",
+        "help.fx.bw": "Вымывает цвет. Это доза, а не переключатель: 40 — выцветшее воспоминание, 100 — настоящая монохромность; по дороге поднимается контраст, чтобы картинка не стала плоской.",
+        "help.fx.film": "Старая плёнка: чёрный, который не доходит до чёрного, тёплый оттенок в светах, медленное мерцание проектора, зерно и мягкий угол. Тёплая, а не зелёная, как у плохого скана: оливковый читается как ошибка цвета, янтарный — как возраст.",
+        "help.fx.bloom": "Размытая копия картинки, наложенная на неё саму по «экрану»: света растекаются, весь кадр заволакивает дымкой. Сны, воспоминания, жара.",
+        "help.fx.vignette": "Затемняет углы и тем самым тянет взгляд в середину вертикального кадра. Дёшево и почти всегда к лицу.",
+        "help.fx.grain": "Живое плёночное зерно — свой рисунок в каждом кадре, поэтому оно шевелится, как настоящее, а не лежит на картинке грязью на объективе.",
+        "help.fx.vhs": "Кассета: резкость теряется поперёк строки и не теряется вдоль неё, цвет сползает с краёв, картинка плоская, поверх — шипение. Вид пятидесятой перезаписи.",
+        "help.fx.crt": "Кинескоп: строки развёртки, цвет, который так и не свёлся точно, контраст люминофора, завал стекла по углам и ровная засветлённая полоса с резкими краями, скользящая вниз по картинке, — биение между развёрткой трубки и камерой, которая её снимает. Именно эта полоса больше всего говорит «снято с экрана», а не «покрашено под экран». Шаг строк считается от высоты кадра, так что это остаётся кинескопом на любом разрешении.",
+        "help.fx.glitch": "Сигнал рассыпается — сразу несколькими способами, на часах, которые друг на друга не делятся. Строки пикселей то и дело дёргаются вбок, каждая с расслоением на цветовые каналы и с заворотом через край кадра, как это и делает сломанная строка развёртки; под ними у всей картинки разъезжаются каналы, её забивает мусором, пропадает цвет, уводит оттенок, а изредка один кадр выворачивается в негатив. Доза — это и сила приступа, и то, как часто он случается: на 10 картинка ломается дважды в минуту, на 100 почти не держится.",
         "bp.scene": "Сцена",
         "bp.regen": "🔊 Переозвучить",
         "bp.play": "▶ Прослушать",
@@ -1532,6 +1591,7 @@ FIELD_HELP = {
     "w-idea": "help.idea", "w-profanity": "help.profanity", "w-tts_rate": "help.tts_rate",
     "w-duration_min": "help.drama_duration_min", "w-duration_tol": "help.drama_duration_tol",
     "w-clip_s": "help.drama_clip_s", "w-visual_notes": "help.visual_notes",
+    "w-visual_style": "help.visual_style",
     "w-clean_subs": "help.clean_subs",
     "w-vprofile": "help.vprofile", "w-duration": "help.duration",
     "w-bg-src": "help.bg_src", "w-bg-link": "help.bg_link", "w-bg-dir": "help.bg_dir",
@@ -1555,7 +1615,57 @@ FIELD_HELP = {
     "e-orch-model": "help.orch_model", "e-orch-key_mode": "help.orch_key_mode",
     "e-orch-key": "help.orch_key", "e-orch-metric": "help.orch_metric",
     "e-orch-amount": "help.orch_amount", "e-orch-clip_seconds": "help.orch_clip_s",
+    "w-fx-on": "help.fx_on",
 }
+# one line of help per montage filter, straight off the catalogue — a filter added
+# there shows up here without anyone remembering to come back for it (its two i18n
+# keys, `fx.<name>` and `help.fx.<name>`, are the whole of what it needs).
+FIELD_HELP.update({f"w-fx-{k}": f"help.fx.{k}" for k in FILTER_KEYS})
+
+# What a dose reads as on the slider, by threshold (see tui/slider.Slider).
+FX_DOSE_LABELS = {0: "fxd_off", 5: "fxd_light", 35: "fxd_clear", 70: "fxd_heavy"}
+
+
+def _fx_fields() -> list:
+    """The Filters block: one switch and, under it, a dose slider per effect.
+
+    It is a block rather than a step because it belongs to the video track and is
+    read once — and it is the same block in all three wizards, because a filter is
+    applied to the finished cut and so has nothing to do with what the mode fills
+    the frame with. The switch exists only to keep eight sliders folded away when
+    nobody wants them; what actually turns an effect on is its dose leaving 0."""
+    return [
+        Toggle("fx-on", "fx_on"),
+        Group("fx", [
+            Heading("fx_head"),
+            Note("fx_hint"),
+            *[Range(f"fx-{k}", f"fx.{k}", value=0, lo=0, hi=100, step=5, labels=FX_DOSE_LABELS)
+              for k in FILTER_KEYS],
+        ], visible_when=lambda v: bool(v.get("fx-on"))),
+    ]
+
+
+def _fx_read(v: dict) -> dict[str, int]:
+    """The filters as the run wants them: {name: dose}, without the zeroes. A dose
+    dialled in and then folded away by the switch is not carried into the run — what
+    the wizard no longer shows, it no longer asks for."""
+    if not v.get("fx-on"):
+        return {}
+    return {k: int(v.get(f"fx-{k}", 0) or 0) for k in FILTER_KEYS if int(v.get(f"fx-{k}", 0) or 0) > 0}
+
+
+def _fx_flags(fx: dict[str, int]) -> str:
+    """The filters as they appear in the previewed command line."""
+    return "".join(f" --filter {k}={d}" for k, d in fx.items())
+
+
+def _summary_fx_lines(t, g: dict) -> list[str]:
+    """The filters as one summary line, in their own names rather than ffmpeg's —
+    omitted when there are none."""
+    fx = g.get("filters") or {}
+    if not fx:
+        return []
+    return [f"  {t('fx_summary')}: " + ", ".join(f"{t('fx.' + k)} {d}%" for k, d in fx.items())]
 
 BG_SOURCES = ["stock_video", "stock_photo", "local_video", "local_photo", "ai_video", "ai_photo"]
 FG_SOURCES = ["stock_photo", "stock_video", "local_photo", "local_video", "ai_photo", "ai_video"]
@@ -1628,6 +1738,38 @@ def _visuals_values(prof: VisualsConfig) -> dict:
         "fg-width": prof.foreground.width_pct,
         "fg-pos": prof.foreground.position,
     }
+
+
+def _ai_source(src: str) -> bool:
+    """Whether a visuals source is one an AI GENERATES a picture from — `ai_photo` or
+    `ai_video`, and whether slopgen calls the generator itself or you paste its prompt
+    into one by hand (`manual`, which is user-assisted *generation*). A stock source is
+    not one, `manual` or otherwise: a search finds a picture that already exists."""
+    return str(src).startswith("ai_")
+
+
+def _generated_picture(v: dict) -> bool:
+    """Whether anything in an info clip's video track is generated from a prompt —
+    the background, or the foreground inserts when they are switched on."""
+    return _ai_source(v.get("bg-src", "")) or (
+        bool(v.get("fg-on")) and _ai_source(v.get("fg-src", ""))
+    )
+
+
+def _flag_snippet(text: str, limit: int = 40) -> str:
+    """A free-form field as it appears in the previewed command line: one line, and
+    short enough to read. The ellipsis is only added when something was actually cut,
+    so a short note or look leaves a command you can paste as it stands."""
+    one = " ".join(text.split())
+    return one[:limit] + "…" if len(one) > limit else one
+
+
+def _summary_style_lines(t, g: dict) -> list[str]:
+    """The run's look, as one summary line — omitted when there is none. What the
+    operator wrote, not the compiled tags: the compile happens in the pipeline (see
+    pipeline/context.style_suffix), and there is nothing to show before it has."""
+    look = _flag_snippet(g.get("visual_style", ""), 70)
+    return [f"  {t('visual_style')}: {look}"] if look else []
 
 
 class GenerateScreen(Screen):
@@ -1710,6 +1852,15 @@ class GenerateScreen(Screen):
             Group("fg-ai-img", [
                 Choice("fg-ai-pmodel", "ai_model", options=AI_PHOTO_MODELS, value="flux"),
             ], visible_when=lambda v: v["fg-on"] and v["fg-src"] == "ai_photo"),
+            # The look is a fragment of a PROMPT, so it is asked where the prompts are
+            # settled and only when there will be any: a stock search and a local
+            # folder have nothing to put it in.
+            Group("look", [
+                Heading("look_head"),
+                Text("visual_style", "visual_style", placeholder="visual_style_ph", large=True),
+            ], visible_when=_generated_picture),
+            # ...and after it the filters, which ask nothing of the source at all
+            *_fx_fields(),
         ])
         self.f_ads = Form("w", [
             Choice("ad-src", "ad_source",
@@ -1932,6 +2083,18 @@ class GenerateScreen(Screen):
         # reveal/hide the AI-model picker when an ai_* source is chosen
         self.f_visuals.refresh_visibility(self)
 
+    @on(Switch.Changed, "#w-fx-on")
+    def _fx_switched(self, event: Switch.Changed) -> None:
+        self._refresh_fx()
+
+    def _refresh_fx(self) -> None:
+        """Fold the filter sliders in or out. Here they are part of the Visuals form;
+        the beat wizards keep them in a form of their own and override this."""
+        try:
+            self.f_visuals.refresh_visibility(self)
+        except Exception:  # the step never composed
+            pass
+
     @on(Select.Changed, "#w-vprofile")
     def _vprofile(self, event: Select.Changed) -> None:
         prof = self.app.store.visuals.get(str(event.value))
@@ -2008,6 +2171,10 @@ class GenerateScreen(Screen):
             "count": max(1, int(p["count"])),
             "breakpoints": self._breakpoints(),
             "visual_notes": c.get("visual_notes", ""),
+            # a look typed before the sources were switched to stock is not carried
+            # into the run: what the wizard no longer shows, it no longer asks for
+            "visual_style": v.get("visual_style", "") if _generated_picture(v) else "",
+            "filters": _fx_read(v),
         }
 
     def _command(self, g: dict, vis_name: str, vis_manual: VisualsConfig | None) -> str:
@@ -2034,6 +2201,9 @@ class GenerateScreen(Screen):
         cmd += f" --subs {g['subs']}"
         if g["clean_subs"]:
             cmd += " --clean-subs"
+        if g["visual_style"]:
+            cmd += f' --visual-style "{_flag_snippet(g["visual_style"])}"'
+        cmd += _fx_flags(g["filters"])
         for name in g["breakpoints"]:
             cmd += f" --break {name}"
         if manual_notes:
@@ -2057,6 +2227,8 @@ class GenerateScreen(Screen):
             + (f"  ({g['ad_mode']})" if g["ad_src"] != NONE else ""),
             f"  {t('push')}: {g['push'] or t('push_local')}",
             f"  {t('count')}: {g['count']}      {t('subs')}: {g['subs']}",
+            *_summary_style_lines(t, g),
+            *_summary_fx_lines(t, g),
         ]
         if vis_manual:
             lines.append(f"  [dim]{t('vis_custom_note')}[/dim]")
@@ -2118,6 +2290,8 @@ class GenerateScreen(Screen):
                 breakpoints=g["breakpoints"],
                 clean_subtitles=g["clean_subs"],
                 visual_notes=g["visual_notes"],
+                visual_style=g["visual_style"],
+                filters=g["filters"],
             )
         except ConfigError as e:
             self.notify(str(e), severity="error", timeout=8)
@@ -2492,9 +2666,23 @@ class DramaScreen(_CharEditAI, GenerateScreen):
         self._stage_sel: int | None = None
         self._stage_form: Form | None = None
         self._orch_rev = 0
+        self.f_look: Form | None = None  # the art style, mounted on the Visuals step
+        self.f_fx: Form | None = None  # the montage filters, same step
 
     def _make_forms(self, t, store: ConfigStore, vis0: VisualsConfig) -> None:
         super()._make_forms(t, store, vis0)
+        # The look asked where the picture is settled, as in every mode — but this
+        # step is a chain editor rather than a Form, so the field is a one-field form
+        # of its own and its predicate reads the chain instead of sibling widgets.
+        self.f_look = Form("w", [
+            Group("look", [
+                Heading("look_head"),
+                Text("visual_style", "visual_style", placeholder="visual_style_ph", large=True),
+            ], visible_when=lambda _v: self._ai_footage()),
+        ])
+        # the filters ask nothing of the chain — they are laid over the cut — so they
+        # are the one part of this step that is the same in every mode
+        self.f_fx = Form("w", _fx_fields())
         if self.HAS_PARTS:
             self.f_publish.fields.insert(2, Number("parts", "parts", value="1", default=1, integer=True))
             self.f_publish.fields.insert(3, Toggle("parts_iterative", "parts_iterative", value=True))
@@ -2552,6 +2740,29 @@ class DramaScreen(_CharEditAI, GenerateScreen):
         if not self._stages:
             self._stages = self._default_stages()
         self._refresh_orch_list()
+        # nothing else asks: the filters are folded away until the switch says otherwise
+        self._refresh_fx()
+
+    def _ai_footage(self) -> bool:
+        """Whether any shot of this run is GENERATED from a prompt. Every entry in the
+        chain is except `search`, which sends the operator to find material that
+        already exists — `manual` is user-assisted *generation* and takes the prompt,
+        the run's look included, exactly as a generator does."""
+        return any(st.get("model") != "search" for st in self._stages)
+
+    def _refresh_look(self) -> None:
+        """Show or hide the look field for the chain as it now stands. Called from
+        `_refresh_orch_list`, which every edit to the chain already goes through."""
+        try:
+            self.f_look.refresh_visibility(self)
+        except Exception:  # the step never composed
+            pass
+
+    def _refresh_fx(self) -> None:
+        try:
+            self.f_fx.refresh_visibility(self)
+        except Exception:  # the step never composed
+            pass
 
     # -- orchestration (drama Visuals step) ---------------------------------
     def _orch_profile_opts(self, t):
@@ -2592,6 +2803,7 @@ class DramaScreen(_CharEditAI, GenerateScreen):
                 id=f"orchitem-{self._orch_rev}-{i}", classes="cast-item",
             )
             lv.append(item)
+        self._refresh_look()  # a chain of nothing but searches generates no prompts
 
     def _build_stage_form(self, t, s: dict) -> Form:
         nkeys = len(gen_keys(key_var_for_model(s["model"])))
@@ -2770,6 +2982,8 @@ class DramaScreen(_CharEditAI, GenerateScreen):
                 yield Button(t("orch_save_prof"), id="orch-save-prof", variant="primary")
             yield ListView(id="orch-list")
             yield Static(t("orch_hint"), classes="hint")
+            yield from self.f_look.compose(t)
+            yield from self.f_fx.compose(t)
             return
         if key != "step.characters":
             yield from super()._pane_body(key, t)
@@ -3336,10 +3550,29 @@ class DramaScreen(_CharEditAI, GenerateScreen):
             "subs": p["subs"], "count": max(1, int(p["count"])),
             "clean_subs": bool(p.get("clean_subs")),
             "visual_notes": c.get("visual_notes", ""),
+            "visual_style": self._look(),
+            "filters": self._fx(),
             "parts": max(1, int(p.get("parts", 1) or 1)),
             "parts_iterative": bool(p.get("parts_iterative", True)),
             "breakpoints": self._breakpoints(),
         }
+
+    def _look(self) -> str:
+        """The run's art style, or "" when nothing about this run is generated — what
+        the wizard no longer shows, it no longer asks for."""
+        try:
+            v = self.f_look.read(self)
+        except Exception:  # the step never mounted
+            return ""
+        return v.get("visual_style", "") if self._ai_footage() else ""
+
+    def _fx(self) -> dict[str, int]:
+        """The run's montage filters. Unlike the look this asks nothing of the chain:
+        a video assembled entirely out of stock clips takes a CRT just as well."""
+        try:
+            return _fx_read(self.f_fx.read(self))
+        except Exception:  # the step never mounted
+            return {}
 
     def _render_summary(self) -> None:
         t = self._t
@@ -3359,6 +3592,8 @@ class DramaScreen(_CharEditAI, GenerateScreen):
             f"  {t('drama_plot_head')}: {plot}",
             *self._summary_cast_lines(t, cast, glob),
             *self._summary_source_lines(t, stages),
+            *_summary_style_lines(t, g),
+            *_summary_fx_lines(t, g),
             *self._summary_extra(g),
             "",
             f"  [dim]{t('drama_soon_note')}[/dim]",
@@ -3410,8 +3645,10 @@ class DramaScreen(_CharEditAI, GenerateScreen):
         if g["clean_subs"]:
             cmd += " --clean-subs"
         if g["visual_notes"]:
-            note = g["visual_notes"].replace("\n", " ")[:40]
-            cmd += f' --visual-notes "{note}…"'
+            cmd += f' --visual-notes "{_flag_snippet(g["visual_notes"])}"'
+        if g["visual_style"]:
+            cmd += f' --visual-style "{_flag_snippet(g["visual_style"])}"'
+        cmd += _fx_flags(g["filters"])
         if g["parts"] != 1:
             cmd += f" --parts {g['parts']}"
             if not g["parts_iterative"]:
@@ -3479,6 +3716,8 @@ class DramaScreen(_CharEditAI, GenerateScreen):
                 breakpoints=g["breakpoints"],
                 clean_subtitles=g["clean_subs"],
                 visual_notes=g["visual_notes"],
+                visual_style=g["visual_style"],
+                filters=g["filters"],
                 **self._extra_params(g),
             )
         except Exception as e:  # pydantic validation / bad field
@@ -3605,6 +3844,8 @@ class FandomScreen(DramaScreen):
         if key == "step.visuals":
             yield Static(t("fandom_source_head"), classes="group-head")
             yield from self.f_source.compose(t)
+            yield from self.f_look.compose(t)
+            yield from self.f_fx.compose(t)
             return
         if key == "step.characters":
             yield from self.f_voice.compose(t)
@@ -3630,10 +3871,19 @@ class FandomScreen(DramaScreen):
             self.f_source.refresh_visibility(self)
         except Exception:  # the step never composed
             pass
+        self._refresh_look()
+
+    def _ai_footage(self) -> bool:
+        """This mode buys its picture from ONE source, so the question is only whether
+        that source generates: everything but `search` does."""
+        return self._source_stage().model != "search"
 
     @on(Select.Changed, "#ws-medium")
+    @on(Select.Changed, "#ws-vsrc")
+    @on(Select.Changed, "#ws-psrc")
     def _medium_changed(self, event: Select.Changed) -> None:
-        """Stills and clips are made by different things; show only the right ones."""
+        """Stills and clips are made by different things; show only the right ones —
+        and the art style only when whatever is picked draws the picture at all."""
         self._refresh_source_form()
 
     def _point_at_world(self) -> None:
