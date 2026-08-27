@@ -45,6 +45,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Protocol
 
+import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
+
+from ...config.loader import CONFIGS_DIR, cache_visual_prompt
 from ...llm.characters import recompile_if_dirty
 from ..context import AppContext
 from ..drama import plan_slots, plan_windows, word_budget
@@ -488,21 +493,117 @@ def _label_parts(
     for i, scene in enumerate(scenes):
         scene.part = 1 + sum(1 for e in edges if e <= i)
 
-def _roster(cast) -> str:
+# How a world's entry is introduced on the sheet. A drama's cast is a list of people
+# and needs no such note; a world's is a list of LOOKS, and an entry may stand for one
+# thing or for every one of its kind (see `config.models.Plurality`). Unmarked, a group
+# reads as an individual and the writer gives it a name, a line of dialogue and a
+# personal arc — four hundred wardens condensed into one man called Warden.
+_PLURALITY_NOTE = {
+    "one": "",
+    "many": " [a GROUP: many of them, identical and faceless, all with this one look]",
+    "class": " [a WHOLE KIND: every member of it looks broadly like this]",
+}
+
+# Only the fandom mode reaches this, and only because its sheet says nothing about who
+# anyone IS — the world's records do (see stages/fandom_script). Told merely that a
+# character exists, a writer invents the rest of it.
+_WORLD_ROSTER_NOTE = (
+    "\nThis sheet says ONLY what each of these looks like, which is all that is written "
+    "down about them as characters. Who they are — their name's weight, their history, "
+    "their rank, their temper, what they want — is in the records of the world, and "
+    "nowhere else: read it there, and never invent it from a description of a coat. An "
+    "entry marked as a GROUP or a KIND is not one person and has no personal story: "
+    "name it in a shot and the shot holds as many of them as it needs."
+)
+
+
+# Compiling one character is a full round trip, and the calls are independent of each
+# other, so they are made side by side. Six at once: enough to turn twenty-four minutes
+# into four, not so many that a provider starts refusing.
+log = logging.getLogger(__name__)
+
+CAST_WORKERS = 6
+
+
+def _character_file(ctx: AppContext, name: str) -> Path | None:
+    """Where this character's file lives, or None if it has none.
+
+    A world's people are shelved with the world; a drama's may be in the shared
+    library, or nowhere at all when the operator built one for this run and never
+    saved it. Only an existing file is ever written to (see `cache_visual_prompt`)."""
+    candidates = []
+    if ctx.is_fandom:
+        world = ctx.store.fandoms.get(ctx.params.fandom)
+        if world is not None and world.root:
+            candidates.append(world.root / "characters" / f"{name}.toml")
+    candidates.append(CONFIGS_DIR / "characters" / f"{name}.toml")
+    return next((c for c in candidates if c.is_file()), None)
+
+
+def _compile_cast(ctx: AppContext) -> list:
+    """Turn the cast into generation-ready visual prompts, in parallel, and REMEMBER
+    the result.
+
+    This used to be a serial list comprehension whose docstring said "in-memory only",
+    and it was the single slowest thing in the pipeline that nobody could see: a world
+    of 44 characters spent about twenty-four minutes here, before the writer had been
+    asked for a word, with no progress reported until the stage was over. Every run
+    paid it again, because the compiled prompt was never written down.
+
+    Three changes, all needed: the calls go out concurrently, each one reports, and
+    each result is cached back into the character's own file so the second run costs
+    nothing. `dirty` already meant "this cache is stale" — it just had nowhere to be
+    stored."""
+    cast = list(ctx.cast)
+    todo = [c for c in cast if c.dirty]
+    if not todo:
+        return cast
+    log.info("compiling %d/%d character prompts", len(todo), len(cast))
+    done = 0
+    ctx.progress("cast", 0, len(todo))
+    out = {c.name: c for c in cast}
+    with ThreadPoolExecutor(max_workers=min(CAST_WORKERS, len(todo))) as pool:
+        futures = {
+            pool.submit(recompile_if_dirty, ctx.llm, c, world=ctx.is_fandom): c
+            for c in todo
+        }
+        for future in as_completed(futures):
+            original = futures[future]
+            try:
+                compiled = future.result()
+            except Exception as e:  # noqa: BLE001 — one bad character is not a run
+                log.warning("could not compile '%s': %s", original.name, e)
+                compiled = original
+            out[compiled.name] = compiled
+            path = _character_file(ctx, compiled.name)
+            if path is not None and compiled.visual_prompt.strip():
+                cache_visual_prompt(path, compiled.visual_prompt)
+            done += 1
+            ctx.progress("cast", done, len(todo))
+    return [out[c.name] for c in cast]
+
+
+def _roster(cast, world: bool = False) -> str:
     """The cast sheet handed to the writer. It also shows what each name expands into
     in a shot prompt, so the writer can see that naming a character is enough — the
-    footage stage substitutes the full look for the name (see SYSTEM)."""
+    footage stage substitutes the full look for the name (see SYSTEM).
+
+    `world` marks the fandom's sheet: no ages, a plurality note per entry, and a
+    reminder that the sheet is a wardrobe rather than a cast list."""
     if not cast:
         return "(no fixed cast — invent characters as the story needs)"
     lines = []
     for c in cast:
         look = c.appearance.strip() or "(improvise looks)"
-        age = f", age {c.age}" if c.age else ""
-        lines.append(f"- {c.name}{age}: {look}")
+        if world:
+            extra = _PLURALITY_NOTE.get(c.plurality, "")
+        else:
+            extra = f", age {c.age}" if c.age else ""
+        lines.append(f"- {c.name}{extra}: {look}")
         tag = ", ".join(t.strip() for t in c.visual_prompt.split(",")[:4] if t.strip())
         if tag:
             lines.append(f"    (slopgen expands the name into: {tag}…)")
-    return "\n".join(lines)
+    return "\n".join(lines) + (_WORLD_ROSTER_NOTE if world else "")
 
 
 # How far a self-sized beat may stray. A shot under two seconds is a flicker nobody
@@ -581,10 +682,9 @@ def write_beats(job: VideoJob, ctx: AppContext, writer: Writer) -> None:
     only mode-specific thing that happens is asking `writer` for the two prompts."""
     p = ctx.params
     lang = LANG_NAMES.get(p.lang, p.lang)
-    # compile the cast to generation-ready visual prompts (lazy; in-memory only)
-    # a world's characters need not be people, and a visual prompt that assumes a face
-    # will grow one on a ship (see llm/characters._ANY_FORM)
-    cast = [recompile_if_dirty(ctx.llm, c, any_form=ctx.is_fandom) for c in ctx.cast]
+    # a world's characters need not be people — nor individuals (see
+    # llm/characters._ANY_FORM and _PLURALITY)
+    cast = _compile_cast(ctx)
     # hand the compiled per-character prompts to footage (so it needn't recompile)
     job.cast_prompts = {c.name: c.visual_prompt for c in cast if c.visual_prompt}
 
@@ -597,7 +697,7 @@ def write_beats(job: VideoJob, ctx: AppContext, writer: Writer) -> None:
             f"video, shorten the clips, or ask for fewer parts"
         )
     brief = p.scenario.strip() or writer.empty_brief(ctx)
-    roster = _roster(cast)
+    roster = _roster(cast, world=ctx.is_fandom)
     tools = writer.tools(ctx)
 
     # The script is written a window at a time (see drama.plan_windows). The ad beat

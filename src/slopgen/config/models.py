@@ -18,6 +18,9 @@ class PathsConfig(BaseModel):
     assets: Path = Path("assets")
     output: Path = Path("output")
     state: Path = Path("state")
+    # downloaded neural weights (see slopgen.models). Gitignored like the other
+    # three: a single local voice is 2.3 GiB, so nothing here is ever committed.
+    models: Path = Path("models")
 
 
 class VideoConfig(BaseModel):
@@ -97,6 +100,63 @@ class DefaultsConfig(BaseModel):
     profanity: int = 0  # 0 = clean … 100 = constant swearing
 
 
+class AzureTTSConfig(BaseModel):
+    """[tts.azure]. Azure Speech is edge-tts' paid sibling and speaks the same word
+    boundaries, so it is the one alternative that costs the pipeline nothing
+    architecturally — the whole 700-voice catalogue, with timings, no aligner.
+
+    `region` is not cosmetic: the Dragon HD Omni voices are a preview and simply do
+    not appear in the catalogue outside the regions that host it, so a wrong region
+    reads as "that voice does not exist"."""
+
+    region: str = "eastus"
+    key_env: str = "AZURE_SPEECH_KEY"
+    region_env: str = "AZURE_SPEECH_REGION"  # overrides `region` when set in .env
+    # Dragon HD Omni knobs; they do nothing on the classic neural voices
+    temperature: float = 1.0
+    enhance_pronunciation: bool = True
+
+
+class QwenTTSConfig(BaseModel):
+    """[tts.qwen] — Alibaba's DashScope. The international endpoint is the default
+    because the mainland one refuses keys minted outside it, which surfaces as an
+    unhelpful 401."""
+
+    key_env: str = "DASHSCOPE_API_KEY"
+    base_url: str = "https://dashscope-intl.aliyuncs.com/api/v1"
+    model: str = "qwen3-tts-flash"
+
+
+class QwenLocalConfig(BaseModel):
+    """[tts.qwen_local] — the same voice on this machine, no key and no network.
+
+    The two defaults below are measured, not conventional: bfloat16 with one thread
+    per PHYSICAL core ran 3.3x faster than float32 with one per hardware thread
+    (RTF 16.45 -> 5.05 on a Ryzen 7840U). Autoregressive decoding here is bound by
+    memory bandwidth, which SMT does not add any of, so the second thread on a core
+    only steals cache. `threads = 0` means "count the physical cores"."""
+
+    model_id: str = "qwen3-tts-0.6b"  # an id in slopgen.models.registry
+    dtype: str = "bfloat16"
+    threads: int = 0
+    # How much the model is allowed to improvise. Left at the value the weights ship
+    # with, because lowering it was tried and measured and did NOT help: five takes of
+    # one line at 0.9, 0.7 and 0.5 came out with the same median length once the dead
+    # air was collapsed (1.58x, 1.57x, 1.57x), and the lowest setting produced the most
+    # takes that ran all the way into the token cap. The instability is not entropy.
+    temperature: float = 0.9
+
+
+class AlignConfig(BaseModel):
+    """[tts.align] — how word timings are recovered for engines that give none.
+
+    A recognizer per language, from the model catalogue. This is NOT transcription:
+    the words are already known, so the recognizer is only ever asked *when* each one
+    was said, and its mistakes are corrected against the script (see tts/align.py)."""
+
+    models: dict[str, str] = {"ru": "vosk-ru-small", "en": "vosk-en-small"}
+
+
 class TTSConfig(BaseModel):
     """[tts] in slopgen.toml. `pronounce` is a per-language table of words the voice
     says wrong, mapped to a spelling that makes it say them right.
@@ -115,9 +175,27 @@ class TTSConfig(BaseModel):
     «Н Л О» run 1.10s here, but beat the phonetic names on other acronyms), so it is
     worth trying both. The voice returns several word boundaries where the script had
     one word; stages/tts.py merges them back so the subtitles show the original
-    spelling with exact timings."""
+    spelling with exact timings.
 
+    `engine` picks who speaks (see slopgen.tts.ENGINES). The table above is engine-
+    independent by design — it fixes what a synthesizer does with a spelling, and
+    every synthesizer here is fed the same respelled text."""
+
+    engine: str = "edge"
+    # A cloning run listens to its own reference sample before it voices anything
+    # (`tts.refs.check_transcript`), and when the sample scores badly it voices ONE
+    # short line to find out whether that matters, refusing only if the model will
+    # not say it (`stages/tts._probe_voice`). The measurement alone is not grounds to
+    # refuse — a recognizer that cannot make out a child or a whisper scores a
+    # perfectly good sample badly — so the probe, not the score, is the gate. Turning
+    # this off skips both, and the first sign of trouble then arrives an hour into a
+    # render.
+    check_reference: bool = True
     pronounce: dict[str, dict[str, str]] = {}  # lang -> {as written: as spoken}
+    azure: AzureTTSConfig = AzureTTSConfig()
+    qwen: QwenTTSConfig = QwenTTSConfig()
+    qwen_local: QwenLocalConfig = QwenLocalConfig()
+    align: AlignConfig = AlignConfig()
 
 
 class GlobalConfig(BaseModel):
@@ -141,7 +219,8 @@ class ContentTypeConfig(BaseModel):
     # per-language creative briefs injected into the JSON-schema prompts
     idea_brief: dict[str, str]  # lang -> text
     script_brief: dict[str, str]  # lang -> text
-    voices: dict[str, str]  # lang -> edge-tts voice name
+    voices: dict[str, str]  # lang -> voice name, read by whichever engine speaks
+    #   (a catalogue id like "ru-RU-SvetlanaNeural", or the name of a configs/voices/ clone)
     # stock search fallbacks when scene keywords return nothing (English only,
     # stock APIs are English-indexed)
     fallback_keywords: list[str] = []
@@ -310,19 +389,87 @@ class PresetConfig(BaseModel):
 # --- configs/characters/*.toml --------------------------------------------
 
 
+# What a character IS, in the fandom mode only. A drama casts actors, so each of its
+# characters is one person; a world contains no such guarantee. Most of what appears
+# on screen in a world is not an individual at all — it is the postmen of the winter
+# carry, the wardens, the elves, the machines: many bodies wearing one look, and the
+# look is the whole of what needs writing down. Squeezing those into one-person
+# entries costs twice — the operator writes "Warden #1" through "Warden #4" to say
+# a thing that has no number, and the writer, handed four individuals, dutifully
+# distinguishes between them.
+#
+#   one   — a specific, single character: this face, in every shot it appears in.
+#   many  — a group of visually identical (or near-identical) faceless figures; the
+#           look belongs to every one of them and to none of them in particular.
+#   class — a whole kind: a race, a species, a caste, a model of machine. Broader
+#           than `many` in that its members vary in incidentals but share a type.
+Plurality = Literal["one", "many", "class"]
+
+
 class CharacterConfig(BaseModel):
-    """A reusable cast member for the AI-drama mode. All descriptive fields are
-    optional and may be left for the LLM to invent. The two `*_compiled` fields
-    are LLM-optimized English descriptors (NOT literal translations) rebuilt
-    lazily from the structured fields whenever `dirty` is set — kept separate so
-    generation injects the ready prompt without paying tokens on every edit."""
+    """A reusable cast member. All descriptive fields are optional and may be left
+    for the LLM to invent. `visual_prompt` is an LLM-optimized English descriptor
+    (NOT a literal translation) rebuilt lazily from the structured fields whenever
+    `dirty` is set — kept separate so generation injects the ready prompt without
+    paying tokens on every edit.
+
+    The two modes fill this in differently, and only the fandom mode uses
+    `plurality` (see above). A drama's character is a person the drama invents, so
+    it carries `age` and its personality is the drama's business. A WORLD's
+    character is only ever a LOOK: what exists in that world and how it is
+    recognised on screen. Who they are, what they want and how they behave is
+    written in the world's lore documents — in prose, where it belongs — or is not
+    written anywhere, which is also fine: nothing in the pipeline reads a
+    personality off a character, it reads a picture."""
 
     name: str
-    age: str = ""  # free text ("17", "late 20s"); folded into the visual prompt
+    # drama only — free text ("17", "late 20s"), folded into the compiled prompt. A
+    # world's character never has one: the loader strips it, the fandom editor has no
+    # field for it, and age that shows on a thing shows in its looks.
+    age: str = ""
     appearance: str = ""  # looks: hair, eyes, build, clothing → every image/video prompt
+    plurality: Plurality = "one"  # fandom only: one / many alike / a whole class
     # LLM-compiled, generation-ready English (rebuilt when dirty, see above)
     visual_prompt: str = ""  # token-dense txt2img/txt2vid descriptor (appearance + age)
     dirty: bool = True  # structured fields changed since last compile
+
+
+# --- configs/voices/*.toml ------------------------------------------------
+
+
+class VoiceConfig(BaseModel):
+    """A cloned voice: a sample of somebody speaking, plus what they say in it.
+
+    Cloning here is zero-shot — there is no training step and no profile living
+    inside a model, just a (sample, transcript) pair handed to the synthesizer with
+    every line. That is why this is a config and not an artifact: the card IS the
+    voice, it is portable, and the same card works on any engine that clones.
+
+    `text` is typed by a human on purpose. Lifting it off the sample with a
+    recognizer was tried and the errors do not stay put — the model reconciles a
+    wrong transcript with the audio by drifting, and in the worst measured case
+    spoke words from the SAMPLE in the middle of the synthesized line. Ten seconds
+    of typing buys the whole voice.
+
+    The sample lives next to the card (`ref` is relative to configs/voices/) because
+    the two are worthless apart. `slopgen voices add` writes both and refuses the
+    samples known to break cloning — clipped, too short, too noisy."""
+
+    name: str
+    ref: str = ""  # sample filename, relative to the card's own folder
+    text: str = ""  # what is said in the sample, exactly, typed by hand
+    # cloud engines enrol a voice from a URL and cannot be handed a local file; fill
+    # this in only if you want THIS card to work in the cloud too (see tts/qwen_api)
+    ref_url: str = ""
+    lang: str = "ru"
+    description: str = ""
+    root: Path | None = Field(default=None, exclude=True)  # set by the loader
+
+    @property
+    def ref_path(self) -> Path | None:
+        if not self.ref:
+            return None
+        return (self.root / self.ref) if self.root else Path(self.ref)
 
 
 # --- configs/fandoms/<name>/ ----------------------------------------------
@@ -332,6 +479,12 @@ class FandomConfig(BaseModel):
     """A fictional world the fandom mode narrates from the INSIDE, and the folder
     that holds it: `configs/fandoms/<name>/` with `fandom.toml`, one or more lore
     documents in markdown, and the world's own cast under `characters/`.
+
+    The split between those last two is the whole of what a world is made of: the
+    documents hold everything that is TRUE of the world, the characters hold only
+    what things LOOK like (see :class:`CharacterConfig`). A person's history, temper
+    and motives are lore; their face is a character entry, and so is the shared face
+    of the four hundred wardens nobody has ever named.
 
     `canon` is to the lore documents what `visual_prompt` is to a character (see
     :class:`CharacterConfig`): an LLM-compiled, generation-ready digest, built once
@@ -453,7 +606,15 @@ class RunParams(BaseModel):
     # built (media/filters.normalise), not here — a typo in a filter costs the effect,
     # never the run.
     filters: dict[str, int] = {}
-    voice_override: str = ""  # edge-tts voice id; empty = use content config default
+    # a catalogue voice for the active engine, or the name of a configs/voices/ clone;
+    # empty = whatever the content config (or the mode's default) picks
+    voice_override: str = ""
+    tts_engine: str = ""  # overrides [tts].engine for this run; empty = the config's
+    # WHO speaks the lines. "engine" synthesizes them; "manual" hands the script back
+    # and waits for wav files, exactly as `manual` does for footage — the operator may
+    # be reading them aloud, or using a service with no API at all. Word timings are
+    # then recovered by the aligner, since a microphone emits no WordBoundary events.
+    tts_source: Literal["engine", "manual"] = "engine"
     tts_rate: int = 0  # speech rate offset in percent (-50 = half speed, +50 = 50% faster)
     # -- drama mode --------------------------------------------------------
     scenario: str = ""  # the drama's premise/plot; empty = the LLM invents one

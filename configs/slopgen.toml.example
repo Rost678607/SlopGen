@@ -2,6 +2,9 @@
 assets = "assets"
 output = "output"
 state = "state"
+# Downloaded neural weights (`slopgen models`). Gitignored like the three above:
+# the local voice alone is 2.3 GiB, so it is fetched rather than shipped.
+models = "models"
 
 [video]
 width = 1080
@@ -31,6 +34,54 @@ music_volume = 0.12
 # «эн эл о» takes 0.62s and is genuinely spelled out. Whether bare letters or their
 # phonetic names read better varies by word (for «НЛО» the names are twice as quick),
 # so try both and keep what sounds right.
+# Who speaks. `edge` is free, needs no key, and reports word timings itself, which
+# is what the subtitles are built on — it is the default for both reasons.
+#
+#   edge        free, no key, 2 Russian voices + 12 multilingual, word timings included
+#   azure       the same synthesizer's paid catalogue: 700+ voices incl. Dragon HD Omni,
+#               also with word timings. ~$22/1M characters. Needs AZURE_SPEECH_KEY.
+#   qwen        Alibaba DashScope: cheaper (~$13/1M, first million free for 90 days)
+#               and clones a voice from your sample. Needs DASHSCOPE_API_KEY.
+#   qwen-local  the same cloning offline and free, at ~5 minutes of CPU per minute of
+#               speech. Needs `slopgen models install qwen3-tts-0.6b` (2.3 GiB).
+#
+# The last two report NO word timings, so they need a recognizer to read the timings
+# back off the audio: `slopgen models install vosk-ru-small`. Install it first — the
+# run refuses to start without it rather than voicing an hour of untimed narration.
+[tts]
+engine = "edge"
+
+# A cloning run listens to its own reference before it voices anything, and when the
+# sample scores badly it voices ONE short line to find out whether that matters —
+# refusing only if the model will not say it. The score alone never refuses: a
+# recognizer that cannot make out a child or a whisper scores a good sample badly.
+# Turning this off skips both, and trouble then shows up an hour into a render.
+check_reference = true
+
+# Preview-region only, and the Dragon HD Omni voices simply do not exist elsewhere:
+# eastus | westeurope | swedencentral | southeastasia
+[tts.azure]
+region = "eastus"
+temperature = 1.0
+enhance_pronunciation = true
+
+[tts.qwen]
+# the international endpoint; a key minted here is rejected by the mainland host
+base_url = "https://dashscope-intl.aliyuncs.com/api/v1"
+model = "qwen3-tts-flash"
+
+# Both measured on a Ryzen 7840U: bfloat16 with one thread per PHYSICAL core ran 3.3x
+# faster than float32 with one per hardware thread. `threads = 0` counts the cores.
+[tts.qwen_local]
+model_id = "qwen3-tts-0.6b"
+dtype = "bfloat16"
+threads = 0
+
+# One recognizer per content language, by id from the model catalogue.
+[tts.align.models]
+ru = "vosk-ru-small"
+en = "vosk-en-small"
+
 [tts.pronounce.ru]
 "НЛО" = "эн эл о"
 "ВОЗ" = "В О З"

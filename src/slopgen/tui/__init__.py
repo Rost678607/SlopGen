@@ -1,3 +1,3 @@
-from .app import SlopgenApp
+from .app import SlopgenApp, run_tui
 
-__all__ = ["SlopgenApp"]
+__all__ = ["SlopgenApp", "run_tui"]

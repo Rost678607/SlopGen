@@ -19,6 +19,7 @@ from .models import (
     PresetConfig,
     RunParams,
     VisualsConfig,
+    VoiceConfig,
 )
 
 __all__ = [
@@ -40,4 +41,5 @@ __all__ = [
     "PresetConfig",
     "RunParams",
     "VisualsConfig",
+    "VoiceConfig",
 ]

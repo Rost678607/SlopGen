@@ -7,6 +7,14 @@ it rewrites the character into a token-dense txt2img/txt2vid descriptor (the kin
 of comma-separated tag prompt diffusion models respond to best) plus a short
 narrative sheet for the script. It runs lazily — only when a character's
 structured fields changed since the last compile (the `dirty` flag).
+
+Two modes are served by the same helpers, and they mean different things by
+"character". A drama's is a person it invents: name, age, looks, and a personality the
+drama is free to write. A world's is a LOOK the world already contains — one specific
+character, a group of identical faceless ones, or a whole class of them — with no age
+and no personality at all, because those are written in the world's lore documents in
+prose (see `config.models.CharacterConfig`). The `world` flag on the functions below is
+what switches between the two.
 """
 
 from __future__ import annotations
@@ -39,7 +47,7 @@ def photo_to_appearance(llm, image_path: Path) -> str:
 # A drama casts actors, so its subjects are people and the prompt may say so — asking
 # for a consistent "face/outfit" is what keeps one across forty shots. A world need not
 # oblige: its characters are whatever it contains, and a prompt that assumes a face
-# will grow one on a ship. `any_form` is set for those.
+# will grow one on a ship. `world` is set for those.
 _ANY_FORM = (
     "The subject need NOT be human: it may be a person, a creature, a machine, a "
     "vehicle, a structure, or a place that acts as a character. Describe whatever it "
@@ -48,34 +56,94 @@ _ANY_FORM = (
     "instead. "
 )
 
+# A world's character may be one thing or four hundred of them (see
+# `config.models.Plurality`), and the difference is not decoration: the compiled prompt
+# is substituted in place of the name in every shot, so what the writer wrote as "three
+# wardens carry the box" becomes "three (<this prompt>) carry the box". A prompt that
+# names an individual's own scar therefore gives all three the same scar, and one that
+# counts ("a pair of wardens") multiplies against the writer's own count. Hence: always
+# ONE singular noun phrase, and for the plural kinds only what every member shares.
+_PLURALITY = {
+    "one": (
+        "The subject is ONE specific individual — this exact one, in every shot it "
+        "appears in. Include the personal, unrepeatable details that make it "
+        "recognisable at a glance. "
+    ),
+    "many": (
+        "The subject is a GROUP of visually identical, faceless figures — a uniformed "
+        "body of them, not one person. Describe the single look that EVERY one of them "
+        "wears: the garment, the covering, the gear, the build, the silhouette. Include "
+        "NOTHING personal — no scar, no individual face, no name-tag, no unique "
+        "ornament — because whatever you write is worn by all of them at once. Write it "
+        "as ONE singular figure ('a figure in …'), never a count and never a plural: a "
+        "shot decides for itself how many are in it. "
+    ),
+    "class": (
+        "The subject is a WHOLE KIND — a race, a species, a caste, a model of machine — "
+        "not one member of it. Describe only the shared traits that make any member "
+        "recognisable AS one of them at a glance: proportions, skin or plating, "
+        "features, the dress or fittings typical of the kind. Leave out whatever varies "
+        "from member to member, and leave out anything personal. Write it as ONE "
+        "singular member of the kind, never a count and never a plural. "
+    ),
+}
 
-def compile_character(llm, char: dict, any_form: bool = False) -> dict:
+
+def compile_character(llm, char: dict, world: bool = False) -> dict:
     """Compile the character into ONE generation-ready English `visual_prompt`: a
-    token-dense txt2img/txt2vid tag descriptor (appearance + age folded in),
-    optimized for diffusion models — not a literal translation.
+    token-dense txt2img/txt2vid tag descriptor, optimized for diffusion models — not a
+    literal translation.
 
-    `any_form` drops the assumption that the subject is a person (see `_ANY_FORM`)."""
+    `world` marks a fandom character: the subject need not be a person (see
+    `_ANY_FORM`), it carries no age, and it may be a group or a class rather than an
+    individual (see `_PLURALITY`)."""
+    plurality = str(char.get("plurality") or "one")
     system = (
         "You are a prompt engineer for AI image/video generation. Turn the given "
         "character into ONE English `visual_prompt`: a token-dense, comma-separated tag "
         "prompt for txt2img/txt2vid (diffusion-style). "
-        + (_ANY_FORM if any_form else "")
-        + "Fold in age and every visual trait; keep it concrete and reusable across "
+        + (_ANY_FORM + _PLURALITY.get(plurality, _PLURALITY["one"]) if world else "")
+        + "Fold in every visual trait"
+        + ("" if world else " and the age")
+        + "; keep it concrete and reusable across "
         + ("scenes so it looks like the same thing every time. "
-           if any_form else "scenes for a consistent face/outfit. ")
+           if world else "scenes for a consistent face/outfit. ")
         + "No "
         "sentences, no name. Optimize for model comprehension — do NOT merely translate. "
         'Respond with JSON only: {"visual_prompt": "..."}.'
     )
     user = (
-        f"name: {char.get('name', '')}\nage: {char.get('age', '')}\n"
-        f"appearance: {char.get('appearance', '')}"
+        f"name: {char.get('name', '')}\n"
+        + (f"what it is: {plurality}\n" if world else f"age: {char.get('age', '')}\n")
+        + f"appearance: {char.get('appearance', '')}"
     )
     data = llm.complete_json("char_compile", system, user)
     return {"visual_prompt": str(data.get("visual_prompt", "")).strip()}
 
 
-FILLABLE = ("age", "appearance")  # fields the AI may populate
+FILLABLE = ("age", "appearance")  # fields the AI may populate (drama)
+# A world's character is a LOOK and nothing else (see `config.models.CharacterConfig`):
+# no age, and above all no personality — a temper, a motive or a history invented here
+# would be a fact about the world stored outside its lore, where the writer never reads
+# it and the operator never finds it again. Those belong in the markdown, in prose.
+WORLD_FILLABLE = ("appearance",)
+
+# What the model is told it is describing, per plurality (see `_PLURALITY`, which does
+# the same job one step later for the compiled prompt).
+_WORLD_SUBJECT = {
+    "one": "ONE specific individual of that world — this one, and no other.",
+    "many": (
+        "a GROUP of visually identical, faceless figures of that world — wardens, "
+        "carriers, bearers, attendants, the kind of thing that appears by the dozen "
+        "and is never named. Describe the ONE look they all share, with nothing "
+        "personal in it, as a single figure rather than a crowd."
+    ),
+    "class": (
+        "a WHOLE KIND of that world — a race, a species, a caste, a model of machine — "
+        "not one member of it. Describe what any member of it looks like: the traits "
+        "they share, not the ones that vary between them."
+    ),
+}
 
 
 def autofill_one(llm, char: dict, lang: str = "en", user_prompt: str = "",
@@ -85,11 +153,15 @@ def autofill_one(llm, char: dict, lang: str = "en", user_prompt: str = "",
     it, and with no prompt it fills empties and refines the rest. Returns just the
     fields it actually changed (for highlighting).
 
-    `world` is set when the person belongs to a fandom, which is the only way a world's
-    people are ever filled in — one at a time, where they live. It is what keeps an
-    invented detail inside the world instead of borrowing one from ours."""
-    before = {k: str(char.get(k, "")).strip() for k in FILLABLE}
+    `world` is set when the character belongs to a fandom, which is the only way a
+    world's characters are ever filled in — one at a time, where they live. It is what
+    keeps an invented detail inside the world instead of borrowing one from ours, and it
+    narrows the job to the one field a world's character has (see `WORLD_FILLABLE`)."""
+    fields = WORLD_FILLABLE if world else FILLABLE
+    plurality = str(char.get("plurality") or "one")
+    before = {k: str(char.get(k, "")).strip() for k in fields}
     empty = [k for k, v in before.items() if not v]
+    names = " and ".join(fields)
     if user_prompt:
         goal = (
             "Follow this instruction from the user, rewriting ANY fields as needed "
@@ -97,35 +169,44 @@ def autofill_one(llm, char: dict, lang: str = "en", user_prompt: str = "",
         )
     elif empty:
         goal = (
-            f"Fill these empty fields: {empty}. You may also lightly refine the other "
-            "field so everything fits together, keeping its core meaning."
+            f"Fill these empty fields: {empty}."
+            + (" You may also lightly refine the other field so everything fits "
+               "together, keeping its core meaning." if len(fields) > 1 else "")
         )
     else:
         goal = (
-            "All fields are already filled. REWRITE each of age and appearance into a "
-            "richer, more specific and vivid version (fresh wording, add concrete detail) "
-            "while keeping the character's identity. You MUST return new, changed values "
-            "for BOTH fields — do not return them unchanged."
+            f"All fields are already filled. REWRITE {names} into a richer, more "
+            "specific and vivid version (fresh wording, add concrete detail) while "
+            "keeping the character's identity. You MUST return "
+            + ("new, changed values for BOTH fields"
+               if len(fields) > 1 else f"a new, changed {names}")
+            + " — do not return them unchanged."
         )
     system = (
         ("You describe one CHARACTER of the world set out below — a real place, not a "
          "story. It need not be a person: it may be a creature, a machine, a vehicle, a "
          "structure, or a place that acts as a character, and you describe whatever it "
-         "actually is rather than assuming a face or clothing. Everything you invent "
-         "about it must belong to that world: what it is for, the way its name is "
-         "formed, what it is made of, what it could plausibly be or own. Never give it "
-         "a thing that world has no room for. "
+         "actually is rather than assuming a face or clothing. "
+         f"THIS ONE IS {_WORLD_SUBJECT.get(plurality, _WORLD_SUBJECT['one'])} "
+         "Everything you invent about it must belong to that world: what it is made of, "
+         "what it is for, what it could plausibly wear or carry. Never give it a thing "
+         "that world has no room for.\n"
+         "You write ONE thing about it: what it LOOKS like. Not its name's meaning, not "
+         "its history, not its rank, not its temper, not what it wants or how it "
+         "behaves — those live in the world's own records and are none of your "
+         "business. Anything that would not be visible in a photograph does not belong "
+         "in your answer. "
          if world else
          "You design one character for a short dramatic video (anime web drama). ")
         + f"`appearance` = looks/clothing/build. {goal}\n"
         f"Write values in {lang}. Respond with JSON only: an object holding ONLY the keys "
-        "you changed (age/appearance), each a non-empty string."
+        f"you changed ({'/'.join(fields)}), each a non-empty string."
     )
     user = (f"Character: {{'name': {char.get('name','')!r}, {before}}}"
-            + (f"\n\nTHE WORLD THEY LIVE IN:\n{world}" if world else ""))
+            + (f"\n\nTHE WORLD IT BELONGS TO:\n{world}" if world else ""))
     data = llm.complete_json("char_autofill", system, user)
     out = {}
-    for k in FILLABLE:
+    for k in fields:
         v = str(data.get(k, "")).strip()
         if v and v != before[k]:  # accept any genuine change (empty or rewritten)
             out[k] = v
@@ -294,13 +375,13 @@ def autofill_all(
     return out
 
 
-def recompile_if_dirty(llm, char: CharacterConfig, any_form: bool = False) -> CharacterConfig:
+def recompile_if_dirty(llm, char: CharacterConfig, world: bool = False) -> CharacterConfig:
     """Lazily refresh the compiled prompts when the character changed. Returns the
     same object when clean, or an updated copy (dirty cleared) when recompiled.
 
-    `any_form` is passed through to :func:`compile_character`: a world's characters
-    are not necessarily people."""
+    `world` is passed through to :func:`compile_character`: a world's characters are
+    not necessarily people, and not necessarily individuals either."""
     if not char.dirty and char.visual_prompt:
         return char
-    out = compile_character(llm, char.model_dump(), any_form=any_form)
+    out = compile_character(llm, char.model_dump(), world=world)
     return char.model_copy(update={**out, "dirty": False})

@@ -199,6 +199,23 @@ def _shot_prompt(
     budget = _tag_budget(len(named))
 
     mentioned: list[str] = []
+    # Substitution happens through PLACEHOLDERS, and that is not a detail. A look is
+    # inserted where a name stood, and the next name in the loop would otherwise be
+    # matched inside the text just inserted — including inside itself, because a
+    # compiled look routinely opens with the thing it describes. Measured on this
+    # project's own fandom run: an entity named "wide stone town square" whose look
+    # begins "wide stone town square, weathered cobblestones…" collided with the
+    # shorter entries "wide stone" and "wide" and came out as "A wide (wide (wide
+    # stone (wide stone (wide stone town square, …", the same clause four times over,
+    # in every one of the eleven prompts. A placeholder holds no letters, so nothing
+    # can match inside it, and expanding them all at the end is one pass with no
+    # re-entry.
+    fills: list[str] = []
+
+    def _slot(body: str) -> str:
+        fills.append(body)
+        return f"\x00{len(fills) - 1}\x00"
+
     # longest name first so "Сергей Костенко" is not eaten by "Сергей"
     for name in sorted(looks, key=len, reverse=True):
         look = looks.get(name, "").strip()
@@ -209,9 +226,10 @@ def _shot_prompt(
             continue
         first = _tags(look, budget) if name in people else look
         # first mention carries the (budgeted) look, later ones a short tag
-        text = pattern.sub(lambda _m: f"({first})", text, count=1)
-        text = pattern.sub(lambda _m: f"({_short_tag(look)})", text)
+        text = pattern.sub(lambda _m: _slot(f"({first})"), text, count=1)
+        text = pattern.sub(lambda _m: _slot(f"({_short_tag(look)})"), text)
         mentioned.append(name)
+    text = re.sub(r"\x00(\d+)\x00", lambda m: fills[int(m.group(1))], text)
 
     absent = [
         _short_tag(cast_prompts[n]) for n in scene.characters
@@ -419,6 +437,13 @@ def _collect_manual(job: VideoJob, ctx: AppContext) -> tuple[dict[int, Path], ma
             target_s=scene.clip_target_s,
             part=scene.part,
             kind=kind,
+            # What to come back with. For a GENERATED shot this is a property of the
+            # run and not of the shot: `manual` is an orthogonal flag over a source
+            # that is either stills or clips, so the medium lives in `ctx.medium` and
+            # the model name never carries it. Dropping it here is what made a
+            # slideshow ask its operator for shot_00.mp4. A SEARCH decides per shot
+            # instead — the briefer sets `want` from what the moment needs.
+            want="" if kind == "search" else ctx.medium,
         ))
     _brief_searches(specs, ctx)
     m = manual.collect(job.workdir, specs, ctx.g.video.width, ctx.g.video.height)

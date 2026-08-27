@@ -15,14 +15,21 @@ import asyncio
 import os
 import shutil
 import subprocess
+import sys
+import tempfile
+import threading
+import time
 import tomllib
 import zlib
+from datetime import datetime
 from pathlib import Path
 
 import tomli_w
 from dotenv import load_dotenv
 from textual import events, on
 from textual.app import App, ComposeResult
+from rich.cells import cell_len
+from rich.markup import escape
 from textual.color import Color
 from textual.containers import Center, Horizontal, Vertical, VerticalScroll
 from textual.coordinate import Coordinate
@@ -70,9 +77,13 @@ from ..media.generate import PHOTO_MODELS, VIDEO_MODELS
 from ..media.generate import env_keys as gen_keys
 from ..media.generate import key_var_for_model
 from ..pipeline import Orchestrator, VideoJob, manual, parts, review
-from ..pipeline.checkpoint import Checkpoint
+from ..pipeline.checkpoint import CHECKPOINT_NAME, Checkpoint
 from ..pipeline.context import AppContext
+from ..models import CATALOG as MODEL_CATALOG
+from ..models import ModelStore, human_size
 from ..pipeline.stages import tts as tts_stage
+from ..tts import ENGINES as TTS_ENGINES
+from ..tts import voice_presets
 from .forms import (
     Choice,
     FieldTextArea,
@@ -83,6 +94,7 @@ from .forms import (
     NumStep,
     Number,
     Range,
+    T,
     Text,
     Toggle,
     resize_text_field,
@@ -110,6 +122,34 @@ EDGE_TTS_VOICES: dict[str, list[tuple[str, str]]] = {
         ("William ♂ (AU)", "en-AU-WilliamNeural"),
     ],
 }
+
+
+def voice_options(store: ConfigStore, lang: str, engine: str = "",
+                  t: T | None = None) -> list[tuple[str, str]]:
+    """The voice menu for one language, under whichever engine will do the speaking.
+
+    Three sources, in the order the operator thinks about them: the curated Edge names
+    above when Edge is the engine (they read better than the raw ids), the engine's own
+    presets otherwise, and — always, on every engine — the operator's own cloned voices
+    from `configs/voices/`. The clones come last and are marked, because they are the
+    ones that belong to this machine rather than to a catalogue."""
+    engine = engine or store.global_cfg.tts.engine or "edge"
+    if engine == "edge":
+        opts = list(EDGE_TTS_VOICES.get(lang, []))
+    else:
+        opts = [(v, v) for v in voice_presets(engine, lang)]
+    info = TTS_ENGINES.get(engine)
+    clones = [(f"⧉ {name}", name) for name, v in store.voices.items()
+              if not v.lang or v.lang == lang]
+    if info is not None and not info.clones:
+        clones = []  # an engine that cannot clone would only fail on them later
+    out = opts + clones
+    # A cloning-only engine has nothing to offer until the operator has made a voice
+    # card, and Textual refuses an empty non-blank Select. Say why rather than crash.
+    if not out:
+        out = [((t or (lambda k: k))("voice_none"), "")]
+    return out
+
 
 LOGO = r"""
  ███████╗██╗      ██████╗ ██████╗  ██████╗ ███████╗███╗   ██╗
@@ -438,7 +478,9 @@ I18N: dict[str, dict[str, str]] = {
     "en": {
         "subtitle": "industrial neuroslop pipeline",
         "menu.generate": "⛏  Generate videos",
+        "menu.runs": "⏵  Continue a run",
         "menu.config": "⚙  Configuration",
+        "menu.models": "🧠 Models",
         "menu.quit": "✖  Quit",
         "step.content": "Content",
         "step.characters": "Story",
@@ -473,6 +515,17 @@ I18N: dict[str, dict[str, str]] = {
         "fandom_person_blank": "(nothing written down yet)",
         "fandom_remove_person": "🗑 Remove from the world",
         "fandom_fill_person": "✨ AI: fill in from the world",
+        "f.plurality": "What it is",
+        "plural_one": "one specific character",
+        "plural_many": "many identical, faceless",
+        "plural_class": "a whole kind (race / class / model)",
+        # short badges for the world's people list, where the line is 44 columns wide
+        "plural_badge_many": "many alike",
+        "plural_badge_class": "a whole kind",
+        "help.world_char_name": "What this is called. It is the handle the writer uses in a shot — slopgen swaps it for the look below before the picture is generated — so a group's name may well be a plural noun of the world's own ('the wardens', 'winter carriers').",
+        "help.world_char_plurality": "Whether this entry is one character or many of them. One = a specific character, this face in every shot. Many identical = a body of interchangeable, faceless figures who all wear the same look; the shot decides how many are in it. A whole kind = a race, a caste, a model of machine — what any member of it looks like.",
+        "help.world_char_appearance": "What it LOOKS like — and only that. Who they are, what they have done and what they are like belongs in the lore document, in prose, where the writer reads it as a fact of the world. This field is injected into every image/video prompt, so anything invisible in a photograph is wasted here. For a group or a kind, describe what all of them share and nothing personal.",
+        "char_cfg_world_note": "The world's own characters. Here a character is a LOOK — one figure, a body of identical ones, or a whole kind. Personalities live in the lore documents; nothing reads them off this form.",
         "help.fandom_world": "The world this video happens in. Pick a fandom, edit its characters (they belong to the world, so an edit here changes the world itself — as it should: a character is in it or is not), and write its lore. The canon sheet under the lore is what the writer actually holds; it is rebuilt whenever the lore changes.",
         "fandom_soon_note": "Ready to generate: a video from inside this world, with its own characters.",
         "fandom_brief_none": "The model returned nothing usable — your text is untouched.",
@@ -640,6 +693,11 @@ I18N: dict[str, dict[str, str]] = {
         "cast_empty": "add a character, write a plot, or enter an AI prompt first",
         "lang": "Content language",
         "voice": "Voice",
+        "tts_engine": "Voice engine",
+        "help.tts_engine": "Who actually speaks the lines. Edge is free and needs no key. Azure is the same synthesizer's paid catalogue — 700+ voices, including the Dragon HD Omni line that reads a line in the context of the ones around it. Qwen is cheaper still and can clone a voice from a sample you supply; the local Qwen does the same offline and free, at about five minutes of CPU per minute of speech. Edge and Azure report word timings themselves; the others need the recognizer from Models, which reads the timings back off the audio.",
+        "voice_none": "— no voices yet: this engine only clones, add a card in Configuration → Cloned voices —",
+        "tts_manual": "I supply the recordings myself",
+        "help.tts_manual": "Turns the voiceover into the same errand as hand-made footage: the run writes the script out, waits, and picks up the wav files you drop into its inbox. For the good voices that have no API — and for reading the lines yourself. Word timings come from the recognizer, since a microphone reports none.",
         "ctype": "Content type",
         "ctype_auto": "Any — no fixed type (LLM picks freely)",
         "idea": "Your idea",
@@ -704,6 +762,73 @@ I18N: dict[str, dict[str, str]] = {
         "cfg.ads": "Ad contracts",
         "cfg.accounts": "Accounts",
         "cfg.presets": "Presets",
+        "cfg.tts": "Voice engine",
+        "cfg.voices": "Cloned voices",
+        "tts_note": "Who speaks, and with what. Edge is the free default and needs nothing; the others need a key (saved to .env) or a downloaded model (Models on the home screen). Only Edge and Azure report word timings themselves — the rest get theirs from the recognizer, so install it before running on them.",
+        "tts_active": "Speaking now",
+        "tts_no_timings": "no word timings of its own — needs the recognizer",
+        "tts_timings_ok": "reports word timings itself",
+        "tts_engine_missing": "model not installed",
+        "azure_region": "Azure region",
+        "azure_temp": "Dragon HD temperature",
+        "azure_enhance": "Dragon HD: careful with rare words",
+        "qwen_model": "DashScope model",
+        "qwen_base": "DashScope endpoint",
+        "qwen_threads": "Threads (0 = physical cores)",
+        "qwen_dtype": "Precision",
+        "help.qwen_threads": "Measured on this project's machine: one thread per PHYSICAL core beat one per hardware thread by 2.4x. The decoding is bound by memory bandwidth, and the second thread on a core adds none of it — it only evicts the other one's cache. 0 counts the cores for you, which is the right answer everywhere.",
+        "voice_step_name": "1 · Name for this voice",
+        "voice_step_text": "2 · What is said in the recording — type it out, word for word",
+        "voice_step_file": "— 3 · The recording —",
+        "voice_step_save": "— 4 · Save —",
+        "voice_step_listen": "— 5 · Listen —",
+        "voice_src_note": "Give the path to your audio file wherever it lives — Downloads, a voice message, anything ffmpeg can read. Import copies it into the library converted to what the cloners want. What matters is that it is ONE continuous take and that the transcript above is what is actually said in it; how long it runs does not change the voice, only the time each line takes to make.",
+        "voice_src_ph": "~/Downloads/recording.m4a",
+        "voice_no_src": "give a path to your recording in step 3 first",
+        "voice_sample": "sample",
+        "voice_sample_none": "no sample yet — point step 3 at your recording and press Import",
+        "voice_sample_gone": "the sample this card names is missing",
+        "voice_now_save": "now press Save",
+        "voice_url": "Public URL of the sample (cloud engine only)",
+        "voice_lang": "Language",
+        "voice_desc": "Note",
+        "voice_note": "A cloned voice = this card + one recording. There is no training step, so the card IS the voice and works on any engine that clones. Two things matter: type the transcript by hand (a recognizer's errors make the model drift, and a wrong one has been measured making it speak words from the SAMPLE mid-line), and let step 3 judge the recording — a clipped or hissy sample fails silently, spoiling every line made with it.",
+        "voice_check": "🎚 Check",
+        "voice_import": "⤓ Import",
+        "voice_no_ref": "point `ref` at an audio file first",
+        "models_head": "Neural models",
+        "models_note": "Weights are not in the repository — they are fetched here and can be thrown away again. An interrupted download resumes where it stopped.",
+        "models_install": "⤓ Install",
+        "models_remove": "🗑 Remove",
+        "models_installed": "installed",
+        "models_missing": "not installed",
+        "models_busy": "already working on a model",
+        "models_needed_by": "needed by",
+        "models_pip": "pip packages",
+        "models_done": "installed",
+        "models_removed": "removed",
+        "models_pip_missing": "missing",
+        "demo": "🔊 Speak a demo",
+        "demo_head": "— Listen —",
+        "demo_note": "One line, spoken right now by the engine above. No pipeline, no subtitles — just the voice. On the local model this takes about a minute the first time, while the weights load.",
+        "demo_lang": "Language",
+        "demo_voice": "Voice",
+        "demo_text": "What it should say",
+        "demo_working": "speaking",
+        "demo_played": "✔ playing",
+        "demo_err": "could not speak it — every take came back wrong",
+        "demo_retry": "take {n} of {of} came back wrong, throwing again…",
+        "demo_no_text": "type something for it to say",
+        "demo_no_voice": "pick a voice first",
+        "demo_no_cloner": "no engine here can clone yet — set DASHSCOPE_API_KEY for `qwen`, or install qwen3-tts-0.6b on the Models screen for `qwen-local`",
+        "voice_clean": "🧹 Import + denoise",
+        "voice_import_done": "imported",
+        "voice_import_err": "import failed",
+        "voice_import_refused": "not imported — fix the recording first (see above)",
+        "voice_before": "before",
+        "voice_says": "does it say its transcript?",
+        "voice_save_first": "save the card first — the demo speaks with what is on disk",
+        "models_pip_ok": "present",
         "f.age": "Age",
         "f.appearance": "Appearance",
         "char_ai_note": "All fields are optional — leave them for the AI. The description is compiled into a model-optimized English prompt at generation time.",
@@ -790,16 +915,46 @@ I18N: dict[str, dict[str, str]] = {
         "gather.delivered": "delivered",
         "gather.inbox": "inbox",
         "gather.clip": "clip",
-        "gather.drop_hint": "drop a clip into the inbox as",
+        "gather.drop_hint": "Drop the clip into the inbox as {id}.mp4 — or a still, if that is what you made: it will be held and slowly panned to the beat's length. Any file ffmpeg finds a picture in is taken, whatever it is called.",
+        "gather.drop_hint_photo": "This run is a slideshow, so a still suits it best — drop it into the inbox as {id}.jpg. A clip is taken just as well and gets fitted to the beat. Any file ffmpeg finds a picture in is taken, whatever it is called.",
+        "gather.drop_hint_any": "Drop it into the inbox as {id}.<ext> — a clip or a still, whichever you made; a still is held and panned to length, a clip is fitted to the beat. Any file ffmpeg finds a picture in is taken.",
+        "gather.ignored": "in the inbox, not taken:",
+        "gather.why.unknown_shot": "no shot is called that",
+        "gather.why.no_picture": "ffmpeg finds no picture in it",
+        "gather.why.already_delivered": "that shot already has its file",
         "gather.none": "No shots awaiting manual clips.",
         "gather.attach_prompt": "Path to the clip file:",
-        "gather.bad_clip": "not a readable video file",
+        "gather.bad_clip": "no picture in that file — a clip or a still, either is fine, but ffmpeg has to be able to read one",
         "gather.incomplete": "no part has all of its clips yet — finish one and it can be cut",
         "gather.col.part": "part",
         "gather.part_ready": "part {n} ✔ ready to cut",
         "gather.part_left": "part {n}: {k} left",
         "gather.will_cut": "Continuing cuts and publishes the ready part(s); the rest waits for you here.",
         "gather.wait_all": "This run cuts every part at the end, so all of the clips are needed before it can go on.",
+        # past runs: pick one off disk and continue it where it stopped
+        "runs.title": "Past runs",
+        "runs.hint": "Every run under the output folder that left a checkpoint, newest first. A continued run is driven by its OWN settings — voice, mode, breakpoints — not by whatever the wizard currently holds, and it skips every stage it already finished.",
+        "runs.col.run": "run",
+        "runs.col.what": "what",
+        "runs.col.videos": "videos",
+        "runs.col.state": "state",
+        "runs.col.error": "error",
+        "runs.mode.info": "⚡ info",
+        "runs.mode.drama": "🎭 drama",
+        "runs.mode.fandom": "🌍 fandom",
+        "runs.state.pending": "not started",
+        "runs.state.running": "interrupted",
+        "runs.state.paused": "needs clips",
+        "runs.state.review": "breakpoint",
+        "runs.state.failed": "failed",
+        "runs.state.done": "finished",
+        "runs.broken": "checkpoint unreadable — written by another version",
+        "runs.done_stages": "done",
+        "runs.updated": "last written",
+        "runs.resume": "▶ Continue this run",
+        "runs.rescan": "⟳ Rescan",
+        "runs.none": "Nothing to continue — no run under the output folder has left a checkpoint yet.",
+        "runs.nothing_left": "this run is finished — there is nothing left to do",
         # breakpoints: picking them (Summary step) and the review screen
         "bp_head": "— Breakpoints —",
         "bp_hint": "Pause the run after these stages to check — and edit — what came out.",
@@ -889,6 +1044,7 @@ I18N: dict[str, dict[str, str]] = {
         "bp.play_none": "this line has no audio yet — re-voice it first",
         "bp.play_err": "ffplay not found (it ships with ffmpeg)",
         "bp.ai_ph_script": "anything: rewrite, reorder, merge, split, add or drop scenes, recast, change generators",
+        "unit.cast": "character prompts compiled",
         "unit.outline": "story outline",
         "unit.script": "script windows",
         "unit.entities": "registry passes",
@@ -927,7 +1083,9 @@ I18N: dict[str, dict[str, str]] = {
     "ru": {
         "subtitle": "промышленный конвейер нейрослопа",
         "menu.generate": "⛏  Генерация видео",
+        "menu.runs": "⏵  Продолжить прогон",
         "menu.config": "⚙  Конфигурация",
+        "menu.models": "🧠 Модели",
         "menu.quit": "✖  Выход",
         "step.content": "Контент",
         "step.characters": "Сюжет",
@@ -962,6 +1120,16 @@ I18N: dict[str, dict[str, str]] = {
         "fandom_person_blank": "(пока ничего не записано)",
         "fandom_remove_person": "🗑 Убрать из мира",
         "fandom_fill_person": "✨ ИИ: дописать по миру",
+        "f.plurality": "Что это",
+        "plural_one": "конкретный персонаж",
+        "plural_many": "много одинаковых безликих",
+        "plural_class": "целый вид (раса / класс / модель)",
+        "plural_badge_many": "много одинаковых",
+        "plural_badge_class": "целый вид",
+        "help.world_char_name": "Как это называется. Это то имя, которым сценарист зовёт его в кадре — slopgen подменит его на внешность ниже, прежде чем картинка уйдёт в генератор, — так что у группы имя вполне может быть множественным словом самого мира («стражи», «зимние почтальоны»).",
+        "help.world_char_plurality": "Один это персонаж или много. Конкретный — одно и то же лицо в каждом кадре. Много одинаковых — взаимозаменяемые безликие фигуры в одной и той же внешности; сколько их в кадре, решает кадр. Целый вид — раса, каста, модель машины: как выглядит любой её представитель.",
+        "help.world_char_appearance": "Как это ВЫГЛЯДИТ — и только. Кто он, что сделал и какой он по характеру — это в лор-документ, прозой, где сценарист прочтёт это как факт мира. Отсюда текст вшивается в каждый промпт кадра, поэтому всё, чего не видно на фотографии, здесь пропадает зря. Для группы или вида описывай общее для всех и ничего личного.",
+        "char_cfg_world_note": "Персонажи самого мира. Здесь персонаж — это ВНЕШНОСТЬ: одна фигура, толпа одинаковых или целый вид. Характеры живут в лор-документах; с этой формы их никто не читает.",
         "help.fandom_world": "Мир, в котором происходит это видео. Выбери фандом, отредактируй его персонажей (они принадлежат миру, поэтому правка здесь меняет сам мир — так и должно быть: персонаж в нём либо есть, либо нет) и напиши его лор. Канон-справка под лором — это то, что реально держит перед собой сценарист; она пересобирается при изменении лора.",
         "fandom_soon_note": "Готово к генерации: видео изнутри этого мира, с его персонажами.",
         "fandom_brief_none": "Модель не вернула ничего пригодного — твой текст не тронут.",
@@ -1129,6 +1297,11 @@ I18N: dict[str, dict[str, str]] = {
         "cast_empty": "сначала добавь персонажа, впиши сюжет или промпт для ИИ",
         "lang": "Язык контента",
         "voice": "Голос",
+        "tts_engine": "Движок озвучки",
+        "help.tts_engine": "Кто на самом деле произносит реплики. Edge бесплатен и не требует ключа. Azure — платный каталог того же синтезатора: 700+ голосов, включая линейку Dragon HD Omni, которая читает фразу с оглядкой на соседние. Qwen ещё дешевле и умеет клонировать голос по твоему образцу; локальный Qwen делает то же самое офлайн и даром — ценой примерно пяти минут процессора на минуту речи. Edge и Azure сами сообщают тайминги слов; остальным нужен распознаватель из раздела «Модели», который снимает тайминги с готового звука.",
+        "voice_none": "— голосов ещё нет: этот движок только клонирует, заведи карточку в «Конфигурация → Клонированные голоса» —",
+        "tts_manual": "Озвучиваю сам",
+        "help.tts_manual": "Превращает озвучку в такую же ручную работу, как самодельный видеоряд: прогон выписывает текст, встаёт и ждёт wav-файлы, которые ты положишь в его входящую папку. Для хороших голосов без API — и для того, чтобы начитать самому. Тайминги слов даст распознаватель: микрофон их не сообщает.",
         "ctype": "Тип контента",
         "ctype_auto": "Любой — без фиксированного типа (нейронка выбирает сама)",
         "idea": "Своя идея",
@@ -1193,6 +1366,84 @@ I18N: dict[str, dict[str, str]] = {
         "cfg.ads": "Рекламные контракты",
         "cfg.accounts": "Аккаунты",
         "cfg.presets": "Пресеты",
+        "cfg.tts": "Движок озвучки",
+        "cfg.voices": "Клонированные голоса",
+        "tts_note": "Кто говорит и чем. Edge — бесплатный вариант по умолчанию, ему не нужно ничего; остальным нужен ключ (сохраняется в .env) или скачанная модель (раздел «Модели» на главном экране). Тайминги слов сами сообщают только Edge и Azure — остальные берут их у распознавателя, так что его надо поставить заранее.",
+        "tts_active": "Сейчас говорит",
+        "tts_no_timings": "своих таймингов слов не даёт — нужен распознаватель",
+        "tts_timings_ok": "сам сообщает тайминги слов",
+        "tts_engine_missing": "модель не установлена",
+        "azure_region": "Регион Azure",
+        "azure_temp": "Температура Dragon HD",
+        "azure_enhance": "Dragon HD: аккуратнее с редкими словами",
+        "qwen_model": "Модель DashScope",
+        "qwen_base": "Эндпоинт DashScope",
+        "qwen_threads": "Потоки (0 = по числу ядер)",
+        "qwen_dtype": "Точность",
+        "help.qwen_threads": "Замерено на машине этого проекта: один поток на ФИЗИЧЕСКОЕ ядро оказался в 2,4 раза быстрее, чем один на аппаратный поток. Декодирование упирается в пропускную способность памяти, а второй поток на ядре её не добавляет — только вытесняет кеш соседа. 0 посчитает ядра сам, и это верный ответ везде.",
+        "voice_step_name": "1 · Как назвать этот голос",
+        "voice_step_text": "2 · Что сказано в записи — набери руками, слово в слово",
+        "voice_step_file": "— 3 · Сама запись —",
+        "voice_step_save": "— 4 · Сохранить —",
+        "voice_step_listen": "— 5 · Послушать —",
+        "voice_src_note": "Укажи путь к своему аудиофайлу там, где он лежит: Загрузки, голосовое, что угодно, что читает ffmpeg. Импорт скопирует его в библиотеку, приведя к тому, что хотят клонеры. Важно, чтобы это был ОДИН непрерывный кусок и чтобы расшифровка выше говорила ровно то, что в нём звучит; длительность на голос не влияет — только на время синтеза каждой реплики.",
+        "voice_src_ph": "~/Загрузки/запись.m4a",
+        "voice_no_src": "сначала укажи в шаге 3 путь к своей записи",
+        "voice_sample": "образец",
+        "voice_sample_none": "образца пока нет — укажи в шаге 3 путь к записи и нажми «Импортировать»",
+        "voice_sample_gone": "образец, названный в карточке, не найден",
+        "voice_now_save": "теперь нажми «Сохранить»",
+        "voice_url": "Публичный URL образца (только для облачного движка)",
+        "voice_lang": "Язык",
+        "voice_desc": "Заметка",
+        "voice_note": "Клонированный голос = эта карточка + одна запись. Обучения нет, поэтому карточка И ЕСТЬ голос и работает на любом клонирующем движке. Важны две вещи: расшифровку набирай руками (ошибки распознавателя уводят модель, и с неверной она, по замерам, начинала произносить слова ИЗ ОБРАЗЦА посреди реплики), и дай шагу 3 оценить запись — клиппованный или шипящий образец не падает с ошибкой, он портит каждую сделанную с ним реплику.",
+        "voice_check": "🎚 Проверить",
+        "voice_import": "⤓ Импортировать",
+        "voice_no_ref": "сначала укажи в `ref` путь к звуковому файлу",
+        "models_head": "Нейронки",
+        "models_note": "Весов в репозитории нет — они качаются здесь и так же выбрасываются. Оборванная загрузка продолжится с места обрыва.",
+        "models_install": "⤓ Установить",
+        "models_remove": "🗑 Удалить",
+        "models_installed": "установлена",
+        "models_missing": "не установлена",
+        "models_busy": "уже качаю другую модель",
+        "models_needed_by": "нужна для",
+        "models_pip": "пакеты pip",
+        "models_done": "установлена",
+        "models_removed": "удалена",
+        # The catalogue itself lives in slopgen/models/registry.py and is written in
+        # English, because the CLI is; these are its Russian face, keyed by model id
+        # and falling back to the registry's own text when one is missing.
+        "model.qwen3-tts-0.6b": "Локальное клонирование голоса: даёшь ему кусок чьей-то речи и её расшифровку — и он говорит твои реплики этим голосом. Здесь только на процессоре: замеренный RTF 5.05 на 8 потоках в bfloat16, то есть минута речи обходится примерно в пять.",
+        "model.vosk-ru-small": "Распознаватель речи, нужный ТОЛЬКО ради таймингов слов, но не ради текста: слова уже известны, распознаватель лишь говорит, когда прозвучало каждое.",
+        "model.vosk-en-small": "Распознаватель речи, нужный ТОЛЬКО ради таймингов слов, но не ради текста: слова уже известны, распознаватель лишь говорит, когда прозвучало каждое.",
+        "model.rnnoise-sh": "Шумодав для ОБРАЗЦОВ голоса, гоняется через arnndn в ffmpeg. На телефонной записи дал +11 dB шумового пола, и, в отличие от спектрального шумоподавления, не оставляет «музыкального шума», который клонер честно повторил бы.",
+        "used.qwen3-tts-0.6b": "движка озвучки «qwen-local»",
+        "used.vosk-ru-small": "tts.align — нужен любому движку, не возвращающему тайминги слов",
+        "used.vosk-en-small": "tts.align — нужен любому движку, не возвращающему тайминги слов",
+        "used.rnnoise-sh": "`slopgen voices add --clean`",
+        "models_pip_missing": "не хватает",
+        "demo": "🔊 Послушать",
+        "demo_head": "— Прослушивание —",
+        "demo_note": "Одна реплика, прямо сейчас, выбранным выше движком. Без конвейера и субтитров — только голос. На локальной модели первый раз это займёт около минуты, пока грузятся веса.",
+        "demo_lang": "Язык",
+        "demo_voice": "Голос",
+        "demo_text": "Что произнести",
+        "demo_working": "говорю",
+        "demo_played": "✔ играю",
+        "demo_err": "не смог произнести — все дубли вышли бракованными",
+        "demo_retry": "дубль {n} из {of} вышел бракованным, бросаю ещё раз…",
+        "demo_no_text": "впиши, что произнести",
+        "demo_no_voice": "сначала выбери голос",
+        "demo_no_cloner": "здесь пока нечем клонировать — впиши DASHSCOPE_API_KEY для «qwen» или поставь qwen3-tts-0.6b на экране «Модели» для «qwen-local»",
+        "voice_clean": "🧹 Импорт + шумодав",
+        "voice_import_done": "импортировано",
+        "voice_import_err": "импорт не удался",
+        "voice_import_refused": "не импортировано — сначала почини запись (см. выше)",
+        "voice_before": "было",
+        "voice_says": "говорит ли то, что написано?",
+        "voice_save_first": "сначала сохрани карточку — демка говорит тем, что лежит на диске",
+        "models_pip_ok": "на месте",
         "f.age": "Возраст",
         "f.appearance": "Внешность",
         "char_ai_note": "Все поля опциональны — можно доверить ИИ. Описание компилируется в оптимизированный под нейросети английский промпт при запуске генерации.",
@@ -1279,16 +1530,46 @@ I18N: dict[str, dict[str, str]] = {
         "gather.delivered": "готово",
         "gather.inbox": "inbox",
         "gather.clip": "клип",
-        "gather.drop_hint": "положи клип в inbox под именем",
+        "gather.drop_hint": "Положи клип в инбокс как {id}.mp4 — или кадр, если сделал кадр: он растянется на длину бита с лёгким наездом. Возьмут любой файл, в котором ffmpeg находит картинку, как бы он ни назывался.",
+        "gather.drop_hint_photo": "Этот прогон — слайд-шоу, так что кадр подходит лучше всего: положи его в инбокс как {id}.jpg. Клип возьмут ровно так же и подгонят под бит. Возьмут любой файл, в котором ffmpeg находит картинку, как бы он ни назывался.",
+        "gather.drop_hint_any": "Положи в инбокс как {id}.<расш> — клип или кадр, что сделал: кадр растянется на нужную длину с лёгким наездом, клип подгонят под бит. Возьмут любой файл, в котором ffmpeg находит картинку.",
+        "gather.ignored": "лежит в инбоксе, но не взято:",
+        "gather.why.unknown_shot": "нет кадра с таким именем",
+        "gather.why.no_picture": "ffmpeg не находит в нём картинки",
+        "gather.why.already_delivered": "у этого кадра уже есть файл",
         "gather.none": "Нет кадров, ожидающих ручных клипов.",
         "gather.attach_prompt": "Путь к файлу клипа:",
-        "gather.bad_clip": "не читается как видеофайл",
+        "gather.bad_clip": "в этом файле нет картинки — клип или кадр, всё равно, но ffmpeg должен её увидеть",
         "gather.incomplete": "ни одна часть ещё не собрана целиком — добей любую, и её можно монтировать",
         "gather.col.part": "часть",
         "gather.part_ready": "часть {n} ✔ можно монтировать",
         "gather.part_left": "часть {n}: осталось {k}",
         "gather.will_cut": "Продолжение смонтирует и опубликует готовые части; остальные подождут тебя здесь.",
         "gather.wait_all": "Этот прогон режет все части в конце, так что дальше он пойдёт только со всеми клипами.",
+        # прошлые прогоны: выбрать на диске и продолжить с места остановки
+        "runs.title": "Прошлые прогоны",
+        "runs.hint": "Все прогоны в папке вывода, оставившие чекпоинт; свежие сверху. Продолженный прогон идёт по СВОИМ настройкам — голос, режим, брейкпоинты, — а не по тем, что сейчас в мастере, и пропускает всё, что уже сделал.",
+        "runs.col.run": "прогон",
+        "runs.col.what": "что",
+        "runs.col.videos": "ролики",
+        "runs.col.state": "состояние",
+        "runs.col.error": "ошибка",
+        "runs.mode.info": "⚡ инфа",
+        "runs.mode.drama": "🎭 дорама",
+        "runs.mode.fandom": "🌍 фэндом",
+        "runs.state.pending": "не начат",
+        "runs.state.running": "оборван",
+        "runs.state.paused": "нужны клипы",
+        "runs.state.review": "брейкпоинт",
+        "runs.state.failed": "упал",
+        "runs.state.done": "завершён",
+        "runs.broken": "чекпоинт не читается — записан другой версией",
+        "runs.done_stages": "сделано",
+        "runs.updated": "последняя запись",
+        "runs.resume": "▶ Продолжить прогон",
+        "runs.rescan": "⟳ Пересканировать",
+        "runs.none": "Продолжать нечего — ни один прогон в папке вывода ещё не оставил чекпоинта.",
+        "runs.nothing_left": "этот прогон завершён — делать в нём больше нечего",
         # брейкпоинты: выбор (шаг «Итог») и экран разбора
         "bp_head": "— Брейкпоинты —",
         "bp_hint": "Остановить конвейер после этих этапов, чтобы проверить и поправить результат.",
@@ -1378,6 +1659,7 @@ I18N: dict[str, dict[str, str]] = {
         "bp.play_none": "у строки ещё нет озвучки — сначала переозвучь",
         "bp.play_err": "ffplay не найден (он идёт вместе с ffmpeg)",
         "bp.ai_ph_script": "что угодно: переписать, переставить, склеить, разбить, добавить или убрать сцены, сменить каст и нейронки",
+        "unit.cast": "промптов персонажей собрано",
         "unit.outline": "план истории",
         "unit.script": "окон сценария",
         "unit.entities": "проходов по реестру",
@@ -1418,8 +1700,107 @@ I18N: dict[str, dict[str, str]] = {
 # status badges reuse localized words where useful; keep them compact/ASCII-safe.
 
 
+# How long the shutdown is given to finish on its own before it is ended by force.
+# Comfortably more than Textual needs to leave the alternate screen and restore the
+# terminal, which happens first — the hang comes later, in the executor join.
+HARD_EXIT_GRACE_S = 2.0
+
+# Armed only for a real interactive session (see `run_tui`). A test harness or an
+# embedder drives the app itself and must be left to end on its own terms — a fuse
+# lit under `run_test` would cut the run short and take its output with it.
+_INTERACTIVE = False
+
+
+def arm_hard_exit(grace: float = HARD_EXIT_GRACE_S) -> None:
+    """Guarantee that closing the interface closes the PROCESS.
+
+    Textual runs threaded workers in a pool, and both `concurrent.futures` and
+    asyncio's own loop shutdown JOIN those threads before the interpreter may exit.
+    A worker inside torch inference cannot be interrupted, so `App.run()` never
+    returns: the interface vanishes from the screen and the process grinds on.
+    Measured on this machine after one demo take — 44 minutes at 687% CPU and 7 GB
+    resident, with nothing left to stop it but `kill`.
+
+    A DAEMON thread is the lever, because a daemon is the one kind of thread nobody
+    waits for. It is armed when the user asks to quit and does nothing if the normal
+    shutdown wins the race; if it does not, `os._exit` ends the process without
+    joining anything. Nothing here is buffered — every config write hits disk when
+    its button is pressed — so there is no state to lose by leaving that way."""
+
+    if not _INTERACTIVE:
+        return
+
+    def _fuse() -> None:
+        time.sleep(grace)
+        try:
+            sys.stdout.flush()
+            sys.stderr.flush()
+        finally:
+            os._exit(0)
+
+    threading.Thread(target=_fuse, daemon=True, name="slopgen-hard-exit").start()
+
+
+def run_tui(*args, **kwargs) -> None:
+    global _INTERACTIVE
+
+    _INTERACTIVE = True
+    app = SlopgenApp(*args, **kwargs)
+    app.run()
+    # normal path: the loop returned on its own, so nothing was stuck
+    os._exit(0)
+
+
 def _label(app: "SlopgenApp", key: str) -> str:
     return I18N[app.ui_lang].get(key, key)
+
+
+def _play_audio(host, path: Path) -> bool:
+    """Play a file and return at once. `ffplay` ships with ffmpeg, which is already a
+    hard requirement, so there is no second audio dependency to install — and the
+    process is detached so a 20-second take does not freeze the interface."""
+    if not path or not Path(path).exists():
+        host.notify(_label(host.app, "bp.play_none"), severity="warning", timeout=5)
+        return False
+    try:
+        subprocess.Popen(
+            ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", str(path)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        return True
+    except (OSError, FileNotFoundError):
+        host.notify(_label(host.app, "bp.play_err"), severity="error", timeout=8)
+        return False
+
+
+# What a demo says. Long enough to judge a voice on — it has to carry a question, a
+# pause and a number, because a voice that reads a flat clause well can still fumble
+# all three — and short enough that the local model, at five minutes of CPU per minute
+# of speech, answers while you are still waiting for it.
+DEMO_TEXT = {
+    "ru": "Марта закрыла дверь и обернулась. «Ты правда думаешь, что это закончится хорошо?» "
+          "Их было двадцать семь, а осталось трое.",
+    "en": "Martha closed the door and turned around. \"Do you really think this ends well?\" "
+          "There were twenty-seven of them, and three are left.",
+}
+
+
+def demo_path(store: ConfigStore, engine: str, voice: str, suffix: str) -> Path:
+    """Where a demo take lands. Named after what made it, so listening to the same
+    voice twice overwrites rather than piles up, and two voices can be compared
+    without either of them being gone."""
+    safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in f"{engine}_{voice}")[:60]
+    d = Path(tempfile.gettempdir()) / "slopgen-demo"
+    d.mkdir(parents=True, exist_ok=True)
+    return d / f"{safe}{suffix}"
+
+
+def _tr(app: "SlopgenApp", key: str, fallback: str) -> str:
+    """A label that has a source of truth OUTSIDE the I18N table — a model's
+    description lives in `models/registry.py`, where the CLI reads it too. Translate
+    it if we have, print the original if we have not; a catalogue entry added without
+    a translation must still be readable rather than show its own key."""
+    return I18N[app.ui_lang].get(key) or fallback
 
 
 def _update_global_toml(section: str, values: dict) -> None:
@@ -1428,6 +1809,67 @@ def _update_global_toml(section: str, values: dict) -> None:
     data = tomllib.loads(path.read_text()) if path.exists() else {}
     data.setdefault(section, {}).update(values)
     path.write_bytes(tomli_w.dumps(data).encode())
+
+
+class ButtonRow(Horizontal):
+    """A row of buttons that WRAPS instead of losing its tail off the right edge.
+
+    Textual's horizontal layout gives every child its natural width and silently clips
+    whatever runs past the container. That is invisible while developing in English and
+    breaks in Russian, where the same labels run 20-30% longer — measured across this
+    app at ordinary terminal widths: 63 clipped buttons, and not only cosmetically. The
+    character editor's "+ new" tab was cut off by 65 columns, i.e. there was no way to
+    add a character at all once the cast grew.
+
+    So a row is a GRID whose column count is recomputed on every resize: as many equal
+    columns as fit the WIDEST button. Equal columns sized to the widest is what makes
+    the guarantee absolute — no label can be truncated, whatever language it is in —
+    and everything that does not fit wraps onto the next row instead of off the edge.
+    """
+
+    DEFAULT_CSS = """
+    ButtonRow { layout: grid; height: auto; grid-gutter: 0 2; grid-rows: 3; }
+    ButtonRow > Button { width: 100%; margin: 0; }
+    /* tabs keep their own width inside the equal cells: an action bar reads better
+       with uniform buttons, a tab strip reads worse — a two-letter tab blown up to
+       the width of the longest name stops looking like a tab. The cells stay equal
+       either way, which is what the wrapping arithmetic relies on. */
+    ButtonRow.tabbar > Button { width: auto; }
+    """
+
+    MIN_BUTTON = 16  # Textual's own default min-width for Button
+    GUTTER = 2  # must match grid-gutter's horizontal value above
+
+    def _natural(self, button) -> int:
+        """How wide this button wants to be: its label plus the two columns of chrome
+        Textual adds, never below the min-width in force for it (10 for a tab, 16 for
+        an ordinary button)."""
+        floor = self.MIN_BUTTON
+        try:
+            min_w = button.styles.min_width
+            if min_w is not None and min_w.is_cells:
+                floor = int(min_w.value)
+        except Exception:  # noqa: BLE001 — a missing style is not worth a crash
+            pass
+        return max(floor, cell_len(str(button.label)) + 2)
+
+    def on_resize(self, event) -> None:
+        self.repack(event.size.width)
+
+    def repack(self, width: int | None = None) -> None:
+        """Recompute the column count. Call it after mounting buttons into an existing
+        row — a tab bar gains a tab without the container changing size, so `on_resize`
+        never fires and the layout would keep the column count it was built with."""
+        kids = [c for c in self.children if c.display and isinstance(c, Button)]
+        width = self.size.width if width is None else width
+        if not kids or width <= 0:
+            return
+        widest = max(self._natural(k) for k in kids)
+        # n columns cost n*widest + (n-1)*gutter, hence the +GUTTER on both sides
+        cols = max(1, min(len(kids), (width + self.GUTTER) // (widest + self.GUTTER)))
+        # only the columns are pinned: rows are left to flow, so a row that gains a
+        # button grows downwards instead of dropping it
+        self.styles.grid_size_columns = cols
 
 
 class TopBar(Horizontal):
@@ -1554,7 +1996,9 @@ class HomeScreen(Screen):
                 yield Static(t("subtitle"), id="logo-sub")
                 with Vertical(id="home-menu"):
                     yield Button(t("menu.generate"), id="go-generate", variant="success")
+                    yield Button(t("menu.runs"), id="go-runs", variant="warning")
                     yield Button(t("menu.config"), id="go-config", variant="primary")
+                    yield Button(t("menu.models"), id="go-models", variant="primary")
                     yield Button(t("menu.quit"), id="go-quit", variant="error")
 
     def on_mount(self) -> None:
@@ -1564,9 +2008,17 @@ class HomeScreen(Screen):
     def _generate(self) -> None:
         self.app.push_screen(ModeSelectScreen())
 
+    @on(Button.Pressed, "#go-runs")
+    def _runs(self) -> None:
+        self.app.push_screen(RunsScreen())
+
     @on(Button.Pressed, "#go-config")
     def _config(self) -> None:
         self.app.push_screen(ConfigScreen())
+
+    @on(Button.Pressed, "#go-models")
+    def _models(self) -> None:
+        self.app.push_screen(ModelManagerScreen())
 
     @on(Button.Pressed, "#go-quit")
     def _quit(self) -> None:
@@ -1607,6 +2059,9 @@ FIELD_HELP = {
     "wlore-area": "help.fandom_lore", "wlore-doc": "help.fandom_lore",
     "e-characters-name": "help.char_name", "e-characters-age": "help.char_age",
     "e-characters-appearance": "help.char_appearance",
+    "e-world-char-name": "help.world_char_name",
+    "e-world-char-plurality": "help.world_char_plurality",
+    "e-world-char-appearance": "help.world_char_appearance",
     "char-prompt": "help.char_prompt", "char-photo-path": "help.char_photo",
     "orch-profile": "help.orch_profile",
     "ws-medium": "help.fandom_medium", "ws-vsrc": "help.fandom_source",
@@ -1789,11 +2244,15 @@ class GenerateScreen(Screen):
         """The Content step's fields. DramaScreen overrides to drop content-type /
         idea (a drama's premise lives in the Story step instead)."""
         init_lang = "en"
-        voice_opts = EDGE_TTS_VOICES.get(init_lang, [])
+        voice_opts = voice_options(store, init_lang, t=lambda k: _label(self.app, k))
         return Form("w", [
             Choice("lang", "lang", options=[(l, l) for l in store.languages()], value=init_lang),
+            Choice("tts_engine", "tts_engine",
+                   options=[(i.label, i.id) for i in TTS_ENGINES.values()],
+                   value=store.global_cfg.tts.engine if store.global_cfg.tts.engine in TTS_ENGINES else "edge"),
             Choice("voice", "voice", options=voice_opts,
                    value=voice_opts[0][1] if voice_opts else None),
+            Toggle("tts_manual", "tts_manual", value=False),
             Choice("ctype", "ctype",
                    options=[(_label(self.app, "ctype_auto"), "")]
                    + [(f"{n} — {c.description}", n) for n, c in store.content_types.items()],
@@ -1905,9 +2364,22 @@ class GenerateScreen(Screen):
         values = self.f_breaks.read(self)
         return [n for n in review.available(self.MODE) if values.get(f"bp-{n}")]
 
+    # nav (28) + inspector (46) are fixed columns; below this the step body would be
+    # squeezed to nothing — and a field of width 0 does not merely look wrong, it
+    # crashes the text renderer. So the inspector, which is help rather than controls,
+    # steps aside first.
+    MIN_WIDTH_FOR_INSPECTOR = 108
+
+    def on_resize(self, event) -> None:
+        try:
+            inspector = self.query_one("#wizard-inspector")
+        except Exception:  # noqa: BLE001 — resize can arrive before compose finishes
+            return
+        inspector.display = event.size.width >= self.MIN_WIDTH_FOR_INSPECTOR
+
     def _nav_buttons(self, step: int):
         t = self._t
-        with Horizontal(classes="nav-row"):
+        with ButtonRow(classes="nav-row"):
             yield Button(t("prev"), id=f"w-prev-{step}", classes="nav-btn")
             yield Button(t("next"), id=f"w-next-{step}", classes="nav-btn", variant="primary")
 
@@ -2057,12 +2529,26 @@ class GenerateScreen(Screen):
     # -- dynamic visibility (data-driven from the Group predicates) ---------
 
     @on(Select.Changed, "#w-lang")
-    def _lang_changed(self, event: Select.Changed) -> None:
-        lang = str(event.value)
-        opts = EDGE_TTS_VOICES.get(lang, [])
+    @on(Select.Changed, "#w-tts_engine")
+    def _voice_menu_changed(self, event: Select.Changed) -> None:
+        """The voice menu belongs to the (language, engine) pair, not to either alone:
+        a voice name means nothing outside the catalogue it comes from, so changing
+        either end has to rebuild the list. Same mechanism as the LLM pane's model
+        presets following the provider."""
+        self._refresh_voices()
+
+    def _refresh_voices(self) -> None:
+        lang = str(self.query_one("#w-lang", Select).value)
+        engine = str(self.query_one("#w-tts_engine", Select).value)
+        opts = voice_options(self.app.store, lang, engine,
+                             t=lambda k: _label(self.app, k))
         voice_sel = self.query_one("#w-voice", Select)
+        keep = voice_sel.value
         voice_sel.set_options(opts)
-        if opts:
+        values = [v for _, v in opts]
+        if keep in values:
+            voice_sel.value = keep
+        elif opts:
             voice_sel.value = opts[0][1]
 
     @on(Select.Changed, "#w-ad-src")
@@ -2158,6 +2644,8 @@ class GenerateScreen(Screen):
         return {
             "lang": c["lang"],
             "voice": c["voice"],
+            "tts_engine": c.get("tts_engine", ""),
+            "tts_manual": bool(c.get("tts_manual")),
             "ctype": c.get("ctype", ""),  # absent in the drama wizard's content form
             "idea": c.get("idea", ""),
             "profanity": c["profanity"],
@@ -2286,6 +2774,8 @@ class GenerateScreen(Screen):
                 manual_visuals=vis_manual,
                 subtitle_style=g["subs"],
                 voice_override=g["voice"],
+                tts_engine=g["tts_engine"],
+                tts_source="manual" if g["tts_manual"] else "engine",
                 tts_rate=g["tts_rate"],
                 breakpoints=g["breakpoints"],
                 clean_subtitles=g["clean_subs"],
@@ -2315,14 +2805,18 @@ def _write_character(
 
     `directory`/`existing` point the same writer at a fandom's own cast folder
     (configs/fandoms/<world>/characters/), which is a separate library — the world's
-    people are not in the global one."""
+    people are not in the global one. Which descriptive fields get written follows
+    the form the operator was editing rather than the model: a drama's character has
+    an age, a world's has a plurality, and neither carries the other's field into
+    its file (see `config.models.CharacterConfig`)."""
     if existing is None:
         existing = store.characters.get(name)
     # the file name IS the identity — the loader fills `name` from the stem, so we
     # don't duplicate it inside the file (avoids filename/inner-name divergence).
     data = {
-        "age": vals.get("age", ""),
-        "appearance": vals.get("appearance", ""),
+        k: vals[k] for k in ("age", "appearance", "plurality") if k in vals
+    }
+    data |= {
         "visual_prompt": existing.visual_prompt if existing else "",
         "dirty": True,
     }
@@ -2380,7 +2874,7 @@ class LoreEditor(Vertical):
         yield Static(t("fandom_lore_head"), classes="group-head")
         yield Label(t("fandom_doc"), classes="lore-doc-label")
         yield Select([], id=f"{p}-doc", classes="lore-doc")
-        with Horizontal(classes="entity-actions"):
+        with ButtonRow(classes="entity-actions"):
             yield Button(t("fandom_preview"), id=f"{p}-toggle", classes="lore-toggle")
             yield Button(t("save"), id=f"{p}-save", classes="lore-save", variant="success")
             yield Button(t("fandom_recompile"), id=f"{p}-recompile",
@@ -2690,11 +3184,15 @@ class DramaScreen(_CharEditAI, GenerateScreen):
     def _content_form(self, store: ConfigStore) -> Form:
         # drama: no content-type / idea — the premise lives in the Story step
         init_lang = "en"
-        voice_opts = EDGE_TTS_VOICES.get(init_lang, [])
+        voice_opts = voice_options(store, init_lang, t=lambda k: _label(self.app, k))
         return Form("w", [
             Choice("lang", "lang", options=[(l, l) for l in store.languages()], value=init_lang),
+            Choice("tts_engine", "tts_engine",
+                   options=[(i.label, i.id) for i in TTS_ENGINES.values()],
+                   value=store.global_cfg.tts.engine if store.global_cfg.tts.engine in TTS_ENGINES else "edge"),
             Choice("voice", "voice", options=voice_opts,
                    value=voice_opts[0][1] if voice_opts else None),
+            Toggle("tts_manual", "tts_manual", value=False),
             Range("profanity", "profanity", value=store.global_cfg.defaults.profanity,
                   lo=0, hi=100, step=5, labels=PROFANITY_LABELS),
             # speed is authored BEFORE the script here: the writer sizes each beat's
@@ -2975,7 +3473,7 @@ class DramaScreen(_CharEditAI, GenerateScreen):
             yield Static(t("orch_head"), classes="group-head")
             yield Label(t("orch_profile"))
             yield Select(self._orch_profile_opts(t), id="orch-profile", value=CUSTOM, allow_blank=False)
-            with Horizontal(classes="entity-actions"):
+            with ButtonRow(classes="entity-actions"):
                 yield Button(t("orch_add"), id="orch-add", variant="success")
                 yield Button(t("orch_up"), id="orch-up")
                 yield Button(t("orch_down"), id="orch-down")
@@ -3008,18 +3506,18 @@ class DramaScreen(_CharEditAI, GenerateScreen):
             [(t("drama_protagonist_none"), "")],
             id="drama-protagonist", allow_blank=False, value="",
         )
-        with Horizontal(classes="entity-actions"):
+        with ButtonRow(classes="entity-actions"):
             yield Button(t("drama_tropes_btn"), id="drama-tropes-btn")
         yield from self._ai_prompt_block(t)
 
     def _ai_prompt_block(self, t):
         yield from Text("prompt", "", placeholder="drama_prompt_ph").build("drama", t)
-        with Horizontal(classes="entity-actions"):
+        with ButtonRow(classes="entity-actions"):
             yield Button(t("char_autofill_all"), id="cast-fill-all", variant="primary")
 
     def _cast_block(self, t):
         yield Static(t("drama_cast_head"), classes="group-head")
-        with Horizontal(classes="entity-actions"):
+        with ButtonRow(classes="entity-actions"):
             yield Button(t("drama_add"), id="cast-add", variant="success")
         yield ListView(id="cast-list")
         yield Static(t("drama_cast_hint2"), classes="hint")
@@ -3542,6 +4040,8 @@ class DramaScreen(_CharEditAI, GenerateScreen):
         p = self.f_publish.read(self)
         return {
             "lang": c["lang"], "voice": c["voice"], "ctype": "", "idea": "",
+            "tts_engine": c.get("tts_engine", ""),
+            "tts_manual": bool(c.get("tts_manual")),
             "profanity": c["profanity"],
             "tts_rate": c.get("tts_rate", 0),
             **self._timing(c),
@@ -3712,6 +4212,8 @@ class DramaScreen(_CharEditAI, GenerateScreen):
                 ad_mode=g["ad_mode"],
                 push=g["push"], count=g["count"],
                 voice_override=g["voice"], tts_rate=g["tts_rate"],
+                tts_engine=g["tts_engine"],
+                tts_source="manual" if g["tts_manual"] else "engine",
                 subtitle_style=g["subs"],
                 breakpoints=g["breakpoints"],
                 clean_subtitles=g["clean_subs"],
@@ -3835,7 +4337,7 @@ class FandomScreen(DramaScreen):
             # folder. Same widget as Configuration → Fandoms, so there is one way to
             # author a world and it does not matter where you are standing.
             yield Static(t("fandom_cast_head"), classes="group-head")
-            with Horizontal(classes="entity-actions"):
+            with ButtonRow(classes="entity-actions"):
                 yield Button(t("fandom_add_person"), id="world-add", variant="success")
             yield ListView(id="world-list")
             yield Static(t("fandom_cast_hint2"), classes="hint")
@@ -3852,7 +4354,7 @@ class FandomScreen(DramaScreen):
             yield from self._plot_block(t)
             yield Static(t("drama_ai_head"), classes="group-head")
             yield from Text("prompt", "", placeholder="fandom_prompt_ph").build("drama", t)
-            with Horizontal(classes="entity-actions"):
+            with ButtonRow(classes="entity-actions"):
                 yield Button(t("fandom_write_brief"), id="fandom-brief-ai", variant="primary")
             return
         yield from super()._pane_body(key, t)
@@ -3895,9 +4397,12 @@ class FandomScreen(DramaScreen):
     #
     # The same shape every other wizard step has, and for the same reason: the middle
     # column is forty characters wide and the panel on the right is otherwise showing
-    # nothing but help. What is NOT shared with the drama is what an edit means —
+    # nothing but help. Two things are NOT shared with the drama. What an edit means:
     # every save here writes the world's own character file, because these people
-    # belong to the world and there is no run cast for them to live in.
+    # belong to the world and there is no run cast for them to live in. And what a
+    # character is: a LOOK, of one figure or of thousands, with its personality (if it
+    # has one) living in the lore documents — hence the `world_characters` form rather
+    # than the drama's (see `config.models.CharacterConfig`).
 
     def _people(self) -> list[CharacterConfig]:
         cfg = self.app.store.fandoms.get(self._fandom)
@@ -3919,8 +4424,11 @@ class FandomScreen(DramaScreen):
         for i, c in enumerate(self._people()):
             look = " ".join((c.appearance or "").split())
             look = (look[:44] + "…") if len(look) > 44 else look
-            age = (c.age or "").strip()
-            sub = f"{age} · {look}" if age and look else (age or look)
+            # what it is comes first: a group and an individual read identically once
+            # they are both reduced to a line of clothing
+            kind = ("" if c.plurality == "one"
+                    else _label(self.app, f"plural_badge_{c.plurality}"))
+            sub = f"{kind} · {look}" if kind and look else (kind or look)
             name = Static(c.name or "—", classes="world-name")
             # as TEXT, so the palette colour is lifted until it reads on the panel
             name.styles.color = identity_ink(colours.get(c.name, palette[0]), ground)
@@ -3940,7 +4448,7 @@ class FandomScreen(DramaScreen):
         self._insp_mode = "editor"
         self._person = idx
         cur = people[idx] if 0 <= idx < len(people) else None
-        self._person_form = _entity_form("characters")
+        self._person_form = _entity_form("world_characters", t)
         widgets = [Static(t("fandom_person_head"), classes="group-head")]
         widgets += self._person_form.build(t)
         widgets.append(Horizontal(Input(placeholder=t("char_photo_ph"), id="char-photo-path"),
@@ -3954,7 +4462,8 @@ class FandomScreen(DramaScreen):
                                   classes="entity-actions"))
         await self._set_inspector(widgets)
         self._person_form.fill(self, {
-            "name": cur.name if cur else "", "age": cur.age if cur else "",
+            "name": cur.name if cur else "",
+            "plurality": cur.plurality if cur else "one",
             "appearance": cur.appearance if cur else "",
         })
 
@@ -4030,9 +4539,10 @@ class FandomScreen(DramaScreen):
 
     @on(Button.Pressed, "#world-fill")
     def _person_fill(self, event: Button.Pressed) -> None:
-        """Fill this person's age and looks from the WORLD. The drama's cast fill
-        invents an ensemble to fit a plot; this one may invent only what this place
-        could already contain."""
+        """Fill in what this LOOKS like, from the WORLD. The drama's cast fill invents
+        an ensemble to fit a plot; this one may invent only what this place could
+        already contain, and only ever its appearance — a world's character has no
+        personality here, it has one in the lore or none at all."""
         event.stop()
         form = self._person_form
         if form is None or not self._fandom:
@@ -4349,7 +4859,12 @@ class ProgressScreen(Screen):
             yield ProgressBar(total=100, show_eta=False, id="run-bar")
             yield Static("", id="run-count")
         yield DataTable(id="queue")
-        yield RichLog(id="log", wrap=True, highlight=True)
+        # markup=True, and it matters: without it every colour this screen writes is
+        # printed as the literal text "[red]…[/red]", which is what the run log did
+        # until an error long enough to read made it obvious. Everything the pipeline
+        # hands over is escaped on the way in (see `_log`) — a traceback carrying a
+        # bracket must not be parsed as a colour.
+        yield RichLog(id="log", wrap=True, highlight=True, markup=True)
 
     def on_mount(self) -> None:
         t = lambda k: _label(self.app, k)  # noqa: E731
@@ -4382,7 +4897,8 @@ class ProgressScreen(Screen):
             ctx = AppContext(store=self.app.store, params=self.params,
                              on_progress=self._on_progress_threadsafe)
         except Exception as e:
-            self.app.call_from_thread(self._log, f"[red]{_label(self.app, 'err.startup')}: {e}")
+            self.app.call_from_thread(
+                self._log, f"[red]{_label(self.app, 'err.startup')}:[/red] {escape(str(e))}")
             return
         orch = Orchestrator(ctx, on_event=self._on_event_threadsafe)
         jobs = orch.run(resume_dir=self.resume_dir)
@@ -4433,13 +4949,13 @@ class ProgressScreen(Screen):
         elif status in ("done", "skip"):
             self.query_one("#run-bar", ProgressBar).update(total=100, progress=100)
         if status == "error":
-            self._log(f"[red]{t('col.video')} {i} — {stage}:[/red]\n{message}")
+            self._log(f"[red]{t('col.video')} {i} — {stage}:[/red]\n{escape(message)}")
         elif status == "paused":
-            self._log(f"[yellow]{t('col.video')} {i} · {t('gather.paused')}[/yellow] — {message}")
+            self._log(f"[yellow]{t('col.video')} {i} · {t('gather.paused')}[/yellow] — {escape(message)}")
         elif status == "review":
             self._log(f"[yellow]{t('col.video')} {i} · {stage} · {t('bp.paused')}[/yellow]")
         elif status == "done" and message:
-            self._log(f"{t('col.video')} {i} · {stage} ✔ {message}")
+            self._log(f"{t('col.video')} {i} · {stage} ✔ {escape(message)}")
 
     def _log(self, text: str) -> None:
         self.query_one("#log", RichLog).write(text)
@@ -4461,7 +4977,7 @@ class ProgressScreen(Screen):
         self._log(f"[bold green]{t('run.finished')}: {len(done)}/{total}[/bold green]")
         for j in done:
             for line in str(j.published).splitlines():
-                self._log(f"  → {line}")
+                self._log(f"  → {escape(line)}")
         self.notify(f"{t('run.finished')}: {len(done)}/{total}", timeout=10)
 
 
@@ -4619,12 +5135,26 @@ class ManualGatherScreen(Screen):
             # whether any ONE episode is complete — that is what Continue would render
             line += f"\n{self._part_status()}"
             line += f"\n[dim]{t('gather.will_cut' if self.iterative else 'gather.wait_all')}[/dim]"
+        line += self._ignored_line()
         self.query_one("#gather-progress", Static).update(line)
         if self.rows:
             table.move_cursor(row=min(prev, len(self.rows) - 1))
             self._show_detail()
         else:
             self.query_one("#shot-detail", Static).update(t("gather.none"))
+
+    def _ignored_line(self) -> str:
+        """What is sitting in the inbox and will never be picked up, with the reason.
+
+        A rescan that takes nothing used to be indistinguishable from a rescan with
+        nothing to take: a file misnamed by one character, or one ffmpeg cannot read,
+        left the screen saying 0/11 and the operator wondering which. Now it says."""
+        t = lambda k: _label(self.app, k)  # noqa: E731
+        bad: list[str] = []
+        for job_index, m in self.manifests.items():
+            for path, why in manual.rejected_in_inbox(m, self._workdir(job_index)):
+                bad.append(f"  {escape(path.name)} — {t(f'gather.why.{why}')}")
+        return f"\n[yellow]{t('gather.ignored')}[/yellow]\n" + "\n".join(bad) if bad else ""
 
     def _selected(self) -> manual.ManualShot | None:
         table = self.query_one("#shots", DataTable)
@@ -4643,19 +5173,26 @@ class ManualGatherScreen(Screen):
             f"[b]{shot.id}[/b]{part}  ·  {_STATUS_BADGE.get(shot.status, shot.status)}  ·  "
             f"~{shot.target_s:.0f}s  ·  {shot.width}×{shot.height}"
         )
+        if shot.want:
+            head += f"  ·  [b]{t(f'gather.want.{shot.want}')}[/b]"
         if shot.kind == "search":
             # A search task is not a prompt to paste; it is an errand. The brief says
             # what to come back with, and the queries are the words to type — kept on
             # their own lines because they are copied one at a time until one hits.
-            want = t(f"gather.want.{shot.want}") if shot.want else ""
-            head += f"  ·  [b]{t('gather.kind.search')}[/b]" + (f" ({want})" if want else "")
+            head += f"  ·  [b]{t('gather.kind.search')}[/b]"
             body = f"{shot.prompt}\n\n[b]{t('gather.queries')}[/b]\n" + "\n".join(
                 f"  {q}" for q in shot.queries
             ) if shot.queries else shot.prompt
             hint = t("gather.drop_hint_search").format(id=shot.id)
         else:
             body = shot.prompt
-            hint = f"{t('gather.drop_hint')} {shot.id}.mp4"
+            # What to bring back is the run's medium, not the shot's: a slideshow asks
+            # for a still and asking it for shot_00.mp4 is how an operator finds out
+            # their choice was thrown away somewhere upstream.
+            hint = {
+                "photo": t("gather.drop_hint_photo"),
+                "video": t("gather.drop_hint"),
+            }.get(shot.want, t("gather.drop_hint_any")).format(id=shot.id)
         self.query_one("#shot-detail", Static).update(
             f"{head}\n\n{body}{clip}\n\n[dim]{hint}[/dim]"
         )
@@ -4824,10 +5361,10 @@ class BreakpointScreen(Screen):
                 # two rows on purpose: the pane is a fixed 48 columns and five
                 # labelled buttons do not fit across it — what is edited above, how
                 # it is arranged below
-                with Horizontal(id="bp-row-item", classes="entity-actions"):
+                with ButtonRow(id="bp-row-item", classes="entity-actions"):
                     yield Button(t("bp.add"), id="bp-add", variant="success")
                     yield Button(t("bp.remove"), id="bp-del", variant="error")
-                with Horizontal(id="bp-row-order", classes="entity-actions"):
+                with ButtonRow(id="bp-row-order", classes="entity-actions"):
                     yield Button(t("bp.up"), id="bp-up")
                     yield Button(t("bp.down"), id="bp-down")
                     yield Button(t("bp.cut"), id="bp-cut", variant="success")
@@ -5040,16 +5577,7 @@ class BreakpointScreen(Screen):
         if index is None:
             return
         audio = self.job.scenes[index].audio
-        if not audio or not Path(audio).exists():
-            self.notify(_label(self.app, "bp.play_none"), severity="warning", timeout=5)
-            return
-        try:
-            subprocess.Popen(
-                ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", str(audio)],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            )
-        except (OSError, FileNotFoundError):
-            self.notify(_label(self.app, "bp.play_err"), severity="error", timeout=8)
+        _play_audio(self, Path(audio) if audio else None)
 
     async def _rebuild(self, keep: int | None = None) -> None:
         """Repaint everything: header, cards, the open card's fields, notes."""
@@ -5467,20 +5995,329 @@ class BreakpointScreen(Screen):
 
 
 # --------------------------------------------------------------------------
+# Past runs: pick one off disk and continue it
+# --------------------------------------------------------------------------
+
+# How many runs the list offers. A drama is resumed over days and the output folder
+# fills up with months of them; past the first page nobody is looking for a run by
+# eye any more, they are looking for it by name on the command line.
+RUNS_LIMIT = 30
+
+# One glyph per job state, so a run's videos read as a tally at a glance. `review`
+# gets the eye rather than the pause the run screen draws for it: on this screen the
+# two parked states lead to two different doors, and telling them apart is the whole
+# reason the column exists.
+_RUN_ICONS = {"done": "✔", "failed": "✘", "review": "👁", "paused": "⏸",
+              "running": "⏳", "pending": "·"}
+# Which state speaks for the whole run, most demanding first. It is deliberately the
+# same order the Continue button follows (review → gather → resume), so what the row
+# says is what pressing the button does.
+_RUN_STATE_ORDER = ["review", "paused", "failed", "running", "pending", "done"]
+
+
+def _scan_runs(base: Path, limit: int = RUNS_LIMIT) -> list[Checkpoint]:
+    """Every run under `base` that left a checkpoint, newest first.
+
+    Newest by the checkpoint's own `updated_at`: the folder's mtime moves for reasons
+    that have nothing to do with the pipeline — a clip dropped into an inbox by hand
+    touches it — so the stamp the writer put there is the honest clock, and mtime is
+    only the fallback for a checkpoint too old to carry one. Both are ISO strings, so
+    one sort covers the mixture. A checkpoint that will not parse is skipped rather
+    than fatal: this screen is the one place the operator goes when a run went wrong,
+    and it must open."""
+    if not Path(base).is_dir():
+        return []
+    found: list[tuple[str, Checkpoint]] = []
+    for d in sorted(Path(base).iterdir()):
+        if not d.is_dir() or not (d / CHECKPOINT_NAME).exists():
+            continue
+        try:
+            cp = Checkpoint.load(d)
+        except Exception:  # noqa: BLE001 — half-written or hand-edited; not our funeral
+            continue
+        stamp = str(cp.data.get("updated_at") or "")
+        if not stamp:
+            stamp = datetime.fromtimestamp(cp.path.stat().st_mtime).isoformat(timespec="seconds")
+        found.append((stamp, cp))
+    found.sort(key=lambda pair: pair[0], reverse=True)
+    return [cp for _, cp in found[:limit]]
+
+
+def _run_params(cp: Checkpoint) -> RunParams | None:
+    """The run's own resolved params, or None when the file predates the current
+    schema. Everything downstream — the summary, the resume — needs them, so a run
+    that cannot produce them is listed and refused rather than hidden."""
+    try:
+        return cp.params
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _run_count(cp: Checkpoint, params: RunParams | None) -> int:
+    return params.count if params is not None else len(cp.data.get("jobs", {}))
+
+
+def _run_statuses(cp: Checkpoint, params: RunParams | None) -> list[str]:
+    return [cp.status(i) for i in range(_run_count(cp, params))]
+
+
+def _run_state(statuses: list[str]) -> str:
+    """The one word for the whole run (see _RUN_STATE_ORDER)."""
+    for state in _RUN_STATE_ORDER:
+        if state in statuses:
+            return state
+    return "done"
+
+
+class RunsScreen(Screen):
+    """The runs that are still on disk, and the way back into one.
+
+    Resume already existed everywhere but here: the CLI has `--resume`, and a run that
+    parks itself opens the gather or breakpoint screen on its own — but only while the
+    interface is still up. Close it, and a half-finished drama was reachable from the
+    command line alone. This is the list that was missing.
+
+    Continuing a run means handing the orchestrator the CHECKPOINT's params, never the
+    wizard's: they are what the run was actually launched with, down to the breakpoints
+    it has not reached yet, and re-deriving them from whatever the wizard currently
+    holds would quietly change the run mid-flight."""
+
+    BINDINGS = [
+        ("r", "rescan", "Rescan"),
+        ("f", "resume", "Continue"),
+    ]
+
+    def __init__(self):
+        super().__init__()
+        self.runs: list[Checkpoint] = []  # parallel to the table's rows
+
+    # -- data --------------------------------------------------------------
+
+    def _base(self) -> Path:
+        return Path(self.app.store.global_cfg.paths.output)
+
+    def _selected(self) -> Checkpoint | None:
+        table = self.query_one("#runs", DataTable)
+        row = table.cursor_row
+        if not self.runs or row is None or row >= len(self.runs):
+            return None
+        return self.runs[row]
+
+    def _what(self, cp: Checkpoint) -> str:
+        """Mode, language, and the one thing that says which run this is — the world
+        for a fandom, the content type for the rest."""
+        p = _run_params(cp)
+        if p is None:
+            return "?"
+        t = lambda k: _label(self.app, k)  # noqa: E731
+        extra = p.fandom if p.mode == "fandom" else p.content_type
+        return f"{t(f'runs.mode.{p.mode}')} · {p.lang}" + (f" · {extra}" if extra else "")
+
+    def _videos(self, statuses: list[str]) -> str:
+        """`3× ✔1 ✘2` — how many videos the run holds and where each of them stands."""
+        tally = [f"{_RUN_ICONS.get(s, '·')}{statuses.count(s)}"
+                 for s in _RUN_STATE_ORDER if s in statuses]
+        return f"{len(statuses)}× " + " ".join(tally)
+
+    def _state_cell(self, cp: Checkpoint, statuses: list[str]) -> str:
+        p = _run_params(cp)
+        if p is None:
+            return f"✘ {_label(self.app, 'runs.broken')}"
+        state = _run_state(statuses)
+        cell = f"{_RUN_ICONS.get(state, '·')} {_label(self.app, f'runs.state.{state}')}"
+        # the stage it stopped on, from the first job that stopped there — a batch
+        # dies one video at a time and they are nearly always in the same place
+        stage = next(
+            (cp.failed_stage(i) or cp.review_stage(i)
+             for i, s in enumerate(statuses) if s == state and
+             (cp.failed_stage(i) or cp.review_stage(i))),
+            "",
+        )
+        return f"{cell} · {stage}" if stage else cell
+
+    def _first_error(self, cp: Checkpoint, statuses: list[str]) -> str:
+        return next((cp.error(i) for i, s in enumerate(statuses) if s == "failed"), "")
+
+    # -- layout ------------------------------------------------------------
+
+    def compose(self) -> ComposeResult:
+        t = lambda k: _label(self.app, k)  # noqa: E731
+        yield TopBar(t("runs.title"))
+        yield Static(t("runs.hint"), id="runs-hint", classes="hint")
+        with Horizontal(id="runs-body"):
+            yield DataTable(id="runs")
+            with VerticalScroll(id="runs-detail"):
+                yield Static("", id="runs-detail-text")
+        with ButtonRow(id="runs-row", classes="entity-actions"):
+            yield Button(t("runs.resume"), id="runs-resume", variant="success")
+            yield Button(t("runs.rescan"), id="runs-rescan", variant="primary")
+
+    def on_mount(self) -> None:
+        t = lambda k: _label(self.app, k)  # noqa: E731
+        table = self.query_one("#runs", DataTable)
+        table.cursor_type = "row"
+        # explicit widths, as on the run screen: auto-width is set from the header
+        # alone, which truncates every cell here — the folder name is a timestamp
+        # plus a mode plus a language, and the error is a sentence
+        for name, width in ((t("runs.col.run"), 26), (t("runs.col.what"), 20),
+                            (t("runs.col.videos"), 16), (t("runs.col.state"), 22),
+                            (t("runs.col.error"), 40)):
+            table.add_column(name, width=width)
+        self.action_rescan()
+
+    def on_screen_resume(self) -> None:
+        """Back from a run that was continued from here: it has moved on since."""
+        if self.is_mounted:
+            self.action_rescan()
+
+    # -- rendering ---------------------------------------------------------
+
+    def _refresh(self) -> None:
+        table = self.query_one("#runs", DataTable)
+        prev = table.cursor_row or 0
+        table.clear()
+        for cp in self.runs:
+            p = _run_params(cp)
+            statuses = _run_statuses(cp, p)
+            error = self._first_error(cp, statuses).strip().splitlines()
+            table.add_row(
+                cp.run_dir.name, self._what(cp), self._videos(statuses),
+                self._state_cell(cp, statuses), (error[0][:40] if error else ""),
+            )
+        if self.runs:
+            table.move_cursor(row=min(prev, len(self.runs) - 1))
+        self._show_detail()
+
+    def _show_detail(self) -> None:
+        """The selected run in full. The table's error cell is one line wide and an
+        error here is a traceback, so this pane is where it actually fits — it holds
+        the whole text and scrolls."""
+        t = lambda k: _label(self.app, k)  # noqa: E731
+        cp = self._selected()
+        text = t("runs.none") if cp is None else "\n".join(self._detail_lines(cp))
+        self.query_one("#runs-detail-text", Static).update(text)
+        self.query_one("#runs-detail", VerticalScroll).scroll_home(animate=False)
+        self.query_one("#runs-resume", Button).disabled = cp is None
+
+    def _detail_lines(self, cp: Checkpoint) -> list[str]:
+        t = lambda k: _label(self.app, k)  # noqa: E731
+        p = _run_params(cp)
+        out = [
+            f"[b]{cp.run_dir.name}[/b]",
+            f"[dim]{cp.run_dir}[/dim]",
+            "",
+            f"{self._what(cp)}",
+            f"[dim]{t('runs.updated')}: {cp.data.get('updated_at') or '—'}[/dim]",
+        ]
+        if p is None:
+            out += ["", f"[red]{t('runs.broken')}[/red]"]
+            return out
+        for i, status in enumerate(_run_statuses(cp, p)):
+            stage = cp.failed_stage(i) or cp.review_stage(i)
+            head = f"[b]{t('col.video')} {i}[/b]  {_RUN_ICONS.get(status, '·')} {t(f'runs.state.{status}')}"
+            out += ["", head + (f"  ·  {stage}" if stage else "")]
+            done = cp.completed(i)
+            if done:
+                out.append(f"[dim]{t('runs.done_stages')}: {', '.join(done)}[/dim]")
+            # everything below is text the pipeline (or Python) wrote, so it is escaped
+            # before it reaches the markup parser — a KeyError carrying a bracket must
+            # not blank the pane it is being read in
+            if cp.manual_msg(i):
+                out.append(f"[yellow]{escape(cp.manual_msg(i))}[/yellow]")
+            if cp.error(i):
+                out.append(f"[red]{escape(cp.error(i))}[/red]")
+        return out
+
+    @on(DataTable.RowHighlighted, "#runs")
+    def _row_changed(self) -> None:
+        self._show_detail()
+
+    # -- actions -----------------------------------------------------------
+
+    @on(Button.Pressed, "#runs-rescan")
+    def action_rescan(self) -> None:
+        self.runs = _scan_runs(self._base())
+        self._refresh()
+
+    @on(Button.Pressed, "#runs-resume")
+    @on(DataTable.RowSelected, "#runs")
+    def action_resume(self) -> None:
+        """Continue the selected run through the door it is actually waiting behind.
+
+        The same three doors the run screen picks between when a batch parks itself
+        (see ProgressScreen._finish) — and the two parked ones are entered by their own
+        screens, not by-passed here, because each of them has work to save before the
+        pipeline may go on. Reloaded from disk rather than taken from the listing: a
+        run continued from another window has moved since this table was painted."""
+        cp = self._selected()
+        if cp is None:
+            return
+        run_dir = cp.run_dir
+        try:
+            fresh = Checkpoint.load(run_dir)
+        except Exception as e:  # noqa: BLE001 — deleted or replaced under us
+            self.notify(f"{e}", severity="error", timeout=8)
+            self.action_rescan()
+            return
+        if _review_jobs(run_dir):  # parked on a breakpoint
+            self.app.push_screen(BreakpointScreen(run_dir))
+            return
+        if _paused_jobs(run_dir):  # parked for hand-made clips
+            self.app.push_screen(ManualGatherScreen(run_dir))
+            return
+        params = _run_params(fresh)
+        if params is None:
+            self.notify(_label(self.app, "runs.broken"), severity="error", timeout=8)
+            return
+        if _run_state(_run_statuses(fresh, params)) == "done":
+            self.notify(_label(self.app, "runs.nothing_left"), timeout=6)
+            return
+        # failed, killed mid-stage, or never started: straight back into the pipeline,
+        # on the checkpoint's own params — see the class docstring
+        self.app.push_screen(ProgressScreen(params, resume_dir=run_dir))
+
+
+# --------------------------------------------------------------------------
 # Configuration: vertical sections on the left; entity sections get a top
 # tab-button row, one tab per existing config file plus "+ new"
 # --------------------------------------------------------------------------
 
-CFG_SECTIONS = ["cfg.llm", "cfg.footage", "cfg.characters", "cfg.fandoms",
-                "cfg.ads", "cfg.accounts", "cfg.presets"]
+CFG_SECTIONS = ["cfg.llm", "cfg.tts", "cfg.voices", "cfg.footage", "cfg.characters",
+                "cfg.fandoms", "cfg.ads", "cfg.accounts", "cfg.presets"]
 
-def _entity_form(kind: str) -> Form:
-    """Declarative field list for one config-entity kind (ns keeps the e-{kind}-{key} ids)."""
+def _entity_form(kind: str, t: T | None = None) -> Form:
+    """Declarative field list for one config-entity kind (ns keeps the e-{kind}-{key} ids).
+
+    `world_characters` is the fandom's own editor and deliberately not the drama's: a
+    world's character is a LOOK the world contains — one of them, many identical ones,
+    or a whole kind — with no age and no personality, because those belong in the lore
+    documents (see `config.models.CharacterConfig`). `t` is needed only there, to label
+    the plurality options in the interface language."""
+    tr = t or (lambda k: k)
     fields = {
         "characters": [
             Text("name", "f.name"),
             Text("age", "f.age"),
             Text("appearance", "f.appearance", large=True),
+        ],
+        "world_characters": [
+            Text("name", "f.name"),
+            Choice("plurality", "f.plurality", value="one", options=[
+                (tr("plural_one"), "one"),
+                (tr("plural_many"), "many"),
+                (tr("plural_class"), "class"),
+            ]),
+            Text("appearance", "f.appearance", large=True),
+        ],
+        # `ref` is deliberately NOT here. It names the sample INSIDE configs/voices/,
+        # which the import writes — an editable field for it put a second file box on
+        # the screen, and the wrong one is the one the eye lands on first.
+        "voices": [
+            Text("name", "voice_step_name"),
+            Text("text", "voice_step_text", large=True),
+            Text("lang", "voice_lang", placeholder="ru"),
+            Text("url", "voice_url"),
+            Text("description", "voice_desc"),
         ],
         "fandoms": [
             Text("name", "f.name"),
@@ -5521,7 +6358,7 @@ def _entity_form(kind: str) -> Form:
             Number("count", "f.count", default=1, integer=True),
         ],
     }[kind]
-    return Form(f"e-{kind}", fields)
+    return Form("e-world-char" if kind == "world_characters" else f"e-{kind}", fields)
 
 
 def _entity_values(store: ConfigStore, kind: str, name: str | None) -> dict[str, str]:
@@ -5532,6 +6369,16 @@ def _entity_values(store: ConfigStore, kind: str, name: str | None) -> dict[str,
             "name": c.name if c else "",
             "age": c.age if c else "",
             "appearance": c.appearance if c else "",
+        }
+    if kind == "voices":
+        v = store.voices.get(name) if name else None
+        return {
+            "name": v.name if v else "",
+            "ref": v.ref if v else "",
+            "text": v.text if v else "",
+            "lang": v.lang if v else "ru",
+            "url": v.ref_url if v else "",
+            "description": v.description if v else "",
         }
     if kind == "fandoms":
         f = store.fandoms.get(name) if name else None
@@ -5600,6 +6447,7 @@ class EntityPane(Vertical):
             "accounts": store.accounts,
             "presets": store.presets,
             "llm": store.llm_profiles,
+            "voices": store.voices,
         }[self.kind]
 
     def _config_dir(self) -> Path:
@@ -5607,9 +6455,9 @@ class EntityPane(Vertical):
 
     def compose(self) -> ComposeResult:
         t = lambda k: _label(self.app, k)  # noqa: E731
-        yield Horizontal(id=f"tabs-{self.kind}", classes="tabbar")
+        yield ButtonRow(id=f"tabs-{self.kind}", classes="tabbar")
         yield VerticalScroll(id=f"form-{self.kind}", classes="entity-form")
-        with Horizontal(classes="entity-actions"):
+        with ButtonRow(classes="entity-actions"):
             yield Button(t("save"), id=f"save-{self.kind}", variant="success")
             yield Button(t("delete"), id=f"del-{self.kind}", variant="error")
 
@@ -5623,7 +6471,7 @@ class EntityPane(Vertical):
         self._names = list(self._store_dict()) + [None]  # None = "+ new"
         # NB: None is also the "+ new" sentinel — an unset `active` must not match it
         idx = self._names.index(active) if active is not None and active in self._names else 0
-        bar = self.query_one(f"#tabs-{self.kind}", Horizontal)
+        bar = self.query_one(f"#tabs-{self.kind}", ButtonRow)
         await bar.remove_children()
         for i, n in enumerate(self._names):
             btn = Button(
@@ -5632,6 +6480,7 @@ class EntityPane(Vertical):
                 classes="tab-btn" + (" tab-active" if i == idx else ""),
             )
             await bar.mount(btn)
+        bar.repack()
         await self._fill_form(self._names[idx])
 
     @on(Button.Pressed, ".tab-btn")
@@ -5643,11 +6492,17 @@ class EntityPane(Vertical):
             b.set_class(b.id == event.button.id, "tab-active")
         await self._fill_form(self._names[int(idx)])
 
+    def _form_spec(self) -> Form:
+        """The fields this pane edits. Overridden where a pane keeps the kind's shelf
+        (its folder, its tabs, its button ids) but not the kind's fields — a fandom's
+        cast is stored as characters and edited as something else."""
+        return _entity_form(self.kind)
+
     async def _fill_form(self, name: str | None) -> None:
         self._current = name
         form = self.query_one(f"#form-{self.kind}", VerticalScroll)
         await form.remove_children()
-        self._form = _entity_form(self.kind)
+        self._form = self._form_spec()
         await form.mount(*self._form.build(lambda k: _label(self.app, k)))
         self._form.fill(self, self._values(name))
 
@@ -5802,9 +6657,9 @@ class LLMPane(EntityPane):
     def compose(self) -> ComposeResult:
         t = lambda k: _label(self.app, k)  # noqa: E731
         yield Static("", id="llm-status")
-        yield Horizontal(id="tabs-llm", classes="tabbar")
+        yield ButtonRow(id="tabs-llm", classes="tabbar")
         yield VerticalScroll(id="form-llm", classes="entity-form")
-        with Horizontal(classes="entity-actions"):
+        with ButtonRow(classes="entity-actions"):
             yield Button(t("save"), id="save-llm", variant="success")
             yield Button(t("activate"), id="activate-llm", variant="primary")
             yield Button(t("delete"), id="del-llm", variant="error")
@@ -5975,6 +6830,587 @@ class FootagePane(Vertical):
         self.notify(f"{_label(self.app, 'saved')}: {saved} {_label(self.app, 'keys.saved_n')}", timeout=6)
 
 
+def _voice_for_demo(store: ConfigStore, name: str, lang: str):
+    """A menu entry turned into something an engine can speak with, by the SAME rule
+    the pipeline uses (`stages/tts._resolve_voice`): a name that matches a card under
+    `configs/voices/` is a clone, anything else is a catalogue id. One namespace, so
+    what you hear here is what a run with that `--voice` will say."""
+    from ..tts import Voice
+
+    card = store.voices.get(name)
+    if card is None:
+        return Voice(name=name, lang=lang)
+    ref = card.ref_path
+    return Voice(name=name, lang=card.lang or lang,
+                 ref_audio=Path(ref) if ref else None,
+                 ref_text=card.text, ref_url=card.ref_url)
+
+
+class _DemoMixin:
+    """Hear a voice before committing a whole video to it.
+
+    Deliberately NOT a pipeline run: it builds the engine, speaks one line and plays
+    it. No aligner, no cache, no job — because the question a demo answers is only
+    "does this voice sound right", and everything else would be time spent before the
+    answer arrives. That matters most on the local model, where the line itself
+    already costs a minute.
+
+    In a worker thread for the same reason: loading 2.3 GiB of weights on the UI
+    thread would freeze the interface for half a minute with no way to tell whether
+    anything was happening."""
+
+    def _demo_busy(self, busy: bool) -> None:
+        for btn in self.query(".demo-btn"):
+            btn.disabled = busy
+
+    def _start_demo(self, engine: str, voice, text: str, status_id: str) -> None:
+        t = lambda k: _label(self.app, k)  # noqa: E731
+        if not text.strip():
+            self.notify(t("demo_no_text"), severity="warning")
+            return
+        self._demo_busy(True)
+        self.query_one(status_id, Static).update(f" [dim]{t('demo_working')}…[/dim]")
+        store = self.app.store
+        self.run_worker(
+            lambda: self._demo_worker(store, engine, voice, text, status_id),
+            thread=True, exclusive=False,
+        )
+
+    # A local take is a dice roll, not a deterministic result: the same line comes back
+    # usable or as a stall depending on the sampling. The pipeline re-rolls for exactly
+    # this reason, and a demo that gave up after one throw was showing the operator a
+    # failure the pipeline itself would have shrugged off.
+    DEMO_ATTEMPTS = 3
+
+    def _demo_worker(self, store, engine: str, voice, text: str, status_id: str) -> None:
+        import time
+
+        from ..tts import TTSError
+        from ..tts import build as build_engine
+
+        t0 = time.time()
+        last = ""
+        try:
+            eng = build_engine(engine, store.global_cfg.tts, voice.lang,
+                               store.global_cfg.paths.models)
+            out = demo_path(store, engine, voice.name, eng.suffix)
+        except Exception as e:  # noqa: BLE001 — a missing key or model, nothing to retry
+            self.app.call_from_thread(self._demo_done, status_id, None, 0.0, str(e))
+            return
+        clones = getattr(eng, "clones", False)
+        attempts = self.DEMO_ATTEMPTS if clones else 1
+        clipper = self._clipper(store, voice.lang) if clones else None
+        for attempt in range(attempts):
+            try:
+                eng.synthesize(text, voice, "+0%", out)
+                if clipper is not None:
+                    clipper(eng, out, text, voice)
+            except TTSError as e:  # a rejected take — throw again
+                last = str(e)
+                self.app.call_from_thread(
+                    self._demo_retrying, status_id, attempt + 1, attempts)
+                continue
+            except Exception as e:  # noqa: BLE001 — everything else is final
+                self.app.call_from_thread(self._demo_done, status_id, None, 0.0,
+                                          f"{type(e).__name__}: {e}")
+                return
+            self.app.call_from_thread(self._demo_done, status_id, out,
+                                      time.time() - t0, None)
+            return
+        self.app.call_from_thread(self._demo_done, status_id, None, time.time() - t0, last)
+
+    @staticmethod
+    def _clipper(store, lang: str):
+        """A function that cuts whatever a cloned take says outside the line, or None
+        when the recogniser it needs is not installed — a demo is worth hearing even
+        then, so this degrades rather than refuses."""
+        from ..models import ModelStore
+        from ..tts import align as aligner
+        from ..media.ffmpeg import duration_of
+
+        try:
+            model_dir = ModelStore(store.global_cfg.paths.models).require(
+                aligner.model_for(lang, store.global_cfg.tts))
+        except Exception:  # noqa: BLE001 — no recogniser, no clipping
+            return None
+
+        def _clip(engine, path, text: str, voice) -> None:
+            from ..tts import verify_take
+
+            _words, seconds, matched = aligner.clip_to_script(
+                path, text, model_dir, duration_of(path))
+            verify_take(engine, text, voice, seconds, matched)
+
+        return _clip
+
+    def _demo_retrying(self, status_id: str, attempt: int, total: int) -> None:
+        t = lambda k: _label(self.app, k)  # noqa: E731
+        self.query_one(status_id, Static).update(
+            f" [yellow]{t('demo_retry').format(n=attempt, of=total)}[/yellow]")
+
+    def _demo_done(self, status_id: str, out, took: float, err: str | None) -> None:
+        t = lambda k: _label(self.app, k)  # noqa: E731
+        self._demo_busy(False)
+        status = self.query_one(status_id, Static)
+        if err:
+            status.update(f" [red]{t('demo_err')}[/red]\n [dim]{err}[/dim]")
+            self.notify(f"{t('demo_err')}: {err}", severity="error", timeout=14)
+            return
+        from ..media.ffmpeg import duration_of
+
+        try:
+            secs = duration_of(out)
+        except Exception:  # noqa: BLE001
+            secs = 0.0
+        status.update(f" [green]{t('demo_played')}[/green] [dim]{secs:.1f}s · {took:.0f}s · {out}[/dim]")
+        _play_audio(self, out)
+
+
+class TTSPane(_DemoMixin, Vertical):
+    """Which engine speaks, and what it needs to do so.
+
+    Built like `LLMPane`'s cascade — pick a provider, the rest of the form follows —
+    because the shape of the question is the same: one choice decides which settings
+    even exist. What differs is the consequence spelled out under the picker: an
+    engine that reports no word timings of its own needs the recognizer installed, and
+    finding that out at the model manager is much better than finding it out three
+    stages into a run.
+
+    Keys go to `.env` and never into `configs/slopgen.toml`, same as everywhere else.
+    """
+
+    KEY_ENVS = {
+        "azure": [("azure_key", "AZURE_SPEECH_KEY")],
+        "qwen": [("qwen_key", "DASHSCOPE_API_KEY")],
+    }
+    AZURE_REGIONS = ["eastus", "westeurope", "swedencentral", "southeastasia",
+                     "westus2", "northeurope", "japaneast"]
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._form = Form("tf", [])  # replaced per engine by _fill
+
+    def compose(self) -> ComposeResult:
+        t = lambda k: _label(self.app, k)  # noqa: E731
+        cfg = self.app.store.global_cfg.tts
+        yield Static("", id="tts-status")
+        yield Static(t("tts_note"), classes="hint")
+        yield Label(t("tts_engine"))
+        yield Select(
+            [(f"{i.label}", i.id) for i in TTS_ENGINES.values()],
+            value=cfg.engine if cfg.engine in TTS_ENGINES else "edge",
+            allow_blank=False, id="tts-engine",
+        )
+        yield VerticalScroll(id="tts-form", classes="entity-form")
+        yield Button(t("save"), id="save-tts", variant="success")
+        # -- listen before you commit a whole video to a voice ------------
+        yield Static(t("demo_head"), classes="group-head")
+        yield Static(t("demo_note"), classes="hint")
+        yield Label(t("demo_lang"))
+        langs = self.app.store.languages() or ["ru", "en"]
+        yield Select([(l, l) for l in langs], value=langs[0], allow_blank=False,
+                     id="tts-demo-lang")
+        yield Label(t("demo_voice"))
+        opts = voice_options(self.app.store, langs[0], cfg.engine or "edge",
+                             t=lambda k: _label(self.app, k))
+        yield Select(opts, value=opts[0][1], allow_blank=False, id="tts-demo-voice")
+        yield Label(t("demo_text"))
+        yield Input(value=DEMO_TEXT.get(langs[0], DEMO_TEXT["en"]), id="tts-demo-text")
+        yield Button(t("demo"), id="demo-tts", variant="primary", classes="demo-btn")
+        yield Static("", id="tts-demo-status")
+
+    async def on_mount(self) -> None:
+        await self._fill(str(self.query_one("#tts-engine", Select).value))
+
+    @on(Select.Changed, "#tts-engine")
+    async def _engine_changed(self, event: Select.Changed) -> None:
+        await self._fill(str(event.value))
+        self._refresh_demo_voices()
+
+    @on(Select.Changed, "#tts-demo-lang")
+    def _demo_lang_changed(self, event: Select.Changed) -> None:
+        lang = str(event.value)
+        self.query_one("#tts-demo-text", Input).value = DEMO_TEXT.get(lang, DEMO_TEXT["en"])
+        self._refresh_demo_voices()
+
+    def _refresh_demo_voices(self) -> None:
+        """The voice menu belongs to the (engine, language) pair — same rule as the
+        wizard's, since a voice name means nothing outside its own catalogue."""
+        try:
+            lang = str(self.query_one("#tts-demo-lang", Select).value)
+            engine = str(self.query_one("#tts-engine", Select).value)
+        except Exception:
+            return
+        sel = self.query_one("#tts-demo-voice", Select)
+        opts = voice_options(self.app.store, lang, engine, t=lambda k: _label(self.app, k))
+        keep = sel.value
+        sel.set_options(opts)
+        sel.value = keep if keep in [v for _, v in opts] else opts[0][1]
+
+    @on(Button.Pressed, "#demo-tts")
+    def _demo(self) -> None:
+        lang = str(self.query_one("#tts-demo-lang", Select).value)
+        engine = str(self.query_one("#tts-engine", Select).value)
+        name = str(self.query_one("#tts-demo-voice", Select).value)
+        if not name:
+            self.notify(_label(self.app, "demo_no_voice"), severity="warning")
+            return
+        voice = _voice_for_demo(self.app.store, name, lang)
+        self._start_demo(engine, voice, self.query_one("#tts-demo-text", Input).value,
+                         "#tts-demo-status")
+
+    async def _fill(self, engine: str) -> None:
+        t = lambda k: _label(self.app, k)  # noqa: E731
+        cfg = self.app.store.global_cfg.tts
+        form = self.query_one("#tts-form", VerticalScroll)
+        await form.remove_children()
+        fields: list = []
+        if engine == "azure":
+            fields = [
+                Choice("region", "azure_region", value=cfg.azure.region,
+                       options=[(r, r) for r in self.AZURE_REGIONS]),
+                Number("temp", "azure_temp", value=str(cfg.azure.temperature), default=1.0),
+                Toggle("enhance", "azure_enhance", value=cfg.azure.enhance_pronunciation),
+            ]
+        elif engine == "qwen":
+            fields = [
+                Text("model", "qwen_model", value=cfg.qwen.model),
+                Text("base", "qwen_base", value=cfg.qwen.base_url),
+            ]
+        elif engine == "qwen-local":
+            fields = [
+                Choice("dtype", "qwen_dtype", value=cfg.qwen_local.dtype,
+                       options=[("bfloat16 (fastest here)", "bfloat16"),
+                                ("float32", "float32")]),
+                Number("threads", "qwen_threads", value=str(cfg.qwen_local.threads),
+                       default=0, integer=True),
+            ]
+        self._form = Form("tf", fields)
+        if fields:
+            await form.mount(*self._form.build(t))
+        for fid, env in self.KEY_ENVS.get(engine, []):
+            await form.mount(Label(f"{t('api_key')}  ({env})"))
+            for w in Text(fid, "", password=True).build("tk", t):
+                await form.mount(w)
+        self._refresh()
+
+    def _refresh(self) -> None:
+        t = lambda k: _label(self.app, k)  # noqa: E731
+        engine = str(self.query_one("#tts-engine", Select).value)
+        info = TTS_ENGINES[engine]
+        bits = [f"{t('tts_active')}: [b]{info.label}[/b]"]
+        bits.append(f"[green]{t('tts_timings_ok')}[/green]" if info.gives_timings
+                    else f"[yellow]{t('tts_no_timings')}[/yellow]")
+        for fid, env in self.KEY_ENVS.get(engine, []):
+            ok = bool(os.environ.get(env))
+            bits.append(f"{env} " + ("[green]✔[/green]" if ok else "[red]✘[/red]"))
+            try:
+                self.query_one(f"#tk-{fid}", Input).placeholder = (
+                    t("key_saved_ph") if ok else t("key_empty_ph"))
+            except Exception:
+                pass
+        store = ModelStore(self.app.store.global_cfg.paths.models)
+        for model_id in info.models:
+            mark = "[green]✔[/green]" if store.is_installed(model_id) else \
+                   f"[red]✘ {t('tts_engine_missing')}[/red]"
+            bits.append(f"{model_id} {mark}")
+        self.query_one("#tts-status", Static).update(" " + " · ".join(bits))
+
+    @on(Button.Pressed, "#save-tts")
+    def _save(self) -> None:
+        engine = str(self.query_one("#tts-engine", Select).value)
+        vals = self._form.read(self) if self._form.fields else {}
+        data: dict = {"engine": engine}
+        if engine == "azure":
+            data["azure"] = {
+                "region": vals["region"],
+                "key_env": "AZURE_SPEECH_KEY",
+                "region_env": "AZURE_SPEECH_REGION",
+                "temperature": float(vals["temp"]),
+                "enhance_pronunciation": bool(vals["enhance"]),
+            }
+        elif engine == "qwen":
+            data["qwen"] = {"key_env": "DASHSCOPE_API_KEY",
+                            "base_url": vals["base"], "model": vals["model"]}
+        elif engine == "qwen-local":
+            data["qwen_local"] = {"model_id": "qwen3-tts-0.6b",
+                                  "dtype": vals["dtype"],
+                                  "threads": int(vals["threads"])}
+        for fid, env in self.KEY_ENVS.get(engine, []):
+            key = self.query_one(f"#tk-{fid}", Input).value.strip()
+            if key:
+                set_env_var(env, key)
+                self.query_one(f"#tk-{fid}", Input).value = ""
+        _update_global_toml("tts", data)
+        self.app.store = ConfigStore()
+        self._refresh()
+        self.notify(f"{_label(self.app, 'saved')}: configs/slopgen.toml [tts]", timeout=6)
+
+
+class VoicePane(_DemoMixin, EntityPane):
+    """The library of cloned voices — a card plus the audio next to it.
+
+    Editing is the plain entity editor; the one addition is the sample check, because
+    the failures a bad sample causes are silent. A clipped reference does not error,
+    it degrades every line of every video, and in the measured worst case makes the
+    model recite the sample's own words mid-sentence — so the measurement is one
+    button away rather than something to remember to do (see `tts.refs`)."""
+
+    def __init__(self, **kwargs):
+        super().__init__("voices", **kwargs)
+        self._ref = ""  # the card's sample filename; set by the import, not typed
+
+    async def _fill_form(self, name: str | None) -> None:
+        await super()._fill_form(name)
+        card = self.app.store.voices.get(name) if name else None
+        self._ref = card.ref if card else ""
+        self._show_sample()
+        self.query_one("#voice-report", Static).update("")
+
+    def _show_sample(self) -> None:
+        """What this card speaks with, stated plainly — the one thing the operator
+        cannot see anywhere else now that the filename is not a form field."""
+        t = lambda k: _label(self.app, k)  # noqa: E731
+        box = self.query_one("#voice-sample", Static)
+        if not self._ref:
+            box.update(f" [yellow]{t('voice_sample_none')}[/yellow]")
+            return
+        path = self._config_dir() / self._ref
+        if not path.exists():
+            box.update(f" [red]{t('voice_sample_gone')}: {self._ref}[/red]")
+            return
+        box.update(f" [green]✔[/green] {t('voice_sample')}: [b]{self._ref}[/b]")
+
+    def compose(self) -> ComposeResult:
+        t = lambda k: _label(self.app, k)  # noqa: E731
+        yield ButtonRow(id="tabs-voices", classes="tabbar")
+        yield Static(t("voice_note"), classes="hint")
+        yield VerticalScroll(id="form-voices", classes="entity-form")
+        # -- step 3: the recording itself. ONE file box on this screen, and it takes
+        # the file where it actually lives — the library copy is made from it here.
+        yield Static(t("voice_step_file"), classes="group-head")
+        yield Static(t("voice_src_note"), classes="hint")
+        yield Input(placeholder=t("voice_src_ph"), id="voice-src")
+        with ButtonRow(classes="entity-actions"):
+            yield Button(t("voice_import"), id="import-voices", variant="primary")
+            yield Button(t("voice_clean"), id="clean-voices")
+            yield Button(t("voice_check"), id="check-voices")
+        yield Static("", id="voice-sample")   # what the card currently holds
+        yield Static("", id="voice-report")   # what the measurement said
+        # -- step 4 -------------------------------------------------------
+        yield Static(t("voice_step_save"), classes="group-head")
+        with ButtonRow(classes="entity-actions"):
+            yield Button(t("save"), id="save-voices", variant="success")
+            yield Button(t("delete"), id="del-voices", variant="error")
+        # -- step 5 -------------------------------------------------------
+        yield Static(t("voice_step_listen"), classes="group-head")
+        yield Input(value=DEMO_TEXT["ru"], id="voice-demo-text")
+        yield Button(t("demo"), id="demo-voices", variant="primary", classes="demo-btn")
+        yield Static("", id="voice-demo-status")
+
+    @on(Button.Pressed, "#check-voices")
+    def _check(self) -> None:
+        from ..tts import refs
+
+        # measure whatever is in the file box; with the box empty, measure the sample
+        # the card already holds — both are questions worth asking of this button
+        src = self.query_one("#voice-src", Input).value.strip()
+        path = Path(src).expanduser() if src else (
+            self._config_dir() / self._ref if self._ref else None)
+        if path is None or not path.exists():
+            self.notify(_label(self.app, "voice_no_ref"), severity="error")
+            return
+        self._render_report(path, refs.inspect(path), transcript=self._transcript(path))
+
+    # -- import ------------------------------------------------------------
+
+    @on(Button.Pressed, "#import-voices")
+    def _import(self) -> None:
+        self._do_import(clean=False)
+
+    @on(Button.Pressed, "#clean-voices")
+    def _import_clean(self) -> None:
+        self._do_import(clean=True)
+
+    def _do_import(self, clean: bool) -> None:
+        """Copy a recording from anywhere into the voice library, converted to what the
+        cloners want (24 kHz mono, peak-normalised) and measured on the way in.
+
+        This is the half that used to live only in `slopgen voices add`. It refuses the
+        same samples for the same reason: a clipped reference does not fail, it quietly
+        degrades every line made with it. `--clean` is the second button rather than a
+        checkbox because it is a decision to see the difference on — the report shows
+        the noise floor before and after."""
+        from ..tts import refs
+
+        t = lambda k: _label(self.app, k)  # noqa: E731
+        src = self.query_one("#voice-src", Input).value.strip()
+        name = self._val("name")
+        if not src:
+            self.notify(t("voice_no_src"), severity="warning")
+            return
+        if not name:
+            self.notify(t("name_req"), severity="error")
+            return
+        source = Path(src).expanduser()
+        if not source.exists():
+            self.notify(f"{t('char_no_file')}: {source}", severity="error")
+            return
+        before = refs.inspect(source)
+        said = self._transcript(source)
+        self._render_report(source, before, transcript=said)
+        if not before.usable or (said is not None and not said.usable):
+            self.notify(t("voice_import_refused"), severity="error", timeout=10)
+            return
+        rnnoise = None
+        if clean:
+            from ..models import ModelStore
+            from ..models.store import ModelMissing
+
+            try:
+                rnnoise = ModelStore(self.app.store.global_cfg.paths.models) \
+                    .require("rnnoise-sh") / "sh.rnnn"
+            except ModelMissing as e:
+                self.notify(str(e), severity="error", timeout=12)
+                return
+        dest = self._config_dir() / f"{name}.wav"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        # Convert via a temporary file, then move. The source may BE the destination —
+        # re-importing a card's own sample to denoise it is a reasonable thing to do,
+        # and ffmpeg reading and writing one file at once produces silence.
+        tmp = dest.with_name(dest.name + ".importing.wav")
+        try:
+            refs.convert(source, tmp, rnnoise=rnnoise)
+            tmp.replace(dest)
+        except Exception as e:  # noqa: BLE001
+            tmp.unlink(missing_ok=True)
+            self.notify(f"{t('voice_import_err')}: {e}", severity="error", timeout=12)
+            return
+        after = refs.inspect(dest)
+        self._ref = dest.name
+        self._show_sample()
+        self._render_report(dest, after, before=before, transcript=self._transcript(dest))
+        self.notify(f"{t('voice_import_done')} — {t('voice_now_save')}", timeout=10)
+
+    def _transcript(self, path: Path):
+        """The sample judged against the transcript typed into the form above it —
+        the check that catches a pair the model will recite instead of read.
+
+        None when there is nothing to judge with: no transcript yet, or no recognizer
+        for its language installed. Skipped rather than installed, because a check
+        that first downloads 46 MiB is one people press once."""
+        from ..models import ModelStore
+        from ..tts import align as aligner, refs
+
+        text = self._val("text")
+        if not text.strip():
+            return None
+        store = self.app.store
+        models = ModelStore(store.global_cfg.paths.models)
+        model_id = aligner.model_for(self._val("lang") or "ru", store.global_cfg.tts)
+        if model_id not in models.installed():
+            return None
+        try:
+            return refs.check_transcript(path, text, models.require(model_id))
+        except Exception:  # noqa: BLE001 — the strictest check, never the fatal one
+            return None
+
+    def _render_report(self, path: Path, report, before=None, transcript=None) -> None:
+        lines = [f" [b]{path.name}[/b] — {report.summary()}"]
+        if before is not None:
+            lines.insert(0, f" [dim]{_label(self.app, 'voice_before')}: {before.summary()}[/dim]")
+        problems = list(report.problems or [])
+        if transcript is not None:
+            lines.append(f" [b]{_label(self.app, 'voice_says')}[/b] — {transcript.summary()}")
+            problems += list(transcript.problems or [])
+        for level, msg in problems:
+            colour = "red" if level == "error" else "yellow"
+            lines.append(f" [{colour}]{'✘' if level == 'error' else '!'}[/{colour}] {msg}")
+        if not problems:
+            lines.append(" [green]✔[/green]")
+        self.query_one("#voice-report", Static).update("\n".join(lines))
+
+    # -- listen ------------------------------------------------------------
+
+    async def _delete(self, name: str) -> None:
+        """Take the sample with the card — the base class only knows about the TOML."""
+        card = self.app.store.voices.get(name)
+        ref = card.ref_path if card else None
+        await super()._delete(name)
+        if ref and Path(ref).exists():
+            Path(ref).unlink()
+
+    @on(Button.Pressed, "#demo-voices")
+    def _demo(self) -> None:
+        """Speak with THIS card, on whichever engine can clone.
+
+        The active engine is used when it clones; otherwise the demo falls back to a
+        cloning one rather than refusing, because a card is worth hearing even while
+        `[tts].engine` is still the free Edge — which cannot clone at all."""
+        t = lambda k: _label(self.app, k)  # noqa: E731
+        name = self._val("name")
+        if not name or name not in self.app.store.voices:
+            self.notify(t("voice_save_first"), severity="warning", timeout=8)
+            return
+        engine = self._cloning_engine()
+        if not engine:
+            self.notify(t("demo_no_cloner"), severity="error", timeout=12)
+            return
+        card = self.app.store.voices[name]
+        voice = _voice_for_demo(self.app.store, name, card.lang or "ru")
+        self._start_demo(engine, voice,
+                         self.query_one("#voice-demo-text", Input).value, "#voice-demo-status")
+
+    def _cloning_engine(self) -> str:
+        """The active engine if it clones, else the first one that can and is ready —
+        a key set, or its weights installed."""
+        from ..models import ModelStore
+
+        store = self.app.store
+        active = store.global_cfg.tts.engine or "edge"
+        models = ModelStore(store.global_cfg.paths.models)
+
+        def ready(eid: str) -> bool:
+            info = TTS_ENGINES[eid]
+            if not info.clones:
+                return False
+            if any(not os.environ.get(k) for k in info.key_envs):
+                return False
+            return all(models.is_installed(m) for m in info.models)
+
+        if ready(active):
+            return active
+        return next((eid for eid in TTS_ENGINES if ready(eid)), "")
+
+    def _rename_sample(self, name: str) -> None:
+        """Carry the sample along when the card is renamed.
+
+        `EntityPane._save` drops the old `.toml` on a rename, which is right for every
+        other config kind because a card is the whole entity. A voice is two files, and
+        without this the sample was left behind under the old name — an orphan wav that
+        nothing points at, next to a card whose `ref` still named it."""
+        old_ref = self._ref
+        if not old_ref:
+            return
+        old_path = self._config_dir() / old_ref
+        new_path = old_path.with_name(f"{name}{old_path.suffix}")
+        if old_path == new_path or not old_path.exists():
+            return
+        old_path.replace(new_path)
+        self._ref = new_path.name
+
+    def _write(self, name: str, vals: dict) -> Path:
+        self._rename_sample(name)
+        data = {"name": name, "ref": self._ref, "text": vals["text"],
+                "lang": vals["lang"] or "ru", "ref_url": vals["url"],
+                "description": vals["description"]}
+        path = self._config_dir() / f"{name}.toml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "wb") as f:
+            tomli_w.dump(data, f)
+        return path
+
+
 class CharacterPane(EntityPane):
     """Global reusable character library — a plain manual editor. AI assistance
     (photo→description, autofill) lives in the AI-drama wizard, not here. Compiled
@@ -5985,10 +7421,10 @@ class CharacterPane(EntityPane):
 
     def compose(self) -> ComposeResult:
         t = lambda k: _label(self.app, k)  # noqa: E731
-        yield Horizontal(id="tabs-characters", classes="tabbar")
+        yield ButtonRow(id="tabs-characters", classes="tabbar")
         yield VerticalScroll(id="form-characters", classes="entity-form")
         yield Static(t("char_cfg_note"), classes="hint")
-        with Horizontal(classes="entity-actions"):
+        with ButtonRow(classes="entity-actions"):
             yield Button(t("save"), id="save-characters", variant="success")
             yield Button(t("delete"), id="del-characters", variant="error")
 
@@ -5997,15 +7433,20 @@ class FandomCharacterPane(_CharEditAI, CharacterPane):
     """The cast that belongs to ONE world, written to
     ``configs/fandoms/<world>/characters/`` instead of the global library.
 
-    Same editor, different shelf: a world's people are part of the world, so a run
-    set in it gets them without the operator adding them, and they never clutter the
-    library other modes pick from. The photo→appearance helper comes along because
-    this is where a world's cast is actually authored — there is no wizard step for
-    it to live in."""
+    A different shelf, and a different editor: a world's people are part of the world,
+    so a run set in it gets them without the operator adding them, and they never
+    clutter the library other modes pick from. What they are made of differs too — a
+    look and how many of it, no age and no personality (see
+    `config.models.CharacterConfig`), which is why the form is `world_characters` and
+    not the drama's. The photo→appearance helper comes along because this is where a
+    world's cast is actually authored."""
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._fandom = ""
+
+    def _form_spec(self) -> Form:
+        return _entity_form("world_characters", lambda k: _label(self.app, k))
 
     async def set_fandom(self, name: str) -> None:
         self._fandom = name
@@ -6021,7 +7462,8 @@ class FandomCharacterPane(_CharEditAI, CharacterPane):
 
     def _values(self, name: str | None) -> dict:
         c = self._store_dict().get(name) if name else None
-        return {"name": c.name if c else "", "age": c.age if c else "",
+        return {"name": c.name if c else "",
+                "plurality": c.plurality if c else "one",
                 "appearance": c.appearance if c else ""}
 
     def _write(self, name: str, vals: dict) -> Path:
@@ -6036,15 +7478,16 @@ class FandomCharacterPane(_CharEditAI, CharacterPane):
 
     def compose(self) -> ComposeResult:
         t = lambda k: _label(self.app, k)  # noqa: E731
-        yield Horizontal(id="tabs-characters", classes="tabbar")
+        yield ButtonRow(id="tabs-characters", classes="tabbar")
+        yield Static(t("char_cfg_world_note"), classes="hint")
         yield VerticalScroll(id="form-characters", classes="entity-form")
         yield Horizontal(Input(placeholder=t("char_photo_ph"), id="char-photo-path"),
                          Button(t("char_describe"), id="char-describe", variant="primary"),
                          id="char-photo-row")
         yield from Text("prompt", "", placeholder="char_prompt_ph").build("char", t)
-        with Horizontal(classes="entity-actions"):
+        with ButtonRow(classes="entity-actions"):
             yield Button(t("fandom_fill_person"), id="world-autofill", variant="primary")
-        with Horizontal(classes="entity-actions"):
+        with ButtonRow(classes="entity-actions"):
             yield Button(t("save"), id="save-characters", variant="success")
             yield Button(t("delete"), id="del-characters", variant="error")
 
@@ -6067,9 +7510,10 @@ class FandomCharacterPane(_CharEditAI, CharacterPane):
 
     @on(Button.Pressed, "#world-autofill")
     def _fill_person(self, event: Button.Pressed) -> None:
-        """Fill this person's age and looks. Unlike the drama's cast fill, which
-        invents an ensemble to fit a plot, this reads the WORLD: whatever it makes up
-        has to be something this place could contain."""
+        """Fill in what this LOOKS like. Unlike the drama's cast fill, which invents an
+        ensemble to fit a plot, this reads the WORLD: whatever it makes up has to be
+        something this place could contain, and it never invents a personality —
+        that is the lore's to write (see `llm.characters.autofill_one`)."""
         event.stop()
         form = self._char_form()
         if form is None or not self._fandom:
@@ -6122,9 +7566,9 @@ class FandomPane(EntityPane):
 
     def compose(self) -> ComposeResult:
         t = lambda k: _label(self.app, k)  # noqa: E731
-        yield Horizontal(id="tabs-fandoms", classes="tabbar")
+        yield ButtonRow(id="tabs-fandoms", classes="tabbar")
         yield VerticalScroll(id="form-fandoms", classes="entity-form")
-        with Horizontal(classes="entity-actions"):
+        with ButtonRow(classes="entity-actions"):
             yield Button(t("save"), id="save-fandoms", variant="success")
             yield Button(t("delete"), id="del-fandoms", variant="error")
         yield LoreEditor(prefix="clore", id="cfg-lore")
@@ -6198,7 +7642,178 @@ class FandomPane(EntityPane):
         self.notify(f"{_label(self.app, 'deleted')}: {path}", timeout=6)
 
 
+class ModelManagerScreen(Screen):
+    """Download and remove neural models.
+
+    Its own screen rather than a config section because nothing here is a setting:
+    these are gigabytes arriving over a slow link, and the operator needs to watch it
+    happen and be able to walk away and come back. The catalogue is on the left, one
+    model's licence, size and reason-for-existing on the right, and a progress bar
+    under them that survives an interrupted download — the store resumes from the
+    byte it stopped at, so pressing Install again after a lost connection continues
+    rather than restarts (see `models.store._stream_to`)."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._ids = list(MODEL_CATALOG)
+        self._current = self._ids[0] if self._ids else ""
+        self._busy = False
+
+    def _store(self) -> ModelStore:
+        return ModelStore(self.app.store.global_cfg.paths.models)
+
+    def compose(self) -> ComposeResult:
+        t = lambda k: _label(self.app, k)  # noqa: E731
+        yield TopBar(t("menu.models"))
+        with Horizontal(id="cfg"):
+            yield ListView(
+                *[ListItem(Label(MODEL_CATALOG[m].label), id=f"mdl-{i}")
+                  for i, m in enumerate(self._ids)],
+                id="cfg-nav",
+            )
+            with VerticalScroll(id="models-body", classes="pane"):
+                yield Static(t("models_note"), classes="hint")
+                yield Static("", id="mdl-info")
+                yield ProgressBar(total=100, show_eta=False, id="mdl-bar")
+                yield Static("", id="mdl-status")
+                with ButtonRow(classes="entity-actions"):
+                    yield Button(t("models_install"), id="mdl-install", variant="success")
+                    yield Button(t("models_remove"), id="mdl-remove", variant="error")
+
+    def on_mount(self) -> None:
+        self._refresh()
+        self.query_one("#cfg-nav", ListView).focus()
+
+    @on(ListView.Highlighted, "#cfg-nav")
+    def _nav(self, event: ListView.Highlighted) -> None:
+        if event.item is None:
+            return
+        self._current = self._ids[int(event.item.id.split("-")[1])]
+        self._refresh()
+
+    def _refresh(self) -> None:
+        t = lambda k: _label(self.app, k)  # noqa: E731
+        spec = MODEL_CATALOG[self._current]
+        store = self._store()
+        here = store.is_installed(spec.id)
+        missing = ModelStore.missing_packages(spec)
+        state = (f"[green]✔ {t('models_installed')}[/green] "
+                 f"({human_size(store.disk_size(spec.id))})") if here else \
+                f"[dim]{t('models_missing')} · {human_size(spec.size)}[/dim]"
+        # the catalogue is written in English (so is the CLI); I18N carries its
+        # translation where there is one, and falls back to the catalogue otherwise
+        lines = [f"[b]{spec.label}[/b]  {state}",
+                 f"[dim]{spec.id} · {spec.license}[/dim]", "",
+                 _tr(self.app, f"model.{spec.id}", spec.description)]
+        if spec.used_by:
+            used = _tr(self.app, f"used.{spec.id}", spec.used_by)
+            lines.append(f"\n[dim]{t('models_needed_by')}: {used}[/dim]")
+        if spec.packages:
+            # only ever ONE list: everything it needs, with what is not here yet named
+            mark = (f"[yellow]{t('models_pip_missing')}: {', '.join(missing)}[/yellow]"
+                    if missing else f"[green]✔ {t('models_pip_ok')}[/green]")
+            lines.append(f"[dim]{t('models_pip')}: {', '.join(spec.packages)}[/dim] — {mark}")
+        lines.append(f"\n[dim]{store.path(spec.id)}[/dim]")
+        self.query_one("#mdl-info", Static).update("\n".join(lines))
+        self.query_one("#mdl-install", Button).disabled = self._busy or (here and not missing)
+        self.query_one("#mdl-remove", Button).disabled = self._busy or not here
+
+    # -- install -----------------------------------------------------------
+
+    def _progress(self, label: str, done: int, total: int, note: str) -> None:
+        """Called from the worker thread — every touch of a widget goes through
+        call_from_thread, exactly as the run screen's progress does."""
+        self.app.call_from_thread(self._progress_ui, label, done, total, note)
+
+    def _progress_ui(self, label: str, done: int, total: int, note: str) -> None:
+        bar = self.query_one("#mdl-bar", ProgressBar)
+        if total:
+            bar.update(total=total, progress=done)
+        text = f"{label} — {note}" if note else f"{label} · {human_size(done)}"
+        if total and not note:
+            text += f" / {human_size(total)}"
+        self.query_one("#mdl-status", Static).update(text)
+
+    @on(Button.Pressed, "#mdl-install")
+    def _install(self) -> None:
+        if self._busy:
+            self.notify(_label(self.app, "models_busy"), severity="warning")
+            return
+        self._busy = True
+        self._refresh()
+        model_id = self._current
+        self.run_worker(lambda: self._install_worker(model_id), thread=True, exclusive=False)
+
+    def _install_worker(self, model_id: str) -> None:
+        try:
+            self._store().install(model_id, self._progress)
+        except Exception as e:  # noqa: BLE001 — reported to the operator, not raised
+            self.app.call_from_thread(self._done, model_id, f"{type(e).__name__}: {e}")
+            return
+        self.app.call_from_thread(self._done, model_id, "")
+
+    def _done(self, model_id: str, error: str) -> None:
+        self._busy = False
+        self._refresh()
+        if error:
+            self.query_one("#mdl-status", Static).update(f"[red]{error}[/red]")
+            self.notify(error, severity="error", timeout=10)
+        else:
+            self.query_one("#mdl-status", Static).update("")
+            self.notify(f"{model_id}: {_label(self.app, 'models_done')}", timeout=6)
+
+    # -- remove ------------------------------------------------------------
+
+    @on(Button.Pressed, "#mdl-remove")
+    def _remove_ask(self) -> None:
+        if self._busy:
+            return
+        model_id = self._current
+        size = human_size(self._store().disk_size(model_id))
+
+        def _confirmed(ok: bool | None) -> None:
+            if not ok:
+                return
+            self._store().remove(model_id)
+            self._refresh()
+            self.notify(f"{model_id}: {_label(self.app, 'models_removed')} ({size})", timeout=6)
+
+        self.app.push_screen(
+            ConfirmModal(_label(self.app, "confirm_del").format(name=f"{model_id} ({size})")),
+            _confirmed,
+        )
+
+
 class ConfigScreen(Screen):
+    # The wheel scrolls the pane under the cursor; these are the keyboard half. Up and
+    # down are NOT here on purpose — they belong to the section list on the left, and
+    # a section is switched far more often than a page is paged.
+    BINDINGS = [
+        ("pageup", "pane_scroll(-1)", ""),
+        ("pagedown", "pane_scroll(1)", ""),
+        ("home", "pane_home", ""),
+        ("end", "pane_end", ""),
+    ]
+
+    def _pane(self):
+        switcher = self.query_one("#cfg-body", ContentSwitcher)
+        return self.query_one(f"#{switcher.current}") if switcher.current else None
+
+    def action_pane_scroll(self, direction: int) -> None:
+        pane = self._pane()
+        if pane is not None:
+            (pane.scroll_page_down if direction > 0 else pane.scroll_page_up)(animate=False)
+
+    def action_pane_home(self) -> None:
+        pane = self._pane()
+        if pane is not None:
+            pane.scroll_home(animate=False)
+
+    def action_pane_end(self) -> None:
+        pane = self._pane()
+        if pane is not None:
+            pane.scroll_end(animate=False)
+
     def compose(self) -> ComposeResult:
         t = lambda k: _label(self.app, k)  # noqa: E731
         yield TopBar(t("menu.config"))
@@ -6209,12 +7824,14 @@ class ConfigScreen(Screen):
             )
             with ContentSwitcher(initial="cpane-0", id="cfg-body"):
                 yield LLMPane(id="cpane-0", classes="pane")
-                yield FootagePane(id="cpane-1", classes="pane")
-                yield CharacterPane(id="cpane-2", classes="pane")
-                yield FandomPane(id="cpane-3", classes="pane")
-                yield EntityPane("ads", id="cpane-4", classes="pane")
-                yield EntityPane("accounts", id="cpane-5", classes="pane")
-                yield EntityPane("presets", id="cpane-6", classes="pane")
+                yield TTSPane(id="cpane-1", classes="pane")
+                yield VoicePane(id="cpane-2", classes="pane")
+                yield FootagePane(id="cpane-3", classes="pane")
+                yield CharacterPane(id="cpane-4", classes="pane")
+                yield FandomPane(id="cpane-5", classes="pane")
+                yield EntityPane("ads", id="cpane-6", classes="pane")
+                yield EntityPane("accounts", id="cpane-7", classes="pane")
+                yield EntityPane("presets", id="cpane-8", classes="pane")
 
     def on_mount(self) -> None:
         self.query_one("#cfg-nav", ListView).focus()
@@ -6233,6 +7850,11 @@ class ConfigScreen(Screen):
 
 
 class SlopgenApp(App):
+    def exit(self, *args, **kwargs):
+        """Arm the fuse on the way out — see :func:`arm_hard_exit`."""
+        arm_hard_exit()
+        return super().exit(*args, **kwargs)
+
     TITLE = "slopgen"
     BINDINGS = [("escape", "back", "")]
     # Textual 8.x in-app text selection crashes on mouse-down over some list
@@ -6261,7 +7883,9 @@ class SlopgenApp(App):
     #wizard-nav ListItem, #cfg-nav ListItem { padding: 1 2; }
     /* ContentSwitcher defaults to height:auto — pin it to the row so the pane
        inside can take a real height and scroll instead of overflowing */
-    #wizard-body, #cfg-body { width: 1fr; height: 1fr; align: center top; }
+    /* min-width is the backstop: whatever else is docked beside it, the step body
+       never collapses to zero, where Rich's line wrapper divides by it and raises */
+    #wizard-body, #cfg-body { width: 1fr; min-width: 24; height: 1fr; align: center top; }
 
     /* right inspector panel: help by default, sub-settings on demand */
     #wizard-inspector {
@@ -6340,7 +7964,10 @@ class SlopgenApp(App):
 
     /* panes fill the body height so the VerticalScroll actually scrolls
        (auto/max-height + center alignment clipped the overflow instead) */
-    .pane { width: 1fr; max-width: 76; height: 100%; padding: 1 2; }
+    /* The pane IS the page, so it is the thing that scrolls. Without this a section
+       taller than the terminal simply had its bottom cut off with no way to reach it
+       (measured: the fandom editor lost 94 rows at 40 lines of height). */
+    .pane { width: 1fr; max-width: 76; height: 100%; padding: 1 2; overflow-y: auto; }
     .pane Label { margin-top: 1; color: $text-muted; }
     .pane Select, .pane Input, .pane TextArea { width: 100%; }
     /* the one text field: no border; a background-coloured pad row above & below
@@ -6381,7 +8008,8 @@ class SlopgenApp(App):
     .hint { color: $secondary; margin-top: 1; }
     .group-head { color: $accent; margin-top: 2; text-style: bold; }
     .nav-row { height: auto; margin-top: 2; }
-    .nav-btn { margin-top: 2; margin-right: 2; }
+    .nav-btn { margin-top: 2; }
+    .nav-row { margin-top: 2; }
     .nav-row .nav-btn { margin-top: 0; }
     .switch-row { height: auto; margin-top: 1; }
     .switch-row Label { margin-top: 1; margin-left: 2; }
@@ -6401,12 +8029,15 @@ class SlopgenApp(App):
     #w-start { margin-top: 2; width: 100%; }
 
     #llm-status { height: 1; background: $surface; margin-bottom: 1; }
-    .tabbar { height: 3; margin-bottom: 1; }
-    .tab-btn { min-width: 10; margin-right: 1; background: $surface; }
+    /* height auto: a cast of six wraps onto a second row instead of pushing
+       the "+ new" tab off the edge, where it could not be clicked */
+    .tabbar { height: auto; margin-bottom: 1; }
+    .tab-btn { min-width: 10; background: $surface; }
     .tab-btn.tab-active { background: $primary; color: $background; text-style: bold; }
-    .entity-form { height: auto; max-height: 60%; }
+    /* grows to fit its fields; the pane around it does the scrolling, so a form and
+       the buttons under it never compete for one screen with two scrollbars */
+    .entity-form { height: auto; }
     .entity-actions { height: auto; margin-top: 1; }
-    .entity-actions Button { margin-right: 2; }
 
     ConfirmModal { align: center middle; }
     #confirm-box { width: 60; height: auto; padding: 2 3; background: $panel; border: thick $error; }
@@ -6433,11 +8064,22 @@ class SlopgenApp(App):
     #gather-row { height: 3; align: center middle; padding: 0 2; }
     #gather-row Button { margin: 0 1; }
 
+    #runs-hint { padding: 0 2; height: auto; }
+    #runs-body { height: 1fr; margin: 1 2 0 2; }
+    #runs { width: 1fr; height: 100%; }
+    /* an error here is a traceback, not a line: the pane scrolls rather than
+       swallowing everything past the first screenful */
+    #runs-detail {
+        width: 52; height: 100%; padding: 1 2; margin-left: 2;
+        border: round $primary; background: $surface; overflow-y: auto;
+    }
+    #runs-row { height: auto; padding: 0 2 1 2; }
+
     #bp-head { padding: 0 2; height: 1; background: $surface; }
     #bp-body { height: 1fr; margin: 0 2; }
     #bp-list-pane { width: 48; }
-    #bp-list-pane .entity-actions { height: 3; margin-top: 0; }
-    #bp-list-pane .entity-actions Button { margin-right: 1; }
+    #bp-list-pane .entity-actions { height: auto; margin-top: 0; }
+
     #bp-add, #bp-cut { width: auto; }
     #bp-up, #bp-down, #bp-del { width: auto; min-width: 5; }
     #bp-list { height: 1fr; }

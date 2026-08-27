@@ -20,6 +20,7 @@ from .models import (
     PresetConfig,
     RunParams,
     VisualsConfig,
+    VoiceConfig,
 )
 
 CONFIGS_DIR = Path("configs")
@@ -60,7 +61,14 @@ def _load_fandoms(subdir: str = "fandoms") -> dict[str, FandomConfig]:
     kind, hence not :func:`_load_dir`): the lore documents and the world's own cast
     live next to its TOML. The folder name is the fandom's identity, and the TOML
     itself is optional — a folder holding nothing but markdown is a valid fandom
-    with every setting left at its default."""
+    with every setting left at its default.
+
+    A world's cast is loaded through the same `CharacterConfig` as the global
+    library, but a world's character has no AGE (see the model): it is a look, and
+    if age shows on it, it shows in the looks. The field is dropped here rather than
+    merely left unwritten, so a file that predates the rule — or one hand-edited
+    with an `age` in it — cannot smuggle a value into a mode that has no field for
+    it and would never show it back to the operator."""
     out: dict[str, FandomConfig] = {}
     d = CONFIGS_DIR / subdir
     if not d.is_dir():
@@ -70,7 +78,8 @@ def _load_fandoms(subdir: str = "fandoms") -> dict[str, FandomConfig]:
         data = _read_toml(toml) if toml.exists() else {}
         data["name"] = path.name  # the folder names it, whatever the TOML says
         data["root"] = path
-        data["cast"] = list(_load_dir(f"{subdir}/{path.name}/characters", CharacterConfig).values())
+        cast = _load_dir(f"{subdir}/{path.name}/characters", CharacterConfig).values()
+        data["cast"] = [c.model_copy(update={"age": ""}) if c.age else c for c in cast]
         out[path.name] = FandomConfig.model_validate(data)
     return out
 
@@ -117,6 +126,34 @@ def write_fandom(cfg: FandomConfig) -> Path:
     return path
 
 
+def cache_visual_prompt(path: Path, prompt: str) -> bool:
+    """Store a freshly compiled `visual_prompt` back into an EXISTING character file.
+
+    `CharacterConfig.visual_prompt` is a cache — rebuilt from the structured fields
+    whenever `dirty` is set — but nothing ever wrote it down, so every run recompiled
+    the whole cast from scratch. That is a full LLM round trip per character, in
+    series: a world of 44 people cost about twenty-four minutes before the writer had
+    even started, on every single run.
+
+    Only the two cache fields are touched and only in a file that already exists, so
+    an operator's edit cannot be overwritten by a background write, and a character
+    that lives only in memory (a drama's ad-hoc cast member) is not given a file it
+    was never meant to have. A failure is ignored: the compile still happened, and
+    paying for it again is better than taking a run down over a cache."""
+    if not prompt.strip() or not path.is_file():
+        return False
+    try:
+        data = _read_toml(path)
+        if data.get("visual_prompt") == prompt and data.get("dirty") is False:
+            return False
+        data["visual_prompt"] = prompt
+        data["dirty"] = False
+        path.write_bytes(tomli_w.dumps(data).encode())
+        return True
+    except (ConfigError, OSError, ValueError):
+        return False
+
+
 class ConfigStore:
     """All configs, loaded once. Reload by constructing a new instance."""
 
@@ -135,6 +172,11 @@ class ConfigStore:
         self.visuals: dict[str, VisualsConfig] = _load_dir("visuals", VisualsConfig)
         self.llm_profiles: dict[str, LLMProfile] = _load_dir("llm", LLMProfile)
         self.characters: dict[str, CharacterConfig] = _load_dir("characters", CharacterConfig)
+        # cloned voices: the card and its audio sample live side by side, so each one
+        # is told where it was loaded from and resolves `ref` against that folder.
+        self.voices: dict[str, VoiceConfig] = _load_dir("voices", VoiceConfig)
+        for v in self.voices.values():
+            v.root = CONFIGS_DIR / "voices"
         self.orchestrations: dict[str, OrchestrationConfig] = _load_dir("orchestration", OrchestrationConfig)
         self.fandoms: dict[str, FandomConfig] = _load_fandoms()
 

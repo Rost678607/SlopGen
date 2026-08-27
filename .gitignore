@@ -12,6 +12,11 @@ dist/
 secrets/
 output/
 state/
+# Downloaded neural weights (see `slopgen models`). The local voice alone is 2.3 GiB;
+# nothing here is ever committed — the catalogue in src/slopgen/models/registry.py is.
+# Anchored to the repo root on purpose: a bare `models/` would also swallow the
+# source package of that same name.
+/models/
 
 # --- OS / editor cruft ---
 .DS_Store
@@ -29,6 +34,11 @@ configs/llm/*.toml
 !configs/llm/deepseek.toml
 !configs/llm/gemini.toml
 !configs/llm/openrouter.toml
+# Cloned voices: a card plus a recording of somebody actually speaking. Both are
+# personal in a way a config normally is not — this is a real person's voice — so the
+# whole folder stays out of the repository, samples included.
+configs/voices/*
+!configs/voices/.gitkeep
 # Personal AI-drama cast, publishing accounts, and ad contracts.
 configs/characters/*.toml
 !configs/characters/example.toml

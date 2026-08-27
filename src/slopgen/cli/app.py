@@ -38,10 +38,39 @@ from ..pipeline.context import AppContext
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
 
+# Sub-apps for the two things that are managed rather than run. Both read the
+# ConfigStore the top-level callback puts on `ctx.obj`, so neither needs an
+# AppContext or an Orchestrator.
+from .models_cmd import app as models_app  # noqa: E402
+from .voices_cmd import app as voices_app  # noqa: E402
+
+app.add_typer(models_app, name="models")
+app.add_typer(voices_app, name="voices")
+
 STATUS_ICON = {
     "start": "…", "done": "[green]✔[/green]", "error": "[red]✘[/red]",
     "skip": "[yellow]↷[/yellow]", "paused": "[yellow]⏸[/yellow]", "review": "[yellow]⏸[/yellow]",
 }
+
+
+def _tts_kwargs(engine: Optional[str], source: Optional[str]) -> dict:
+    """Validate --tts-engine / --tts-source here rather than downstream: a misspelt
+    engine would otherwise surface after the script is already written and paid for."""
+    from ..tts import ENGINES
+
+    out: dict = {}
+    if engine:
+        if engine not in ENGINES:
+            typer.secho(f"error: unknown TTS engine '{engine}' "
+                        f"(known: {', '.join(ENGINES)})", fg="red")
+            raise typer.Exit(1)
+        out["tts_engine"] = engine
+    if source:
+        if source not in ("engine", "manual"):
+            typer.secho("error: --tts-source must be 'engine' or 'manual'", fg="red")
+            raise typer.Exit(1)
+        out["tts_source"] = source
+    return out
 
 
 def _check_filters(items: Optional[list[str]]) -> dict[str, int]:
@@ -259,9 +288,9 @@ def main(
 
     # no subcommand and nothing else to do -> interactive TUI
     if ctx.invoked_subcommand is None:
-        from ..tui.app import SlopgenApp
+        from ..tui.app import run_tui
 
-        SlopgenApp(store).run()
+        run_tui(store)
         raise typer.Exit()
 
 
@@ -284,7 +313,10 @@ def info(
     preset: Optional[str] = typer.Option(None, "--preset", help="preset from configs/presets/"),
     out: Optional[Path] = typer.Option(None, "--out", help="output dir override"),
     subs: Optional[str] = typer.Option(None, "--subs", help="subtitle style: word_pop | phrases | karaoke"),
+    voice: Optional[str] = typer.Option(None, "--voice", help="narrator voice: a catalogue id for the active engine (ru-RU-SvetlanaNeural), or the name of a configs/voices/ clone; default comes from the content type"),
     tts_rate: Optional[int] = typer.Option(None, "--tts-rate", min=-50, max=50, help="speech rate offset in percent (-50 = slowest, 0 = normal, +50 = fastest)"),
+    tts_engine: Optional[str] = typer.Option(None, "--tts-engine", help="who speaks: edge | azure | qwen | qwen-local (default: [tts].engine)"),
+    tts_source: Optional[str] = typer.Option(None, "--tts-source", help="engine (default) | manual — write the script out and wait for your own recordings, as --manual does for footage"),
     breaks: Optional[list[str]] = typer.Option(None, "--break", "-b", help="stop for review after this stage (repeatable): idea | script | tts | footage | subtitles | assemble | metadata"),
     clean_subs: bool = typer.Option(False, "--clean-subs", help="swap profanity out of the burned-in subtitles; the voiceover keeps every word"),
     visual_style: Optional[str] = typer.Option(None, "--visual-style", help="how the picture should LOOK, in your own words (\"anime\", \"grainy 16mm, sodium street light\"); compiled into tags glued onto every generated prompt"),
@@ -298,6 +330,7 @@ def info(
     store: ConfigStore = ctx.obj
     breakpoints = _check_breakpoints(breaks, "info")
     fx = _check_filters(vfilter)  # before the try: its own error is already reported
+    tts = _tts_kwargs(tts_engine, tts_source)  # same: typer.Exit must not be swallowed
     try:
         params = store.resolve(
             lang=lang, content_type=content_type, ad=ad, ad_mode=ad_mode,
@@ -305,6 +338,7 @@ def info(
             push=push, count=count, preset=preset, idea=idea or "",
             out=out, dry_run=dry_run, keep_temp=keep_temp, subtitle_style=subs,
             tts_rate=tts_rate or 0, breakpoints=breakpoints, clean_subtitles=clean_subs,
+            voice_override=voice or "", **tts,
             visual_style=visual_style or "", filters=fx,
         )
     except (ConfigError, Exception) as e:
@@ -335,8 +369,10 @@ def drama(
     clip_s: float = typer.Option(0.0, "--clip-s", help="average length of ONE generated clip, seconds (0 = each generator's own); clips of 8s+ are written as multi-scene sequences"),
     parts: int = typer.Option(1, "--parts", min=1, help="ask the writer for this many cliffhanger parts; the boundaries are then movable at the script/cut breakpoints"),
     parts_at_once: bool = typer.Option(False, "--parts-at-once", help="cut every part together at the end instead of finishing each one as soon as its own clips are in"),
-    voice: Optional[str] = typer.Option(None, "--voice", help="edge-tts narrator voice id (default per language)"),
+    voice: Optional[str] = typer.Option(None, "--voice", help="narrator voice: a catalogue id for the active engine (ru-RU-SvetlanaNeural), or the name of a configs/voices/ clone"),
     tts_rate: Optional[int] = typer.Option(None, "--tts-rate", min=-50, max=50, help="speech rate offset in percent (-50 = slowest, 0 = normal, +50 = fastest); the writer sizes each beat's narration to it"),
+    tts_engine: Optional[str] = typer.Option(None, "--tts-engine", help="who speaks: edge | azure | qwen | qwen-local (default: [tts].engine)"),
+    tts_source: Optional[str] = typer.Option(None, "--tts-source", help="engine (default) | manual — write the script out and wait for your own recordings, as --manual does for footage"),
     ad: Optional[str] = typer.Option(None, "--ad", help="ad contract name from configs/ads/"),
     ad_mode: str = typer.Option("both", "--ad-mode", help="overlay | native | both"),
     profanity: int = typer.Option(0, "--profanity", min=0, max=100, help="swearing level 0-100"),
@@ -359,6 +395,7 @@ def drama(
     store: ConfigStore = ctx.obj
     breakpoints = _check_breakpoints(breaks, "drama")
     fx = _check_filters(vfilter)  # before the try: its own error is already reported
+    tts = _tts_kwargs(tts_engine, tts_source)  # same: typer.Exit must not be swallowed
     # resolve the cast by name
     names = [n.strip() for n in (cast or "").split(",") if n.strip()]
     missing = [n for n in names if n not in store.characters]
@@ -395,6 +432,7 @@ def drama(
             ad=ad or "", ad_mode=ad_mode,
             push=push or "", count=max(1, count),
             voice_override=voice or "", tts_rate=tts_rate or 0,
+            **tts,
             out=out, dry_run=dry_run, keep_temp=keep_temp, subtitle_style=subs,
             breakpoints=breakpoints, clean_subtitles=clean_subs,
             visual_notes=visual_notes or "", visual_style=visual_style or "",
@@ -431,8 +469,10 @@ def fandom(
     source: Optional[str] = typer.Option(None, "--source", help="what makes the shots: a generator (wan2.1 | ltx-video | animatediff for video, flux | turbo for photo), `manual` (you generate them) or `search` (you find them; slopgen briefs you per shot). Default: wan2.1 for video, flux for photo"),
     orchestration: Optional[str] = typer.Option(None, "--orchestration", help="a full chain from configs/orchestration/, overriding --source when you want to mix"),
     duration: float = typer.Option(120.0, "--duration", help="length of the finished video, in seconds"),
-    voice: Optional[str] = typer.Option(None, "--voice", help="edge-tts narrator voice id (default per language)"),
+    voice: Optional[str] = typer.Option(None, "--voice", help="narrator voice: a catalogue id for the active engine (ru-RU-SvetlanaNeural), or the name of a configs/voices/ clone"),
     tts_rate: Optional[int] = typer.Option(None, "--tts-rate", min=-50, max=50, help="speech rate offset in percent (-50 = slowest, 0 = normal, +50 = fastest); the writer sizes each beat's narration to it"),
+    tts_engine: Optional[str] = typer.Option(None, "--tts-engine", help="who speaks: edge | azure | qwen | qwen-local (default: [tts].engine)"),
+    tts_source: Optional[str] = typer.Option(None, "--tts-source", help="engine (default) | manual — write the script out and wait for your own recordings, as --manual does for footage"),
     ad: Optional[str] = typer.Option(None, "--ad", help="ad contract name from configs/ads/"),
     ad_mode: str = typer.Option("both", "--ad-mode", help="overlay | native | both"),
     profanity: int = typer.Option(0, "--profanity", min=0, max=100, help="swearing level 0-100"),
@@ -457,6 +497,7 @@ def fandom(
     store: ConfigStore = ctx.obj
     breakpoints = _check_breakpoints(breaks, "fandom")
     fx = _check_filters(vfilter)  # before the try: its own error is already reported
+    tts = _tts_kwargs(tts_engine, tts_source)  # same: typer.Exit must not be swallowed
     if world not in store.fandoms:
         typer.secho(
             f"error: fandom '{world}' not found "
@@ -515,6 +556,7 @@ def fandom(
             ad=ad or "", ad_mode=ad_mode,
             push=push or "", count=max(1, count),
             voice_override=voice or "", tts_rate=tts_rate or 0,
+            **tts,
             out=out, dry_run=dry_run, keep_temp=keep_temp, subtitle_style=subs,
             breakpoints=breakpoints, clean_subtitles=clean_subs,
             visual_notes=visual_notes or "", visual_style=visual_style or "",
@@ -559,9 +601,9 @@ def _open_parked(store: ConfigStore, run_dir: Optional[Path], indices, what: str
     if not indices(rd):
         typer.secho(f"{rd} has no jobs waiting for {what}", fg="yellow")
         raise typer.Exit(1)
-    from ..tui.app import SlopgenApp
+    from ..tui.app import run_tui
 
-    SlopgenApp(store, open_dir=rd).run()
+    run_tui(store, open_dir=rd)
 
 
 @app.command()

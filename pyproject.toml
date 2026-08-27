@@ -17,6 +17,13 @@ dependencies = [
     "gradio_client>=1.3",
 ]
 
+# Optional engines. Everything the pipeline needs by default is above; these are
+# per-engine SDKs, and only the engine that needs one has to have it. Weights and
+# the packages that load them are NOT here — `slopgen models install` fetches those,
+# because a 2.3 GiB model has no business in a dependency list (see slopgen/models/).
+[project.optional-dependencies]
+azure = ["azure-cognitiveservices-speech>=1.40"]
+
 [project.scripts]
 slopgen = "slopgen.cli.app:run"
 

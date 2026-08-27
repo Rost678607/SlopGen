@@ -260,6 +260,10 @@ def _collect_manual(job: VideoJob, ctx: AppContext, manual_bg: str, manual_fg: s
         return ", ".join(p for p in bits if p.strip()) or "cinematic scene"
 
     specs: list[manual.ShotSpec] = []
+    # what to bring back, per LAYER: an info clip may want stills behind and clips in
+    # front, or the other way round, so this is not a property of the run
+    bg_want = manual.medium_of(ctx.visuals.background.source)
+    fg_want = manual.medium_of(ctx.visuals.foreground.source)
     scene_start = 0.0  # must mirror run()'s offset so fg anchoring lines up
     for i, scene in enumerate(job.scenes):
         if scene.is_ad:
@@ -271,6 +275,7 @@ def _collect_manual(job: VideoJob, ctx: AppContext, manual_bg: str, manual_fg: s
                 prompt=_prompt(_queries(scene, 1, fallback)[0], manual_bg),
                 target_s=scene.duration,
                 kind=manual_bg,
+                want="" if manual_bg == "search" else bg_want,
             ))
         if manual_fg:
             for k, cue in enumerate(scene.insert_cues):
@@ -282,6 +287,7 @@ def _collect_manual(job: VideoJob, ctx: AppContext, manual_bg: str, manual_fg: s
                     prompt=_prompt(cue.query or " ".join(scene.keywords), manual_fg),
                     target_s=span[1] - span[0],
                     kind=manual_fg,
+                    want="" if manual_fg == "search" else fg_want,
                 ))
         scene_start += scene.duration
     if not specs:

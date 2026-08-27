@@ -41,17 +41,23 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from ..media.ffmpeg import FFmpegError, duration_of
-from ..media.stock import IMAGE_EXTS, VIDEO_EXTS
+from ..media.stock import IMAGE_EXTS
 
 MANIFEST_NAME = "manual_shots.json"
-_SHOT_RE = re.compile(r"shot_(\d+)", re.IGNORECASE)
+# How a background shot's number may be written on a file the operator renamed by
+# hand: `shot_03`, `shot3`, `shot-3`, `shot 03`. The voice inbox has been this
+# forgiving about `scene_NN` from the start; there is no reason for the picture
+# inbox to be stricter, and a file rejected over a hyphen looks like a bug.
+_SHOT_RE = re.compile(r"shot[ _-]?(\d+)", re.IGNORECASE)
+# the same for a foreground insert: `fg_03_1`, `fg3-1`, `fg 03 1`
+_FG_RE = re.compile(r"fg[ _-]?(\d+)[ _-](\d+)", re.IGNORECASE)
 
 ShotStatus = Literal["pending", "in_flight", "delivered"]
 
@@ -239,21 +245,78 @@ def build_or_update(
     return manifest
 
 
+def medium_of(source: str) -> str:
+    """What a visuals source delivers — "photo", "video", or "" when the name does
+    not say. The layer sources are named `<where>_<what>` (`stock_video`, `ai_photo`,
+    `local_photo`), which is the whole rule."""
+    return ("photo" if source.endswith("_photo")
+            else "video" if source.endswith("_video") else "")
+
+
+# What a delivered file turns out to be, asked of ffprobe rather than of its name —
+# ("video" | "photo" | "", seconds). Nothing here cares what the shot ASKED for: a
+# still is held and panned to length, a clip is fitted to it, and both work wherever
+# the other does, so the only question is which of the two arrived.
+#
+# By content and not by extension, because the extension is wrong often enough to
+# matter. An animated .gif is a clip that every extension table in this repository
+# would have called a picture; an .mkv is a clip that none of them listed; a photo
+# saved as .avif or a phone's .heic is a picture that none of them listed either. The
+# tell is in the container: ffmpeg demuxes a single image through a `*_pipe` format
+# (`jpeg_pipe`, `png_pipe`, `webp_pipe`), and anything with a timeline reports a real
+# format and a duration. Measured on eight files here — still jpg/png/webp, animated
+# gif and webp, mp4, mkv, and an audio-only mp3 — that rule sorts every one of them
+# correctly, including the two the extension rule got wrong.
+_PROBED: dict[tuple, tuple[str, float]] = {}
+
+
+def probe_asset(path: Path) -> tuple[str, float]:
+    """``("video", seconds)``, ``("photo", 0.0)``, or ``("", 0.0)`` when there is no
+    picture in the file at all (an audio track, a half-copied download, a PDF)."""
+    path = Path(path)
+    try:
+        st = path.stat()
+    except OSError:
+        return "", 0.0
+    key = (str(path), st.st_mtime_ns, st.st_size)
+    if key in _PROBED:
+        return _PROBED[key]
+    answer = ("", 0.0)
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+             "stream=codec_type:format=format_name,duration", "-of", "json", str(path)],
+            capture_output=True, text=True, check=True,
+        )
+        data = json.loads(out.stdout or "{}")
+        fmt = data.get("format") or {}
+        has_picture = any(s.get("codec_type") == "video" for s in data.get("streams") or [])
+        if has_picture:
+            if str(fmt.get("format_name", "")).endswith("_pipe"):
+                answer = "photo", 0.0
+            else:
+                try:
+                    seconds = float(fmt.get("duration") or 0.0)
+                except (TypeError, ValueError):
+                    seconds = 0.0
+                answer = ("video", seconds) if seconds > 0 else ("", 0.0)
+    except (subprocess.CalledProcessError, json.JSONDecodeError, OSError):
+        answer = "", 0.0
+    _PROBED[key] = answer
+    return answer
+
+
 def is_photo_file(path: Path) -> bool:
-    return Path(path).suffix.lower() in IMAGE_EXTS
+    """True when the delivered file is a still. Falls back to the extension only for
+    a file ffprobe would not answer about, so a caller always gets a straight yes/no
+    for something already accepted."""
+    kind, _s = probe_asset(path)
+    return kind == "photo" if kind else Path(path).suffix.lower() in IMAGE_EXTS
 
 
 def _valid_asset(path: Path) -> bool:
-    """A dropped file counts only if it is usable. A clip must have a non-zero
-    duration ffprobe can read (guards against half-copied downloads); a still only
-    has to be a non-empty image — user-assisted SEARCH may legitimately deliver one,
-    and a photo is held or panned to length rather than played."""
-    try:
-        if is_photo_file(path):
-            return path.stat().st_size > 0
-        return path.suffix.lower() in VIDEO_EXTS and duration_of(path) > 0
-    except (FFmpegError, ValueError, KeyError, OSError):
-        return False
+    """A dropped file counts if there is a picture in it — moving or not."""
+    return probe_asset(path)[0] != ""
 
 
 def _match_shot(shots: list[ManualShot], stem: str) -> ManualShot | None:
@@ -263,22 +326,37 @@ def _match_shot(shots: list[ManualShot], stem: str) -> ManualShot | None:
     exact = next((s for s in shots if s.id == stem), None)
     if exact is not None:
         return exact
+    m = _FG_RE.fullmatch(stem)
+    if m:
+        wanted = f"fg_{int(m.group(1)):02d}_{int(m.group(2))}"
+        return next((s for s in shots if s.id == wanted), None)
     m = _SHOT_RE.fullmatch(stem)
     if m:
-        want = f"shot_{int(m.group(1)):02d}"
-        return next((s for s in shots if s.id == want), None)
+        wanted = f"shot_{int(m.group(1)):02d}"
+        return next((s for s in shots if s.id == wanted), None)
     return None
+
+
+# Files an inbox may hold that are nobody's delivery and should not be complained
+# about: the operator's own notes, and the half-written files a browser leaves behind.
+_IGNORED_SUFFIXES = {".txt", ".md", ".json", ".part", ".crdownload", ".tmp", ".download"}
 
 
 def scan_inbox(manifest: ManualManifest, workdir: Path) -> int:
     """Attach any inbox/<shot-id>.* files to still-undelivered shots. Returns the
-    number newly delivered. Validation-only; normalization happens at assemble."""
+    number newly delivered. Validation-only; normalization happens at assemble.
+
+    No extension list: what a file IS gets asked of ffprobe (see :func:`probe_asset`),
+    so an .mkv, an animated .gif or a phone's .heic is taken if there is a picture in
+    it, and a file with no picture is left where it lies. Whichever kind arrives is
+    the kind the shot becomes — a still where a clip was asked for is held and panned,
+    a clip where a still was asked for is fitted to the beat."""
     inbox = inbox_dir(workdir)
     if not inbox.is_dir():
         return 0
     delivered = 0
     for f in sorted(inbox.iterdir()):
-        if not f.is_file() or f.suffix.lower() not in (VIDEO_EXTS | IMAGE_EXTS):
+        if not f.is_file() or f.name.startswith(".") or f.suffix.lower() in _IGNORED_SUFFIXES:
             continue
         shot = _match_shot(manifest.shots, f.stem)
         if shot is None or shot.status == "delivered":
@@ -287,6 +365,32 @@ def scan_inbox(manifest: ManualManifest, workdir: Path) -> int:
             attach(shot, f)
             delivered += 1
     return delivered
+
+
+def rejected_in_inbox(manifest: ManualManifest, workdir: Path) -> list[tuple[Path, str]]:
+    """Every file sitting in the inbox that did NOT become a delivery, and why.
+
+    Silence is the bug this exists for: a file named for a shot that nobody could
+    read, or named for no shot at all, simply stayed on disk while the screen went on
+    saying 0/11 — and the operator has no way to tell "not picked up yet" from "will
+    never be picked up". Reasons are ids, translated by whoever displays them."""
+    inbox = inbox_dir(workdir)
+    if not inbox.is_dir():
+        return []
+    out: list[tuple[Path, str]] = []
+    for f in sorted(inbox.iterdir()):
+        if not f.is_file() or f.name.startswith(".") or f.suffix.lower() in _IGNORED_SUFFIXES:
+            continue
+        shot = _match_shot(manifest.shots, f.stem)
+        if shot is None:
+            out.append((f, "unknown_shot"))
+        elif shot.clip and Path(shot.clip) == f:
+            continue  # this is the delivery
+        elif not _valid_asset(f):
+            out.append((f, "no_picture"))
+        elif shot.status == "delivered":
+            out.append((f, "already_delivered"))
+    return out
 
 
 def attach(shot: ManualShot, clip: Path) -> None:

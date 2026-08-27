@@ -76,6 +76,14 @@ class Checkpoint:
         """The stage this job is parked on for review (empty when it isn't)."""
         return self._job_state(index).get("review_stage") or ""
 
+    def failed_stage(self, index: int) -> str:
+        """The stage this job died on (empty when it did not)."""
+        return self._job_state(index).get("failed_stage") or ""
+
+    def error(self, index: int) -> str:
+        """What killed it, as it was reported — possibly several lines."""
+        return self._job_state(index).get("error") or ""
+
     def reviewed(self, index: int) -> list[str]:
         """Breakpoints already shown for this video — they never fire twice."""
         return list(self._job_state(index).get("reviewed", []))

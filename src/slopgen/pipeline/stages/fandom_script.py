@@ -32,6 +32,14 @@ works alone (see `llm/lore.py` for the full reasoning):
      concrete facts that window is responsible for spending (`beats.DETAILS_RULE`);
   3. `lore_lookup`, the archivist tool, for the detail the writer knows it is missing
      — the only layer that costs a full reading of the documents per question.
+
+The world's cast is not a fourth layer, and the mode is careful to say so (see
+`CAST_RULE`). It is a WARDROBE: a list of what things look like, where one entry may be
+one character, a body of identical faceless ones, or a whole kind of them. Everything a
+character IS reaches the writer through the three layers above, like every other fact
+about the world — which is the point, since a world's people are made of the same
+material as its weather and its ledgers, and splitting them off into little character
+sheets is how a video ends up about four people standing in a place.
 """
 
 from __future__ import annotations
@@ -170,6 +178,29 @@ BRIEF_RULE = (
     "what an author meant. Say 'the ledgers disagree', never 'the lore is inconsistent'.\n"
 )
 
+# What the cast sheet is, and — more importantly — what it is NOT. A world's sheet is a
+# wardrobe, not a cast list: it holds looks and nothing else, because everything a
+# character IS is written in the records instead (see `config.models.CharacterConfig`).
+# A writer handed a description of a coat and told it is a character will happily supply
+# the rest — a name's meaning, a grievance, a dead brother — and that invention is
+# indistinguishable, in the finished video, from something the world actually contains.
+# The other half of the rule is number: an entry may stand for four hundred identical
+# figures, and left unsaid it becomes one man with a name.
+CAST_RULE = (
+    "The cast sheet is AUTHORITATIVE for what each character LOOKS like and for what "
+    "sort of thing it is: a person or not, one of them or many, and its gender where it "
+    "has one. Never contradict it, in the narration or in a video_prompt — pronouns and "
+    "NUMBER included. An entry marked as a GROUP or a KIND is not one individual and has "
+    "no personal story: it is however many of them a shot needs, and the narration "
+    "speaks of them the way it would of any anonymous many.\n"
+    "The sheet says NOTHING ELSE about anyone. Who a character is, what they have done, "
+    "what they are like and what anyone thinks of them is in the records of this world, "
+    "and there alone — take it from there, and never invent it out of a description of a "
+    "coat. A character the records do not speak of is simply someone the records do not "
+    "speak of.\n"
+    "Two characters in one shot must stay visually distinct.\n"
+)
+
 SYSTEM_RESIDENT = (
     "You are writing a narrated vertical video, in {lang}, spoken by ONE person who "
     "LIVES in the world described below. They speak in first person about their own "
@@ -195,10 +226,7 @@ SYSTEM_RESIDENT = (
     '  • "characters": the list of named characters from the cast sheet visible in this '
     "shot (subset of the cast; [] if none).\n"
     "{open_rule}"
-    "{arc_rule} The cast sheet is AUTHORITATIVE for what each character IS and how it "
-    "looks — its kind, and where it is a person, its gender and age — never contradict "
-    "it, in the narration or in video_prompt, pronouns included. Two characters in one "
-    "shot must stay visually distinct.\n"
+    "{arc_rule} {cast_rule}"
     "{part_rule}"
     "{premise_rule}"
     "{world_block}"
@@ -233,10 +261,7 @@ SYSTEM_CHRONICLER = (
     '  • "characters": the list of named characters from the cast sheet visible in this '
     "shot (subset of the cast; [] if none).\n"
     "{open_rule}"
-    "{arc_rule} The cast sheet is AUTHORITATIVE for what each character IS and how it "
-    "looks — its kind, and where it is a person, its gender and age — never contradict "
-    "it, in the narration or in video_prompt, pronouns included. Two characters in one "
-    "shot must stay visually distinct.\n"
+    "{arc_rule} {cast_rule}"
     "{part_rule}"
     "{premise_rule}"
     "{world_block}"
@@ -259,7 +284,10 @@ VIDEO_PROMPT_RULE = (
     "character's full visual description before the prompt reaches the generator, which "
     "is what keeps two of them in one shot from being blended. Do not describe their "
     "looks yourself. A character need not be a person: it may be a creature, a machine, "
-    "a vehicle or a structure, and the sheet says which. "
+    "a vehicle or a structure, and the sheet says which. Nor need it be ONE: an entry "
+    "marked as a group or a kind stands for all of them at once, and a shot showing "
+    "several says so around the name — 'three <name> hauling a crate uphill' — never by "
+    "pluralising or altering the name itself. "
     "The image generator has never heard of this world: never put one of its own terms "
     "in a video_prompt untranslated — describe what the thing LOOKS like in plain "
     "English (not 'the winter carry', but 'figures in heavy coats carrying mail sacks "
@@ -364,7 +392,9 @@ class FandomWriter:
             "THE BRIEF — what this video is about: material and, where the operator "
             "addresses you directly, instructions to follow rather than to write "
             f"down.\n{brief}\n\n"
-            f"Characters who may appear (not all of them are people):\n{roster}\n\n"
+            "Characters who may appear — what they LOOK like, and nothing more. Not all "
+            "of them are people, and an entry may be one figure, a body of identical "
+            f"ones, or a whole kind:\n{roster}\n\n"
             f"The piece runs {beats} beats, cut into {len(windows)} stretches of "
             f"{', '.join(str(b - a) for a, b in windows)} beats."
         )
@@ -387,7 +417,8 @@ class FandomWriter:
             video_prompt_rule=VIDEO_PROMPT_RULE,
             world_rule=WORLD_RULE,
             open_rule=OPEN_RULE_FANDOM if w.index == 0 else "",
-            arc_rule=w.arc, part_rule=w.part_rule, premise_rule=PREMISE_RULE,
+            arc_rule=w.arc, cast_rule=CAST_RULE,
+            part_rule=w.part_rule, premise_rule=PREMISE_RULE,
             world_block=self._world_block()
             + (f"\nHOW THIS ONE IS TOLD — the operator's note on register: {tone}\n"
                if tone else ""),
@@ -399,7 +430,9 @@ class FandomWriter:
             "THE BRIEF — what this video is about: material and, where the operator "
             "addresses you directly, instructions to follow rather than to write "
             f"down.\n{brief}\n\n"
-            f"Characters who may appear (not all of them are people):\n{roster}\n\n"
+            "Characters who may appear — what they LOOK like, and nothing more. Not all "
+            "of them are people, and an entry may be one figure, a body of identical "
+            f"ones, or a whole kind:\n{roster}\n\n"
         )
         if tail:
             user += f"The beats already written end like this:\n{tail}\n\n"
