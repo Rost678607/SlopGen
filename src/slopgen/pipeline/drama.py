@@ -112,6 +112,42 @@ def speech_scale(rate: int) -> float:
     return max(1.0 + rate / 100.0, 0.25)
 
 
+# Roughly how many CHARACTERS of narration one second of speech takes, at the voice's
+# natural speed. The same fact as `_WORDS_PER_SEC` in the other currency, and it earns
+# its own table because the two are used for different things: a WORD budget is what a
+# writer is told ("a beat of this length holds about twelve words"), while a CHARACTER
+# budget is what a script is CHECKED against afterwards — a model counts words badly
+# and inconsistently across languages, and nothing on our side can count the words of a
+# Russian sentence the way a synthesizer will say them.
+#
+# Measured rather than derived: the hand-corrected fandom script in
+# output/20260827_213735_fandom_ru came to 1,566 characters and 122.0 seconds of real
+# qwen-local speech across 14 lines — 12.8 chars/s, 2.3 words/s. The per-line spread is
+# wide (7 to 18 chars/s, since a line's pauses belong to its punctuation as much as to
+# its length), which is exactly why this is used on WHOLE scripts and windows and never
+# on one beat.
+_CHARS_PER_SEC: dict[str, float] = {"en": 14.0, "ru": 12.8}
+_DEFAULT_CPS = 13.0
+
+
+def chars_per_sec(lang: str, rate: int = 0) -> float:
+    return _CHARS_PER_SEC.get(lang, _DEFAULT_CPS) * speech_scale(rate)
+
+
+def char_budget(seconds: float, lang: str, rate: int = 0) -> int:
+    """How many characters of narration fit in `seconds` of speech — the budget a
+    writer is given as a hard number, and the one it can check itself against."""
+    return max(1, round(seconds * chars_per_sec(lang, rate)))
+
+
+def speech_seconds(text: str, lang: str, rate: int = 0) -> float:
+    """How long this text will take to say. The inverse of :func:`char_budget`, and
+    the only estimate available before the voice stage has run — which is where a
+    script that overshoots the length has to be caught, since by the time there is
+    audio the money for the shots is already spent."""
+    return len(text) / chars_per_sec(lang, rate)
+
+
 def word_budget(seconds: float, lang: str, rate: int = 0) -> int:
     """Roughly how many spoken words fit in `seconds` of narration for `lang`, at the
     run's speech `rate`.

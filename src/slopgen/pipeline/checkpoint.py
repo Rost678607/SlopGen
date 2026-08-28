@@ -8,8 +8,12 @@ reloads this file, skips the finished stages, and re-runs from the point of
 failure. The completed stages' outputs (TTS audio, downloaded footage, the
 serialized job itself) all live on disk, so nothing is recomputed needlessly.
 
-Writes are atomic (temp file + os.replace) so a crash mid-write can never
-corrupt the checkpoint.
+It also carries the run's BILL. Every LLM call is recorded as it is made (see
+`llm/usage`) and the whole ledger is written out with the job on every save, so what a
+video cost — per stage, per prompt, and how much of it went on retries — is readable
+off a finished run instead of off a provider's dashboard for the day. That is what made
+the fandom script's real problem visible: not the model being expensive, but the same
+43k-character cast sheet going out again on every window and every retry.
 """
 
 from __future__ import annotations
@@ -28,15 +32,19 @@ CHECKPOINT_NAME = "checkpoint.json"
 class Checkpoint:
     """Read/write access to a single run's checkpoint file."""
 
-    def __init__(self, run_dir: Path, data: dict):
+    def __init__(self, run_dir: Path, data: dict, usage=None):
         self.run_dir = Path(run_dir)
         self.path = self.run_dir / CHECKPOINT_NAME
         self.data = data
+        # the run's ledger (`llm.usage.UsageLedger`), or None for a checkpoint opened
+        # only to be read — `slopgen review` has no calls of its own to bill
+        self.usage = usage
 
     # -- construction ------------------------------------------------------
 
     @classmethod
-    def start(cls, run_dir: Path, params: RunParams, stages: list[str]) -> "Checkpoint":
+    def start(cls, run_dir: Path, params: RunParams, stages: list[str],
+              usage=None) -> "Checkpoint":
         cp = cls(run_dir, {
             "version": 1,
             "created_at": datetime.now().isoformat(timespec="seconds"),
@@ -44,16 +52,22 @@ class Checkpoint:
             "params": params.model_dump(mode="json"),
             "stages": stages,
             "jobs": {},
-        })
+        }, usage=usage)
         cp.save()
         return cp
 
     @classmethod
-    def load(cls, run_dir: Path) -> "Checkpoint":
+    def load(cls, run_dir: Path, usage=None) -> "Checkpoint":
         path = Path(run_dir) / CHECKPOINT_NAME
         if not path.exists():
             raise FileNotFoundError(f"no checkpoint at {path}")
-        return cls(run_dir, json.loads(path.read_text()))
+        return cls(run_dir, json.loads(path.read_text()), usage=usage)
+
+    def usage_of(self, index: int) -> dict:
+        """What this video has cost so far, as `llm.usage.UsageLedger.summary()` last
+        wrote it. A resumed run starts a fresh ledger, so this is the bill of the pass
+        that wrote it rather than of every pass ever made."""
+        return self._job_state(index).get("usage") or {}
 
     @property
     def params(self) -> RunParams:
@@ -109,6 +123,8 @@ class Checkpoint:
             "updated_at": datetime.now().isoformat(timespec="seconds"),
             **extra,
         }
+        if self.usage is not None:
+            st["usage"] = self.usage.summary()
         self.data.setdefault("jobs", {})[str(job.index)] = st
         self.save()
 

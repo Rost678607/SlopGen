@@ -67,11 +67,22 @@ SHOT_RULE = (
     "document, a single revealed fact wants a short beat; a movement, a process, an "
     "arrival, something the eye should watch happen wants a long one. Vary them — a "
     "run of identically-timed shots is what makes a video feel like a slideshow of "
-    "nothing. The whole piece should come to about {total:.0f} seconds across roughly "
-    "{beats} beats, so if you spend a long beat somewhere, spend short ones nearby.\n"
-    "The narration of a beat must FIT the seconds you gave it: about {wps:.1f} spoken "
-    "words per second at this video's speaking rate. A beat of {lo:.0f}s therefore "
-    "carries a phrase, not a paragraph.\n"
+    "nothing.\n"
+    "THE LENGTH IS NOT NEGOTIABLE, and it is the one instruction here with arithmetic "
+    "in it. What you are writing now runs EXACTLY {total:.0f} seconds across about "
+    "{beats} beats: the \"seconds\" you assign must ADD UP TO {total:.0f}, and the "
+    "narration you write must be about {chars} CHARACTERS in total — that is what "
+    "{total:.0f} seconds of this voice says, at roughly {wps:.1f} words a second. Count "
+    "it before you answer. Over budget is not a style choice: the shots are already "
+    "paid for, so a piece written long is either cut or spoken fast, and both are worse "
+    "than the piece you would have written to the number.\n"
+    "So a beat of {lo:.0f}s carries a phrase and a beat of {hi:.0f}s carries a sentence "
+    "or two — and if you spend a long beat somewhere, spend short ones nearby.\n"
+    "Fitting the budget means saying FEWER THINGS, never saying things in fewer words. "
+    "Whole sentences, with verbs in them, in the register the records describe: a line "
+    "compressed into a telegraphic list of nouns ('three came, looked, said nothing, "
+    "left') is not a shorter version of this voice, it is a different and worse one. "
+    "When a beat will not fit, drop something from it — never the grammar.\n"
     "{shape}"
 )
 
@@ -96,9 +107,14 @@ SHAPE_PHOTO = (
 )
 
 
-def shot_rule(clip_s: float, *, total: float, beats: int, wps: float, photo: bool) -> str:
+def shot_rule(clip_s: float, *, total: float, beats: int, chars: int, wps: float,
+              photo: bool) -> str:
+    """`total`/`beats`/`chars` are THIS WINDOW's share of the video, never the whole
+    one. A window handed the whole number writes to it, and a piece cut into three
+    windows comes out three times too long — which is most of how the first measured
+    run reached 181 seconds against a budget of 120."""
     return SHOT_RULE.format(
-        lo=MIN_BEAT_S, hi=MAX_BEAT_S, total=total, beats=beats, wps=wps,
+        lo=MIN_BEAT_S, hi=MAX_BEAT_S, total=total, beats=beats, chars=chars, wps=wps,
         shape=SHAPE_PHOTO if photo else SHAPE_VIDEO,
     )
 
@@ -165,17 +181,59 @@ LORE_TOOL_RULE = (
     "this world, and you write accordingly.\n"
 )
 
-# What the brief asks for is usually one of two things, and they want opposite
-# handling: "tell me about X" is reportage, "what really happened to X" is an argument.
-# A model given a theory brief without this drifts into summarising the evidence and
-# never commits to a conclusion.
+# The brief is the one thing in this prompt the operator wrote themselves, and it kept
+# losing to the world around it. Handed a finished text — six numbered rules, then the
+# accounts of people who had met the things, then a sign-off — the writer treated it as
+# a TOPIC: it kept the parts it liked, reordered them, and spent the first five of
+# twenty beats on background out of the canon sheet that the brief does not contain at
+# all. The rules it had actually been given started at beat six.
+#
+# That is what a brief becomes when it arrives labelled "what this video is about" next
+# to seventeen thousand characters of world facts labelled authoritative — the sheet
+# reads as the material and the brief as a suggestion about which corner of it to
+# visit. So the two are declared for what they are, in that order: the brief IS the
+# piece, and the records are a constraint on how it may be told.
+#
+# The clauses after that are each one observed failure. Invention: 'the Krivulya moves
+# the bog about; that is why there are six rules' — a causal link neither the brief nor
+# the records make, which in a finished video is indistinguishable from a fact of the
+# world. The reverse: a beat describing plainly what a creature looks like, in a world
+# whose records say nobody has ever got a good look at one. And the scaffolding: 'the
+# instruction ends here', a line of the brief's furniture, read out loud in the voice.
 BRIEF_RULE = (
-    "\nWHAT THIS VIDEO IS ABOUT — the operator's brief. It may ask you to recount "
-    "something about the world, or to argue a THEORY about it. If it asks for a theory, "
-    "genuinely build one: lay out the evidence from the records, name what does not add "
-    "up, and commit to a conclusion. It is a claim made INSIDE the world by someone who "
-    "lives there — never a fan theory, never a reading of a text, never a guess about "
-    "what an author meant. Say 'the ledgers disagree', never 'the lore is inconsistent'.\n"
+    "\nTHE BRIEF — THIS IS THE VIDEO, not a topic for one. The operator wrote it, and "
+    "it is the spine of what you write: its material, its order and its shape. "
+    "Everything in it is in the piece; nothing that is not in it is added to the piece. "
+    "If it lists six things, you say all six, in its order, and you do not open with a "
+    "seventh. If it moves from one kind of material to another — rules, then accounts, "
+    "then a close — you keep that structure and let the beats fall where it turns.\n"
+    "You are not summarising it and you are not taking inspiration from it. You are "
+    "SAYING it, in this world's voice, cut into beats and fitted to the time: the same "
+    "content, reworded only as far as speaking it aloud requires. Where it runs shorter "
+    "than the time you have, go DEEPER into what it already says — hold a moment, let a "
+    "voice finish, let a detail land — never wider.\n"
+    "It may instead only NAME a subject: a place, a custom, an unexplained event, a "
+    "question. Then it is a topic rather than a text and you build the piece around it "
+    "yourself. Judge by whether it carries content of its own — a sentence is a topic, "
+    "a page is the piece. If it asks you to argue a THEORY, genuinely build one: lay "
+    "out the evidence from the records, name what does not add up, and commit to a "
+    "conclusion. It is a claim made INSIDE the world by someone who lives there — never "
+    "a fan theory, never a reading of a text, never a guess about what an author meant. "
+    "Say 'the ledgers disagree', never 'the lore is inconsistent'.\n"
+    "THE RECORDS ABOVE ARE A CONSTRAINT, NOT MATERIAL. They say what this world "
+    "contains, what its words are, and what nothing you write may contradict. They "
+    "never add a subject the brief did not raise and never earn a beat of their own: "
+    "you use them the way you use grammar — everywhere, and invisibly.\n"
+    "INVENT NOTHING. Not a cause, not a reason, not a connection between two things "
+    "that neither the brief nor the records make. If the brief says a rule is kept and "
+    "does not say why, then why is not known, and you say THAT — not a reason you "
+    "supplied. And where the records say a thing has never been seen clearly, it has "
+    "not: neither the narration nor a video_prompt may show it plainly, and the shot is "
+    "built around what people did see.\n"
+    "The brief's own furniture is not narration. A heading, a numbering, a note about "
+    "what the text is, a line marking where it stops ('that is the end of the "
+    "instruction') — that is scaffolding you write TO, never text you read out. Nor is "
+    "an instruction the operator addressed to you rather than to the world.\n"
 )
 
 # What the cast sheet is, and — more importantly — what it is NOT. A world's sheet is a
@@ -201,6 +259,16 @@ CAST_RULE = (
     "Two characters in one shot must stay visually distinct.\n"
 )
 
+# The cast sheet lives in the SYSTEM prompt rather than the user turn, and that is a
+# cost decision as much as a prompt one: it is identical in every window, so putting it
+# in front of everything that varies is what lets a provider's prompt cache serve it
+# instead of re-reading it (see `window_system`).
+ROSTER_RULE = (
+    "\nCHARACTERS WHO MAY APPEAR — what each of them LOOKS like, and nothing more. Not "
+    "all of them are people, and an entry may be one figure, a body of identical ones, "
+    "or a whole kind:\n{roster}\n"
+)
+
 SYSTEM_RESIDENT = (
     "You are writing a narrated vertical video, in {lang}, spoken by ONE person who "
     "LIVES in the world described below. They speak in first person about their own "
@@ -217,20 +285,19 @@ SYSTEM_RESIDENT = (
     "defining it. One unbroken first-person voice — never a screenplay, never a "
     "narrator over a documentary.\n"
     "{world_rule}"
-    "Break it into BEATS. {shot_rule} For each beat give:\n"
-    '  • "seconds": how long this beat is on screen (you choose — see the rule above);\n'
-    '  • "narration": the spoken text for this shot, in {lang}, sized to those seconds '
-    "(a {words}-word beat is about what a five-second one holds), carrying the piece "
-    "forward;\n"
+    "{world_block}"
+    "{roster_rule}"
+    "{cast_rule}"
+    "{brief_rule}"
+    "{premise_rule}"
+    "\nBreak the piece into BEATS. For each beat give:\n"
+    '  • "seconds": how long this beat is on screen (you choose — see the rule below);\n'
+    '  • "narration": the spoken text for this shot, in {lang}, sized to those seconds, '
+    "carrying the piece forward;\n"
     "{video_prompt_rule}"
     '  • "characters": the list of named characters from the cast sheet visible in this '
     "shot (subset of the cast; [] if none).\n"
-    "{open_rule}"
-    "{arc_rule} {cast_rule}"
-    "{part_rule}"
-    "{premise_rule}"
-    "{world_block}"
-    "{brief_rule}"
+    "{window_rule}"
     "\nTHE OUTPUT CONTRACT, which nothing above overrides:\n"
     'Respond with JSON only: {{"title": "<short title in {lang}>", "scenes": '
     '[{{"seconds": <number>, "narration": "...", "video_prompt": "...", '
@@ -252,20 +319,19 @@ SYSTEM_CHRONICLER = (
     "lives here too — what they lack is not the basics, it is what you found in the "
     "records.\n"
     "{world_rule}"
-    "Break it into BEATS. {shot_rule} For each beat give:\n"
-    '  • "seconds": how long this beat is on screen (you choose — see the rule above);\n'
-    '  • "narration": the spoken text for this shot, in {lang}, sized to those seconds '
-    "(a {words}-word beat is about what a five-second one holds), advancing the account "
-    "or the argument;\n"
+    "{world_block}"
+    "{roster_rule}"
+    "{cast_rule}"
+    "{brief_rule}"
+    "{premise_rule}"
+    "\nBreak the piece into BEATS. For each beat give:\n"
+    '  • "seconds": how long this beat is on screen (you choose — see the rule below);\n'
+    '  • "narration": the spoken text for this shot, in {lang}, sized to those seconds, '
+    "advancing the account or the argument;\n"
     "{video_prompt_rule}"
     '  • "characters": the list of named characters from the cast sheet visible in this '
     "shot (subset of the cast; [] if none).\n"
-    "{open_rule}"
-    "{arc_rule} {cast_rule}"
-    "{part_rule}"
-    "{premise_rule}"
-    "{world_block}"
-    "{brief_rule}"
+    "{window_rule}"
     "\nTHE OUTPUT CONTRACT, which nothing above overrides:\n"
     'Respond with JSON only: {{"title": "<short title in {lang}>", "scenes": '
     '[{{"seconds": <number>, "narration": "...", "video_prompt": "...", '
@@ -309,27 +375,47 @@ OPEN_RULE_FANDOM = (
     "dynamic framing, high contrast.\n"
 )
 
+# The planner is where the brief was lost first, and for a reason written into its own
+# instructions: it used to be told that it alone reads the full records and that "the
+# concrete detail you do not hand out is the detail the video loses", and its `details`
+# field asked for things from the RECORDS. So it planned a tour of the world and hung
+# the brief off it, which is exactly the shape the finished script came out in — five
+# beats of lore, then the six rules the operator had actually written.
+#
+# It is now told the other way round: the brief is the thing being cut up, the records
+# are what keeps the cutting honest, and a stretch's checklist is what the BRIEF put in
+# it. The length arithmetic is here too, because the planner is the only pass that can
+# distribute it — a stretch given half the brief and a sixth of the seconds is a
+# window that cannot help but overrun.
 OUTLINE_SYSTEM = (
     "You are the STORY EDITOR of a narrated vertical video set in the world whose "
     "records are given below. You do not write it — you cut the operator's brief into "
     "exactly {wins} consecutive STRETCHES, which {wins} different writers then write. "
-    "Each writer sees only its own stretch, this outline, a compiled summary of the "
-    "world and the last few lines written before it. Whatever you leave out of the "
-    "outline never reaches the page — and you are the ONLY pass that reads the full "
-    "records, so the concrete detail you do not hand out is the detail the video loses.\n"
+    "Each writer sees only its own stretch, this outline, the brief, a compiled summary "
+    "of the world and the last few lines written before it. Whatever you leave out of "
+    "the outline never reaches the page.\n"
     "{world_rule}"
-    "Read the WHOLE brief and the WHOLE records, then plan the whole piece before you "
-    "write stretch 1. The stretches are slices of ONE piece, in order. Give each "
-    "stretch its fair share of the material — a stretch is the same length as every "
-    "other, so do not pack half the brief into the first two.\n"
+    "{brief_rule}"
+    "Read the WHOLE brief, then the records, then plan the whole piece before you write "
+    "stretch 1. The stretches are consecutive slices of the brief, IN ITS ORDER: "
+    "stretch 1 begins where the brief begins and the last one ends where it ends. Never "
+    "reorder it, never move its opening into the middle, and never spend a stretch on "
+    "something it does not contain.\n"
+    "SIZE THEM. The whole piece runs {total:.0f} seconds and about {chars} characters "
+    "of spoken narration; each stretch gets roughly an equal share of both. So the "
+    "material has to divide that way too — a stretch handed half the brief and a "
+    "{share:.0f}-second slot is a stretch that cannot be written. If the brief holds "
+    "more than the time allows, say so by cutting the least load-bearing material out "
+    "of the plan entirely rather than by squeezing every stretch.\n"
     "For each stretch give:\n"
     '  • "covers": what it deals with, in order — 2-5 concrete sentences about events, '
     "claims and moments, not themes or mood. Written in {lang}.\n"
-    '  • "details": the concrete things from the RECORDS this stretch is responsible '
-    "for spending — names, dates, numbers, places, objects, customs, quoted lines, in "
-    "the records' own exact wording. This is the checklist its writer must spend, and "
-    "the main way the world's real texture reaches the page: be generous and be "
-    "specific. Put each detail in the one stretch it belongs to and nowhere else.\n"
+    '  • "details": the concrete things THE BRIEF puts in this stretch — its rules, its '
+    "accounts, its names, numbers and quoted lines, in the brief's own wording. Where a "
+    "detail needs a fact from the records to be said correctly (the world's own word "
+    "for a thing, a name spelled right), add that fact here too — but the records never "
+    "put an ITEM on this list of their own. This is the checklist its writer must "
+    "spend: put each one in the single stretch it belongs to.\n"
     '  • "ends_on": ONE sentence — where the piece stands when this stretch ends. The '
     "next stretch begins from exactly there.\n"
     "The last stretch ends the piece, unless the brief directs otherwise, in which case "
@@ -380,18 +466,29 @@ class FandomWriter:
     # -- the outline pass --------------------------------------------------
 
     def outline_system(self, ctx, *, wins, lang, part_rule, part_json):
+        from ..drama import char_budget
+
+        total = ctx.params.duration_s
         return OUTLINE_SYSTEM.format(
             wins=wins, lang=lang, part_rule=part_rule, part_json=part_json,
-            world_rule=WORLD_RULE, premise_rule=PREMISE_RULE,
+            world_rule=WORLD_RULE, premise_rule=PREMISE_RULE, brief_rule=BRIEF_RULE,
+            total=total, share=total / max(wins, 1),
+            chars=char_budget(total, ctx.params.lang, ctx.params.tts_rate),
         )
 
     def outline_user(self, ctx, *, brief, roster, beats, windows):
+        """The brief comes FIRST and the records second, which is not cosmetic: handed
+        forty thousand characters of lore and then a page of brief, the planner reads
+        the brief as a note about which part of the lore to visit. It is the thing
+        being cut up, so it opens the turn."""
         return (
-            "THE RECORDS OF THIS WORLD — read all of it before planning anything.\n"
+            "THE BRIEF — this is the piece. Cut THIS up: its material, in its order, "
+            "plus, where the operator addresses you directly, instructions to plan for "
+            f"rather than to write down.\n{brief}\n\n"
+            "THE RECORDS OF THIS WORLD — read them after the brief, and read them as "
+            "the constraint on how it may be told: what this world contains, what its "
+            "words are, what may not be contradicted. They are not the subject.\n"
             f"{self.lore}\n\n"
-            "THE BRIEF — what this video is about: material and, where the operator "
-            "addresses you directly, instructions to follow rather than to write "
-            f"down.\n{brief}\n\n"
             "Characters who may appear — what they LOOK like, and nothing more. Not all "
             "of them are people, and an entry may be one figure, a body of identical "
             f"ones, or a whole kind:\n{roster}\n\n"
@@ -401,42 +498,58 @@ class FandomWriter:
 
     # -- one window --------------------------------------------------------
 
-    def window_system(self, ctx, w: Window, *, lang):
+    def window_system(self, ctx, w: Window, *, lang, roster=""):
+        """One window's contract, ordered so that everything INVARIANT comes first.
+
+        That order is the cheapest change in this file. A provider's prompt cache
+        matches on the prefix and stops at the first difference, so the expensive
+        constants — the canon sheet, the cast sheet, every rule above — used to be
+        worth nothing to it: they sat BEHIND the per-window arc and part rules, and
+        every window re-read all of them at full price, as did every retry. Everything
+        that varies now lives in one block at the end (`window_rule`), where it cannot
+        cost anything but itself."""
         template = (
             SYSTEM_CHRONICLER
             if ctx.params.fandom_voice == "chronicler"
             else SYSTEM_RESIDENT
         )
         tone = (ctx.fandom.tone if ctx.fandom else "").strip()
+        # the varying tail, in one piece: how long this stretch runs, where in the
+        # piece it sits, whether it opens the video, which of its beats close an episode
+        window_rule = "\n" + shot_rule(
+            w.clip_s, total=w.target_s, beats=w.beats, chars=w.chars,
+            wps=w.words / max(w.clip_s, 0.1), photo=self.photo,
+        ) + "\n" + w.arc + (OPEN_RULE_FANDOM if w.index == 0 else "") + w.part_rule
         return template.format(
-            lang=lang, words=w.words,
-            shot_rule=shot_rule(
-                w.clip_s, total=ctx.params.duration_s, beats=w.beats_total,
-                wps=w.words / max(w.clip_s, 0.1), photo=self.photo,
-            ),
+            lang=lang,
             video_prompt_rule=VIDEO_PROMPT_RULE,
             world_rule=WORLD_RULE,
-            open_rule=OPEN_RULE_FANDOM if w.index == 0 else "",
-            arc_rule=w.arc, cast_rule=CAST_RULE,
-            part_rule=w.part_rule, premise_rule=PREMISE_RULE,
+            cast_rule=CAST_RULE,
+            premise_rule=PREMISE_RULE,
             world_block=self._world_block()
             + (f"\nHOW THIS ONE IS TOLD — the operator's note on register: {tone}\n"
                if tone else ""),
+            roster_rule=ROSTER_RULE.format(roster=roster),
             brief_rule=BRIEF_RULE,
+            window_rule=window_rule,
         )
 
     def window_user(self, ctx, w: Window, *, brief, roster, tail, lang):
+        """The user turn is now only the brief and the handover, in that order.
+
+        The cast sheet moved into the system prompt (see `window_system`), and the
+        brief goes first here for the same reason: it is identical in every window, so
+        keeping the one varying thing — the last lines already written — at the end
+        leaves the whole prefix cacheable, retries included."""
         user = (
-            "THE BRIEF — what this video is about: material and, where the operator "
-            "addresses you directly, instructions to follow rather than to write "
-            f"down.\n{brief}\n\n"
-            "Characters who may appear — what they LOOK like, and nothing more. Not all "
-            "of them are people, and an entry may be one figure, a body of identical "
-            f"ones, or a whole kind:\n{roster}\n\n"
+            "THE BRIEF — this is the piece you are writing. Its material, its order and "
+            "its shape; and where the operator addresses you directly, instructions to "
+            f"follow rather than to voice.\n{brief}\n\n"
+            f"Write the narration in {lang}; keep every video_prompt in English.\n"
         )
         if tail:
-            user += f"The beats already written end like this:\n{tail}\n\n"
-        return user + f"Write the narration in {lang}; keep every video_prompt in English."
+            user += f"\nThe beats already written end like this:\n{tail}\n"
+        return user
 
     # -- the archivist -----------------------------------------------------
 

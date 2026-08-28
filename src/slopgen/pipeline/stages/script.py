@@ -16,13 +16,30 @@ from .idea import LANG_NAMES
 
 SYSTEM = (
     "You write voiceover scripts for viral vertical short videos. "
-    "Target spoken length: about {duration:.0f} seconds ≈ {words:.0f} words total. "
+    "{length_rule}"
     "Respond with JSON only:\n"
     '{{"scenes": [{{"text": "<1-2 spoken sentences>", "keywords": ["<2-4 words>", ...]}}, ...]}}\n'
-    "Rules: scale the number of scenes to the target length (a scene is 5-9 seconds of speech); "
+    "Rules: scale the number of scenes to the length above (a scene is 5-9 seconds of speech); "
     "the first scene is a shocking hook; short punchy sentences; "
     "no scene numbering, no stage directions — only spoken words in \"text\". "
     "\"keywords\" are ALWAYS in English: concrete, visual stock-footage search phrases matching the scene."
+)
+
+LENGTH_RULE = "Target spoken length: about {duration:.0f} seconds ≈ {words:.0f} words total. "
+
+# `duration_s = 0` — the operator bought no length and the model chooses one (see
+# `llm/length`). The info clip is the one mode that needs no separate call to decide it:
+# its script is a single request, and the finished video is exactly as long as the
+# narration turned out to be, so nothing downstream ever has to know the number in
+# advance. It is only told what a length is FOR here, because a model given no target
+# writes to the length of the prompt it was given rather than to the length of what it
+# has to say.
+FREE_LENGTH_RULE = (
+    "YOU CHOOSE HOW LONG IT IS. Make it exactly as long as the topic actually earns and "
+    "not a second longer: a vertical short is watched to the end or not at all, and "
+    "padding is what makes a short video feel long. Most topics land between 30 and 90 "
+    "seconds; one with real substance may run longer, one thin enough to say in three "
+    "sentences should be three sentences. "
 )
 
 VISUALS_RULES = (
@@ -181,7 +198,10 @@ def run(job: VideoJob, ctx: AppContext) -> None:
     # No content type ("auto") → no style brief in the prompt.
     brief = briefs.get(ctx.params.lang) or next(iter(briefs.values()), "")
     duration = ctx.params.duration_s
-    system = SYSTEM.format(duration=duration, words=duration * 2.4)
+    system = SYSTEM.format(
+        length_rule=FREE_LENGTH_RULE if duration <= 0
+        else LENGTH_RULE.format(duration=duration, words=duration * 2.4)
+    )
     vis = ctx.visuals
     # background photo slideshow (stock or AI) → per-beat "visuals" queries
     if (

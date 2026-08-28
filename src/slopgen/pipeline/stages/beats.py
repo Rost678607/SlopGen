@@ -42,6 +42,7 @@ which are to be followed and never voiced (see `PREMISE_RULE`).
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -51,8 +52,9 @@ from pathlib import Path
 
 from ...config.loader import CONFIGS_DIR, cache_visual_prompt
 from ...llm.characters import recompile_if_dirty
+from ...llm.length import suggest_length
 from ..context import AppContext
-from ..drama import plan_slots, plan_windows, word_budget
+from ..drama import char_budget, plan_slots, plan_windows, speech_seconds, word_budget
 from ..job import Scene, VideoJob
 from ..parts import normalize_scene_parts, requested_parts
 from .idea import LANG_NAMES
@@ -162,8 +164,8 @@ PREMISE_RULE = (
     "them: no narration, no title and no video_prompt may carry a word the operator was saying to "
     "YOU rather than about the story, and the narrator never remarks on how the story is being "
     "told. An instruction about the story's shape, opening, ending, tone or content OVERRIDES the "
-    "arc, opening and part rules above; it never overrides the output format, the language, or "
-    "one continuous shot per beat.\n"
+    "arc, opening and part rules wherever they appear in this prompt; it never overrides the "
+    "output format, the length budget, the language, or one continuous shot per beat.\n"
 )
 
 CONTINUE_RULE = (
@@ -258,6 +260,8 @@ class Window:
     windows: int  # how many windows there are
     clip_s: float  # average seconds of the clips THIS window writes to
     words: int  # narration budget for one of its beats
+    target_s: float  # seconds of finished video THIS window is responsible for
+    chars: int  # characters of narration that fit in `target_s` (see drama.char_budget)
     arc: str  # ready-made: where in the story this window sits (plan/percentage)
     part_rule: str  # ready-made: which of its beats close an episode
     open_rule: str  # ready-made: the opening rule, on the first window only
@@ -281,9 +285,14 @@ class Writer(Protocol):
                      windows: list[tuple[int, int]]) -> str:
         """User turn for that pass."""
 
-    def window_system(self, ctx: AppContext, w: Window, *, lang: str) -> str:
+    def window_system(self, ctx: AppContext, w: Window, *, lang: str, roster: str) -> str:
         """System prompt for one window. The shared suffixes (profanity, visual
-        constraints, the ad) are appended by :func:`write_beats` afterwards."""
+        constraints, the ad) are appended by :func:`write_beats` afterwards.
+
+        The cast sheet is offered to both halves of the contract because the modes put
+        it in different turns: a drama's goes in the user turn next to the premise,
+        while a world's goes here, ahead of everything that varies per window, where a
+        provider's prompt cache can serve it instead of re-reading it every time."""
 
     def window_user(self, ctx: AppContext, w: Window, *, brief: str, roster: str,
                     tail: str, lang: str) -> str:
@@ -540,7 +549,31 @@ def _character_file(ctx: AppContext, name: str) -> Path | None:
     return next((c for c in candidates if c.is_file()), None)
 
 
-def _compile_cast(ctx: AppContext) -> list:
+def _mentions(text: str, name: str) -> bool:
+    return bool(re.search(re.escape(name), text, re.IGNORECASE))
+
+
+def _used_cast(cast, scenes: list[Scene]) -> list:
+    """The characters the finished script actually puts on screen.
+
+    Two places name one: the beat's own `characters` list, and the shot description
+    itself — the writer is told to refer to a character BY NAME inside a video_prompt,
+    and the footage stage substitutes on exactly that (see
+    `drama_footage._shot_prompt`), so a name that appears only there still needs a
+    compiled look. Anything neither mentions is a character this video does not
+    contain, and compiling it is a full round trip bought for nothing.
+
+    Order follows the cast, not the script, so the sheet reads the same every run."""
+    named = {n.casefold() for s in scenes for n in s.characters}
+    prompts = " ".join(s.video_prompt for s in scenes)
+    return [
+        c for c in cast
+        if c.name.strip()
+        and (c.name.casefold() in named or _mentions(prompts, c.name))
+    ]
+
+
+def _compile_cast(ctx: AppContext, cast: list) -> list:
     """Turn the cast into generation-ready visual prompts, in parallel, and REMEMBER
     the result.
 
@@ -583,22 +616,60 @@ def _compile_cast(ctx: AppContext) -> list:
     return [out[c.name] for c in cast]
 
 
-def _roster(cast, world: bool = False) -> str:
-    """The cast sheet handed to the writer. It also shows what each name expands into
-    in a shot prompt, so the writer can see that naming a character is enough — the
-    footage stage substitutes the full look for the name (see SYSTEM).
+# How much of a look a WORLD's sheet spends on one entry.
+#
+# The writer needs very little of it, and is told so twice over: it never describes
+# anyone (the footage stage substitutes each character's compiled look for its name in
+# every shot — see `drama_footage._shot_prompt`), and it is forbidden to infer anything
+# about a character from its clothes. What it actually needs is to know who exists,
+# what SORT of thing each one is, and enough of a look to keep two of them apart in one
+# frame. A paragraph per entry buys none of that.
+#
+# The cost of the paragraph, measured on this project's own world: 47 entries came to
+# 42,876 characters — two and a half times the compiled canon sheet sitting next to it —
+# and the whole thing went out again with every window, every retry and the outline
+# pass, for material the writer may not use. A line each puts the same sheet under
+# 7,000. A drama's cast is a handful of people the operator wrote themselves, so it is
+# left whole: there is nothing to save and the ages matter.
+WORLD_LOOK_CHARS = 110
 
-    `world` marks the fandom's sheet: no ages, a plurality note per entry, and a
-    reminder that the sheet is a wardrobe rather than a cast list."""
+
+def _short_look(text: str, limit: int = WORLD_LOOK_CHARS) -> str:
+    """The opening of an appearance, cut at a sentence where one is close enough and
+    at a word otherwise. What survives is the silhouette — which is the part a writer
+    puts two characters in one shot by."""
+    text = " ".join(text.split())
+    if len(text) <= limit:
+        return text
+    head = text[: limit + 1]
+    cut = max(head.rfind(". "), head.rfind("; "), head.rfind(", "))
+    if cut >= limit // 2:
+        return head[:cut].rstrip(",;")
+    cut = head.rfind(" ")
+    return (head[:cut] if cut > 0 else head[:limit]).rstrip(",;") + "…"
+
+
+def _roster(cast, world: bool = False) -> str:
+    """The cast sheet handed to the writer. For a drama it also shows what each name
+    expands into in a shot prompt, so the writer can see that naming a character is
+    enough — the footage stage substitutes the full look for the name (see SYSTEM).
+
+    `world` marks the fandom's sheet: no ages, a plurality note per entry, one LINE of
+    look apiece (see `WORLD_LOOK_CHARS`), and a reminder that the sheet is a wardrobe
+    rather than a cast list. It shows no expansion either, because a world's sheet is
+    read before anything has been compiled — which is the point: on a world of
+    forty-seven characters, compiling the eight that turn up is the whole saving."""
     if not cast:
         return "(no fixed cast — invent characters as the story needs)"
     lines = []
     for c in cast:
         look = c.appearance.strip() or "(improvise looks)"
         if world:
-            extra = _PLURALITY_NOTE.get(c.plurality, "")
-        else:
-            extra = f", age {c.age}" if c.age else ""
+            lines.append(
+                f"- {c.name}{_PLURALITY_NOTE.get(c.plurality, '')}: {_short_look(look)}"
+            )
+            continue
+        extra = f", age {c.age}" if c.age else ""
         lines.append(f"- {c.name}{extra}: {look}")
         tag = ", ".join(t.strip() for t in c.visual_prompt.split(",")[:4] if t.strip())
         if tag:
@@ -611,6 +682,144 @@ def _roster(cast, world: bool = False) -> str:
 # clamp is here rather than in the prompt because a model asked for "3 to 10" will
 # occasionally answer 45.
 MIN_BEAT_S, MAX_BEAT_S = 2.0, 12.0
+
+# ---------------------------------------------------------------------------
+# The length the operator bought, enforced.
+#
+# A self-timed writer (the fandom's) chooses BOTH halves of the budget: how many
+# seconds each beat is on screen, and how much narration goes into it. Nothing
+# downstream can repair a miss, and the two halves fail differently. A photo run's
+# scene lasts exactly as long as its line takes to say (`drama_footage._sync` gives a
+# still no length of its own), so a script with half again too much text is half again
+# too long a video. A clip run reconciles the two by stretching the voice, so the same
+# script comes out on time and spoken at 1.5x.
+#
+# The first measured fandom run wrote 20 beats summing to 181 seconds against a
+# 120-second budget, with 2,588 characters of narration — about 200 seconds of speech —
+# and nothing caught it, because the budget reached the model as "should come to about"
+# and was never looked at again. The hand-corrected script the operator wrote instead
+# came to 1,566 characters and 122 seconds, so the length was never the hard part.
+#
+# So each window is checked in both currencies against the share of the budget it was
+# given, and a miss wider than RETRY_MISS re-asks that window with the arithmetic
+# spelled out — how many seconds over, how many characters to cut. That is the one
+# correction a model can act on, and it is cheap: the correction goes on the END of the
+# user turn, so the whole system prompt (the canon sheet, the cast sheet) is still the
+# prefix the provider cached on the first attempt.
+RETRY_MISS = 0.15
+WINDOW_ATTEMPTS = 2
+
+# What is left after the retries is absorbed rather than re-asked (see `_fit_seconds`).
+# Below this the writer is simply right and the arithmetic is noise.
+FIT_TOLERANCE_S = 0.5
+
+
+@dataclass
+class Budget:
+    """What a stretch of script was asked for, against what it came back with."""
+
+    target: float  # seconds of finished video it is responsible for
+    shots: float  # sum of the beat lengths the writer chose
+    speech: float  # how long its narration will take to say (drama.speech_seconds)
+
+    @property
+    def miss(self) -> float:
+        """How far out it is, relatively, in whichever currency is further out."""
+        if self.target <= 0:
+            return 0.0
+        return max(abs(self.shots - self.target), abs(self.speech - self.target)) / self.target
+
+
+def _budget(scenes: list[Scene], target: float, lang: str, rate: int) -> Budget:
+    return Budget(
+        target=target,
+        shots=sum(s.clip_target_s for s in scenes),
+        speech=speech_seconds("".join(s.text for s in scenes), lang, rate),
+    )
+
+
+def _correction(scenes: list[Scene], b: Budget, lang: str, rate: int) -> str:
+    """The retry turn: what the writer produced, what it was asked for, and the exact
+    edit that closes the gap.
+
+    Told only "that was too long", a model shortens the last two beats and leaves the
+    rest; told the character count, it rewrites to it. The characters are the operative
+    number — the seconds follow from them, since a beat can only be as short as the
+    line it carries."""
+    chars = sum(len(s.text) for s in scenes)
+    want = char_budget(b.target, lang, rate)
+    return (
+        "\n\nTHAT ANSWER IS OUT OF BUDGET — rewrite the whole stretch and answer again.\n"
+        f"This stretch runs {b.target:.0f} SECONDS and holds about {want} characters of "
+        f"narration in total.\n"
+        f"You wrote {len(scenes)} beats: {chars} characters, which is about "
+        f"{b.speech:.0f}s of speech, with \"seconds\" adding up to {b.shots:.0f}.\n"
+        f"Write it again at the right length: "
+        f"{'cut' if chars > want else 'add'} about {abs(chars - want)} characters of "
+        f"narration, and give the beats \"seconds\" that add up to {b.target:.0f}.\n"
+        "Keep the same material and the same order — this is a length edit, not a new "
+        "draft. Say FEWER THINGS, not the same things in fewer words: whole sentences "
+        "with verbs in them, never a telegraphic list of nouns."
+    )
+
+
+def _fit_seconds(scenes: list[Scene], target: float) -> None:
+    """Scale the shot lengths the writer chose so they add up to the length bought.
+
+    Only the residue the retries left — a few seconds — reaches this, and only the
+    proportions the writer chose survive it: a beat it made twice as long as its
+    neighbour stays twice as long. Beats clamped at the ends of the allowed range
+    (`MIN_BEAT_S`/`MAX_BEAT_S`) stop absorbing, so the loop re-spreads what is left
+    over the ones that can still move; four passes settle anything that can settle,
+    and a run where every beat is pinned at a limit simply cannot reach the target."""
+    # an ad beat is not scaled: its length comes from the ad clip that will be cut
+    # into it, not from the plan (see `_assign_slots`)
+    beats = [s for s in scenes if s.clip_target_s > 0 and not s.is_ad]
+    if not beats or target <= 0:
+        return
+    for _ in range(4):
+        total = sum(s.clip_target_s for s in beats)
+        if not total or abs(total - target) <= FIT_TOLERANCE_S:
+            break
+        k = target / total
+        for s in beats:
+            s.clip_target_s = round(
+                min(max(s.clip_target_s * k, MIN_BEAT_S), MAX_BEAT_S), 1
+            )
+
+
+def _norm(text: str) -> str:
+    return " ".join(text.lower().split()).strip(" .,!?;:—-…\"'\u00ab\u00bb")
+
+
+def _drop_repeats(scenes: list[Scene], origin: list[int]) -> None:
+    """Drop a beat whose narration repeats one already written, in place.
+
+    Each window is shown the last few lines of the one before it and told to continue
+    from them; handed a closing line it likes, a window has been observed to write it
+    twice — once where it stood and once as the ending, so the video says goodbye
+    twice. Which copy goes depends on where the second one is: an ending that was said
+    early keeps its place at the end, and anything else keeps the first occurrence and
+    loses the echo.
+
+    Exact repeats only, after case, spacing and punctuation are normalised. Two beats
+    that say the same thing in different words are a writing problem, and guessing at
+    that with a similarity score is how a deliberate refrain gets cut."""
+    seen: dict[str, int] = {}
+    drop: set[int] = set()
+    for i, sc in enumerate(scenes):
+        key = _norm(sc.text)
+        if len(key) < 12:  # "Хм." twice is not a duplicated line
+            continue
+        if key in seen:
+            drop.add(seen[key] if i == len(scenes) - 1 else i)
+        seen[key] = i
+    if not drop:
+        return
+    kept = [(sc, w) for i, (sc, w) in enumerate(zip(scenes, origin)) if i not in drop]
+    scenes[:] = [sc for sc, _ in kept]
+    origin[:] = [w for _, w in kept]
+    log.info("dropped %d repeated beat(s)", len(drop))
 
 
 def _parse_scenes(data: dict) -> list[Scene]:
@@ -682,11 +891,40 @@ def write_beats(job: VideoJob, ctx: AppContext, writer: Writer) -> None:
     only mode-specific thing that happens is asking `writer` for the two prompts."""
     p = ctx.params
     lang = LANG_NAMES.get(p.lang, p.lang)
+    self_timed = bool(getattr(writer, "self_timed", False))
     # a world's characters need not be people — nor individuals (see
     # llm/characters._ANY_FORM and _PLURALITY)
-    cast = _compile_cast(ctx)
-    # hand the compiled per-character prompts to footage (so it needn't recompile)
-    job.cast_prompts = {c.name: c.visual_prompt for c in cast if c.visual_prompt}
+    #
+    # WHEN the looks are compiled is the difference between a world and a drama. A
+    # drama's cast is a handful of people the operator assembled for this video and
+    # every one of them is in it, so they are compiled up front and the sheet shows
+    # what each name expands into. A world's cast is the world's: forty-seven entries
+    # of which a two-minute video uses eight, and compiling one is a full round trip.
+    # So a world's sheet is read straight off the appearances — nothing has to be
+    # compiled to write a script — and the compile happens at the bottom of this
+    # function, for the characters the script actually put on screen. On the measured
+    # run that is eight compiles instead of forty-seven.
+    cast = list(ctx.cast)
+    if not ctx.is_fandom:
+        cast = _compile_cast(ctx, cast)
+        # hand the compiled per-character prompts to footage (so it needn't recompile)
+        job.cast_prompts = {c.name: c.visual_prompt for c in cast if c.visual_prompt}
+
+    brief = p.scenario.strip() or writer.empty_brief(ctx)
+    # A length of zero is the operator saying "you decide" (see `llm/length`). Unlike
+    # the info clip, a beat mode cannot simply write and see how long it came out: the
+    # length is what the shot list is CUT from, so it has to exist before a word is
+    # written. One small call answers it, and the answer is written back onto the run —
+    # everything from `plan_slots` to the outline's own arithmetic reads
+    # `params.duration_s`, and a batch of several videos off one brief asks once.
+    if p.duration_s <= 0:
+        seconds, why = suggest_length(
+            ctx.llm, brief=brief,
+            brief_s=speech_seconds(brief, p.lang, p.tts_rate),
+            kind=writer.kind, lang=lang, clip_s=p.clip_seconds,
+        )
+        log.info("no length was set — writing %.0fs: %s", seconds, why or "no reason given")
+        p.duration_s = seconds
 
     slots = plan_slots(ctx.orchestration, p.duration_s, p.clip_seconds)
     beats = len(slots)
@@ -696,7 +934,6 @@ def write_beats(job: VideoJob, ctx: AppContext, writer: Writer) -> None:
             f"a {beats}-beat script cannot be cut into {parts} episodes — lengthen the "
             f"video, shorten the clips, or ask for fewer parts"
         )
-    brief = p.scenario.strip() or writer.empty_brief(ctx)
     roster = _roster(cast, world=ctx.is_fandom)
     tools = writer.tools(ctx)
 
@@ -717,12 +954,13 @@ def write_beats(job: VideoJob, ctx: AppContext, writer: Writer) -> None:
         ctx.progress("outline", 1, 1)
 
     scenes: list[Scene] = []
-    counts: list[int] = []  # beats each window actually returned, for the episode cuts
+    origin: list[int] = []  # which window each written beat came from, for the cuts
     for wi, (first, last) in enumerate(windows):
         win_beats = last - first
         # clip length can differ per window under a hybrid orchestration, so the
         # narration budget is taken from the slots this window actually writes to
-        win_clip_s = sum(s.clip_seconds for s in slots[first:last]) / win_beats
+        win_target_s = sum(s.clip_seconds for s in slots[first:last])
+        win_clip_s = win_target_s / win_beats
         tail_rule = CONTINUE_RULE if wi else ""
         end_rule = FINAL_RULE if wi == len(windows) - 1 else ""
         if stretches:
@@ -746,11 +984,13 @@ def write_beats(job: VideoJob, ctx: AppContext, writer: Writer) -> None:
             index=wi, first=first, last=last, beats=win_beats, beats_total=beats,
             windows=len(windows), clip_s=win_clip_s,
             words=word_budget(win_clip_s, p.lang, p.tts_rate), arc=arc,
+            target_s=win_target_s,
+            chars=char_budget(win_target_s, p.lang, p.tts_rate),
             part_rule=_part_rule(parts, breaks, first, last, beats),
             open_rule=OPEN_RULE if wi == 0 else "",
             is_ad=ctx.native_ad_on and wi == ad_window,
         )
-        system = writer.window_system(ctx, w, lang=lang)
+        system = writer.window_system(ctx, w, lang=lang, roster=roster)
         system += profanity_rule(p.profanity, p.lang)
         if p.profanity > 0:
             system += DRAMA_PROFANITY
@@ -763,19 +1003,47 @@ def write_beats(job: VideoJob, ctx: AppContext, writer: Writer) -> None:
             ctx, w, brief=brief, roster=roster,
             tail=_tail(scenes) if scenes else "", lang=lang,
         )
-        data = ctx.llm.complete_json(f"{writer.kind}_script", system, user, tools=tools)
-        got = _parse_scenes(data)
-        if not got:
-            raise ValueError(
-                f"LLM returned no beats for window {wi + 1}/{len(windows)} of the script"
+        # A writer that sizes its own beats is the only one that can miss the length,
+        # and it is checked against the share of the budget this window owns rather
+        # than against the whole video — a window told the whole number writes to it
+        # and the piece comes out one window too long, once per window.
+        got: list[Scene] = []
+        turn = user
+        for attempt in range(WINDOW_ATTEMPTS if self_timed else 1):
+            data = ctx.llm.complete_json(
+                f"{writer.kind}_script", system, turn, tools=tools, attempt=attempt
             )
+            got = _parse_scenes(data)
+            if not got:
+                raise ValueError(
+                    f"LLM returned no beats for window {wi + 1}/{len(windows)} of the script"
+                )
+            title = title or str(data.get("title", "")).strip()
+            if not self_timed:
+                break
+            b = _budget(got, w.target_s, p.lang, p.tts_rate)
+            if b.miss <= RETRY_MISS or attempt == WINDOW_ATTEMPTS - 1:
+                if b.miss > RETRY_MISS:
+                    log.warning(
+                        "window %d/%d still off budget after %d attempts: %.0fs of shots, "
+                        "%.0fs of speech against %.0fs asked for",
+                        wi + 1, len(windows), WINDOW_ATTEMPTS, b.shots, b.speech, w.target_s,
+                    )
+                break
+            log.info(
+                "window %d/%d %.0f%% off budget (%.0fs shots / %.0fs speech vs %.0fs) — re-asking",
+                wi + 1, len(windows), 100 * b.miss, b.shots, b.speech, w.target_s,
+            )
+            turn = user + _correction(got, b, p.lang, p.tts_rate)
         scenes.extend(got)
-        counts.append(len(got))
-        title = title or str(data.get("title", "")).strip()
+        origin.extend([wi] * len(got))
         ctx.progress("script", wi + 1, len(windows))
 
     if not scenes:
         raise ValueError("LLM returned an empty script")
+
+    _drop_repeats(scenes, origin)
+    counts = [sum(1 for w in origin if w == wi) for wi in range(len(windows))]
 
     # guarantee the requested swearing level (same focused rewrite as info mode)
     if p.profanity > 0:
@@ -803,8 +1071,55 @@ def write_beats(job: VideoJob, ctx: AppContext, writer: Writer) -> None:
                 f"the script has {len(scenes)} scenes and cannot fill "
                 f"{parts} non-empty parts"
             )
-    _assign_slots(scenes, slots, keep_length=getattr(writer, "self_timed", False))
+    _assign_slots(scenes, slots, keep_length=self_timed)
+    if self_timed:
+        # the writer's proportions, the operator's total (see `_fit_seconds`)
+        _fit_seconds(scenes, p.duration_s)
+        final = _budget(scenes, p.duration_s, p.lang, p.tts_rate)
+        if abs(final.speech - p.duration_s) > max(p.duration_tol_s, 0.1 * p.duration_s):
+            log.warning(
+                "the script's narration runs about %.0fs against the %.0fs asked for — "
+                "the shots were fitted to the budget, so the voice will be %s to match "
+                "(a still-image run simply runs %.0fs)",
+                final.speech, p.duration_s,
+                "sped up" if final.speech > p.duration_s else "slowed down", final.speech,
+            )
     job.scenes = scenes
     # the title comes from the outline, which is the only pass that read the whole
     # story; failing that, from the first window — the one that saw it open
     job.topic = title or (p.scenario.strip()[:80] or writer.fallback_title)
+    if ctx.is_fandom:
+        # only now is it known who is in the video (see `_used_cast`)
+        used = _used_cast(cast, scenes)
+        log.info("compiling looks for %d of %d characters", len(used), len(cast))
+        compiled = {
+            c.name: c.visual_prompt
+            for c in _compile_cast(ctx, used) if c.visual_prompt
+        }
+        # every OTHER character of the world is listed too, with an empty look. The
+        # operator may put one into a shot at the `script` breakpoint, and a name the
+        # job has never heard of can neither be offered there nor matched afterwards —
+        # while an entry with no look costs nothing downstream, since both the shot
+        # composer and the entity registry skip a blank one. The look for a late
+        # arrival is compiled by the next stage (see `ensure_cast_prompts`).
+        job.cast_prompts = {
+            c.name: compiled.get(c.name, "") for c in cast if c.name.strip()
+        }
+
+
+def ensure_cast_prompts(job: VideoJob, ctx: AppContext) -> None:
+    """Compile a look for anyone the script names who has not got one yet.
+
+    A world's looks are compiled for the characters the WRITER used (see
+    `write_beats`), which is the whole saving — but the script is editable after that,
+    and an operator who writes a forty-eighth character into a shot at the `script`
+    breakpoint must not get a shot with no look in it. So the stage after the
+    breakpoint tops the sheet up, and pays only for whoever actually turned up late."""
+    pending = [c for c in ctx.cast if c.name.strip() and not job.cast_prompts.get(c.name)]
+    todo = _used_cast(pending, job.scenes)
+    if not todo:
+        return
+    log.info("compiling %d character(s) added after the script", len(todo))
+    for c in _compile_cast(ctx, todo):
+        if c.visual_prompt:
+            job.cast_prompts[c.name] = c.visual_prompt

@@ -20,7 +20,7 @@ from ..config import (
     VisualsConfig,
 )
 from ..config.loader import lore_sha, read_lore
-from ..llm import ChatLLM
+from ..llm import LLMRouter, UsageLedger
 from ..llm.style import compile_style
 
 # Stand-in for the "no content type" ("auto") choice: empty briefs/voices/
@@ -41,9 +41,13 @@ class AppContext:
     # compiled look, filled on first use (see `style_suffix`); None = not yet compiled,
     # "" = nothing to compile. Never set by the caller.
     _style: str | None = None
+    # what the run spends, filled in by the client on every call (see `llm/usage`).
+    # It lives on the context rather than inside the client because it outlives any
+    # one of them: a run may split its stages across two models and still has one bill.
+    usage: UsageLedger = field(default_factory=UsageLedger)
 
     def __post_init__(self):
-        self.llm = ChatLLM(self.store.active_llm_profile())
+        self.llm = LLMRouter(self.store, self.usage)
 
     def progress(self, unit: str, done: int, total: int) -> None:
         """Report `done of total` for a stage's inner loop. Never raises: a broken

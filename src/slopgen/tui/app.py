@@ -494,7 +494,7 @@ I18N: dict[str, dict[str, str]] = {
         "fandom_medium": "Made of",
         "fandom_medium_video": "🎬 video clips",
         "fandom_medium_photo": "🖼 photo slideshow",
-        "help.fandom_duration_s": "How long the finished video runs, in seconds. There is no tolerance and no clip-length field: the writer sizes every shot itself to fit this, whatever the shots are made of.",
+        "help.fandom_duration_s": "How long the finished video runs, in seconds. There is no tolerance and no clip-length field: the writer sizes every shot itself to fit this, whatever the shots are made of. Put 0 and the model reads the brief and decides — a brief that is already a finished text runs as long as saying it takes.",
         "help.fandom_medium": "What the picture is made of. Clips play; stills are held and slowly panned. It also decides what can make them — a slideshow is drawn by an image generator, found as photographs, or drawn by hand as images — so the list below changes with it.",
         "fandom_source_note": "🙋 and 🔍 are you: with the first slopgen writes a prompt per shot and you generate it in an external tool, with the second it says what to find and hands you ready-made search queries. Either way the run pauses at the footage stage and `slopgen gather` resumes it once the files are in the inbox. `flux` and `turbo` make stills instead of clips; a still is held and panned to length, and one you supply yourself counts the same — deliver a .jpg or .png and it is treated as a photo.",
         "fandom_source_head": "— Where the shots come from —",
@@ -601,7 +601,7 @@ I18N: dict[str, dict[str, str]] = {
         "drama_duration_tol": "Tolerance, sec",
         "drama_clip_s": "Average AI clip, sec",
         "drama_clip_auto": "per generator",
-        "help.drama_duration_min": "Target length of the drama, in minutes. The story may run a little over/under (see Tolerance).",
+        "help.drama_duration_min": "Target length of the drama, in minutes. The story may run a little over/under (see Tolerance). Put 0 and the model reads the premise and decides how long the story needs — the tolerance then means nothing, since nobody bought a length to stray from.",
         "help.drama_duration_tol": "How many seconds the finished video may run over or under the target when the story calls for it.",
         "help.drama_clip_s": "How long ONE generated clip runs on average. It decides how many clips the story is cut into and how much narration each carries — and a long clip (8s+) is written as a sequence of several scenes instead of one framing. 0 = each generator's own length.",
         # right-panel help + character editor
@@ -620,7 +620,8 @@ I18N: dict[str, dict[str, str]] = {
         "help.idea": "Your own topic. Leave empty and the LLM invents one.",
         "help.profanity": "How much swearing in the narration. ←/→ to adjust: 0 = clean … 100 = constant.",
         "help.vprofile": "A ready visuals preset. Picking one prefills the fields below; edit any to customise.",
-        "help.duration": "Target spoken length, in seconds (a soft target, not a hard cap).",
+        "help.duration": "Target spoken length, in seconds (a soft target, not a hard cap). Put 0 and the model chooses it: as long as the topic actually earns and not a second longer.",
+        "length_auto": "the model decides",
         "help.bg_src": "Where the background comes from: stock video/photo, AI-generated, or your local files.",
         "help.bg_link": "narration = match the spoken words; neutral = generic footage.",
         "help.bg_dir": "Folder with your own clips/images (used by the local_* sources).",
@@ -846,6 +847,10 @@ I18N: dict[str, dict[str, str]] = {
         "char_nothing": "AI made no changes",
         "web_search": "Web search tool (ground the script in real facts)",
         "web_search_note": "gives the model a web_search tool so it verifies facts instead of inventing names/events; needs a tool-calling model",
+        "price_in": "Price: input, $/1M tokens",
+        "price_cached": "Price: cached input, $/1M tokens",
+        "price_out": "Price: output, $/1M tokens",
+        "price_note": "what this model costs, from the provider's price list. Leave at 0 and a run still counts every token — it just cannot put a number on them (slopgen usage <run dir>). Cached input is what a prompt-cache hit costs; 0 means it is billed like a miss.",
         "footage_note": "Stock keys (Pexels/Pixabay) for stock_* visuals, plus optional AI-generator tokens for ai_* visuals. All optional; local assets and Pollinations work with no key.",
         "pexels_key": "Pexels API key",
         "pixabay_key": "Pixabay API key",
@@ -1099,7 +1104,7 @@ I18N: dict[str, dict[str, str]] = {
         "fandom_medium": "Из чего",
         "fandom_medium_video": "🎬 видеоклипы",
         "fandom_medium_photo": "🖼 слайд-шоу из фото",
-        "help.fandom_duration_s": "Сколько идёт готовое видео, в секундах. Допуска и поля длины клипа нет: сценарист сам подбирает длину каждого кадра под это число, из чего бы кадры ни были.",
+        "help.fandom_duration_s": "Сколько идёт готовое видео, в секундах. Допуска и поля длины клипа нет: сценарист сам подбирает длину каждого кадра под это число, из чего бы кадры ни были. Поставь 0 — нейронка прочитает бриф и решит сама: бриф, который уже готовый текст, идёт ровно столько, сколько его произносить.",
         "help.fandom_medium": "Из чего складывается картинка. Клипы играют, неподвижные кадры держатся с медленным наездом. От этого же зависит, чем их делать — слайд-шоу рисует генератор картинок, или ты находишь фотографии, или рисуешь их сам, — поэтому список ниже меняется вместе с выбором.",
         "fandom_source_note": "🙋 и 🔍 — это ты: в первом случае слопген пишет промпт на каждый кадр, и ты генерируешь его во внешнем сервисе, во втором — говорит, что найти, и выдаёт готовые поисковые запросы. И там и там прогон встаёт на этапе видеоряда, а `slopgen gather` продолжает, когда файлы окажутся в инбоксе. `flux` и `turbo` делают неподвижные кадры вместо клипов; кадр растягивается на нужную длину с лёгким наездом, и принесённый тобой считается так же — положи .jpg или .png, и он будет обработан как фото.",
         "fandom_source_head": "— Откуда берутся кадры —",
@@ -1205,7 +1210,7 @@ I18N: dict[str, dict[str, str]] = {
         "drama_duration_tol": "Допуск, сек",
         "drama_clip_s": "Средний ИИ-клип, сек",
         "drama_clip_auto": "по генератору",
-        "help.drama_duration_min": "Целевая длина дорамы в минутах. История может немного выйти за рамки (см. Допуск).",
+        "help.drama_duration_min": "Целевая длина дорамы в минутах. История может немного выйти за рамки (см. Допуск). Поставь 0 — нейронка прочитает премису и сама решит, сколько истории нужно; допуск тогда ни при чём, отклоняться не от чего.",
         "help.drama_duration_tol": "На сколько секунд готовое видео может превысить/недотянуть цель, если этого требует сюжет.",
         "help.drama_clip_s": "Сколько в среднем длится ОДИН сгенерированный клип. От этого зависит, на сколько клипов режется история и сколько озвучки достаётся каждому — а длинный клип (от 8с) пишется как последовательность нескольких сцен, а не один кадр. 0 = длина самого генератора.",
         # помощь в правой панели + редактор персонажа
@@ -1224,7 +1229,8 @@ I18N: dict[str, dict[str, str]] = {
         "help.idea": "Своя тема. Оставь пустым — LLM придумает сама.",
         "help.profanity": "Сколько мата в озвучке. ←/→ для настройки: 0 = чисто … 100 = постоянно.",
         "help.vprofile": "Готовый пресет видеоряда. Выбор предзаполняет поля ниже; любое можно поправить.",
-        "help.duration": "Целевая длина озвучки в секундах (ориентир, не жёсткий лимит).",
+        "help.duration": "Целевая длина озвучки в секундах (ориентир, не жёсткий лимит). Поставь 0 — длину выберет нейронка: ровно столько, сколько тема на самом деле стоит, и ни секундой больше.",
+        "length_auto": "на усмотрение нейронки",
         "help.bg_src": "Откуда берётся фон: сток видео/фото, генерация ИИ или твои локальные файлы.",
         "help.bg_link": "narration = под смысл слов; neutral = обобщённый футаж.",
         "help.bg_dir": "Папка с твоими клипами/картинками (для источников local_*).",
@@ -1461,6 +1467,10 @@ I18N: dict[str, dict[str, str]] = {
         "char_nothing": "ИИ ничего не изменил",
         "web_search": "Инструмент веб-поиска (опора на реальные факты)",
         "web_search_note": "даёт модели инструмент web_search — она проверяет факты, а не выдумывает имена/события; нужна модель с tool-calling",
+        "price_in": "Цена: вход, $ за 1 млн токенов",
+        "price_cached": "Цена: вход из кеша, $ за 1 млн токенов",
+        "price_out": "Цена: выход, $ за 1 млн токенов",
+        "price_note": "сколько стоит эта модель по прайсу провайдера. Оставишь нули — прогон всё равно посчитает токены, просто не переведёт их в деньги (slopgen usage <папка прогона>). «Вход из кеша» — цена попадания в кеш промпта; 0 значит, что считаем как обычный вход.",
         "footage_note": "Ключи стоков (Pexels/Pixabay) для stock_*-видеоряда и опциональные токены ИИ-генераторов для ai_*-видеоряда. Все необязательны: локальным ассетам и Pollinations ключ не нужен.",
         "pexels_key": "API-ключ Pexels",
         "pixabay_key": "API-ключ Pixabay",
@@ -2669,7 +2679,7 @@ class GenerateScreen(Screen):
         cmd = f"slopgen info {g['lang']} {g['ctype']}"
         if g["idea"]:
             cmd += f' --idea "{g["idea"]}"'
-        cmd += f" --visuals {vis_name} --duration {g['duration']:.0f}"
+        cmd += f" --visuals {vis_name} --duration {g['duration']:.0f}"  # 0 = model's choice
         if g["profanity"]:
             cmd += f" --profanity {g['profanity']}"
         if g["tts_rate"]:
@@ -2710,7 +2720,8 @@ class GenerateScreen(Screen):
             f"  {t('lang')}: [b]{g['lang']}[/b]  {t('voice')}: [b]{g['voice']}[/b]      {t('ctype')}: [b]{g['ctype']}[/b]",
             f"  {t('idea')}: {g['idea'] or '—'}",
             f"  {t('profanity')}: [b]{g['profanity']}%[/b]      {t('tts_rate').split(' (')[0]}: [b]{g['tts_rate']:+d}%[/b]",
-            f"  {t('vis_profile').split(' (')[0]}: [b]{vis_label}[/b]      {t('duration')}: ~{g['duration']:.0f}s",
+            f"  {t('vis_profile').split(' (')[0]}: [b]{vis_label}[/b]      {t('duration')}: "
+            + (f"[b]{t('length_auto')}[/b]" if g["duration"] <= 0 else f"~{g['duration']:.0f}s"),
             f"  {t('ad_source')}: {ad_label}"
             + (f"  ({g['ad_mode']})" if g["ad_src"] != NONE else ""),
             f"  {t('push')}: {g['push'] or t('push_local')}",
@@ -3216,9 +3227,15 @@ class DramaScreen(_CharEditAI, GenerateScreen):
         ]
 
     def _timing(self, c: dict) -> dict:
-        """The gathered timing, in the units the pipeline wants (seconds)."""
+        """The gathered timing, in the units the pipeline wants (seconds).
+
+        A typed 0 is a LENGTH OF ZERO, which here means "you decide" (see
+        `llm/length`) — so it must survive the read rather than being taken for an
+        empty box and replaced by the default."""
+        minutes = c.get("duration_min")
+        minutes = 2.0 if minutes in (None, "") else float(minutes)
         return {
-            "duration": float(c.get("duration_min") or 2.0) * 60.0,
+            "duration": 0.0 if minutes <= 0 else minutes * 60.0,
             "duration_tol": float(c.get("duration_tol") or 15.0),
             "clip_s": max(float(c.get("clip_s") or 0.0), 0.0),
         }
@@ -4106,7 +4123,8 @@ class DramaScreen(_CharEditAI, GenerateScreen):
         a mode that never asked about tolerance or clip length does not report them."""
         return [
             f"  {t('lang')}: [b]{g['lang']}[/b]      {t('duration')}: "
-            f"~{g['duration'] / 60:.1f} min ±{g['duration_tol']:.0f}s"
+            + (f"[b]{t('length_auto')}[/b]" if g["duration"] <= 0
+               else f"~{g['duration'] / 60:.1f} min ±{g['duration_tol']:.0f}s")
             + (f"      {t('parts')}: [b]{g['parts']}[/b]"
                + ("" if g["parts_iterative"] else f" ({t('parts_batch')})")
                if g["parts"] != 1 else ""),
@@ -4135,7 +4153,8 @@ class DramaScreen(_CharEditAI, GenerateScreen):
         return ""
 
     def _timing_flags(self, g: dict) -> str:
-        return (f" --duration-min {g['duration'] / 60:g} --tol {g['duration_tol']:g}"
+        return ((" --duration-min 0" if g["duration"] <= 0
+                 else f" --duration-min {g['duration'] / 60:g} --tol {g['duration_tol']:g}")
                 + (f" --clip-s {g['clip_s']:g}" if g["clip_s"] else ""))
 
     def _drama_command(self, g: dict) -> str:
@@ -4688,8 +4707,11 @@ class FandomScreen(DramaScreen):
         return [Number("duration_s", "fandom_duration_s", value="120", default=120.0)]
 
     def _timing(self, c: dict) -> dict:
+        # a typed 0 is "you decide", not an empty box (see DramaScreen._timing)
+        secs = c.get("duration_s")
+        secs = 120.0 if secs in (None, "") else float(secs)
         return {
-            "duration": max(float(c.get("duration_s") or 120.0), 5.0),
+            "duration": 0.0 if secs <= 0 else max(secs, 5.0),
             "duration_tol": 0.0,   # the length is the length
             "clip_s": 0.0,         # the writer's to choose, per shot
         }
@@ -4729,8 +4751,9 @@ class FandomScreen(DramaScreen):
 
     def _summary_timing_lines(self, t, g: dict, clip: str) -> list[str]:
         medium = t(f"fandom_medium_{self._medium()}")
+        length = t("length_auto") if g["duration"] <= 0 else f"{g['duration']:.0f}s"
         return [f"  {t('lang')}: [b]{g['lang']}[/b]      {t('fandom_duration_s')}: "
-                f"[b]{g['duration']:.0f}s[/b]      {t('fandom_medium')}: [b]{medium}[/b]"
+                f"[b]{length}[/b]      {t('fandom_medium')}: [b]{medium}[/b]"
                 f"      {t('tts_rate').split(' (')[0]}: [b]{g['tts_rate']:+d}%[/b]"]
 
     def _summary_source_lines(self, t, stages: str) -> list[str]:
@@ -6685,6 +6708,10 @@ class LLMPane(EntityPane):
             Number("temp", "temp", value=str(prof.temperature), default=1.2),
             Toggle("web", "web_search", value=prof.web_search),
             Note("web_search_note"),
+            Number("pin", "price_in", value=str(prof.price_in), default=0.0),
+            Number("pcache", "price_cached", value=str(prof.price_cached), default=0.0),
+            Number("pout", "price_out", value=str(prof.price_out), default=0.0),
+            Note("price_note"),
             Text("key", "api_key", value="", password=True),
         ])
         await form.mount(*self._form.build(t))
@@ -6699,7 +6726,19 @@ class LLMPane(EntityPane):
             key_env="",
             temperature=float(self.query_one("#e-llm-temp", Input).value or 1.2),
             web_search=self.query_one("#e-llm-web", Switch).value,
+            price_in=self._price("pin"),
+            price_cached=self._price("pcache"),
+            price_out=self._price("pout"),
         )
+
+    def _price(self, wid: str) -> float:
+        """One price field, in USD per million tokens. A blank or unparseable box is
+        zero — an unpriced profile reports tokens and no money, which is the honest
+        answer when nobody has said what the model costs."""
+        try:
+            return max(float(self.query_one(f"#e-llm-{wid}", Input).value or 0.0), 0.0)
+        except (ValueError, Exception):
+            return 0.0
 
     def _refresh_key_status(self) -> None:
         t = lambda k: _label(self.app, k)  # noqa: E731
@@ -6763,6 +6802,9 @@ class LLMPane(EntityPane):
             "key_env": "",
             "temperature": prof.temperature,
             "web_search": prof.web_search,
+            "price_in": prof.price_in,
+            "price_cached": prof.price_cached,
+            "price_out": prof.price_out,
         }
         path = self._config_dir() / f"{name}.toml"
         path.parent.mkdir(parents=True, exist_ok=True)

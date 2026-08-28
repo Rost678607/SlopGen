@@ -12,10 +12,12 @@ from __future__ import annotations
 import base64
 import json
 import os
+import time
 
 import httpx
 
 from ..config.models import LLMConfig, LLMProfile
+from .usage import Call, Prices, UsageLedger
 
 LLMSettings = LLMConfig | LLMProfile  # both carry provider/base_url/model/key_env/temperature
 
@@ -60,6 +62,28 @@ MODEL_PRESETS: dict[str, list[str]] = {
 }
 
 
+def _usage(raw: dict) -> tuple[int, int, int]:
+    """(prompt, cached, completion) tokens out of a provider's ``usage`` block.
+
+    Every OpenAI-compatible provider reports the first and the last the same way and
+    the middle one differently, which is exactly the number that matters here (see
+    `llm/usage`): DeepSeek splits the input into `prompt_cache_hit_tokens` /
+    `prompt_cache_miss_tokens`, OpenAI and its imitators nest a `cached_tokens` under
+    `prompt_tokens_details`, and a provider with no prompt cache reports neither.
+    Whatever the shape, `prompt_tokens` is always the WHOLE input and `cached` a part
+    of it — a provider reporting only the miss is turned back into that here, so the
+    two numbers never mean different things depending on who answered."""
+    prompt = int(raw.get("prompt_tokens") or 0)
+    completion = int(raw.get("completion_tokens") or 0)
+    details = raw.get("prompt_tokens_details") or {}
+    cached = raw.get("prompt_cache_hit_tokens")
+    if cached is None:
+        cached = details.get("cached_tokens") if isinstance(details, dict) else None
+    if cached is None and raw.get("prompt_cache_miss_tokens") is not None:
+        cached = prompt - int(raw["prompt_cache_miss_tokens"])
+    return prompt, max(min(int(cached or 0), prompt), 0), completion
+
+
 def resolve_provider(cfg: LLMSettings) -> tuple[str, str, str]:
     """Effective (base_url, model, key_env): empty config fields fall back to provider defaults."""
     p = PROVIDERS.get(cfg.provider, PROVIDERS["custom"])
@@ -67,7 +91,7 @@ def resolve_provider(cfg: LLMSettings) -> tuple[str, str, str]:
 
 
 class ChatLLM:
-    def __init__(self, cfg: LLMSettings):
+    def __init__(self, cfg: LLMSettings, ledger: UsageLedger | None = None):
         base_url, self.model, key_env = resolve_provider(cfg)
         key = os.environ.get(key_env, "")
         if not key:
@@ -78,6 +102,19 @@ class ChatLLM:
         if not base_url:
             raise LLMError("llm.base_url is empty for the 'custom' provider")
         self.cfg = cfg
+        # what this run is spending, and what it is spending it on (see llm/usage).
+        # Optional: a client built for a one-off errand (the TUI compiling a character
+        # while the operator edits it) belongs to no run and has nothing to bill.
+        self.ledger = ledger
+        self.profile = getattr(cfg, "name", "") or cfg.provider
+        # a cache hit costs less than a miss on every provider that has a cache; where
+        # the operator priced only the input, a hit is priced the same as a miss rather
+        # than as free, which is the conservative way to be wrong.
+        self.prices = Prices(
+            inp=float(getattr(cfg, "price_in", 0.0) or 0.0),
+            cached=float(getattr(cfg, "price_cached", 0.0) or getattr(cfg, "price_in", 0.0) or 0.0),
+            out=float(getattr(cfg, "price_out", 0.0) or 0.0),
+        )
         self.client = httpx.Client(
             base_url=base_url,
             headers={"Authorization": f"Bearer {key}"},
@@ -86,7 +123,25 @@ class ChatLLM:
 
     MAX_TOOL_ROUNDS = 5
 
-    def _post(self, messages: list[dict], tools: list | None, json_mode: bool = True) -> dict:
+    def _bill(self, kind: str, attempt: int, raw: dict, seconds: float,
+              ok: bool = True) -> None:
+        """Write one round trip into the run's ledger. Never raises: an unparseable
+        usage block is a missing number, not a failed stage."""
+        if self.ledger is None:
+            return
+        try:
+            prompt, cached, completion = _usage(raw if isinstance(raw, dict) else {})
+            self.ledger.record(Call(
+                stage="", kind=kind, profile=self.profile, model=self.model,
+                attempt=attempt, prompt_tokens=prompt, cached_tokens=cached,
+                completion_tokens=completion, seconds=round(seconds, 2), ok=ok,
+                cost_usd=self.prices.cost(prompt, cached, completion),
+            ))
+        except Exception:  # noqa: BLE001 — accounting never kills a run
+            pass
+
+    def _post(self, messages: list[dict], tools: list | None, json_mode: bool = True,
+              kind: str = "", attempt: int = 0) -> dict:
         body: dict = {
             "model": self.model,
             "temperature": self.cfg.temperature,
@@ -97,11 +152,21 @@ class ChatLLM:
         elif json_mode:
             # response_format conflicts with tool use on most providers
             body["response_format"] = {"type": "json_object"}
-        r = self.client.post("/chat/completions", json=body)
-        r.raise_for_status()
-        return r.json()["choices"][0]["message"]
+        t0 = time.monotonic()
+        try:
+            r = self.client.post("/chat/completions", json=body)
+            r.raise_for_status()
+            data = r.json()
+        except Exception:
+            # a call that never came back still cost time, and a run whose bill shows
+            # eight failures is diagnosing itself
+            self._bill(kind, attempt, {}, time.monotonic() - t0, ok=False)
+            raise
+        self._bill(kind, attempt, data.get("usage") or {}, time.monotonic() - t0)
+        return data["choices"][0]["message"]
 
-    def _run_tools(self, messages: list[dict], tools: list, bound: dict | None = None) -> str:
+    def _run_tools(self, messages: list[dict], tools: list, bound: dict | None = None,
+                   kind: str = "", attempt: int = 0) -> str:
         """Drive the tool-calling loop: let the model call tools until it answers.
 
         `bound` holds this call's own executors (a tool closed over run-specific data,
@@ -109,7 +174,7 @@ class ChatLLM:
         from .tools import TOOL_EXECUTORS
 
         for _ in range(self.MAX_TOOL_ROUNDS):
-            msg = self._post(messages, tools)
+            msg = self._post(messages, tools, kind=kind, attempt=attempt)
             calls = msg.get("tool_calls")
             if not calls:
                 return msg.get("content") or ""
@@ -135,7 +200,7 @@ class ChatLLM:
                         result = f"tool '{name}' failed: {e}. Check the arguments and try again."
                 messages.append({"role": "tool", "tool_call_id": call.get("id", ""), "content": str(result)})
         # ran out of rounds — force a final answer without tools
-        return self._post(messages, None).get("content") or ""
+        return self._post(messages, None, kind=kind, attempt=attempt).get("content") or ""
 
     def describe_image(self, prompt: str, image: bytes, mime: str = "image/jpeg") -> str:
         """Vision call: send an image + prompt, return the model's plain-text answer.
@@ -149,10 +214,7 @@ class ChatLLM:
                 {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
             ],
         }]
-        body = {"model": self.model, "temperature": self.cfg.temperature, "messages": messages}
-        r = self.client.post("/chat/completions", json=body)
-        r.raise_for_status()
-        return r.json()["choices"][0]["message"].get("content") or ""
+        return self._post(messages, None, json_mode=False, kind="vision").get("content") or ""
 
     ATTEMPTS = 3  # transient transport errors (connection reset) are common on free tiers
 
@@ -172,11 +234,13 @@ class ChatLLM:
                     ],
                     None,
                     json_mode=False,
+                    kind=kind,
+                    attempt=attempt,
                 ).get("content") or ""
             except (httpx.HTTPError, KeyError) as e:
                 last_err = e
-                if attempt < self.ATTEMPTS - 1 and isinstance(e, httpx.TransportError):
-                    time.sleep(1.5 * (attempt + 1))
+                if i < self.ATTEMPTS - 1 and isinstance(e, httpx.TransportError):
+                    time.sleep(1.5 * (i + 1))
         raise LLMError(f"LLM call '{kind}' failed: {last_err}")
 
     def complete_json(
@@ -186,6 +250,7 @@ class ChatLLM:
         user: str,
         web_search: bool = False,
         tools: dict | None = None,
+        attempt: int = 0,
     ) -> dict:
         """One JSON-mode chat completion; retries on bad JSON or transport errors.
 
@@ -196,6 +261,12 @@ class ChatLLM:
         `tools` adds this call's own function tools, as `{name: (schema, executor)}`,
         for a tool that has to be closed over run-specific data (see
         `llm.tools.make_lore_lookup`).
+
+        `attempt` is the caller's own retry counter, for a stage that re-asks because
+        the ANSWER was unusable rather than because the request failed (the script
+        stage re-asks a window that came back off its length budget). It only labels
+        the call in the run's ledger, so a bill can say how much of itself went on
+        re-asking — the request is otherwise identical.
 
         Careful: offering ANY tool costs JSON mode — `response_format` conflicts with
         tool use on most providers (see `_post`), so the model is merely *asked* for
@@ -209,16 +280,17 @@ class ChatLLM:
         bound = {name: ex for name, (_, ex) in (tools or {}).items()}
         schemas += [schema for schema, _ in (tools or {}).values()]
         last_err: Exception | None = None
-        for attempt in range(self.ATTEMPTS):
+        for i in range(self.ATTEMPTS):
+            attempt = attempt + i if i else attempt
             try:
                 messages = [
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},
                 ]
                 content = (
-                    self._run_tools(messages, schemas, bound)
+                    self._run_tools(messages, schemas, bound, kind=kind, attempt=attempt)
                     if schemas
-                    else self._post(messages, None).get("content") or ""
+                    else self._post(messages, None, kind=kind, attempt=attempt).get("content") or ""
                 )
                 # some free models wrap JSON in markdown fences despite json mode
                 content = content.strip().removeprefix("```json").removeprefix("```").removesuffix("```")
@@ -228,6 +300,6 @@ class ChatLLM:
                 # back off before retrying a transport error (reset/timeout); the
                 # server may have dropped the pooled connection — the next try
                 # reconnects. No backoff needed for the last attempt.
-                if attempt < self.ATTEMPTS - 1 and isinstance(e, httpx.TransportError):
-                    time.sleep(1.5 * (attempt + 1))
+                if i < self.ATTEMPTS - 1 and isinstance(e, httpx.TransportError):
+                    time.sleep(1.5 * (i + 1))
         raise LLMError(f"LLM call '{kind}' failed: {last_err}")

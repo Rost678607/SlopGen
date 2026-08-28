@@ -187,6 +187,11 @@ def _rewrite(ctx: AppContext, job: VideoJob, entities: list[Entity]) -> int:
 
 
 def run(job: VideoJob, ctx: AppContext) -> None:
+    # anyone the operator wrote into a shot at the `script` breakpoint still needs a
+    # look, and this is the first stage after it (see `beats.ensure_cast_prompts`)
+    from .beats import ensure_cast_prompts
+
+    ensure_cast_prompts(job, ctx)
     # nothing to pin and nothing to fix when no shot was described in the first place
     # (an all-ad or fully hand-authored script) — both passes would just burn calls
     if not any(s.video_prompt.strip() for s in job.scenes):

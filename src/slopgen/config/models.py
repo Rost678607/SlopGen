@@ -27,7 +27,18 @@ class VideoConfig(BaseModel):
     width: int = 1080
     height: int = 1920
     fps: int = 30
-    target_duration_s: float = 45.0  # default script length target (informational, not a hard cap)
+    # default script length target; 0 = let the model choose it (see `llm/length`)
+    target_duration_s: float = 45.0
+    crf: int = 19  # delivery quality, lower is better
+    # A ceiling on the delivered bitrate, in Mbit/s (0 turns it off). It exists for the
+    # montage filters: grain, VHS hiss and the glitch hash are fresh noise on every
+    # frame, which is the one thing no encoder can predict from the frame before, so
+    # `crf` alone answers them by spending — a two-minute filtered video measured 78
+    # Mbit/s and 1.2 GB. The cap is the honest lever because it does nothing at all to
+    # a clean video (a Ken-Burns photo cut runs under 3 Mbit/s and never reaches it)
+    # and bites only on the noise, which is also the first thing worth dropping: the
+    # platform re-encodes every upload to a third of this anyway.
+    max_bitrate_mbps: float = 16.0
 
 
 class SubtitlesConfig(BaseModel):
@@ -49,6 +60,18 @@ class LLMConfig(BaseModel):
     the inline fields remain as a legacy fallback when no profiles exist."""
 
     profile: str = ""
+    # Which model answers which KIND of call, as {call kind: profile name} — the
+    # `[llm.stage_profiles]` table. The pipeline's calls are not alike: writing a
+    # script off a whole world is what an expensive model is for, while compiling one
+    # character's appearance into image tags, naming a video or turning a shot into a
+    # stock query is errand work a cheap model does as well. Every call carries a kind
+    # label already (the first argument of `complete_json`), so routing needs no new
+    # plumbing — an unrouted kind, or one naming a profile that does not exist, simply
+    # goes to `profile` as before. Kinds: idea, length, script, drama_outline,
+    # drama_script, fandom_outline, fandom_script, fandom_canon, fandom_brief,
+    # lore_lookup, drama_entities, drama_shot_fix, char_compile, char_autofill,
+    # style_compile, metadata, profanity, censor, lookup, bp_rewrite, bp_scenes, vision.
+    stage_profiles: dict[str, str] = {}
     # legacy inline settings (deepseek | gemini | openrouter | custom)
     provider: str = "deepseek"
     base_url: str = ""
@@ -73,6 +96,15 @@ class LLMProfile(BaseModel):
     # plugin). Grounds the narration in real, current facts. OpenRouter only —
     # other providers silently ignore it.
     web_search: bool = False
+    # What this model costs, in USD per MILLION tokens, so a run can price itself
+    # (see `llm/usage`). Deliberately configuration and not a shipped table: prices
+    # change, differ per provider and are not the same for a cache hit as for a miss,
+    # and a stale table quietly reporting the wrong dollar figure is worse than no
+    # figure at all. Left at 0, a run still counts every token and simply reports no
+    # money. `price_cached` unset means a cache hit is billed like a miss.
+    price_in: float = 0.0
+    price_cached: float = 0.0
+    price_out: float = 0.0
 
 
 class UIConfig(BaseModel):
@@ -568,7 +600,9 @@ class RunParams(BaseModel):
     idea: str = ""  # user-provided topic; empty = the LLM invents one
     visuals: str = "classic"  # visuals profile name from configs/visuals/
     manual_visuals: VisualsConfig | None = None  # ad-hoc profile from TUI overrides
-    duration_s: float = 45.0  # target spoken length (informational for the LLM)
+    # How long the finished video runs. ZERO means the operator bought no length and
+    # the model chooses one from the material (see `llm/length` and `free_length`).
+    duration_s: float = 45.0
     # drama only: the model may run the finished video over/under `duration_s` by
     # up to this many seconds when the story calls for it (0 = aim exactly).
     duration_tol_s: float = 0.0
@@ -645,3 +679,15 @@ class RunParams(BaseModel):
     # still, not merely a clip that happens to be short.
     medium: Literal["", "video", "photo"] = ""
     manual_orchestration: OrchestrationConfig | None = None  # ad-hoc chain from the TUI
+
+    @property
+    def free_length(self) -> bool:
+        """Nobody bought a length: the model chooses one from the material.
+
+        Every mode accepts it and they arrive at it differently, which is why this is a
+        question rather than a number (see `llm/length`). An info clip needs no length
+        at all — its video is as long as its narration turned out — so its writer is
+        simply told to choose. A beat mode has to know before it writes, because the
+        length is what the shot list is cut from, so the script stage asks for one and
+        writes the answer back onto `duration_s`."""
+        return self.duration_s <= 0

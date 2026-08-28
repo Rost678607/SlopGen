@@ -154,10 +154,12 @@ class Orchestrator:
         stages = stages_for(p)
         if resume_dir is not None:
             run_dir = Path(resume_dir)
-            cp = Checkpoint.load(run_dir)
+            cp = Checkpoint.load(run_dir, usage=self.ctx.usage)
         else:
             run_dir = self._run_dir()
-            cp = Checkpoint.start(run_dir, p, [n for n, _ in stages] + ["publish"])
+            cp = Checkpoint.start(
+                run_dir, p, [n for n, _ in stages] + ["publish"], usage=self.ctx.usage
+            )
         self.run_dir = run_dir
         jobs: list[VideoJob] = []
 
@@ -172,6 +174,7 @@ class Orchestrator:
 
             job = cp.load_job(i) or VideoJob(index=i, workdir=run_dir / f"{i:02d}")
             job.workdir.mkdir(parents=True, exist_ok=True)
+            self.ctx.usage.reset()  # the bill is per video, not per batch
             jobs.append(job)
             done = cp.completed(i)  # ordered list of finished stages
             breakpoints = review.wanted(p.breakpoints, p.mode) - set(cp.reviewed(i))
@@ -185,7 +188,12 @@ class Orchestrator:
                     current = name
                     self.on_event(i, name, "start", "")
                     t0 = time.monotonic()
+                    # everything the stage spends on LLM calls is billed to its name
+                    # (see llm/usage); the ledger is the only thing in the pipeline
+                    # that needs to know which stage is running
+                    self.ctx.usage.stage = name
                     fn(job, self.ctx)
+                    self.ctx.usage.stage = ""
                     self.on_event(i, name, "done", f"{time.monotonic() - t0:.1f}s")
                     if name in parts.PART_STAGES and job.pending_parts:
                         # it did the episodes it could and still owes the rest, so it

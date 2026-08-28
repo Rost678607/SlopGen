@@ -103,6 +103,12 @@ def _check_breakpoints(names: Optional[list[str]], mode: str) -> list[str]:
 # -- shared output ----------------------------------------------------------
 
 
+def _length(params: RunParams) -> str:
+    """How the run's length reads in a banner printed BEFORE anything is written —
+    which is the only place where "the model decides" is still the honest answer."""
+    return "length=auto" if params.free_length else f"~{params.duration_s:.0f}s"
+
+
 def _console_event(i: int, stage: str, status: str, message: str) -> None:
     from rich import print as rprint
 
@@ -306,7 +312,7 @@ def info(
     ad: Optional[str] = typer.Option(None, "--ad", help="ad contract name from configs/ads/"),
     ad_mode: Optional[str] = typer.Option(None, "--ad-mode", help="overlay | native | both"),
     visuals: Optional[str] = typer.Option(None, "--visuals", help="visuals profile from configs/visuals/"),
-    duration: Optional[float] = typer.Option(None, "--duration", help="target spoken length, seconds"),
+    duration: Optional[float] = typer.Option(None, "--duration", help="target spoken length, seconds; 0 = let the model choose it"),
     profanity: Optional[int] = typer.Option(None, "--profanity", min=0, max=100, help="swearing level 0 (clean) - 100 (constant)"),
     push: Optional[str] = typer.Option(None, "--push", help="account from configs/accounts/; omit to save locally"),
     count: Optional[int] = typer.Option(None, "--count", "-n", help="videos to generate"),
@@ -346,7 +352,7 @@ def info(
         raise typer.Exit(1)
     rprint(
         f"[bold]slopgen[/bold]: {params.count}× {params.lang}/{params.content_type or 'auto'}"
-        f" visuals={params.visuals} ~{params.duration_s:.0f}s"
+        f" visuals={params.visuals} {_length(params)}"
         f" ad={params.ad or '-'}({params.ad_mode}) push={params.push or 'local'}"
         + (f" fx=\\[{describe_filters(params.filters)}]" if params.filters else "")
         + (" [yellow]\\[dry-run][/yellow]" if params.dry_run else "")
@@ -364,7 +370,7 @@ def drama(
     scenario: Optional[str] = typer.Option(None, "--scenario", help="the plot/premise; omit to let the LLM invent one"),
     cast: Optional[str] = typer.Option(None, "--cast", help="comma-separated character names from configs/characters/"),
     orchestration: Optional[str] = typer.Option(None, "--orchestration", help="generator chain from configs/orchestration/ (default: one wan2.1 stage)"),
-    duration_min: float = typer.Option(2.0, "--duration-min", help="target length in minutes"),
+    duration_min: float = typer.Option(2.0, "--duration-min", help="target length in minutes; 0 = let the model choose it from the premise"),
     tol: float = typer.Option(15.0, "--tol", help="allowed over/under-run, seconds"),
     clip_s: float = typer.Option(0.0, "--clip-s", help="average length of ONE generated clip, seconds (0 = each generator's own); clips of 8s+ are written as multi-scene sequences"),
     parts: int = typer.Option(1, "--parts", min=1, help="ask the writer for this many cliffhanger parts; the boundaries are then movable at the script/cut breakpoints"),
@@ -423,7 +429,10 @@ def drama(
             scenario=scenario or "",
             manual_cast=[store.characters[n] for n in names],
             orchestration=orchestration or "",
-            duration_s=max(duration_min, 0.1) * 60.0,
+            # 0 is not a length, it is the absence of one: the writer picks it off the
+            # premise (see llm/length). Anything else is floored so a typo'd 0.001
+            # cannot produce a one-beat drama.
+            duration_s=0.0 if duration_min <= 0 else max(duration_min, 0.1) * 60.0,
             duration_tol_s=max(tol, 0.0),
             clip_seconds=max(clip_s, 0.0),
             parts=max(1, parts),
@@ -443,7 +452,8 @@ def drama(
         raise typer.Exit(1)
     rprint(
         f"[bold]slopgen[/bold] drama: {params.count}× {params.lang}"
-        f" ~{params.duration_s / 60:.1f}min ±{params.duration_tol_s:.0f}s"
+        + (f" {_length(params)}" if params.free_length
+           else f" ~{params.duration_s / 60:.1f}min ±{params.duration_tol_s:.0f}s")
         + (f" clip~{params.clip_seconds:g}s" if params.clip_seconds else "")
         + (f" parts={params.parts}" if params.parts != 1 else "")
         + ("" if params.parts_iterative else " [dim](all at the end)[/dim]")
@@ -468,7 +478,7 @@ def fandom(
     medium: str = typer.Option("video", "--medium", help="what the picture is made of: video (clips) | photo (a slideshow of stills, held and slowly panned)"),
     source: Optional[str] = typer.Option(None, "--source", help="what makes the shots: a generator (wan2.1 | ltx-video | animatediff for video, flux | turbo for photo), `manual` (you generate them) or `search` (you find them; slopgen briefs you per shot). Default: wan2.1 for video, flux for photo"),
     orchestration: Optional[str] = typer.Option(None, "--orchestration", help="a full chain from configs/orchestration/, overriding --source when you want to mix"),
-    duration: float = typer.Option(120.0, "--duration", help="length of the finished video, in seconds"),
+    duration: float = typer.Option(120.0, "--duration", help="length of the finished video, in seconds; 0 = let the model choose it from the brief"),
     voice: Optional[str] = typer.Option(None, "--voice", help="narrator voice: a catalogue id for the active engine (ru-RU-SvetlanaNeural), or the name of a configs/voices/ clone"),
     tts_rate: Optional[int] = typer.Option(None, "--tts-rate", min=-50, max=50, help="speech rate offset in percent (-50 = slowest, 0 = normal, +50 = fastest); the writer sizes each beat's narration to it"),
     tts_engine: Optional[str] = typer.Option(None, "--tts-engine", help="who speaks: edge | azure | qwen | qwen-local (default: [tts].engine)"),
@@ -549,8 +559,8 @@ def fandom(
             fandom=world, fandom_voice=narrator,
             scenario=scenario or "",
             orchestration=orchestration or "",
-            duration_s=max(duration, 5.0),
-            duration_tol_s=0.0,   # the length is the length
+            duration_s=0.0 if duration <= 0 else max(duration, 5.0),
+            duration_tol_s=0.0,   # the length is the length (once there is one)
             clip_seconds=0.0,     # the writer sizes every shot (fandom_script.SHOT_RULE)
             profanity=profanity,
             ad=ad or "", ad_mode=ad_mode,
@@ -568,7 +578,7 @@ def fandom(
     fandom_cfg = store.fandoms[world]
     rprint(
         f"[bold]slopgen[/bold] fandom '{world}': {params.count}× {params.lang}"
-        f" {params.duration_s:.0f}s {medium}"
+        f" {_length(params)} {medium}"
         + f" narrator={narrator}"
         f" people=[{', '.join(c.name for c in fandom_cfg.cast) or '—'}]"
         + (f" orch={orchestration}" if orchestration
@@ -623,6 +633,53 @@ def review(
     """Inspect and edit what a stage produced at a breakpoint, then resume the run
     (opens the TUI)."""
     _open_parked(ctx.obj, run_dir, _review_indices, "a breakpoint review")
+
+
+@app.command()
+def usage(
+    run_dir: Path = typer.Argument(..., help="a run's output dir (the folder with checkpoint.json)"),
+    calls: bool = typer.Option(False, "--calls", help="list every call instead of the per-stage roll-up"),
+) -> None:
+    """What a run spent on the LLM: tokens per stage, retries, cache hits, cost.
+
+    Read off the run's own checkpoint (see `llm/usage`), so it answers per video what
+    a provider's dashboard only answers per day — and it is the fastest way to find
+    out that a stage is paying twice for a context it never uses."""
+    from rich import print as rprint
+
+    from ..llm.usage import format_summary
+    from ..pipeline.checkpoint import Checkpoint
+
+    try:
+        cp = Checkpoint.load(run_dir)
+    except Exception as e:
+        typer.secho(f"error: {e}", fg="red")
+        raise typer.Exit(1)
+    found = False
+    for i in range(cp.params.count):
+        data = cp.usage_of(i)
+        if not data:
+            continue
+        found = True
+        rprint(f"\n[bold]video {i}[/bold]")
+        if calls:
+            for c in data.get("calls", []):
+                tag = f" retry {c['attempt']}" if c["attempt"] else ""
+                cost = "" if c.get("cost_usd") is None else f" ${c['cost_usd']:.4f}"
+                rprint(
+                    f"  {c['stage'] or '-':<10} {c['kind']:<18}{tag:<9} "
+                    f"in {c['prompt_tokens']:>7,} (cached {c['cached_tokens']:>7,})  "
+                    f"out {c['completion_tokens']:>6,}  {c['seconds']:>5.1f}s{cost}"
+                )
+        else:
+            rprint(format_summary(data))
+        t = data.get("totals") or {}
+        if t.get("prompt_tokens"):
+            rprint(f"  [dim]prompt cache served {t['cached_tokens'] / t['prompt_tokens']:.0%} "
+                   f"of the input · {t.get('retries', 0)} retr(y/ies) · "
+                   f"{t.get('failed', 0)} failed call(s)[/dim]")
+    if not found:
+        rprint("[yellow]no usage recorded — the run predates token accounting[/yellow]")
 
 
 def run() -> None:

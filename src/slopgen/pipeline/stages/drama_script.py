@@ -140,7 +140,9 @@ class DramaWriter:
             f"{', '.join(str(b - a) for a, b in windows)} beats."
         )
 
-    def window_system(self, ctx, w: Window, *, lang):
+    def window_system(self, ctx, w: Window, *, lang, roster=""):
+        # a drama's cast sheet stays in the user turn, next to the premise it belongs
+        # to: it is small, it is the operator's own, and there is nothing to cache
         return SYSTEM.format(
             lang=lang, words=w.words, shot_rule=shot_rule(w.clip_s),
             open_rule=w.open_rule, arc_rule=w.arc, part_rule=w.part_rule,
