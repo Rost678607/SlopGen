@@ -262,12 +262,30 @@ def medium_of(source: str) -> str:
 # matter. An animated .gif is a clip that every extension table in this repository
 # would have called a picture; an .mkv is a clip that none of them listed; a photo
 # saved as .avif or a phone's .heic is a picture that none of them listed either. The
-# tell is in the container: ffmpeg demuxes a single image through a `*_pipe` format
-# (`jpeg_pipe`, `png_pipe`, `webp_pipe`), and anything with a timeline reports a real
-# format and a duration. Measured on eight files here — still jpg/png/webp, animated
-# gif and webp, mp4, mkv, and an audio-only mp3 — that rule sorts every one of them
-# correctly, including the two the extension rule got wrong.
+# tell is in the container: ffmpeg demuxes a single image through an image demuxer,
+# and anything with a timeline reports a real format and a duration.
+#
+# Which image demuxer, though, is not fixed. A file handed over by PATH can go to
+# `image2` instead of `jpeg_pipe` — that is what happens to a JPEG whose header the
+# stricter jpeg probe will not vouch for, which covers a good share of what an image
+# generator or a stock site hands back — and `image2`, unlike the pipe demuxers,
+# invents a one-frame duration (0.04 s at the nominal 25 fps). Reading that as a
+# timeline is how a still ends up cut as a 2-frame background. So a lone frame counts
+# as a still whatever the container is called, and the name test lists `image2` too.
+_STILL_FORMATS = {"image2", "image2pipe"}
 _PROBED: dict[tuple, tuple[str, float]] = {}
+
+
+def _is_still(format_name: str, stream: dict) -> bool:
+    """True when the picture ffprobe found has no timeline: an image demuxer, or a
+    single frame in a container that does have one."""
+    names = {n for n in str(format_name).split(",") if n}
+    if any(n.endswith("_pipe") for n in names) or names & _STILL_FORMATS:
+        return True
+    try:
+        return int(stream.get("nb_frames") or 0) == 1
+    except (TypeError, ValueError):
+        return False
 
 
 def probe_asset(path: Path) -> tuple[str, float]:
@@ -285,14 +303,16 @@ def probe_asset(path: Path) -> tuple[str, float]:
     try:
         out = subprocess.run(
             ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
-             "stream=codec_type:format=format_name,duration", "-of", "json", str(path)],
+             "stream=codec_type,nb_frames:format=format_name,duration",
+             "-of", "json", str(path)],
             capture_output=True, text=True, check=True,
         )
         data = json.loads(out.stdout or "{}")
         fmt = data.get("format") or {}
-        has_picture = any(s.get("codec_type") == "video" for s in data.get("streams") or [])
-        if has_picture:
-            if str(fmt.get("format_name", "")).endswith("_pipe"):
+        picture = next((s for s in data.get("streams") or []
+                        if s.get("codec_type") == "video"), None)
+        if picture is not None:
+            if _is_still(fmt.get("format_name", ""), picture):
                 answer = "photo", 0.0
             else:
                 try:
