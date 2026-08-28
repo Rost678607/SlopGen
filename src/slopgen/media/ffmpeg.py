@@ -358,6 +358,29 @@ def _fold_segments(
     return current, batch
 
 
+def _bitrate_cap(cfg: GlobalConfig) -> list[str]:
+    """The VBV ceiling on the delivered picture (`video.max_bitrate_mbps`), or nothing
+    when it is switched off.
+
+    A ceiling rather than a higher `crf` because the two are not the same tool. What
+    makes a filtered video enormous is noise — grain, tape hiss, glitch hash, a fresh
+    pattern every frame and so unpredictable from the frame before — and `crf` answers
+    that by paying for it: measured on 15 s of a filtered photo cut, crf 19 came to 96
+    Mbit/s and every two points of crf bought only about a third off, so reaching a
+    sane size that way lands at crf 25+ and grades the whole picture down to get there.
+    The cap instead leaves the quality target alone and only refuses to overspend, which
+    on this material looks the same as crf 25 (compared frame to frame) while leaving a
+    video that never approaches the ceiling — anything without heavy filters — exactly
+    as it was.
+
+    `bufsize` is two seconds of it, the usual choice: enough that a burst of glitch can
+    borrow from the quiet second before it, short enough that the average holds."""
+    mbps = cfg.video.max_bitrate_mbps
+    if mbps <= 0:
+        return []
+    return ["-maxrate", f"{mbps:g}M", "-bufsize", f"{mbps * 2:g}M"]
+
+
 def _delivery_cmd(
     segments: list[Path],
     out: Path,
@@ -431,7 +454,8 @@ def _delivery_cmd(
     cmd += [
         "-filter_complex", ";".join(filters),
         "-map", vtag, "-map", atag,
-        "-c:v", "libx264", "-preset", "medium", "-crf", "19",
+        "-c:v", "libx264", "-preset", "medium", "-crf", str(cfg.video.crf),
+        *_bitrate_cap(cfg),
         "-c:a", "aac", "-b:a", "192k",
         # end on the shorter stream so the delivered file has audio and video of
         # equal length — no trailing stream that players stretch or free-run.

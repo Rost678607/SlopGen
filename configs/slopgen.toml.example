@@ -11,6 +11,11 @@ width = 1080
 height = 1920
 fps = 30
 target_duration_s = 45.0
+crf = 19
+# ceiling on the delivered bitrate, Mbit/s (0 = off). Montage filters are noise, and
+# noise costs bitrate without limit — this is what keeps a filtered cut from shipping
+# at 1 GB. Lower it to 8-12 if uploads are slow; a cut without filters never reaches it.
+max_bitrate_mbps = 16.0
 
 [subtitles]
 style = "word_pop"
