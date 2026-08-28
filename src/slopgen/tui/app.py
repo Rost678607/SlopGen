@@ -4629,13 +4629,57 @@ class FandomScreen(DramaScreen):
             return ""
         return (cfg.canon or "").strip() or read_lore(cfg)
 
+    # How much lore the brief helper may be handed whole. Unlike the script stage it
+    # runs ONCE, when the operator presses the button, so the sheet's saving is worth
+    # very little here — and the sheet is exactly where the world's near-duplicates
+    # stop being distinguishable, since it holds one line per thing (see
+    # `llm.lore.SAME_NAME_RULE`). On this project's own world the records are 22k
+    # characters against a 17k sheet: the accuracy is nearly free.
+    BRIEF_LORE_CHARS = 80_000
+
+    def _brief_world_text(self) -> str:
+        """The records themselves where they fit, the compiled sheet where they do
+        not. The opposite default from `_world_text`, which serves the character
+        autofill — that one only needs to know what a place LOOKS like."""
+        cfg = self.app.store.fandoms.get(self._fandom)
+        if not cfg:
+            return ""
+        lore = read_lore(cfg)
+        if lore and len(lore) <= self.BRIEF_LORE_CHARS:
+            return lore
+        return (cfg.canon or "").strip() or lore
+
+    def _brief_length(self) -> tuple[float, int]:
+        """The run's length and its narration budget, as the Length step has them.
+
+        Every step of the wizard is mounted at once (a ContentSwitcher only shows one),
+        so this reads the real field from another step rather than a remembered copy.
+        Zero means the operator left the length free, and the helper is told so rather
+        than left to guess: the length will then be read off the very brief it is about
+        to write (see `llm/length`), so a habitual five sentences would quietly decide
+        how long the video is."""
+        from ..pipeline.drama import char_budget
+
+        try:
+            content = self.f_content.read(self)
+            seconds = float(self._timing(content).get("duration") or 0.0)
+        except Exception:  # a step not composed yet — free is the safe reading
+            return 0.0, 0
+        if seconds <= 0:
+            return 0.0, 0
+        # the NARRATION's language and speed, not the interface's: the budget is how
+        # much this voice says in those seconds
+        return seconds, char_budget(
+            seconds, str(content.get("lang") or "en"), int(content.get("tts_rate") or 0)
+        )
+
     @on(Button.Pressed, "#fandom-brief-ai")
     def _write_brief(self, event: Button.Pressed) -> None:
         """Propose or rewrite what this video is about. It never touches the world's
         people — they are the world's, and inventing one here would be inventing a
         person into a place that does not have them."""
         event.stop()
-        world = self._world_text()
+        world = self._brief_world_text()
         if not world:
             self.notify(self._t("fandom_none"), severity="warning")
             return
@@ -4645,15 +4689,20 @@ class FandomScreen(DramaScreen):
         except Exception:
             instruction = ""
         lang = self.app.store.global_cfg.ui.lang
+        seconds, chars = self._brief_length()
         self._start_thinking("drama-prompt")
         self.run_worker(
-            lambda: self._brief_worker(world, current, instruction, lang),
+            lambda: self._brief_worker(world, current, instruction, lang, seconds, chars),
             thread=True, exclusive=False,
         )
 
-    def _brief_worker(self, world: str, current: str, instruction: str, lang: str) -> None:
+    def _brief_worker(self, world: str, current: str, instruction: str, lang: str,
+                      seconds: float = 0.0, chars: int = 0) -> None:
         try:
-            brief = lore_ai.write_brief(self._llm(), world, current, instruction, lang)
+            brief = lore_ai.write_brief(
+                self._llm(), world, current, instruction, lang,
+                duration_s=seconds, chars=chars,
+            )
         except Exception as e:
             self.app.call_from_thread(self._brief_done, "", str(e))
             return

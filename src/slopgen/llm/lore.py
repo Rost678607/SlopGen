@@ -57,6 +57,14 @@ SYSTEM = (
     "records' own words, and keep each entry to a line. Do not summarize the prose, do "
     "not interpret it, do not invent anything the records do not contain. Proper nouns, "
     "numbers and dates must be reproduced EXACTLY as written.\n"
+    "TWO THINGS WITH THE SAME NAME ARE TWO ENTRIES. Where the records give more than "
+    "one faction, region or house an office, a body, a custom or a rank of the SAME "
+    "NAME — each side's own version of it — never fold them into one line, and never "
+    "let a detail belonging to one attach itself to the other. Write an entry per "
+    "version, say WHOSE it is, and say what that one does that the other does not. "
+    "This is the single most damaging thing a sheet can get wrong: everything "
+    "downstream reads it as fact, so one side ends up wearing the other's practice and "
+    "nothing later can tell that it is wrong. When in doubt, split rather than merge.\n"
     "The world is real and these are its records. Never describe it as fiction, a "
     "story, a setting or someone's work; never mention an author, a canon or an "
     "audience.\n"
@@ -65,12 +73,15 @@ SYSTEM = (
     '  • "rules": how it works — the laws, limits and customs a story set here may not '
     "break. One line each.\n"
     '  • "glossary": the world\'s own terms and what each means, one line each. Every '
-    "word the records use that an outsider would not know belongs here.\n"
+    "word the records use that an outsider would not know belongs here. A word that "
+    "means something different on either side of a border gets a line per side.\n"
     '  • "figures": named characters — who or WHAT they are and what they are known '
     "for. Not only people: a named beast, machine, vessel or building belongs here too "
     "if the records treat it as someone rather than something.\n"
     '  • "places": named locations, one line each.\n'
-    '  • "factions": groups, guilds, families, institutions and what they want.\n'
+    '  • "factions": groups, guilds, families, institutions and what they want. Where '
+    "two sides each run something of the same name, they are two lines here, each "
+    "naming its side and its own way of going about it.\n"
     '  • "timeline": recorded events in order, each with whatever dating the records '
     "give.\n"
     '  • "taboos": what does NOT exist in this world and what never happens in it — '
@@ -149,20 +160,78 @@ def recompile_if_stale(
 # adds or edits anyone. All this does is answer "what is worth an account here", which
 # is the one thing about a fandom run that is not already written down.
 BRIEF_SYSTEM = (
-    "You know the world set out below and you are proposing what a short vertical "
-    "video about it should be about — the brief its writer will work from.\n"
+    "You know the world set out below and you are writing what a short vertical video "
+    "about it should be — the brief its writer will work from.\n"
     "The world is real: it is not a story, a setting or anyone's invention, and there "
     "is no author to speak of. Write the brief the way one person there would tell "
     "another what is worth looking into.\n"
-    "A good brief names ONE thing and says what about it: a custom and why it is kept, "
-    "a place and what happened there, a person and what they are known for, an event "
-    "nobody has explained — or a question the records leave open, with the evidence "
-    "that makes it a real question. Be concrete: use the world's own names, numbers "
-    "and dates. Two to five sentences, no more. It is a brief, not a script: never "
-    "write the narration itself and never address the writer.\n"
+    "{shape_rule}"
+    "Be concrete: use the world's own names, numbers and dates, spelled exactly as the "
+    "records spell them.\n"
+    "{same_name_rule}"
+    "{length_rule}"
     "{edit_rule}"
     "Write in {lang}.\n"
     'Respond with JSON only: {{"brief": "..."}}.'
+)
+
+# What a brief IS was over-specified, and it fought the operator. It used to say "two
+# to five sentences, no more" and "never write the narration itself" — absolutes, so an
+# instruction asking for the whole thing written out came back compressed into a
+# summary of itself. The video's writer has since been told to read a long brief as the
+# PIECE and a short one as a topic (see stages/fandom_script.BRIEF_RULE), which makes
+# the choice between them the operator's to make. So the instruction decides the shape,
+# and the default — no instruction at all — is still the short one.
+SHAPE_FREE = (
+    "A brief names ONE thing and says what about it: a custom and why it is kept, a "
+    "place and what happened there, a person and what they are known for, an event "
+    "nobody has explained — or a question the records leave open, with the evidence "
+    "that makes it a real question. Two to five sentences. Do not write the narration "
+    "itself, and do not write instructions to the video's writer.\n"
+)
+SHAPE_TOLD = (
+    "THE OPERATOR'S INSTRUCTION DECIDES THE SHAPE AND THE LENGTH OF WHAT YOU WRITE, and "
+    "there is no cap on it. If they ask for more than a summary — every rule listed out, "
+    "the accounts in order, the whole thing written the way it should be said — write "
+    "exactly that, at whatever length it takes, and never compress it back into a "
+    "paragraph about itself. If they ask only for a subject, give them a subject in two "
+    "or three sentences.\n"
+    "Both are valid and they are read differently: the video's writer treats a SHORT "
+    "brief as a topic to build a piece around, and a LONG one as the piece itself, to "
+    "be voiced in this world's own tongue and cut into shots. So write the one the "
+    "instruction asks for, in the form it will be read in.\n"
+    "Do not invent instructions addressed to the video's writer; where the operator's "
+    "own brief already carries one, keep it as it stands.\n"
+)
+
+# The failure this exists for, from a real world: two factions each keep a body called
+# the same name, and they work differently — one walks markets in pairs with a box of
+# chips that graft onto whoever takes one, the other seizes men outside taverns, which
+# is why the other side has lookouts who whistle. The compiled sheet had folded both
+# into a single line, so anything written off the sheet gave one side the other's
+# practice. The sheet is fixed at the source (see SYSTEM), and this is the second
+# guard, for the worlds whose records genuinely leave two things easy to confuse.
+SAME_NAME_RULE = (
+    "Where this world has two things of the SAME NAME — one side's version of an "
+    "office, a custom or a body, and another side's — never give one of them the "
+    "other's practice. Find which is which in the records before you name what it does, "
+    "and where the records do not tell them apart, do not tell them apart either.\n"
+)
+
+# The brief and the video's length are the same question asked twice, and the helper
+# used to be told neither. It matters most when the length is FREE: with `duration_s`
+# at 0 the length is chosen off this very brief (see `llm/length`), so a brief written
+# to a habitual five sentences quietly decides that the video is short.
+LENGTH_BOUGHT = (
+    "The finished video runs about {seconds:.0f} seconds — roughly {chars} characters "
+    "of spoken narration all told. Give the brief the material that fills exactly that: "
+    "not a season's worth to be crammed in, and not three sentences to be padded out.\n"
+)
+LENGTH_FREE = (
+    "Nobody has fixed how long the video runs: its length will be decided from THIS "
+    "brief and nothing else. So the brief decides it. Give the subject exactly as much "
+    "as it is worth — every extra line you write here becomes screen time somebody has "
+    "to sit through, and every line you leave out is a video that ends too early.\n"
 )
 
 _WRITE = (
@@ -178,11 +247,28 @@ _REWRITE = (
 
 
 def write_brief(llm, world: str, current: str = "", instruction: str = "",
-                lang: str = "English") -> str:
+                lang: str = "English", duration_s: float = 0.0, chars: int = 0) -> str:
     """Propose (or rewrite) what a fandom video is about. Returns the brief, or "" if
-    the model gave nothing usable — the caller leaves the operator's text alone."""
+    the model gave nothing usable — the caller leaves the operator's text alone.
+
+    `world` should be the RECORDS THEMSELVES wherever they fit, not the compiled sheet:
+    the sheet is an inventory of one line per thing, and one line is exactly where two
+    similarly-named institutions stop being distinguishable (see `SAME_NAME_RULE`). The
+    caller decides which it can afford to send.
+
+    `duration_s` is the run's length and `chars` its narration budget
+    (`pipeline.drama.char_budget`); zero means the operator left the length free, which
+    is worth telling the model rather than hiding, since the length will then be read
+    off the brief it is about to write."""
     system = BRIEF_SYSTEM.format(
-        lang=_lang_name(lang), edit_rule=_REWRITE if current.strip() else _WRITE
+        lang=_lang_name(lang),
+        shape_rule=SHAPE_TOLD if instruction.strip() else SHAPE_FREE,
+        same_name_rule=SAME_NAME_RULE,
+        length_rule=(
+            LENGTH_BOUGHT.format(seconds=duration_s, chars=chars)
+            if duration_s > 0 and chars > 0 else LENGTH_FREE
+        ),
+        edit_rule=_REWRITE if current.strip() else _WRITE,
     )
     user = (
         f"THE WORLD:\n{world}\n\n"

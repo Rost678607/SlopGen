@@ -107,11 +107,25 @@ def read_lore(cfg: FandomConfig) -> str:
     return "\n\n".join(parts)
 
 
+# Bumped whenever `llm.lore.SYSTEM` changes what a canon sheet is supposed to CONTAIN.
+# The sheet is cached against the checksum below, so without this a fix to the compiler
+# would reach only the worlds whose lore happens to be edited afterwards — every sheet
+# already on disk would keep the flaw it was compiled with, and the operator would have
+# no way of knowing which. Folding the version in retires every sheet at once; the
+# rebuild is one call per world, and the TUI already flags a stale sheet.
+#   2 — keep two same-named institutions of different factions apart (see llm/lore)
+CANON_COMPILER_VERSION = 2
+
+
 def lore_sha(lore: str) -> str:
     """The checksum that decides whether the compiled canon sheet is still current.
-    It covers the documents' TEXT, so a rename, a reorder or a deletion invalidates
-    the sheet exactly like an edit does (see :class:`FandomConfig`)."""
-    return hashlib.sha1(lore.encode("utf-8")).hexdigest()
+
+    It covers the documents' TEXT, so a rename, a reorder or a deletion invalidates the
+    sheet exactly like an edit does (see :class:`FandomConfig`) — and the version of the
+    compiler that built it, so improving the compile prompt invalidates it too."""
+    return hashlib.sha1(
+        f"v{CANON_COMPILER_VERSION}\n{lore}".encode("utf-8")
+    ).hexdigest()
 
 
 def write_fandom(cfg: FandomConfig) -> Path:
