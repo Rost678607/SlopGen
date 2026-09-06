@@ -65,6 +65,12 @@ VIDEO_MODELS: dict[str, list[str]] = {
 PHOTO_MODELS: dict[str, str] = {
     "flux": "flux",
     "turbo": "turbo",
+    # Not a generator either (see the note above VIDEO_MODELS). `frames` means the
+    # picture comes out of the WORLD'S OWN frame base — a folder of stills the operator
+    # has accumulated, each spent several times over a video and reused in the next
+    # one. It is a photo model because what it puts on screen is a still; everything
+    # else about it is pipeline/framebase.py's business.
+    "frames": "",
 }
 
 # Expected output length, in seconds, of one clip/shot from each generator. Drives
@@ -90,6 +96,12 @@ MODEL_CLIP_SECONDS: dict[str, float] = {
     "search": DEFAULT_CLIP_SECONDS,
     "flux": 5.0,
     "turbo": 5.0,
+    # NOT how long a picture stays up: in this mode nothing decides that in advance,
+    # the picture track is cut where the speaker breathes (see framebase.cut_shots).
+    # This is how long a NARRATION BEAT runs, and it is deliberately long — with the
+    # two tracks unhooked, short beats would only make their boundaries coincide again
+    # by accident, and a world is narrated in paragraphs rather than in one-line shots.
+    "frames": 10.0,
 }
 
 
@@ -102,6 +114,12 @@ def is_video_model(model: str) -> bool:
     """True when `model` is a text-to-video generator (find_clip via `wan`), False
     for a text-to-image one (find_image via `pollinations`)."""
     return model not in PHOTO_MODELS
+
+
+def is_frame_model(model: str) -> bool:
+    """True when the picture comes from the world's own frame base rather than from a
+    generator or from the operator's inbox one shot at a time."""
+    return model == "frames"
 
 
 def is_search_model(model: str) -> bool:

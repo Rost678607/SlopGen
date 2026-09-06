@@ -2141,20 +2141,28 @@ MODEL_LABELS = {"manual": "🙋 you generate it", "search": "🔍 you find it"}
 # visuals profile that is the `manual` toggle, so they must not appear in the
 # ai_model picker next to it; a chain stage names them like any other source.
 OPERATOR_SOURCES = ("manual", "search")
+# `frames` is not a generator either, but it is not the operator's inbox either: the
+# picture comes out of the world's own frame base, a folder it accumulates across runs
+# (see pipeline/framebase). It sits in PHOTO_MODELS so a fandom run can name it like
+# any other source, which is why it has to be excluded HERE from the two lists that
+# mean "a generator to call": naming it beside flux would offer to generate with it,
+# and putting it in a chain would promise a video half out of the base and half out of
+# a model — which the mode cannot do, being all-or-nothing by construction.
+NOT_GENERATORS = OPERATOR_SOURCES + ("frames",)
 
 
 def _model_opt(m: str) -> tuple[str, str]:  # (label, value) for a Select
     return (MODEL_LABELS.get(m, m), m)
 
-AI_VIDEO_MODELS = [_model_opt(m) for m in VIDEO_MODELS if m not in OPERATOR_SOURCES]
-AI_PHOTO_MODELS = [_model_opt(m) for m in PHOTO_MODELS if m not in OPERATOR_SOURCES]
+AI_VIDEO_MODELS = [_model_opt(m) for m in VIDEO_MODELS if m not in NOT_GENERATORS]
+AI_PHOTO_MODELS = [_model_opt(m) for m in PHOTO_MODELS if m not in NOT_GENERATORS]
 ALL_SOURCES = list(VIDEO_MODELS) + list(PHOTO_MODELS)
 # A drama's chain may NOT search. Its beats are scripted moments with named characters
 # doing specific things — "Марта отталкивает Ефима у сортировочного стола" — which no
 # stock library holds, and the cast machinery (name→appearance substitution, the entity
 # registry) means nothing for found footage. Generating it by hand still makes sense,
 # so `manual` stays.
-ORCH_MODEL_OPTS = [_model_opt(m) for m in ALL_SOURCES if m != "search"]
+ORCH_MODEL_OPTS = [_model_opt(m) for m in ALL_SOURCES if m not in ("search", "frames")]
 # every source a mode may offer, split by what it puts on screen (see FandomScreen)
 VIDEO_SOURCES = [_model_opt(m) for m in VIDEO_MODELS]
 PHOTO_SOURCES = [_model_opt(m) for m in list(PHOTO_MODELS) + list(OPERATOR_SOURCES)]

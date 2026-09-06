@@ -41,9 +41,10 @@ from ...media.generate import (
 )
 from ...llm import lookup
 from ...media.stock import VIDEO_EXTS, FootageError, find_image
-from .. import manual, parts
+from .. import framebase, manual, parts
 from ..context import AppContext
 from ..job import BgAsset, VideoJob
+from . import picture
 from .idea import LANG_NAMES
 
 log = logging.getLogger(__name__)
@@ -156,7 +157,7 @@ def _drop_foreign(text: str) -> str:
     return " ".join(kept)
 
 
-def _shot_prompt(
+def shot_prompt(
     scene, cast_prompts: dict[str, str], notes: str = "",
     entity_prompts: dict[str, str] | None = None,
 ) -> str:
@@ -266,7 +267,7 @@ def _generate(scene, ctx: AppContext, dirs: dict, cursors: dict, cast_prompts: d
     model = scene.gen_model or "wan2.1"
     if is_manual_model(model):  # manual scenes are ingested in run(), never generated
         raise FootageError("manual scene reached the auto generator — this is a bug")
-    prompt = (_shot_prompt(scene, cast_prompts, ctx.params.visual_notes, entity_prompts)
+    prompt = (shot_prompt(scene, cast_prompts, ctx.params.visual_notes, entity_prompts)
               or " ".join(scene.characters) or "cinematic scene")
     keys = env_keys(key_var_for_model(model))
     video = is_video_model(model)
@@ -424,7 +425,7 @@ def _collect_manual(job: VideoJob, ctx: AppContext) -> tuple[dict[int, Path], ma
         scene = job.scenes[i]
         kind = "search" if is_search_model(scene.gen_model or "") else "generate"
         prompt = (
-            _shot_prompt(scene, job.cast_prompts, ctx.params.visual_notes, entity_prompts)
+            shot_prompt(scene, job.cast_prompts, ctx.params.visual_notes, entity_prompts)
             or " ".join(scene.characters)
             or "cinematic scene"
         )
@@ -452,6 +453,13 @@ def _collect_manual(job: VideoJob, ctx: AppContext) -> tuple[dict[int, Path], ma
 
 
 def run(job: VideoJob, ctx: AppContext) -> None:
+    # The world's own frame base: one picture track for the whole video, already
+    # planned and reviewed by the `picture` stage. Nothing here applies — there is no
+    # generator to call and no per-scene decision left to make — so all that remains is
+    # to ask for what the base could not cover and lay the track onto the scenes.
+    if framebase.active(job, ctx):
+        picture.collect(job, ctx)
+        return
     dirs = {
         "clip_cache": ctx.g.paths.state / "cache" / "footage",
         "img_cache": ctx.g.paths.state / "cache" / "images",

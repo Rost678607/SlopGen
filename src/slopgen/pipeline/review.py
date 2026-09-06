@@ -41,7 +41,11 @@ _DRAMA_STAGES = (
 # fandom runs the drama's stages behind one of its own: `canon`, the world's compiled
 # reference sheet, which is the last chance to fix the world before it is written about.
 # It drops `cut`, having no episodes to cut (see orchestrator.STAGES_FANDOM).
+# `picture` is the frame-base plan: which still is up when, and how it moves. It is a
+# breakpoint of its own because it is the last moment before the operator is ASKED for
+# anything — pinning a card here is what decides which pictures still have to be made.
 _FANDOM_STAGES = ["canon"] + [s for s in _DRAMA_STAGES if s != "cut"]
+_FANDOM_STAGES.insert(_FANDOM_STAGES.index("footage"), "picture")
 
 _MODE_STAGES = {"drama": _DRAMA_STAGES, "fandom": _FANDOM_STAGES}
 
@@ -478,6 +482,41 @@ def _metadata_doc(job: VideoJob, mode: str) -> Doc:
                note_key="bp.note.metadata")
 
 
+def _picture_doc(job: VideoJob, mode: str) -> Doc:
+    """The picture track: which still is up when, and what the camera does to it.
+
+    One row per SHOT rather than per scene, because in this mode the two no longer
+    line up — that is the whole point of the track (see pipeline/framebase). The value
+    is the card, editable as a choice out of the world's base, and changing it PINS
+    the shot: the stage runs again and re-plans everything around the choice without
+    touching it.
+
+    A shot the base could not cover shows blank, and its info line carries the ask it
+    turned into, so the operator can see what they are about to be asked for while
+    they can still prevent it by pinning something instead."""
+    rows: list[Row] = []
+    names = sorted({s.card for s in job.frame_shots if s.card})
+    asks = {a.id: a for a in job.frame_asks}
+    for i, s in enumerate(job.frame_shots):
+        bits = [f"{s.start:.1f}\u2013{s.start + s.duration:.1f}s"]
+        if s.move:
+            bits.append(s.move.kind)
+        if s.target:
+            bits.append(f"\u2192 {s.target}")
+        if s.fit:
+            bits.append(s.fit)
+        if s.pinned:
+            bits.append("pinned")
+        if not s.card and s.ask_id:
+            a = asks.get(s.ask_id)
+            bits.append(f"ask {s.ask_id}: {(a.prompt if a else '')[:60]}")
+        if s.referents:
+            bits.append(", ".join(s.referents))
+        rows.append(Row(label=f"#{i + 1}", value=s.card, src=i, field="card",
+                        kind="choice", options=names, info=" \u00b7 ".join(bits)))
+    return Doc(stage="picture", rows=rows)
+
+
 _READERS = {
     "idea": _idea_doc,
     "canon": _canon_doc,
@@ -485,6 +524,7 @@ _READERS = {
     "entities": _entities_doc,
     "tts": _tts_doc,
     "cut": _cut_doc,
+    "picture": _picture_doc,
     "footage": _footage_doc,
     "subtitles": _subtitles_doc,
     "assemble": _assemble_doc,
@@ -715,6 +755,28 @@ def _apply_metadata(job: VideoJob, rows: list[Row], mode: str) -> bool:
     return False  # publish reads the part, not a re-run of the stage
 
 
+def _apply_picture(job: VideoJob, rows: list[Row], mode: str) -> bool:
+    """Fold edited card choices back onto the picture track.
+
+    A row whose card differs from what was planned becomes a PIN: the operator has
+    said what goes there, and re-planning may work around it but never over it. The
+    stage is reported stale so it runs again — the shots either side of a pin have to
+    be chosen against it, or the repetition rules it was supposed to obey are broken
+    by the pin itself."""
+    changed = False
+    for row in rows:
+        if row.src is None or not 0 <= row.src < len(job.frame_shots):
+            continue
+        shot = job.frame_shots[row.src]
+        value = row.value.strip()
+        if value != shot.card:
+            shot.card = value
+            shot.pinned = bool(value)
+            shot.move = None  # the move belongs to a card; a new card gets a new one
+            changed = True
+    return changed
+
+
 _WRITERS = {
     "idea": _apply_idea,
     "canon": _apply_canon,
@@ -722,6 +784,7 @@ _WRITERS = {
     "entities": _apply_entities,
     "tts": _apply_tts,
     "cut": _apply_cut,
+    "picture": _apply_picture,
     "footage": _apply_footage,
     "subtitles": _apply_subtitles,
     "assemble": _apply_assemble,

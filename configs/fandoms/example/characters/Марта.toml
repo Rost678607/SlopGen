@@ -1,3 +1,4 @@
 name = "Марта"
 appearance = "Невысокая плотная женщина, седые волосы туго собраны в узел на затылке, несколько прядей выбились. Обветренное загорелое лицо, глубокие морщины у глаз от прищура, серые глаза, тяжёлые брови. Тёмно-зелёная вязаная кофта грубой шерсти поверх форменной серой рубахи с медными пуговицами, длинная бурая юбка, кожаный передник с чернильными пятнами. На шее шнурок с латунным ключом от холодной кладовой, на поясе — жестяная чернильница. Руки крупные, костяшки в трещинах."
-dirty = true
+dirty = false
+visual_prompt = "short stocky woman, gray hair tightly gathered in bun at back of head, loose strands framing face, weathered tanned face, deep wrinkles around eyes from squinting, gray eyes, heavy eyebrows, dark green coarse wool knitted cardigan, gray uniform shirt with copper buttons underneath, long brown skirt, leather apron with ink stains, cord around neck with brass key, tin inkwell on belt, large hands, cracked knuckles"

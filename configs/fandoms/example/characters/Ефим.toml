@@ -1,3 +1,4 @@
 name = "Ефим"
 appearance = "Худой жилистый мужчина лет тридцати, среднего роста, тёмно-русые волосы до плеч, стянутые полоской кожи, короткая неровная борода. Тёмные глаза, обмороженный кончик носа, белый шрам через левую бровь. Толстый овчинный полушубок мехом внутрь, поверх — холщовая накидка цвета мокрого камня, на голове вязаная шапка с наушниками. Через плечо холщовая сумка о двух отделениях с бурой сургучной печатью, на поясе плоский фонарь на сале. Ноги обмотаны сукном поверх сапог."
-dirty = true
+dirty = false
+visual_prompt = "thin wiry man in his thirties, average height, shoulder-length dark blond hair tied back with leather strip, short uneven beard, dark eyes, frostbitten nose tip, white scar through left eyebrow, thick sheepskin coat with fur inside, canvas cloak in wet stone grey, knitted earflap hat, canvas shoulder bag with two compartments and brown wax seal, flat lard lamp on belt, legs wrapped in cloth over boots, rugged medieval fantasy character, detailed texture, consistent appearance"

@@ -1,0 +1,38 @@
+# A frame card: one reusable still of this world, and the places on it worth
+# looking at. The picture lives beside this file under the name in `file`; this
+# example ships without one, so the card loads and is simply never spent.
+#
+# Two texts, and they are not interchangeable:
+#   `prompt`      — English, what a picture model was (or would be) told to draw.
+#   `description` — prose in the world's own language, for the model that matches
+#                   cards to beats. Names, never looks: what a character looks like
+#                   is written once in characters/<name>.toml, and a second copy
+#                   here would drift out of step with it.
+file = "двор станции.png"
+prompt = "wide shot of a mountain pass post station yard at dusk, log buildings, mules, canvas mail bags stacked on a low platform, scrub pine, cold light"
+description = "Двор станции на седловине под вечер. Мулы у коновязи, почтовые сумки сложены на помосте. Захар стоит у весов, Нюша на крыльце. За двором начинается стланик."
+note = "Общий план двора — сюда возвращаемся каждый раз, когда речь про станцию, сумки или прибытие."
+
+# Regions somebody has marked on the picture, in fractions of it. Of the picture as
+# the RENDERER sees it: a still is fitted to the video's aspect and centre-cropped
+# before anything else happens (media/ffmpeg.photo_filter), so these are fractions of
+# what survives that, which is also what the web editor draws on.
+#
+# `of` names what the region is OF, spelled as the world spells it — that is how a
+# move finds the person being talked about. Leave `of` empty for a thing that is not
+# anybody: the matcher can still send the camera there by naming the label, and that
+# is the only way such a region is ever reached.
+[[targets]]
+label = "Захар у весов"
+of = "Захар"
+rect = { cx = 0.38, cy = 0.44, scale = 0.30 }
+
+[[targets]]
+label = "Нюша на крыльце"
+of = "Нюша"
+rect = { cx = 0.72, cy = 0.38, scale = 0.26 }
+
+[[targets]]
+label = "сумки на помосте"
+of = ""
+rect = { cx = 0.50, cy = 0.72, scale = 0.34 }

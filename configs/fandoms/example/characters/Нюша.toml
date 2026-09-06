@@ -1,3 +1,4 @@
 name = "Нюша"
 appearance = "Тонкая девушка чуть выше среднего роста, светло-рыжие волосы заплетены в две косы и убраны под серый платок, веснушки по всему лицу, зелёные глаза, обкусанные губы. Мужская форменная рубаха не по размеру, подвёрнутые рукава, поверх — тёплая безрукавка из некрашеной овчины, тёмная юбка до щиколоток, толстые вязаные чулки и валенки. На пальцах правой руки чернильные пятна, к запястью на шнурке привязан латунный штемпель. Держится чуть сутулясь, будто всегда наклонена над конторкой."
-dirty = true
+dirty = false
+visual_prompt = "slender young woman, slightly above average height, light reddish hair plaited into two braids tucked under grey headscarf, freckles across entire face, green eyes, bitten chapped lips, ill-fitting men's uniform shirt, rolled-up sleeves, warm sleeveless vest of undyed sheepskin, dark ankle-length skirt, thick knitted stockings, felt boots, ink stains on fingers of right hand, brass stamp tied to right wrist with cord, slightly stooped posture as if leaning over a desk"

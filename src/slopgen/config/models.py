@@ -107,6 +107,26 @@ class LLMProfile(BaseModel):
     price_out: float = 0.0
 
 
+class WebConfig(BaseModel):
+    """The browser UI (`slopgen web`).
+
+    Defaults to loopback and no password, which is the only combination that is safe
+    without anybody thinking about it. Setting a password is what unlocks binding to
+    the network: marking a crop on a picture is a pointing job, and pointing is far
+    nicer done with a finger on a tablet than with a mouse — but the same server can
+    start runs and spend API quota, so it does not go on the network unlocked.
+
+    `max_parallel` is small on purpose. Runs share more than the machine: one API
+    quota, one ffmpeg's worth of CPU, and — for two videos of the same world — one
+    folder on disk that both would write to (see web/runs.py, which serialises those
+    against each other whatever this says)."""
+
+    host: str = "127.0.0.1"
+    port: int = 8770
+    password: str = ""  # empty = no login, and then `host` may not leave loopback
+    max_parallel: int = 2
+
+
 class UIConfig(BaseModel):
     lang: Literal["en", "ru"] = "en"  # TUI interface language
     theme: str = "minecraft"  # persisted Textual theme name
@@ -237,6 +257,7 @@ class GlobalConfig(BaseModel):
     audio: AudioConfig = AudioConfig()
     llm: LLMConfig = LLMConfig()
     ui: UIConfig = UIConfig()
+    web: WebConfig = WebConfig()
     footage: FootageConfig = FootageConfig()
     defaults: DefaultsConfig = DefaultsConfig()
     tts: TTSConfig = TTSConfig()
@@ -504,7 +525,180 @@ class VoiceConfig(BaseModel):
         return (self.root / self.ref) if self.root else Path(self.ref)
 
 
+# How well a card has to fit a stretch of narration before it is spent on it. The
+# matcher grades every stretch on this scale (see stages/picture), and the operator's
+# setting is the cutoff: everything at or above it is used, everything below it is a
+# reason to ask for a new picture.
+#
+#   exact — it shows what is being talked about, in the place it is happening
+#   close — the right place or the right people, not both, contradicting nothing
+#   loose — of this world and this part of the story, but not about what is said
+#   any   — spend whatever is nearest and never ask for anything
+FrameFit = Literal["exact", "close", "loose", "any"]
+# What each setting will actually accept. "any" holds every grade there is, which is
+# what makes it the "stop asking me" position rather than a quality setting.
+FIT_ACCEPTS: dict[str, frozenset[str]] = {
+    "exact": frozenset({"exact"}),
+    "close": frozenset({"exact", "close"}),
+    "loose": frozenset({"exact", "close", "loose"}),
+    "any": frozenset({"exact", "close", "loose", "wrong"}),
+}
+
+
+# --- crop geometry: where a still is looked at, and how the look travels ---
+
+
+class Rect(BaseModel):
+    """A crop window on a still, in fractions of the picture.
+
+    Three numbers rather than four, because the window's ASPECT is not free: a
+    picture is fitted to the video's aspect ratio BEFORE anything is cropped out of
+    it (see `media/ffmpeg.make_photo_part`), so a window that is `scale` of the
+    width and `scale` of the height is the only shape that can be shown without
+    pillars or a second crop. `scale` 1.0 is the whole picture; 0.5 shows a quarter
+    of its area.
+
+    The centre is stored rather than a corner because the centre is what an operator
+    actually points at — "her face", "the empty cap" — and what a move converges ON.
+    Corners would make every zoom an arithmetic puzzle for whoever writes a card by
+    hand, which is the fallback whenever the editor is not open."""
+
+    cx: float = 0.5  # window centre, as a fraction of the picture's width
+    cy: float = 0.5  # …and of its height
+    scale: float = 1.0  # the window's side, as a fraction of the picture (0 < s <= 1)
+
+    def clamped(self, floor: float = 0.1) -> "Rect":
+        """The same window, pulled inside the picture and inside what ffmpeg will
+        accept. `zoompan` caps its zoom at 10, so a scale under 0.1 silently stops
+        moving instead of failing, which is the worst way for this to go wrong."""
+        s = min(max(self.scale, floor), 1.0)
+        half = s / 2
+        return Rect(
+            cx=min(max(self.cx, half), 1.0 - half),
+            cy=min(max(self.cy, half), 1.0 - half),
+            scale=s,
+        )
+
+
+# The move kinds, which are also the anti-repetition key: the source projects never
+# ran the same kind on two adjacent shots (eight consecutive shots, eight different
+# trajectories), and two zooms in a row is exactly what makes stills read as a
+# slideshow however well each one is composed.
+# `drift` is the odd one out and earns its place on a base nobody has marked up yet:
+# a slow slide across the whole picture needs no crop targets, and without it a fresh
+# base can only alternate hold and push_in, which is a metronome of its own.
+MoveKind = Literal["hold", "push_in", "drift", "zoom_in", "zoom_out", "pan"]
+
+
+class KenBurns(BaseModel):
+    """One shot's crop move: hold rect A, travel to rect B, hold there.
+
+    Measured off the source footage rather than invented. The move is a straight
+    interpolation of the crop RECTANGLE — vertical offset grew 12, 24, 36, 48 px on
+    consecutive samples, linear and with a NON-ZERO offset, so the window converges
+    off-centre, onto something — and it does not span the shot: one measured shot ran
+    20.35s→25.87s with the travel only at 22.5s→24.3s, which is 2.15s of stillness,
+    1.8s of travel and 1.57s of stillness. A move that runs the whole shot reads as a
+    screensaver; a move that starts and stops reads as somebody who saw something.
+
+    Times are in SHOT seconds, not piece seconds. A shot that straddles a scene
+    boundary is rendered as two files (see `pipeline/framebase` and `BgAsset.move_at`)
+    and both are laid against this one clock, so the travel crosses the join instead
+    of restarting — the same trick continuous video mode plays with `BgAsset.start`,
+    one clock further out."""
+
+    rect_a: Rect = Rect()
+    rect_b: Rect = Rect()
+    move_start: float = 0.0  # seconds into the SHOT where the travel begins
+    move_end: float = 0.0  # …and ends; equal to move_start means a pure hold
+    kind: MoveKind = "hold"  # anti-repetition key, and the label review shows
+
+
 # --- configs/fandoms/<name>/ ----------------------------------------------
+
+
+class CropTarget(BaseModel):
+    """A named region of a frame card: what is in it, and where.
+
+    `label` is for the operator's eye, in whatever language they think in. `of` names
+    the thing the region is OF, spelled as the world spells it — that is what lets a
+    move converge on whatever the narration is currently about. Leave it empty for a
+    region worth looking at that is not anybody in particular: a doorway, a horizon,
+    a pile of something."""
+
+    label: str = ""  # "мужнина шапка, поднятая в руках"
+    of: str = ""  # what this region is of, as the world names it; "" = no one thing
+    rect: Rect = Rect()
+
+
+class FrameCard(BaseModel):
+    """One reusable still in a world's frame base.
+
+    The base is the whole economy of this mode. A frame is bought once — generated,
+    drawn, or paid for — and then spent two to four times across a video and again in
+    the next one, so what a card writes down is not "the shot for beat 7" but "a
+    picture of this, in this world, with these places worth looking at". That is why
+    a card carries crop TARGETS: one wide still of a widow at a market is four shots
+    (her face, the empty cap, the crowd behind her, the whole stall) and the move
+    between any two of them costs nothing.
+
+    Two texts, and keeping them apart is the point. `prompt` is the English
+    generation prompt — what a picture model was, or would be, told to draw, full of
+    appearance and lighting and style. `description` is prose for the LLM that
+    matches cards to beats, and it deliberately carries NO appearance at all, only
+    names: who and what is in the picture, where it is, what is going on. Appearance
+    already lives once, in each character's compiled `visual_prompt`; a second copy
+    inside every card would drift out of step with it and make matching noisy, since
+    what decides whether a picture fits a beat is who is in it and where, never the
+    colour of anyone's beard.
+
+    Nothing here is LLM-compiled, so there is no `dirty` flag — unlike a character, a
+    card has no structured fields a prompt gets rebuilt from, because the picture IS
+    the artifact. What CAN go stale is the geometry: swap the file behind a card and
+    every target still points at where something used to be. That is a checksum
+    question, exactly like a fandom's `docs_sha`, so `file_sha` is one.
+
+    The file lives beside the card and is named by bare filename, the way a voice
+    sample lives beside its card (see :class:`VoiceConfig`). Here the two are bound
+    even harder: a crop target is a pair of coordinates ON THAT FILE, so a card and
+    its picture separated are both worthless.
+
+    It may also be a CLIP rather than a still, and then it is looped to fill its shot
+    rather than retimed to it — a card is a thing the world has, not a thing cut to
+    measure for one beat, so stretching it to fit would be the wrong operation. What
+    it does not get is a crop move: the clip already has motion of its own, and two
+    motions over one picture fight."""
+
+    name: str  # the card's filename stem, filled in by the loader
+    file: str = ""  # the picture or clip, beside this card; "" = "<name>.png"
+    prompt: str = ""  # the English prompt it was made from, so it can be remade
+    # what is in it, in the world's own language, names but never looks (see above)
+    description: str = ""
+    note: str = ""  # why this card was taken in, in the operator's own language
+    targets: list[CropTarget] = []  # named regions; the whole frame is always implied
+    file_sha: str = ""  # sha1 of the file when the targets were last written
+    retired: bool = False  # keep the card on disk, stop spending it
+    # -- runtime only, filled by the loader; never written back to the TOML --
+    root: Path | None = Field(default=None, exclude=True)  # the frames/ folder
+
+    @property
+    def path(self) -> Path | None:
+        name = self.file or f"{self.name}.png"
+        return (self.root / name) if self.root else Path(name)
+
+    @property
+    def usable(self) -> bool:
+        """Has its file on disk and has not been retired. A card whose picture went
+        missing is not an error anywhere — a world is a folder people move around —
+        it simply stops being spent."""
+        p = self.path
+        return not self.retired and p is not None and p.is_file()
+
+    def targets_for(self, referents: set[str]) -> list[CropTarget]:
+        """The targets that are OF one of `referents`. Regions of nothing in
+        particular are never in here: they are worth looking at, but they are not
+        what is being said."""
+        return [t for t in self.targets if t.of and t.of in referents]
 
 
 class FandomConfig(BaseModel):
@@ -540,6 +734,10 @@ class FandomConfig(BaseModel):
     # -- runtime only, filled by the loader; never written back to the TOML --
     root: Path | None = Field(default=None, exclude=True)  # the fandom's folder
     cast: list[CharacterConfig] = Field(default_factory=list, exclude=True)
+    # the world's frame base: stills it can be told out of, spent again and again
+    # (see :class:`FrameCard`). Empty is not a broken world, it is one nobody has
+    # drawn yet — the footage stage asks the operator for what it is missing.
+    frames: list[FrameCard] = Field(default_factory=list, exclude=True)
 
 
 # --- configs/orchestration/*.toml -----------------------------------------
@@ -679,6 +877,17 @@ class RunParams(BaseModel):
     # still, not merely a clip that happens to be short.
     medium: Literal["", "video", "photo"] = ""
     manual_orchestration: OrchestrationConfig | None = None  # ad-hoc chain from the TUI
+    # -- frame base (generator "frames"; see pipeline/framebase) ------------
+    # How close a card has to be to what is being said before it is spent instead of
+    # a new one being asked for. It is a band and not a number because what stands
+    # behind it is a model's verdict, and a model naming its own confidence as 0.62
+    # is naming nothing that stays put between models or between weeks.
+    frame_fit: FrameFit = "close"
+    # How eager the picture is to change: 0 waits for a real break in the speech and
+    # gives long shots, 1 takes almost any gap and gives short ones. It is not a
+    # length, because length is not the thing being decided — where the speaker
+    # breathes is (see framebase.cut_shots).
+    cut_sensitivity: float = 0.35
 
     @property
     def free_length(self) -> bool:

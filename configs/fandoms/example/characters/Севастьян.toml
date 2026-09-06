@@ -1,3 +1,4 @@
 name = "Севастьян"
 appearance = "Высокий сухой старик, слегка сгорбленный, длинные седые волосы и окладистая белая борода, выгоревшие голубые глаза, тёмное дублёное лицо. Долгополый брезентовый плащ, весь в бурых и охряных потёках краски, под ним стёганая куртка, на голове войлочная шляпа с обвисшими полями. За спиной короткая лестница-стремянка и связка кистей, на поясе жестяное ведёрко с охрой. В руке ошкуренная жердина в рост человека, крашенная охрой до половины."
-dirty = true
+dirty = false
+visual_prompt = "tall gaunt elderly man, slightly stooped posture, long gray hair, full white beard, faded pale blue eyes, deeply tanned leathery wrinkled face, long canvas duster coat stained with brown and ochre paint drips, quilted jacket underneath, felt hat with drooping brim, short wooden stepladder on back, bundle of paintbrushes on back, tin bucket hanging from belt, bucket containing ochre pigment, holding a peeled wooden pole as tall as himself, pole painted ochre up to halfway, weathered old painter, distinctive individual"

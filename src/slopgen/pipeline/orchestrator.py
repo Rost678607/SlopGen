@@ -48,6 +48,7 @@ from .stages import (
     footage,
     idea,
     metadata,
+    picture,
     script,
     subtitles,
     tts,
@@ -83,6 +84,14 @@ STAGES_DRAMA: list[tuple[str, Callable]] = [
 ]
 
 
+# `picture` plans the whole picture track out of the world's frame base, and it sits
+# BEFORE footage so the operator reviews the plan before being asked for the pictures
+# it is missing rather than after. Both it and `entities` decide for themselves whether
+# this run concerns them (see framebase.active) — the chain stays the same list for
+# every fandom run, because checkpoints and resume are keyed on stage names and a
+# chain that changed shape by mode would make a resumed run disagree with the one that
+# parked it. A stage that is not this run's business reports `skip` and costs nothing.
+#
 # No `cut`: a fandom video is one piece. Episodes are a serial's device — a story cut
 # where it hurts most — and an account of a world has no cliffhanger to hang them on.
 # Nothing downstream misses the stage: every later stage syncs the (single) part list
@@ -92,6 +101,7 @@ STAGES_FANDOM: list[tuple[str, Callable]] = [
     ("script", fandom_script.run),
     ("entities", entities.run),
     ("tts", tts.run),
+    ("picture", picture.run),
     ("footage", drama_footage.run),
     ("subtitles", subtitles.run),
     ("assemble", assemble.run),
@@ -110,9 +120,17 @@ EventCallback = Callable[[int, str, str, str], None]
 
 
 class Orchestrator:
-    def __init__(self, ctx: AppContext, on_event: EventCallback | None = None):
+    def __init__(self, ctx: AppContext, on_event: EventCallback | None = None,
+                 should_stop: Callable[[], bool] | None = None):
         self.ctx = ctx
         self.on_event = on_event or (lambda *a: None)
+        # Asked BETWEEN stages, never inside one. A stage is a unit of work that
+        # writes its own output — clips fetched, lines voiced, a cut rendered — and
+        # tearing one in half would leave that half on disk with nothing recording
+        # that it is half. Between stages the checkpoint is current, so stopping there
+        # is indistinguishable from a crash the resume already knows how to survive:
+        # `slopgen --resume` picks the run up at the stage it never started.
+        self.should_stop = should_stop or (lambda: False)
         self.run_dir: Path | None = None  # set once run() picks/receives it
 
     def _run_dir(self) -> Path:
@@ -185,6 +203,11 @@ class Orchestrator:
                     if name in done:  # resumed: output already on disk
                         self.on_event(i, name, "skip", "resumed")
                         continue
+                    if self.should_stop():
+                        cp.paused(job, done, name, "stopped by the operator")
+                        self.on_event(i, name, "paused", "stopped by the operator")
+                        parked = True
+                        break
                     current = name
                     self.on_event(i, name, "start", "")
                     t0 = time.monotonic()

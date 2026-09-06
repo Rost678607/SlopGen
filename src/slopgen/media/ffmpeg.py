@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from ..config.models import GlobalConfig
+from ..config.models import GlobalConfig, KenBurns
 from .filters import graph as filter_graph
 
 
@@ -95,29 +95,101 @@ def make_video_part(clip: Path, dur: float, out: Path, cfg: GlobalConfig, start:
 ZOOM = {"none": 0.0, "subtle": 0.09, "strong": 0.18}
 
 
-def make_photo_part(img: Path, dur: float, out: Path, cfg: GlobalConfig, motion: str = "subtle", direction: int = 0) -> None:
-    """Ken-Burns photo piece: slow zoom in/out (alternating by `direction`)."""
+def _ken_burns(move: KenBurns, dur: float, phase: float, cfg: GlobalConfig) -> tuple[str, str, str, int]:
+    """The (z, x, y, frames) of one crop move, laid against the SHOT's clock.
+
+    `phase` is how much of the shot has already played before this piece begins: 0
+    for a whole shot, the offset of the cut for the tail half of a shot that crossed
+    a scene boundary. It is carried in SECONDS rather than frames on purpose — each
+    piece quantises its own length independently (`int(dur * fps)`), so frames would
+    drift by one per cut, while seconds re-derive the same ramp for every piece of
+    the same shot.
+
+    Three things about `zoompan` decide the shape of what comes out of here, all
+    measured against explicit `crop` references on ffmpeg 7.1.2:
+
+    * `on` is the 0-based OUTPUT frame index, so the ramp is written against it
+      directly and a piece that starts mid-travel simply gets a negative offset.
+    * the `zoom` variable inside `x`/`y` is the CURRENT frame's zoom, which is what
+      makes the existing centred idiom work — but we do not use it, because the
+      window's side is already known here as exact arithmetic on the rects, and
+      reading it back would be reading a number ffmpeg has already rounded.
+    * `x`/`y` are TRUNCATED to int, so `(0.7-0.25)*200` — which is 89.99999999999999
+      in doubles — lands the window on 89 instead of 90. The trailing `+0.5` turns
+      that truncation into round-to-nearest.
+
+    `clip()` is what makes hold → move → hold a single expression: no `enable=`, no
+    second filter, no concat. The three phases of the move are one ramp that is
+    pinned at 0 before the travel and at 1 after it."""
     v = cfg.video
     frames = max(int(dur * v.fps), 1)
-    z = ZOOM.get(motion, 0.09)
-    if z == 0:
+    a, b = move.rect_a.clamped(), move.rect_b.clamped()
+    m0 = (move.move_start - phase) * v.fps
+    # A pure hold (move_end == move_start) would divide by zero; one frame is the
+    # shortest a travel can honestly be, and for a hold the two rects are equal
+    # anyway so what the ramp does in that frame changes nothing.
+    span = max((move.move_end - phase) * v.fps - m0, 1.0)
+    # The feasible set of `clamped` windows is convex, so a straight line between two
+    # clamped rects never leaves the picture and no intermediate clamping is needed.
+    p = f"clip((on{-m0:+.4f})/{span:.4f},0,1)"
+    s = f"({a.scale:.6f}{b.scale - a.scale:+.6f}*{p})"
+    z = f"1/{s}"
+    x = f"({a.cx:.6f}{b.cx - a.cx:+.6f}*{p}-{s}/2)*iw+0.5"
+    y = f"({a.cy:.6f}{b.cy - a.cy:+.6f}*{p}-{s}/2)*ih+0.5"
+    return z, x, y, frames
+
+
+def photo_filter(dur: float, cfg: GlobalConfig, motion: str = "subtle", direction: int = 0,
+                 move: KenBurns | None = None, phase: float = 0.0) -> tuple[str, int]:
+    """The filtergraph of one Ken-Burns photo piece, and how many frames it runs for.
+
+    Split out of :func:`make_photo_part` so the graph has one definition: what the
+    picture DOES is checked frame by frame against explicit `crop` references, and
+    that check has to see the same string the pipeline renders. Going through the
+    encoded file instead would prove nothing — x264 spends different bits on
+    identical frames, so even a dead-still hold comes back with a different checksum
+    every frame."""
+    v = cfg.video
+    if move is not None:
+        z, x, y, frames = _ken_burns(move, dur, phase, cfg)
+    else:
+        frames = max(int(dur * v.fps), 1)
+        zf = ZOOM.get(motion, 0.09)
+        z = (
+            f"min(1+{zf}*on/{frames},{1 + zf})" if direction % 2 == 0
+            else f"max({1 + zf}-{zf}*on/{frames},1)"
+        )
+        x, y = "(iw-iw/zoom)/2", "(ih-ih/zoom)/2"
+    # upscale 2x before zoompan to avoid sub-pixel jitter. The crop that follows is
+    # what makes the canvas exactly the video's aspect ratio, which is in turn what
+    # lets a crop window be three numbers instead of four (see Rect).
+    graph = (
+        f"[0:v]scale={v.width * 2}:{v.height * 2}:force_original_aspect_ratio=increase,"
+        f"crop={v.width * 2}:{v.height * 2},"
+        f"zoompan=z='{z}':x='{x}':y='{y}'"
+        f":d={frames}:s={v.width}x{v.height}:fps={v.fps},setsar=1[v]"
+    )
+    return graph, frames
+
+
+def make_photo_part(img: Path, dur: float, out: Path, cfg: GlobalConfig, motion: str = "subtle",
+                    direction: int = 0, move: KenBurns | None = None, phase: float = 0.0) -> None:
+    """Ken-Burns photo piece.
+
+    Two ways in. `motion`/`direction` is the visuals profile's knob: a centred zoom
+    of a fixed strength, in or out by turns, running the whole piece. `move` is a
+    real crop move — rect A held, travelled to rect B, held again (see
+    :class:`KenBurns`) — and it wins when given, because it says everything the knob
+    says and the one thing the knob cannot: WHERE in the picture to look."""
+    if move is None and ZOOM.get(motion, 0.09) == 0:
         _run([
             "ffmpeg", "-y", "-loop", "1", "-i", str(img),
             "-vf", _vf_fit(cfg), "-an", *VENC, "-t", f"{dur:.3f}", str(out),
         ])
         return
-    zoom = (
-        f"min(1+{z}*on/{frames},{1 + z})" if direction % 2 == 0
-        else f"max({1 + z}-{z}*on/{frames},1)"
-    )
-    # upscale 2x before zoompan to avoid sub-pixel jitter
+    graph, frames = photo_filter(dur, cfg, motion, direction, move, phase)
     _run([
-        "ffmpeg", "-y", "-i", str(img),
-        "-filter_complex",
-        f"[0:v]scale={v.width * 2}:{v.height * 2}:force_original_aspect_ratio=increase,"
-        f"crop={v.width * 2}:{v.height * 2},"
-        f"zoompan=z='{zoom}':x='(iw-iw/zoom)/2':y='(ih-ih/zoom)/2'"
-        f":d={frames}:s={v.width}x{v.height}:fps={v.fps},setsar=1[v]",
+        "ffmpeg", "-y", "-i", str(img), "-filter_complex", graph,
         "-map", "[v]", "-an", *VENC, "-frames:v", str(frames), str(out),
     ])
 

@@ -40,7 +40,8 @@ def _segment(i: int, scene, tmp, ctx: AppContext):
     for k, a in enumerate(scene.bg_assets):
         part = tmp / f"s{i:02d}_bg{k}.mp4"
         if a.is_photo:
-            ffmpeg.make_photo_part(a.path, a.duration, part, ctx.g, vis.background.motion, direction=k)
+            ffmpeg.make_photo_part(a.path, a.duration, part, ctx.g, vis.background.motion,
+                                   direction=k, move=a.move, phase=a.move_at)
         else:
             ffmpeg.make_video_part(a.path, a.duration, part, ctx.g, start=a.start, speed=a.speed)
         bg_parts.append(part)

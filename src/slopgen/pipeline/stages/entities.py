@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import logging
 
+from .. import framebase
 from ..context import AppContext
 from ..drama import plan_windows
 from ..job import Entity, VideoJob
@@ -192,6 +193,14 @@ def run(job: VideoJob, ctx: AppContext) -> None:
     from .beats import ensure_cast_prompts
 
     ensure_cast_prompts(job, ctx)
+    # The registry exists so that a thing which recurs is not drawn afresh every time.
+    # When the picture comes out of the world's frame base, nothing is drawn per shot
+    # at all — the pictures already exist — so there is nothing here to keep consistent
+    # and both passes would spend calls on an answer nobody reads. The cast prompts
+    # above are still wanted: ASKING for a new picture has to say who is in it.
+    if framebase.active(job, ctx):
+        log.info("visual registry: the picture comes from the frame base — nothing to register")
+        return
     # nothing to pin and nothing to fix when no shot was described in the first place
     # (an all-ad or fully hand-authored script) — both passes would just burn calls
     if not any(s.video_prompt.strip() for s in job.scenes):

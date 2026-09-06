@@ -6,6 +6,8 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from ..config.models import KenBurns
+
 
 class Word(BaseModel):
     text: str
@@ -24,6 +26,16 @@ class BgAsset(BaseModel):
     # a clip/voice length mismatch between this and the voice's atempo instead of
     # looping the clip back to its start mid-scene.
     speed: float = 1.0
+    # -- frame-base stills (see pipeline/framebase.py) ----------------------
+    # The crop move of the SHOT this piece belongs to, and how far into that shot the
+    # piece begins. Two fields rather than one, because the picture track no longer
+    # changes where the scenes do: a still that is up for 5.5s across a scene boundary
+    # is rendered as two pieces, and both have to describe the same travel — `move`
+    # says what the travel is, `move_at` says where in it this piece starts. It is the
+    # manoeuvre `start` already makes for continuous video, one clock further out:
+    # there the offset is into the SOURCE, here into the shot's own timeline.
+    move: KenBurns | None = None
+    move_at: float = 0.0
 
 
 class InsertCue(BaseModel):
@@ -116,11 +128,69 @@ class Scene(BaseModel):
     part: int = 1  # drama: output part number; cuts happen after the last scene in a part
 
 
+class FrameShot(BaseModel):
+    """One still on the picture track: which card is up, when, and how it moves.
+
+    The track belongs to the VIDEO and not to any scene, which is the whole point of
+    the frame-base mode. Measured on the source projects: the picture changes are not
+    aligned to the narration at all — the two tracks run past each other — and that
+    asynchrony is most of what makes stills read as edited footage rather than as a
+    slideshow. So shots are planned end to end over the finished timeline, cut at
+    WORD boundaries (see :mod:`.framebase`), and only then sliced at the scene
+    boundaries into the per-scene :class:`BgAsset`s that assemble already renders.
+
+    It is persisted on the job for the reason `Scene.tts_rate` is: it holds the
+    operator's choices — a pinned card, a card they supplied themselves — and a
+    re-run of the footage stage must reproduce them rather than re-roll them."""
+
+    start: float  # absolute seconds in the finished video
+    duration: float
+    # WHERE this shot begins, said in a way that survives the clock moving. The seconds
+    # above are derived: they come out of the scene durations, and re-voicing one line
+    # at the `tts` breakpoint shifts every one of them. The anchor does not move,
+    # because a cut is always placed on a word (see framebase.Cue) — so the honest
+    # identity of a shot is which word it starts on, and the seconds are recomputed
+    # from it. -1 marks a shot that begins a region rather than a word.
+    anchor_scene: int = -1
+    anchor_word: int = -1
+    card: str = ""  # FrameCard.name; "" = the base does not cover this shot yet
+    said: str = ""  # the narration heard over this shot — what the matcher reads
+    prompt: str = ""  # what the writer asked to be shown — what an ask is written from
+    referents: list[str] = []  # who or what is being talked about while it is up
+    target: str = ""  # the region of the card to look at, as the matcher named it
+    fit: str = ""  # the matcher's grade of the chosen card (see config.FrameFit)
+    move: KenBurns | None = None
+    pinned: bool = False  # the operator chose this card; selection may not overrule it
+    ask_id: str = ""  # the manual-manifest id when this shot is (or was) an ask
+
+
+class FrameAsk(BaseModel):
+    """One picture the base is missing, and every shot it would cover.
+
+    Asks are grouped rather than counted one per shot, because a card is bought once
+    and spent several times: three stretches about the same person in the same place
+    are one purchase, and asking three times for what is one picture is exactly the
+    operator's time this mode exists to save. What may NOT be grouped is the same
+    person in two places — that is two rooms and two pictures — and telling those
+    apart is a judgement about the text, which is why the matcher makes it (see
+    stages/picture) instead of a rule about referents doing it badly."""
+
+    id: str  # the manual-manifest id, and the inbox filename stem: "frame_00"
+    prompt: str = ""  # English, for whatever draws it
+    description: str = ""  # the draft of the new card's own description, to be edited
+    shots: list[int] = []  # indices into VideoJob.frame_shots this one picture covers
+    card: str = ""  # the card it became, once delivered and filed
+
+
 class VideoJob(BaseModel):
     index: int
     workdir: Path
     topic: str = ""
     scenes: list[Scene] = []
+    # frame-base mode: the picture track, planned over the whole video rather than
+    # per scene (see pipeline/framebase.py). Empty in every other mode.
+    frame_shots: list[FrameShot] = Field(default_factory=list)
+    frame_asks: list[FrameAsk] = Field(default_factory=list)  # pictures still to be made
     cast_prompts: dict[str, str] = Field(default_factory=dict)  # drama: name → visual_prompt
     entities: list[Entity] = Field(default_factory=list)  # drama: recurring non-cast visuals
     # fandom: the world's compiled canon sheet, carried here so a resumed run writes

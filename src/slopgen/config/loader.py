@@ -14,6 +14,7 @@ from .models import (
     CharacterConfig,
     ContentTypeConfig,
     FandomConfig,
+    FrameCard,
     GlobalConfig,
     LLMProfile,
     OrchestrationConfig,
@@ -52,6 +53,7 @@ def _load_dir(subdir: str, model):
 
 
 FANDOM_TOML = "fandom.toml"  # the config file inside a fandom's folder
+FRAMES_DIR = "frames"  # the frame base inside a fandom's folder: cards + their pictures
 
 
 def _load_fandoms(subdir: str = "fandoms") -> dict[str, FandomConfig]:
@@ -80,6 +82,11 @@ def _load_fandoms(subdir: str = "fandoms") -> dict[str, FandomConfig]:
         data["root"] = path
         cast = _load_dir(f"{subdir}/{path.name}/characters", CharacterConfig).values()
         data["cast"] = [c.model_copy(update={"age": ""}) if c.age else c for c in cast]
+        # the frame base. `_load_dir` globs *.toml only, so the pictures sitting in
+        # the same folder are ignored for free — and they have to sit there, because
+        # a card's crop targets are coordinates on one specific file.
+        frames = _load_dir(f"{subdir}/{path.name}/{FRAMES_DIR}", FrameCard).values()
+        data["frames"] = [c.model_copy(update={"root": path / FRAMES_DIR}) for c in frames]
         out[path.name] = FandomConfig.model_validate(data)
     return out
 
@@ -137,6 +144,132 @@ def write_fandom(cfg: FandomConfig) -> Path:
     cfg.root.mkdir(parents=True, exist_ok=True)
     path = cfg.root / FANDOM_TOML
     path.write_bytes(tomli_w.dumps(cfg.model_dump()).encode())
+    return path
+
+
+def write_config(kind: str, name: str, data: dict) -> Path:
+    """Write one named config into `configs/<kind>/<name>.toml`.
+
+    The generic half of config writing, for the kinds whose file IS their model dump:
+    LLM profiles, presets, ad contracts, accounts, visuals profiles. `name` is the
+    file's identity — the loader fills it back in from the stem — so it is dropped
+    from the body rather than written twice and left to disagree with itself.
+
+    Deliberately unvalidated here: the caller has a validated pydantic model and
+    hands over its dump. Taking a raw dict and validating inside would mean this
+    module knowing every kind, which is the thing being avoided."""
+    if not name or "/" in name or "\\" in name or name.startswith("."):
+        raise ConfigError(f"unusable config name: {name!r}")
+    path = CONFIGS_DIR / kind / f"{name}.toml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    body = {k: v for k, v in data.items() if k != "name" and v is not None}
+    path.write_bytes(tomli_w.dumps(body).encode())
+    return path
+
+
+def delete_config(kind: str, name: str) -> bool:
+    """Remove one named config. Returns whether there was anything to remove."""
+    path = CONFIGS_DIR / kind / f"{name}.toml"
+    if not path.is_file():
+        return False
+    path.unlink()
+    return True
+
+
+def update_global(section: str, values: dict) -> Path:
+    """Merge values into one section of `configs/slopgen.toml`.
+
+    Comments are not preserved — same caveat the terminal's writer carries, and for
+    the same reason: this is a round trip through a parser that does not keep them.
+    Merging rather than replacing is what keeps a form that shows three fields from
+    wiping the other nine in the same section."""
+    path = CONFIGS_DIR / "slopgen.toml"
+    data = _read_toml(path) if path.exists() else {}
+    data.setdefault(section, {}).update(values)
+    path.write_bytes(tomli_w.dumps(data).encode())
+    return path
+
+
+def write_character(path: Path, cfg: CharacterConfig) -> Path:
+    """Persist one character card.
+
+    Lives here rather than in a frontend because there are two of them now, and a
+    second copy of "which fields a character file holds" is a second place for it to
+    drift. The compiled `visual_prompt` is written along with everything else: it is
+    a cache, and dropping it on every edit would make a run pay to rebuild a
+    descriptor that has not changed — `dirty` is what says whether it must.
+
+    `age` is written only when it has a value, because a world's character has none
+    (the loader strips it) and an empty key in the file invites somebody to fill it
+    in for a mode that would never show it back."""
+    data: dict = {
+        "appearance": cfg.appearance,
+        "plurality": cfg.plurality,
+        "visual_prompt": cfg.visual_prompt,
+        "dirty": cfg.dirty,
+    }
+    if cfg.age:
+        data["age"] = cfg.age
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(tomli_w.dumps(data).encode())
+    return path
+
+
+def frames_dir(cfg: FandomConfig) -> Path:
+    """Where a world keeps its frame base. Not created on load: a world with no base
+    is one nobody has drawn yet, not a broken one, and an empty folder appearing in
+    every fandom would only say that slopgen has been run."""
+    if not cfg.root:
+        raise ConfigError(f"fandom '{cfg.name}' has no folder to write to")
+    return cfg.root / FRAMES_DIR
+
+
+def file_sha(path: Path) -> str:
+    """The checksum a card's crop targets were measured against.
+
+    Full contents rather than size and mtime: a card and its picture travel between
+    machines together, because a world is one folder somebody copies, and every copy
+    would otherwise read as an edit and throw away geometry that is still correct. A
+    base of a hundred 2 MB stills hashes in well under a second, once per run.
+
+    A missing file hashes to "" rather than raising — a card whose file went
+    missing is already handled as not usable (see :meth:`FrameCard.usable`), and a
+    checksum is not the place to discover it."""
+    h = hashlib.sha1()
+    try:
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+    except OSError:
+        return ""
+    return h.hexdigest()
+
+
+def card_is_stale(card: FrameCard) -> bool:
+    """Whether the file behind a card is not the one its crop targets were drawn on.
+    Never fatal: a stale card is still a picture, it just cannot be trusted to know
+    where anything in it is, so selection stops offering it a targeted move and holds
+    or pushes in instead (see `pipeline/framebase`).
+
+    A card that has never recorded a checksum is NOT stale — hand-written cards are
+    expected, and the editor is what fills `file_sha` in."""
+    path = card.path
+    if not card.file_sha or path is None:
+        return False
+    return file_sha(path) != card.file_sha
+
+
+def write_frame_card(card: FrameCard) -> Path:
+    """Persist one frame card to `<fandom>/frames/<name>.toml`.
+
+    The file is not touched: it is already beside the card, and whoever put it there
+    is who names it. Runtime-only `root` is excluded by the model, exactly as
+    a fandom's is."""
+    if not card.root:
+        raise ConfigError(f"frame card '{card.name}' has no folder to write to")
+    card.root.mkdir(parents=True, exist_ok=True)
+    path = card.root / f"{card.name}.toml"
+    path.write_bytes(tomli_w.dumps(card.model_dump()).encode())
     return path
 
 

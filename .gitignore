@@ -51,6 +51,14 @@ configs/ads/*.toml
 configs/fandoms/*
 !configs/fandoms/example/
 !configs/fandoms/example/**
+# …but never the frame base's PICTURES. The example world documents what a card
+# looks like, which is a TOML file; the stills a run delivers into it are the
+# operator's own material and several megabytes each.
+configs/fandoms/example/frames/*.png
+configs/fandoms/example/frames/*.jpg
+configs/fandoms/example/frames/*.jpeg
+configs/fandoms/example/frames/*.webp
+configs/fandoms/example/frames/*.mp4
 
 # Media libraries are copyright-sensitive — supply your own.
 assets/music/*
