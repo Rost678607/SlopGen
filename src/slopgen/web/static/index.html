@@ -1,0 +1,188 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>slopgen</title>
+<link rel="stylesheet" href="/static/app.css">
+<body>
+<div id="login" hidden>
+  <form id="loginform">
+    <h1>slopgen</h1>
+    <input type="password" name="password" placeholder="пароль" data-lp="web.a.password" autofocus>
+    <button data-l="web.login">войти</button>
+    <p class="err" id="loginerr"></p>
+  </form>
+</div>
+
+<div id="app" hidden>
+  <!-- The same three doors the terminal has: make something, pick a run back up,
+       set things up. Everything else lives behind one of them, because a flat list
+       of nine tabs is a list of nine decisions before any work starts. -->
+  <nav>
+    <b>slopgen</b>
+    <button data-tab="gen" class="on" data-l="web.nav.gen">⛏ генерация</button>
+    <button data-tab="runs" data-l="web.nav.runs">⏵ прогоны</button>
+    <button data-tab="cfg" data-l="web.nav.cfg">⚙ конфигурация</button>
+    <button data-tab="models" data-l="web.nav.models">🧠 модели</button>
+    <span class="grow"></span>
+    <select id="ui-lang" title="язык интерфейса" data-lt="web.a.uilang"></select>
+  </nav>
+
+  <section id="tab-gen">
+    <div class="chips big" id="mode-menu">
+      <button data-mode="fandom" class="on" data-l="web.mode.fandom">фандом</button>
+      <button data-mode="info" data-l="web.mode.info">инфо-ролик</button>
+      <button data-mode="drama" data-l="web.mode.drama">драма</button>
+    </div>
+
+    <form id="startform" class="cards" data-mode="fandom">
+    </form>
+
+    <form id="infoform" class="cards" data-mode="info" hidden>
+    </form>
+
+    <form id="dramaform" class="cards" data-mode="drama" hidden>
+    </form>
+  </section>
+
+  <section id="tab-runs" hidden>
+    <div id="runs"></div>
+  </section>
+
+  <section id="tab-models" hidden>
+    <div id="models"></div>
+  </section>
+
+  <section id="tab-cfg" hidden>
+    <div id="cfg-menu" class="chips big"></div>
+
+    <div id="cfg-fandoms" hidden>
+      <div class="panel">
+        <div class="row"><label class="inline" data-l="web.card.world">мир <select id="world"></select></label>
+          <span class="grow"></span>
+          <span class="chips" id="w-sub"></span></div>
+      </div>
+
+      <div id="w-lore" class="panel">
+        <h3 data-l="web.cfg.lore">лор <span id="w-stale" class="dim"></span></h3>
+        <div class="row"><select id="w-doc"></select>
+          <span class="grow"></span>
+          <button id="w-doc-save" class="primary" data-l="web.cfg.savedoc">сохранить документ</button></div>
+        <textarea id="w-doc-text" rows="16" spellcheck="false"></textarea>
+      </div>
+
+      <div id="w-castbox" class="panel" hidden>
+        <h3 data-l="web.cfg.cast">кто в мире <span class="dim" data-l="web.cfg.cast.note">внешность подставляется в каждый запрос картинки</span></h3>
+        <div id="w-cast"></div>
+      </div>
+
+      <div id="w-frames" hidden>
+        <div id="cards"></div>
+        <label class="drop" id="drop">
+          <input type="file" id="upload" accept="image/*,video/*" hidden data-l="web.frames.drop">
+          перетащи сюда картинку или клип — станет новой карточкой
+        </label>
+      </div>
+    </div>
+
+    <div id="cfg-keys" hidden>
+      <div class="panel">
+        <h3 data-l="web.cfg.keys">ключи API <span class="dim" data-l="web.cfg.keys.note">лежат в .env, в гит не попадают; значения не показываются</span></h3>
+        <div id="keys"></div>
+      </div>
+    </div>
+
+    <div id="cfg-list" hidden>
+      <div class="panel">
+        <div class="row"><b id="cl-title"></b>
+          <span class="grow"></span>
+          <input id="cl-new" placeholder="имя нового" data-lp="web.a.newname" style="max-width:220px">
+          <button id="cl-add" class="ghost" data-l="web.add">завести</button></div>
+      </div>
+      <div id="cl-items"></div>
+    </div>
+
+    <div id="cfg-tts" hidden>
+      <div class="panel">
+        <h3 data-l="web.cfg.tts">чем озвучивать</h3>
+        <div id="engines"></div>
+        <label class="inline"><input type="checkbox" id="tts-check" data-l="web.cfg.tts.check"> проверять референс перед клонированием</label>
+      </div>
+    </div>
+
+    <div id="cfg-voices" hidden>
+      <div class="panel">
+        <h3 data-l="web.cfg.voices">клонированные голоса <span class="dim" data-l="web.cfg.voices.note">сэмпл и что в нём сказано — вместе это и есть голос</span></h3>
+        <form id="voice-new" class="grid">
+          <label data-l="web.f.title">имя<input name="name" required></label>
+          <label data-l="web.f.lang">язык<input name="lang" value="ru"></label>
+          <label class="wide" data-l="web.f.transcript">что сказано в сэмпле — слово в слово
+            <textarea name="text" rows="2"></textarea></label>
+          <label class="wide" data-l="web.f.sample">сэмпл<input type="file" name="file" accept="audio/*" required></label>
+          <div class="row"><span class="grow"></span><button class="primary" data-l="web.cfg.addvoice">завести голос</button></div>
+        </form>
+      </div>
+      <div id="voices"></div>
+    </div>
+
+    <div id="cfg-orch" hidden>
+      <div class="panel">
+        <div class="row"><b data-l="web.cfg.chains">цепочки генераторов</b>
+          <span class="dim" data-l="web.cfg.chains.note">по стадии на генератор: сколько кадров с каждого, прежде чем перейти к следующему</span>
+          <span class="grow"></span>
+          <input id="or-new" placeholder="имя новой" data-lp="web.a.newname.f" style="max-width:220px">
+          <button id="or-add" class="ghost" data-l="web.add">завести</button></div>
+      </div>
+      <div id="or-items"></div>
+    </div>
+
+    <div id="cfg-todo" class="panel" hidden>
+      <h3 id="cfg-todo-title"></h3>
+      <p class="dim" data-l="web.tui.only">Этот раздел пока живёт только в терминале: <code>slopgen</code> <span data-l="web.tui.only2">→ Конфигурация. Перенос идёт по одному разделу за раз.</span></p>
+    </div>
+  </section>
+</div>
+
+<div id="editor" hidden>
+  <header>
+    <button id="close" data-l="web.back">← назад</button>
+    <b id="ed-name"></b>
+    <span class="grow"></span>
+    <span id="saved" class="saved"></span>
+    <button id="save" class="primary" data-l="web.save">сохранить</button>
+  </header>
+  <div class="ed-body">
+    <div class="stage" id="stage">
+      <img id="pic" alt="" draggable="false">
+      <video id="vid" hidden muted loop playsinline draggable="false"></video>
+      <div id="safe" hidden></div>
+      <div id="boxes"></div>
+      <div id="preview" hidden></div>
+      <p id="nofile" hidden data-l="web.frames.none">картинки ещё нет — размечать нечего.<br data-l="web.frames.none2">принеси её, и области можно будет расставить</p>
+    </div>
+    <aside>
+      <label data-l="web.frames.desc">что на картинке — имена, без внешности
+        <textarea id="ed-descr" rows="5"></textarea></label>
+      <label data-l="web.frames.prompt">промпт, которым сделана (английский)
+        <textarea id="ed-prompt" rows="3"></textarea></label>
+      <label data-l="web.frames.note">заметка для себя
+        <textarea id="ed-note" rows="2"></textarea></label>
+      <h3 data-l="web.frames.targets">области <small data-l="web.frames.hint">нажми на предмет и отведи в сторону — точка нажатия станет центром</small></h3>
+      <ul id="targets"></ul>
+      <button id="playmove" class="ghost" data-l="web.frames.preview">показать движение по двум первым</button>
+    </aside>
+  </div>
+</div>
+
+<div id="panel" hidden>
+  <header>
+    <button id="panel-close" data-l="web.back">← назад</button>
+    <b id="panel-title"></b>
+    <span class="grow"></span>
+    <button id="panel-apply" class="primary" hidden data-l="web.apply">применить и продолжить</button>
+  </header>
+  <div id="panel-body"></div>
+</div>
+
+<script src="/static/forms.js"></script>
+<script src="/static/app.js"></script>
+</body>

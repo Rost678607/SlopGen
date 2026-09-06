@@ -15,6 +15,12 @@ dependencies = [
     "google-api-python-client>=2.130",
     "google-auth-oauthlib>=1.2",
     "gradio_client>=1.3",
+    # the browser UI (`slopgen web`): a JSON API, an event stream and file
+    # uploads. Both are pure-python wheels, which is what keeps them cheap on a
+    # NixOS pip venv where a native toolkit is not.
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "python-multipart>=0.0.9",
 ]
 
 # Optional engines. Everything the pipeline needs by default is above; these are

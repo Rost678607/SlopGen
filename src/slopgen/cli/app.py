@@ -304,6 +304,30 @@ def main(
 
 
 @app.command()
+def web(
+    ctx: typer.Context,
+    host: Optional[str] = typer.Option(None, "--host", help="what to bind to; needs a password to leave loopback"),
+    port: Optional[int] = typer.Option(None, "--port"),
+) -> None:
+    """Open the browser UI: the frame base with its crop editor, and runs that keep
+    going when the tab is closed."""
+    from rich import print as rprint
+
+    from ..web.app import serve
+
+    store: ConfigStore = ctx.obj
+    cfg = store.global_cfg.web
+    if host:
+        cfg.host = host
+    if port:
+        cfg.port = port
+    where = cfg.host if cfg.password or cfg.host in ("127.0.0.1", "localhost", "::1") else "127.0.0.1"
+    rprint(f"[bold]slopgen[/bold] web on [cyan]http://{where}:{cfg.port}[/cyan]"
+           + ("" if cfg.password else "  [dim](no password → loopback only)[/dim]"))
+    serve(store)
+
+
+@app.command()
 def info(
     ctx: typer.Context,
     lang: Optional[str] = typer.Argument(None, help="content language, e.g. ru / en"),
