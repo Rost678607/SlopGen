@@ -48,6 +48,7 @@ from ...llm.tools import LORE_LOOKUP_TOOL, make_lore_lookup
 from ..context import AppContext
 from ..job import VideoJob
 from .beats import (
+    FIDELITY_RULE,
     MAX_BEAT_S,
     MIN_BEAT_S,
     PREMISE_RULE,
@@ -200,36 +201,36 @@ LORE_TOOL_RULE = (
 # world. The reverse: a beat describing plainly what a creature looks like, in a world
 # whose records say nobody has ever got a good look at one. And the scaffolding: 'the
 # instruction ends here', a line of the brief's furniture, read out loud in the voice.
+#
+# What this rule no longer carries is HOW CLOSELY the brief is to be followed word for
+# word — that question is not the world's, it is every mode's, and it lives one rule
+# further down in `beats.FIDELITY_RULE`. What stays here is only what the records
+# change about it: they are a constraint and never the material a gap gets filled with.
 BRIEF_RULE = (
     "\nTHE BRIEF — THIS IS THE VIDEO, not a topic for one. The operator wrote it, and "
     "it is the spine of what you write: its material, its order and its shape. "
     "Everything in it is in the piece; nothing that is not in it is added to the piece. "
     "If it lists six things, you say all six, in its order, and you do not open with a "
     "seventh. If it moves from one kind of material to another — rules, then accounts, "
-    "then a close — you keep that structure and let the beats fall where it turns.\n"
-    "You are not summarising it and you are not taking inspiration from it. You are "
-    "SAYING it, in this world's voice, cut into beats and fitted to the time: the same "
-    "content, reworded only as far as speaking it aloud requires. Where it runs shorter "
-    "than the time you have, go DEEPER into what it already says — hold a moment, let a "
-    "voice finish, let a detail land — never wider.\n"
-    "It may instead only NAME a subject: a place, a custom, an unexplained event, a "
-    "question. Then it is a topic rather than a text and you build the piece around it "
-    "yourself. Judge by whether it carries content of its own — a sentence is a topic, "
-    "a page is the piece. If it asks you to argue a THEORY, genuinely build one: lay "
-    "out the evidence from the records, name what does not add up, and commit to a "
-    "conclusion. It is a claim made INSIDE the world by someone who lives there — never "
-    "a fan theory, never a reading of a text, never a guess about what an author meant. "
-    "Say 'the ledgers disagree', never 'the lore is inconsistent'.\n"
+    "then a close — you keep that structure and let the beats fall where it turns. You "
+    "are not summarising it and you are not taking inspiration from it: you are SAYING "
+    "it, in this world's voice, cut into beats and fitted to the time. How far you may "
+    "reword it, and where you may write material of your own at all, is the rule below "
+    "this one; here it is enough that the brief is the piece.\n"
+    "If it asks you to argue a THEORY, genuinely build one: lay out the evidence from "
+    "the records, name what does not add up, and commit to a conclusion. It is a claim "
+    "made INSIDE the world by someone who lives there — never a fan theory, never a "
+    "reading of a text, never a guess about what an author meant. Say 'the ledgers "
+    "disagree', never 'the lore is inconsistent'.\n"
     "THE RECORDS ABOVE ARE A CONSTRAINT, NOT MATERIAL. They say what this world "
     "contains, what its words are, and what nothing you write may contradict. They "
     "never add a subject the brief did not raise and never earn a beat of their own: "
-    "you use them the way you use grammar — everywhere, and invisibly.\n"
-    "INVENT NOTHING. Not a cause, not a reason, not a connection between two things "
-    "that neither the brief nor the records make. If the brief says a rule is kept and "
-    "does not say why, then why is not known, and you say THAT — not a reason you "
-    "supplied. And where the records say a thing has never been seen clearly, it has "
-    "not: neither the narration nor a video_prompt may show it plainly, and the shot is "
-    "built around what people did see.\n"
+    "you use them the way you use grammar — everywhere, and invisibly. So they are "
+    "never a reason to fill a gap either: where the brief says a rule is kept and does "
+    "not say why, then why is not known, and you say THAT — not a reason the records "
+    "let you assemble. And where the records say a thing has never been seen clearly, "
+    "it has not: neither the narration nor a video_prompt may show it plainly, and the "
+    "shot is built around what people did see.\n"
     "The brief's own furniture is not narration. A heading, a numbering, a note about "
     "what the text is, a line marking where it stops ('that is the end of the "
     "instruction') — that is scaffolding you write TO, never text you read out. Nor is "
@@ -289,6 +290,7 @@ SYSTEM_RESIDENT = (
     "{roster_rule}"
     "{cast_rule}"
     "{brief_rule}"
+    "{fidelity_rule}"
     "{premise_rule}"
     "\nBreak the piece into BEATS. For each beat give:\n"
     '  • "seconds": how long this beat is on screen (you choose — see the rule below);\n'
@@ -323,6 +325,7 @@ SYSTEM_CHRONICLER = (
     "{roster_rule}"
     "{cast_rule}"
     "{brief_rule}"
+    "{fidelity_rule}"
     "{premise_rule}"
     "\nBreak the piece into BEATS. For each beat give:\n"
     '  • "seconds": how long this beat is on screen (you choose — see the rule below);\n'
@@ -421,9 +424,13 @@ OUTLINE_SYSTEM = (
     "The last stretch ends the piece, unless the brief directs otherwise, in which case "
     "plan for that instead.\n"
     "{part_rule}"
-    "The rule below is addressed to the writers, and it binds you first: an instruction "
-    "the operator wrote TO them is never material to plan a stretch around.\n"
+    "The rules below are addressed to the writers, and they bind you first: an "
+    "instruction the operator wrote TO them is never material to plan a stretch around, "
+    "and a brief that is already written is cut up rather than re-planned — a "
+    "\"covers\" that recounts things the brief does not contain is an invention its "
+    "writer will dutifully put on screen.\n"
     "{premise_rule}"
+    "{fidelity_rule}"
     'Respond with JSON only: {{"title": "<short title in {lang}>", "stretches": '
     '[{{"covers": "...", "details": ["...", "..."], "ends_on": "..."}}, ...]{part_json}}}.'
 )
@@ -472,6 +479,7 @@ class FandomWriter:
         return OUTLINE_SYSTEM.format(
             wins=wins, lang=lang, part_rule=part_rule, part_json=part_json,
             world_rule=WORLD_RULE, premise_rule=PREMISE_RULE, brief_rule=BRIEF_RULE,
+            fidelity_rule=FIDELITY_RULE,
             total=total, share=total / max(wins, 1),
             chars=char_budget(total, ctx.params.lang, ctx.params.tts_rate),
         )
@@ -531,6 +539,7 @@ class FandomWriter:
                if tone else ""),
             roster_rule=ROSTER_RULE.format(roster=roster),
             brief_rule=BRIEF_RULE,
+            fidelity_rule=FIDELITY_RULE,
             window_rule=window_rule,
         )
 

@@ -38,6 +38,12 @@ writer is not asked to label its beats at all, only to write the right one at a 
 The premise is a BRIEF rather than source text: next to the plot the operator writes
 directions to the writer ("break it off with no ending", "don't explain the letter"),
 which are to be followed and never voiced (see `PREMISE_RULE`).
+
+How much of that brief is the writer's to write at all is a separate question, and the
+answer is usually "none of it": an operator who has written the plot out wants it CUT
+into beats, not rewritten, and a model left to infer that rewrites it anyway. So the
+job is stated rather than inferred — split what is written, repair only what is
+actually broken, invent only where the brief is notes (see `FIDELITY_RULE`).
 """
 
 from __future__ import annotations
@@ -166,6 +172,68 @@ PREMISE_RULE = (
     "told. An instruction about the story's shape, opening, ending, tone or content OVERRIDES the "
     "arc, opening and part rules wherever they appear in this prompt; it never overrides the "
     "output format, the length budget, the language, or one continuous shot per beat.\n"
+)
+
+# The operator writes the plot himself, and a model handed a finished one rewrites it
+# anyway — not because anything was wrong with it, but because rewriting is what a
+# writer does when you call it a writer. Measured on a run whose brief was twelve
+# finished sentences: of the twelve beats cut out of them, four carried something the
+# operator had never written — a watchman "and he does not get up", a quarter where "the inn
+# is barred and the lads leave", a keeper who "guards" the memory as well as
+# remembering it, a beekeeper who "talks to" the swarm before claiming it answers. Each
+# is small, each is plausible, and each arrives in the finished video indistinguishable
+# from something the author decided.
+#
+# So the writer is told what job it is on, and that the job depends on what it was
+# handed: a finished brief is CUT UP, a faulty one is repaired at the fault and nowhere
+# else, and only notes are written from. Judged per sentence rather than per brief,
+# because an operator's plot is routinely finished prose in one paragraph and a bullet
+# list in the next.
+#
+# This is deliberately the one rule that tells the model NOT to exercise judgement.
+# Everything else in these prompts asks it to write well; this asks it to leave alone
+# what is already written, including the parts it would have written differently.
+FIDELITY_RULE = (
+    "\nHOW MUCH OF THIS IS YOURS TO WRITE. Decide it BEFORE the first beat, and decide "
+    "it sentence by sentence — one brief is routinely a finished text in one paragraph "
+    "and a bare note in the next.\n"
+    "  1. WHERE THE BRIEF ALREADY SAYS IT — a finished sentence in the operator's own "
+    "words, carrying its own content — your job is to CUT IT INTO BEATS, not to write "
+    "it again. Keep the operator's sentences: their wording, their word "
+    "order, their terms, their names, their register, their jokes, their rhythm. What "
+    "you may change is only what cutting "
+    "requires — where a beat starts and stops, a long sentence split across two beats, "
+    "a pronoun made explicit because its sentence now opens one, a connective dropped "
+    "at a seam. ADD NOTHING: not a detail, not a cause, not a consequence, not a "
+    "reaction, not an adjective, not a clause that merely 'follows'. DROP NOTHING: "
+    "everything they wrote is in the piece, in their order. This outranks the opening "
+    "rule below: a written brief opens where it opens, and the hook is found inside its "
+    "first sentences rather than by moving a later one up in front of them.\n"
+    "  2. WHERE SOMETHING IS ACTUALLY WRONG — it contradicts itself or something you "
+    "were given elsewhere, a name is used two ways, a sentence cannot be spoken aloud "
+    "as written — fix THAT, with the smallest fix that does it, in their voice, and "
+    "leave "
+    "everything around it exactly as it stands. Say nothing about having fixed it. A "
+    "wording you would have chosen differently is NOT a fault. Neither is a plain "
+    "sentence, a repetition, a blunt transition, a joke you would not have made, a "
+    "detail left unexplained, or an ending that does not resolve. You are not here to "
+    "improve the writing.\n"
+    "  3. WHERE THE BRIEF IS ONLY A SKETCH — notes, a list, a subject named and nothing "
+    "more, a stretch it steps over — that part is yours, and there you invent freely, "
+    "in the direction the written parts point. This is the ONLY case in which you write "
+    "material of your own, and it never licenses touching the parts that are written. "
+    "Judge by whether the brief carries content of its own: a sentence naming a subject "
+    "is a sketch, a paragraph telling you what happens is written.\n"
+    "TIME does not change any of this. If the brief fills less than the seconds you "
+    "have, spend the difference on case 3 — the moments it steps over, played out, and "
+    "on holding what it does say — never by widening one of their sentences into "
+    "two of yours. If it fills more, take the whole of something out rather than compressing "
+    "everything, and take out what carries the least.\n"
+    "When the operator's sentence and a better one of yours are both available, theirs "
+    "wins. They will "
+    "read this back against what they wrote, and a line they do not recognise is a "
+    "defect "
+    "even when it is good.\n"
 )
 
 CONTINUE_RULE = (

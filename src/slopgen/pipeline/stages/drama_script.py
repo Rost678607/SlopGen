@@ -32,6 +32,7 @@ from __future__ import annotations
 from ..context import AppContext
 from ..job import VideoJob
 from .beats import (
+    FIDELITY_RULE,
     PREMISE_RULE,
     Window,
     shot_rule,
@@ -72,6 +73,7 @@ SYSTEM = (
     "on the sheet is never 'he'). Two characters in one shot must stay visually distinct.\n"
     "{part_rule}"
     "{premise_rule}"
+    "{fidelity_rule}"
     'Respond with JSON only: {{"title": "<short title in {lang}>", "scenes": [{{"narration": "...", '
     '"video_prompt": "...", "characters": ["..."], "is_ad": false}}, ...]}}.'
 )
@@ -107,9 +109,12 @@ OUTLINE_SYSTEM = (
     "The last stretch ends the story, unless the brief directs the writer to end it otherwise, in "
     "which case plan for that instead.\n"
     "{part_rule}"
-    "The rule below is addressed to the writers, and it binds you first: an instruction the "
-    "operator wrote TO them is never material to plan a stretch around.\n"
+    "The rules below are addressed to the writers, and they bind you first: an instruction the "
+    "operator wrote TO them is never material to plan a stretch around, and a brief that is "
+    "already written is cut up rather than re-planned — a \"covers\" that recounts events the "
+    "brief does not contain is an invention its writer will dutifully put on screen.\n"
     "{premise_rule}"
+    "{fidelity_rule}"
     'Respond with JSON only: {{"title": "<short title in {lang}>", "stretches": [{{"covers": "...", '
     '"details": ["...", "..."], "ends_on": "..."}}, ...]{part_json}}}.'
 )
@@ -128,7 +133,7 @@ class DramaWriter:
     def outline_system(self, ctx, *, wins, lang, part_rule, part_json):
         return OUTLINE_SYSTEM.format(
             wins=wins, lang=lang, part_rule=part_rule, part_json=part_json,
-            premise_rule=PREMISE_RULE,
+            premise_rule=PREMISE_RULE, fidelity_rule=FIDELITY_RULE,
         )
 
     def outline_user(self, ctx, *, brief, roster, beats, windows):
@@ -146,7 +151,7 @@ class DramaWriter:
         return SYSTEM.format(
             lang=lang, words=w.words, shot_rule=shot_rule(w.clip_s),
             open_rule=w.open_rule, arc_rule=w.arc, part_rule=w.part_rule,
-            premise_rule=PREMISE_RULE,
+            premise_rule=PREMISE_RULE, fidelity_rule=FIDELITY_RULE,
         )
 
     def window_user(self, ctx, w: Window, *, brief, roster, tail, lang):
