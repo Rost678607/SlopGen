@@ -11,6 +11,11 @@ A mode is chosen first (before the language), and it shapes the rest of the line
 
     slopgen info ru facts --break script --break tts   -> stop for review after those stages
 
+    slopgen info ru facts --loop                 -> keep making them until stopped
+    slopgen info ru --loop --loop-limit 20 --topics me   -> twenty, each topic yours to give
+    slopgen loop topic "..." / source ai|me / limit N / breaks script / stop
+                                                -> steer a running loop from anywhere
+
     slopgen --preset daily_en                   -> everything from a preset (info)
     slopgen --resume output/20260709_...        -> continue a crashed run
     slopgen gather [output/2026...]             -> add user-assisted clips, then resume
@@ -38,14 +43,18 @@ from ..pipeline.context import AppContext
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
 
-# Sub-apps for the two things that are managed rather than run. Both read the
-# ConfigStore the top-level callback puts on `ctx.obj`, so neither needs an
+# Sub-apps for the things that are managed rather than run. All three read the
+# ConfigStore the top-level callback puts on `ctx.obj`, so none needs an
 # AppContext or an Orchestrator.
+from .loop_cmd import app as loop_app  # noqa: E402
 from .models_cmd import app as models_app  # noqa: E402
 from .voices_cmd import app as voices_app  # noqa: E402
 
 app.add_typer(models_app, name="models")
 app.add_typer(voices_app, name="voices")
+# The third is neither: a loop is RUN rather than managed, but the loop already
+# running is steered from outside it, and that is what these are.
+app.add_typer(loop_app, name="loop")
 
 STATUS_ICON = {
     "start": "…", "done": "[green]✔[/green]", "error": "[red]✘[/red]",
@@ -189,6 +198,24 @@ def _report(jobs, orch) -> None:
         if orch.run_dir is not None:
             rprint(f"\n[yellow]to resume the unfinished videos:[/yellow] slopgen --resume {orch.run_dir}")
         raise typer.Exit(2)
+
+
+def _go(store: ConfigStore, params: RunParams, loop: bool, limit: int,
+        topics: str, on_park: str) -> None:
+    """One batch, or a loop of them.
+
+    The same settings mean both things: a loop is this run repeated with its topic left
+    open, so nothing about the video changes when the flag is added — only how many are
+    made and who is still allowed to decide (see pipeline/loop.py)."""
+    if not loop:
+        _execute(store, params)
+        return
+    from . import loop_cmd
+
+    # The topic this run was started with is not dropped: `LoopFile.create` puts it at
+    # the head of the queue, so the first video is the one that was asked for and the
+    # source decides only what comes after it.
+    loop_cmd.start(store, params, source=topics, limit=limit, on_park=on_park)
 
 
 def _execute(store: ConfigStore, params: RunParams) -> None:
@@ -353,6 +380,10 @@ def info(
     vfilter: Optional[list[str]] = typer.Option(None, "--filter", "-F", help="add a montage filter over the whole video (repeatable), name or name=dose 0-100: --filter crt --filter grain=30. Available: " + ", ".join(FILTER_KEYS)),
     dry_run: bool = typer.Option(False, "--dry-run", help="generate everything but skip publishing"),
     keep_temp: bool = typer.Option(False, "--keep-temp", help="keep intermediate ffmpeg files"),
+    loop: bool = typer.Option(False, "--loop", help="keep making videos one after another until stopped, instead of a fixed batch; steer it while it runs with `slopgen loop ...`"),
+    loop_limit: int = typer.Option(0, "--loop-limit", min=0, help="end the loop after this many videos (0 = no limit); implies --loop"),
+    topics: str = typer.Option("ai", "--topics", help="who picks each looped video's topic once the queue is empty: ai | me (switchable while it runs)"),
+    on_park: str = typer.Option("hold", "--on-park", help="what a loop does when a video stops for review or for hand-made clips: hold (wait for you) | go_on"),
 ) -> None:
     """Generate the minute-of-info clip (idea → script → voiceover → footage)."""
     from rich import print as rprint
@@ -381,7 +412,7 @@ def info(
         + (f" fx=\\[{describe_filters(params.filters)}]" if params.filters else "")
         + (" [yellow]\\[dry-run][/yellow]" if params.dry_run else "")
     )
-    _execute(store, params)
+    _go(store, params, loop or bool(loop_limit), loop_limit, topics, on_park)
 
 
 # -- drama mode -------------------------------------------------------------
@@ -417,6 +448,10 @@ def drama(
     vfilter: Optional[list[str]] = typer.Option(None, "--filter", "-F", help="add a montage filter over the whole video (repeatable), name or name=dose 0-100: --filter crt --filter grain=30. Available: " + ", ".join(FILTER_KEYS)),
     dry_run: bool = typer.Option(False, "--dry-run", help="generate everything but skip publishing"),
     keep_temp: bool = typer.Option(False, "--keep-temp", help="keep intermediate ffmpeg files"),
+    loop: bool = typer.Option(False, "--loop", help="keep making videos one after another until stopped, instead of a fixed batch; steer it while it runs with `slopgen loop ...`"),
+    loop_limit: int = typer.Option(0, "--loop-limit", min=0, help="end the loop after this many videos (0 = no limit); implies --loop"),
+    topics: str = typer.Option("ai", "--topics", help="who picks each looped video's topic once the queue is empty: ai | me (switchable while it runs)"),
+    on_park: str = typer.Option("hold", "--on-park", help="what a loop does when a video stops for review or for hand-made clips: hold (wait for you) | go_on"),
 ) -> None:
     """Generate an AI web drama: a narrated story with a recurring cast and
     AI-generated shots orchestrated across free generators."""
@@ -486,7 +521,7 @@ def drama(
         + (f" fx=\\[{describe_filters(params.filters)}]" if params.filters else "")
         + (" [yellow]\\[dry-run][/yellow]" if params.dry_run else "")
     )
-    _execute(store, params)
+    _go(store, params, loop or bool(loop_limit), loop_limit, topics, on_park)
 
 
 # -- fandom mode ------------------------------------------------------------
@@ -521,6 +556,10 @@ def fandom(
     vfilter: Optional[list[str]] = typer.Option(None, "--filter", "-F", help="add a montage filter over the whole video (repeatable), name or name=dose 0-100: --filter crt --filter grain=30. Available: " + ", ".join(FILTER_KEYS)),
     dry_run: bool = typer.Option(False, "--dry-run", help="generate everything but skip publishing"),
     keep_temp: bool = typer.Option(False, "--keep-temp", help="keep intermediate ffmpeg files"),
+    loop: bool = typer.Option(False, "--loop", help="keep making videos one after another until stopped, instead of a fixed batch; steer it while it runs with `slopgen loop ...`"),
+    loop_limit: int = typer.Option(0, "--loop-limit", min=0, help="end the loop after this many videos (0 = no limit); implies --loop"),
+    topics: str = typer.Option("ai", "--topics", help="who picks each looped video's topic once the queue is empty: ai | me (switchable while it runs)"),
+    on_park: str = typer.Option("hold", "--on-park", help="what a loop does when a video stops for review or for hand-made clips: hold (wait for you) | go_on"),
 ) -> None:
     """Generate a video set inside a world you wrote down: the narrator treats that
     world as the real one they live in, never as fiction being described.
@@ -612,7 +651,7 @@ def fandom(
         + (f" fx=\\[{describe_filters(params.filters)}]" if params.filters else "")
         + (" [yellow]\\[dry-run][/yellow]" if params.dry_run else "")
     )
-    _execute(store, params)
+    _go(store, params, loop or bool(loop_limit), loop_limit, topics, on_park)
 
 
 # -- user-assisted clip gathering -------------------------------------------

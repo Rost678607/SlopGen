@@ -33,7 +33,7 @@ from typing import Callable
 
 from ..publish import get_publisher
 from . import parts, review
-from .checkpoint import Checkpoint
+from .checkpoint import CHECKPOINT_NAME, Checkpoint
 from .context import AppContext
 from .job import VideoJob
 from .manual import ManualInputPending
@@ -137,7 +137,17 @@ class Orchestrator:
         p = self.ctx.params
         base = p.out or self.ctx.g.paths.output
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        run_dir = Path(base) / f"{stamp}_{p.content_type or p.mode}_{p.lang}"
+        name = f"{stamp}_{p.content_type or p.mode}_{p.lang}"
+        run_dir = Path(base) / name
+        # A folder already holding a checkpoint belongs to another run, and the stamp
+        # is only a second wide: two runs started inside the same one would share a
+        # folder and the second would write its checkpoint over the first's. Rare by
+        # hand, ordinary in a loop, where an iteration that fails early is over in less
+        # than a second (see pipeline/loop.py).
+        n = 2
+        while (run_dir / CHECKPOINT_NAME).exists():
+            run_dir = Path(base) / f"{name}_{n}"
+            n += 1
         run_dir.mkdir(parents=True, exist_ok=True)
         return run_dir
 

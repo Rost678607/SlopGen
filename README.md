@@ -77,6 +77,12 @@ slopgen fandom ru example --narrator chronicler --duration-min 3 --parts 2
 
 # generate without publishing (demo assets included)
 slopgen info en cyber --ad example_vpn --dry-run
+
+# on a loop: one video after another, until you stop it
+slopgen info ru facts --loop                          # topics from the model, no limit
+slopgen info ru --loop --loop-limit 20 --topics me    # twenty, each topic yours to give
+slopgen loop topic "why bread goes stale"             # steer it from another terminal
+slopgen loop source ai   /   loop breaks script   /   loop limit 5   /   loop stop
 ```
 
 Single-part output lands in `output/<timestamp>_<type|mode>_<lang>/<n>/final.mp4` + `metadata.json`.
@@ -186,6 +192,82 @@ Parameter priority (info mode): **CLI flags > preset > account defaults > global
 | `metadata`  | title, description and tags, right before publish                                                       |
 
 The screen is master-detail: the stage's items are **cards** on the left — **＋** adds one, **▲ ▼** reorder, **✖** drops — and the open card's fields are edited on the right. A drama scene carries its spoken line, its shot prompt, who is in it (added and removed one by one from the run's cast), which generator makes it and how long the clip runs. Fields are editable by hand (except the `.ass` files, where a wholesale model rewrite would mangle the cue timings), and an **AI edit line** sits under the list. At the `script` breakpoint it works on the scene list as a whole and may do anything the instruction asks — rewrite any field, reorder, merge, split, add or drop scenes, recast them, switch generators — carrying each scene's identity along so an untouched one keeps the audio and clip already made for it. Elsewhere it rewrites the free-text lines: describe the change ("shorter", "make scene 3 angrier", "split this beat in two") and the model rewrites the whole set — for script/voiceover it may also change how many fragments there are. A drama also shows **part markers** among the cards — `── part 2 starts here ──` — and everything below one belongs to that episode. On `script` and `cut` they are yours to move (**▲ ▼**), to add (**＋ Part break**, splitting the drama further) and to drop (merging an episode into the one above); everywhere else they are drawn read-only, so you can always see which episode you are looking at. This is what sets the number of parts — `--parts` only asks the writer for a starting point. Press **Continue** and the run picks up from there; a breakpoint fires once per video, so a re-run of the stage you just edited won't park again. With `-n` >1 the videos queue up and are reviewed one after another. All three modes support it. Headless runs print `slopgen review <dir>` to reopen the parked run (same as `slopgen gather` for manual clips). With `--tts-source manual` the voiceover parks the same way, and the recordings go into `manual_voice/inbox/`.
+
+**Generation in a loop (`--loop`).** A batch (`-n 5`) settles everything before it starts:
+five videos, one set of settings, one source of topics, and nothing to be said to it once
+the first one begins. A loop is the same work one video at a time, with the decisions kept
+open — three of them are read again before every video, and all three can be changed while
+it runs. Add `--loop` to any mode (`--loop-limit N` caps it, `0`/omitted = no limit;
+`--topics ai|me` says who picks each topic; `--on-park hold|go_on` says what a video that
+stops for review means). The topic you started it with is used for the first video whoever
+picks the rest.
+
+**A topic in the queue is always used; the source only decides what happens when the queue
+runs out** — under `ai` the model invents one and the loop never waits, under `me` it waits
+for you. Standing in a terminal it ASKS: type a topic for the next video, press Enter to let
+the model take this one, or type a command — `!ai` `!me` `!limit N` `!breaks script,tts`
+`!park hold|go_on` `!stop`. From anywhere else, the same edits are subcommands, and each
+lands on the next video rather than in the middle of the one being made:
+
+| Command | What it does |
+| ------- | ------------ |
+| `slopgen loop status [DIR]` | what it is doing, what it has made, what is queued |
+| `slopgen loop list`         | every loop under the output folder, newest first |
+| `slopgen loop topic "..." [...]` | queue topics for the next videos (`--me` also hands the rest over to you) |
+| `slopgen loop source ai\|me` | who picks the topic once the queue runs out |
+| `slopgen loop limit N`      | cap it, or uncap it (`0`) |
+| `slopgen loop breaks [STAGES]` | which stages stop for review from the next video on; no argument = none |
+| `slopgen loop park hold\|go_on` | whether a parked video holds the loop |
+| `slopgen loop set KEY=VALUE ...` | **any generation setting**, from the next video on (see below) |
+| `slopgen loop show`         | every setting the loop is on, and the name to type to change it |
+| `slopgen loop stop`         | end it after the video being made now; that video is never torn in half |
+| `slopgen loop go [DIR]`     | pick a stopped loop back up in this terminal, on the plan it already has |
+
+Omit `DIR` and the loop most recently written to is the one meant. The plan lives in
+`output/loop_<stamp>_<type>_<lang>/loop.json` and is a plain file: anything that can edit it
+can steer the loop, including the browser, where a loop is a card at the top of the runs tab
+with the same controls on it.
+
+**Every setting, on the fly.** Not only who picks the topics: everything the run was
+started with is a setting of the loop, and any of it can be rewritten between two videos
+— the length, the look, the montage filters, the voice and its speed, the subtitles, the
+cast, the world, the generator chain, the ad contract, where it publishes. Type them as
+`key=value`, by short name or by field name:
+
+```bash
+slopgen loop set duration=90 style="16mm, sodium street light" fx=crt=40,grain=20
+slopgen loop set voice=ru-RU-SvetlanaNeural rate=-10 subs=karaoke clean_subs=yes
+slopgen loop set cast=Алекс,Кирилл parts=3 tol=20        # a drama, re-cast mid-loop
+slopgen loop set world=Хлябь narrator=chronicler source=wan2.1   # a fandom, re-aimed
+slopgen loop set ad=example_vpn push=yt_main dry_run=no  # start publishing for real
+slopgen loop show                                        # what it is on right now
+```
+
+`slopgen loop show` lists the lot with the short name beside each. A value naming a
+config that does not exist — an account, an ad contract, a world, a filter, a character
+— is refused **as it is typed**, because a loop is unattended by design and the
+alternative is finding out from a video that failed at its last stage while you slept.
+
+Five things are not settings and each has somewhere else it lives: the **mode** (that is
+another loop), the **count** (the loop is the thing that repeats), the **output folder**,
+and the **topic** — that is the queue's, above. Everything else is fair game. In the
+browser it is the same set and literally the same form: the loop's card has a
+**settings** button that opens the mode's start form filled in from the loop, with its
+launch button reading *apply to the loop*.
+
+**A change lands on the next video, never in the middle of one.** The video being made
+was launched on the settings that stood when it started, which is the only way a setting
+can mean one thing for a whole video. The plan file is written by several hands at once —
+the loop recording a video, the browser retuning it, a terminal queueing a topic — so
+every write takes a lock, re-reads what is there and puts back only its own half.
+
+**The videos are ordinary runs.** They land in the output folder beside every other one, so
+`slopgen review`, `slopgen gather`, the TUI's run list and the browser's reach them without
+knowing a loop exists. By default a video that parks — on a breakpoint, or waiting for
+hand-made clips — **holds** the loop until you have dealt with it, because starting the next
+one is exactly what stops you finishing the one that asked you a question. `--on-park go_on`
+says carry on regardless. A loop also stops itself after three failures in a row: an
+unlimited loop and a dead API key would otherwise spend the night failing in a tight ring.
 
 **Length on the model's word (`0`).** Put `0` where a length goes — `--duration`, `--duration-min`, or the Length field in the TUI — and nobody buys one: the model chooses it from the material. What it is worth is decided by the brief, so a brief that is already a finished text runs as long as saying it takes, a premise with three turns in it gets the time those turns need, and a bare topic gets what the format wants. Every mode takes it, and they arrive at it differently for a reason. An info clip needs no extra request at all: its script is one call and the video is exactly as long as the narration came out, so the writer is simply told to choose. A drama or a fandom video has to know first — the length is what the shot list is cut from, and the number of shots decides how many passes the script is written in — so the run makes one small call that reads the brief and answers with seconds, prints what it chose and why, and then proceeds exactly as if you had typed that number, budget checks and all. Being held to a length is not weaker for the model having picked it.
 
@@ -469,6 +551,12 @@ slopgen fandom ru example --scenario "Что делают с сумками, з�
 slopgen fandom ru example --narrator chronicler --duration-min 3 --parts 2
 
 slopgen --resume output/<время>_<тип|режим>_<язык>   # продолжить оборвавшийся прогон
+
+# в цикле: ролик за роликом, пока не остановишь
+slopgen info ru facts --loop                          # темы придумывает нейронка, без предела
+slopgen info ru --loop --loop-limit 20 --topics me    # двадцать штук, темы твои
+slopgen loop topic "почему хлеб черствеет"            # рулить из другого терминала
+slopgen loop source ai   /   loop breaks script   /   loop limit 5   /   loop stop
 ```
 
 Одиночный результат: `output/<время>_<тип|режим>_<язык>/<n>/final.mp4` + `metadata.json`.
@@ -496,6 +584,80 @@ slopgen --resume output/<время>_<тип|режим>_<язык>   # прод
 Экран устроен как мастер-детейл: слева **карточки** позиций этапа — **＋** добавляет, **▲ ▼** двигают, **✖** удаляет, — справа поля открытой карточки. У сцены дорамы это реплика, промпт кадра, кто в кадре (добавляется и убирается поштучно из каста прогона), какая нейронка её генерирует и сколько длится клип. Поля правятся руками (кроме `.ass` — переписывание файла нейронкой снесёт тайминги), а под списком — ИИ-строка. На брейкпоинте `script` она работает со списком сцен целиком и умеет всё, о чём попросишь: переписать любое поле, переставить сцены, склеить, разбить, добавить, убрать, сменить каст и нейронки — сохраняя тождество сцен, так что нетронутая сцена оставляет при себе уже сделанные озвучку и клип. На остальных этапах переписывает текстовые строки: пишешь, что поменять («короче», «третью сцену злее», «разбей этот бит на два»), и модель переписывает весь набор; для сценария и озвучки она может ещё и поменять количество фрагментов. У дорамы среди карточек стоят ещё и **маркеры частей** — `── здесь начинается часть 2 ──`, — и всё, что ниже маркера, относится к этой серии. На `script` и `cut` их можно двигать (**▲ ▼**), добавлять (**＋ Разрыв части**, разрезая дораму дальше) и удалять (склеивая серию с предыдущей); на остальных этапах они нарисованы только для чтения, чтобы всегда было видно, какую серию смотришь. Именно этим и задаётся количество частей — `--parts` лишь просит у сценариста отправную точку. Жмёшь **Продолжить** — конвейер идёт дальше. Брейкпоинт срабатывает один раз на видео, так что переделка только что отредактированного этапа снова не встанет. При `-n` >1 видео выстраиваются в очередь и разбираются по одному. Работает во всех трёх режимах. В headless-прогоне печатается команда `slopgen review <папка>`, чтобы вернуться к застывшему прогону (по аналогии с `slopgen gather` для ручных клипов).
 
 Приоритет параметров (режим info): **флаги CLI > пресет > дефолты аккаунта > глобальные дефолты**. Аккаунт может нести свои дефолты — `slopgen info --push yt_main` уже валидная команда. Драма собирает параметры прямо из своих флагов (слияния с пресетом/аккаунтом пока нет).
+
+**Генерация в цикле (`--loop`).** Батч (`-n 5`) решает всё до старта: пять роликов, один
+набор настроек, один источник тем — и сказать ему что-то после первого уже нельзя. Цикл —
+та же работа по одному ролику, но решения оставлены открытыми: три из них перечитываются
+перед каждым роликом, и все три можно менять на ходу. Добавь `--loop` к любому режиму
+(`--loop-limit N` — предел, `0`/без флага — без предела; `--topics ai|me` — кто придумывает
+тему; `--on-park hold|go_on` — что значит вставший на проверке ролик). Тема, с которой цикл
+запущен, идёт в первый ролик, кто бы ни придумывал остальные.
+
+**Тема из очереди используется всегда, а источник решает лишь то, что будет, когда очередь
+кончится:** при `ai` нейронка придумывает свою и цикл никогда не ждёт, при `me` — ждёт тебя.
+Стоя в терминале, он СПРАШИВАЕТ: впиши тему следующего ролика, нажми Enter — и этот ролик
+придумает нейронка, — или набери команду: `!ai` `!me` `!limit N` `!breaks script,tts`
+`!park hold|go_on` `!stop`. Отовсюду ещё те же правки — это подкоманды, и каждая попадает в
+следующий ролик, а не в середину начатого:
+
+| Команда | Что делает |
+| ------- | ---------- |
+| `slopgen loop status [ПАПКА]` | чем занят, что сделал, что в очереди |
+| `slopgen loop list`           | все циклы в папке вывода, свежие сверху |
+| `slopgen loop topic "..." [...]` | поставить темы в очередь (`--me` — заодно отдать тебе и остальные) |
+| `slopgen loop source ai\|me`  | кто придумывает тему, когда очередь кончилась |
+| `slopgen loop limit N`        | поставить предел или снять его (`0`) |
+| `slopgen loop breaks [СТАДИИ]` | какие стадии встают на проверку со следующего ролика; без аргументов — никакие |
+| `slopgen loop park hold\|go_on` | держит ли вставший ролик весь цикл |
+| `slopgen loop set КЛЮЧ=ЗНАЧЕНИЕ ...` | **любая настройка генерации**, со следующего ролика (см. ниже) |
+| `slopgen loop show`           | все настройки, на которых стоит цикл, и как называется каждая |
+| `slopgen loop stop`           | закончить после текущего ролика; его самого никогда не рвут пополам |
+| `slopgen loop go [ПАПКА]`     | поднять остановленный цикл в этом терминале, по его же плану |
+
+Без `ПАПКИ` берётся тот цикл, в который писали последним. План лежит в
+`output/loop_<время>_<тип>_<язык>/loop.json` и это обычный файл: рулить циклом может всё, что
+умеет его править, — в том числе браузер, где цикл выглядит карточкой наверху вкладки
+«прогоны» с теми же органами управления.
+
+**Любая настройка на ходу.** Не только «кто придумывает тему»: всё, с чем прогон был
+запущен, — настройка цикла, и что угодно из этого переписывается между двумя роликами:
+длина, вид, монтажные фильтры, голос и его скорость, субтитры, каст, мир, цепочка
+генераторов, рекламный контракт, куда публиковать. Набираются как `ключ=значение`, по
+короткому имени или по имени поля:
+
+```bash
+slopgen loop set duration=90 style="плёнка, ранняя PS1" fx=crt=40,grain=20
+slopgen loop set voice=ru-RU-SvetlanaNeural rate=-10 subs=karaoke clean_subs=yes
+slopgen loop set cast=Алекс,Кирилл parts=3 tol=20        # дораме — сменить каст на ходу
+slopgen loop set world=Хлябь narrator=chronicler source=wan2.1   # фандому — сменить прицел
+slopgen loop set ad=example_vpn push=yt_main dry_run=no  # начать публиковать по-настоящему
+slopgen loop show                                        # на чём он стоит прямо сейчас
+```
+
+`slopgen loop show` перечисляет всё вместе с коротким именем каждой. Значение, называющее
+несуществующий конфиг — аккаунт, рекламный контракт, мир, фильтр, персонажа, — отвергается
+**в момент набора**: цикл по замыслу работает без присмотра, и иначе об ошибке сообщит
+ролик, упавший на последней стадии, пока ты спал.
+
+Пять вещей настройками не являются, и у каждой есть своё место: **режим** (это другой
+цикл), **количество** (повторяется сам цикл), **папка вывода** и **тема** — она в очереди,
+см. выше. Всё остальное можно. В браузере это тот же набор и буквально та же форма: у
+карточки цикла есть кнопка **настройки**, открывающая форму запуска этого режима,
+заполненную из цикла, а кнопка запуска в ней читается как *применить к циклу*.
+
+**Правка попадает в следующий ролик и никогда в середину начатого.** Тот, который делают
+сейчас, запущен на настройках, стоявших в момент его старта, — только так настройка может
+означать одно и то же для целого ролика. План пишут сразу в несколько рук — цикл
+записывает ролик, браузер переставляет настройки, терминал ставит тему в очередь, — поэтому
+каждая запись берёт замок, перечитывает то, что лежит, и кладёт назад только свою половину.
+
+**Ролики — обычные прогоны.** Они ложатся в папку вывода рядом со всеми прочими, поэтому
+`slopgen review`, `slopgen gather`, список прогонов в TUI и в браузере доходят до них, не
+зная про цикл вовсе. По умолчанию вставший ролик — на брейкпоинте или в ожидании ручных
+клипов — **держит** цикл, пока ты им не займёшься: запуск следующего ровно тем и мешает, что
+не даёт доделать тот, который задал тебе вопрос. `--on-park go_on` — идти дальше несмотря ни
+на что. Ещё цикл останавливает себя сам после трёх падений подряд: иначе цикл без предела и
+умерший ключ API провели бы ночь, падая по кругу.
 
 **Длина на усмотрение нейронки (`0`).** Поставь `0` там, где задаётся длина, — `--duration`, `--duration-min` или поле «Длина» в TUI, — и её никто не покупает: модель выбирает её по материалу. Решает бриф: бриф, который уже готовый текст, идёт ровно столько, сколько его произносить; премиса с тремя поворотами получает время, которое этим поворотам нужно; голая тема получает то, что положено формату. Берут это все режимы, и приходят к этому по-разному, и не случайно. Инфо-ролику дополнительный запрос не нужен вовсе: его сценарий — один вызов, а видео идёт ровно столько, сколько вышло озвучки, так что сценаристу просто говорят выбрать самому. Дораме и фандому надо знать заранее: из длины нарезается список кадров, а число кадров решает, за сколько проходов пишется сценарий, — поэтому прогон делает один маленький запрос, который читает бриф и отвечает секундами, печатает, что выбрал и почему, и дальше идёт ровно так, как если бы это число вписал ты, вместе со всеми проверками бюджета. Держать за длину не менее строго оттого, что её выбрала сама модель.
 

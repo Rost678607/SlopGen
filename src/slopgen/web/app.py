@@ -45,6 +45,7 @@ from ..config.models import (AccountConfig, AdConfig, CharacterConfig, CropTarge
                              VoiceConfig)
 from ..media.stock import IMAGE_EXTS, VIDEO_EXTS
 from ..pipeline import manual, review
+from ..pipeline.loop import check_params
 from ..pipeline.checkpoint import Checkpoint
 from ..models import CATALOG as MODEL_CATALOG
 from ..models import ModelStore, human_size
@@ -758,10 +759,15 @@ def create_app(store: ConfigStore) -> FastAPI:
             out.append(d)
         return out
 
-    @app.post("/api/runs/fandom")
-    async def start_fandom(request: Request,
-                           slopgen: str | None = Cookie(default=None)) -> dict:
-        """Start a fandom run.
+    # -- what a form MEANS, per mode -------------------------------------
+    #
+    # One function per mode, and the endpoints below are three lines each on top of it.
+    # They were inline until a loop could be retuned: the browser edits a loop's
+    # settings in the same form that starts a run, so "what this form means" had to
+    # become something two doors can ask rather than something one of them does.
+
+    def _fandom_params(b: dict) -> RunParams:
+        """A fandom run, from the form's body.
 
         The chain is built here rather than named, because a fandom's picture comes
         from ONE source for the whole video — `frames` most of all, which is
@@ -769,8 +775,6 @@ def create_app(store: ConfigStore) -> FastAPI:
         source and this turns it into a one-stage chain, which is what the pipeline
         reads. Hardcoding `frames` was the first version, and it left the old
         per-shot modes unreachable from the browser entirely."""
-        guard(slopgen)
-        b = await request.json()
         world = str(b.get("fandom", ""))
         if world not in store.fandoms:
             raise HTTPException(status_code=404, detail=f"no world named {world!r}")
@@ -797,7 +801,36 @@ def create_app(store: ConfigStore) -> FastAPI:
                 stages=[OrchestrationStage(model=source, metric="percent", amount=100.0,
                                            clip_seconds=model_clip_seconds(source))]),
         )
-        return sup.start(params, title=str(b.get("title", "")) or f'{_t("web.mode.fandom")} · {world}').as_dict()
+        return params
+
+    @app.post("/api/runs/fandom")
+    async def start_fandom(request: Request,
+                           slopgen: str | None = Cookie(default=None)) -> dict:
+        """Start a fandom run, or a loop of them."""
+        guard(slopgen)
+        b = await request.json()
+        params = _fandom_params(b)
+        title = str(b.get("title", "")) or f'{_t("web.mode.fandom")} · {params.fandom}'
+        loop = _loop_of(b)
+        return sup.start_loop(params, title, **loop).as_dict() if loop \
+            else sup.start(params, title=title).as_dict()
+
+    def _loop_of(b: dict) -> dict | None:
+        """The loop block a form may send, or None when it asked for a plain run.
+
+        The three mode forms send the same block, and it is deliberately the ONLY
+        difference between starting one video and starting a hundred: a loop is this run
+        with its topic left open, so every other setting on the form means exactly what
+        it meant before (see pipeline/loop.py)."""
+        loop = b.get("loop")
+        if not isinstance(loop, dict) or not loop.get("on"):
+            return None
+        return {
+            "source": "me" if str(loop.get("source", "ai")) == "me" else "ai",
+            "limit": max(0, int(loop.get("limit", 0) or 0)),
+            "on_park": "go_on" if str(loop.get("on_park", "hold")) == "go_on" else "hold",
+            "topics": [str(t).strip() for t in (loop.get("topics") or []) if str(t).strip()],
+        }
 
     def _common(b: dict) -> dict:
         """The settings every mode shares, read off one block rather than three.
@@ -826,13 +859,9 @@ def create_app(store: ConfigStore) -> FastAPI:
             out["subtitle_style"] = b["subtitle_style"]
         return out
 
-    @app.post("/api/runs/info")
-    async def start_info(request: Request,
-                         slopgen: str | None = Cookie(default=None)) -> dict:
+    def _info_params(b: dict) -> RunParams:
         """The minute-of-useless-info clip: a topic, or none and the model invents one."""
-        guard(slopgen)
-        b = await request.json()
-        params = RunParams(
+        return RunParams(
             lang=str(b.get("lang", "ru")),
             content_type=str(b.get("content_type", "")),
             mode="info", idea=str(b.get("idea", "")),
@@ -843,22 +872,29 @@ def create_app(store: ConfigStore) -> FastAPI:
             breakpoints=[x for x in b.get("breakpoints", []) if isinstance(x, str)],
             **_common(b),
         )
-        return sup.start(params, title=str(b.get("title", "")) or _t("web.mode.info")).as_dict()
 
-    @app.post("/api/runs/drama")
-    async def start_drama(request: Request,
-                          slopgen: str | None = Cookie(default=None)) -> dict:
+    @app.post("/api/runs/info")
+    async def start_info(request: Request,
+                         slopgen: str | None = Cookie(default=None)) -> dict:
+        """Start an info run, or a loop of them."""
+        guard(slopgen)
+        b = await request.json()
+        params = _info_params(b)
+        title = str(b.get("title", "")) or _t("web.mode.info")
+        loop = _loop_of(b)
+        return sup.start_loop(params, title, **loop).as_dict() if loop \
+            else sup.start(params, title=title).as_dict()
+
+    def _drama_params(b: dict) -> RunParams:
         """The AI drama: a premise, a cast, and a generator chain.
 
         The chain is the one thing this mode cannot default sensibly — it is what the
         operator is rationing free tiers with — so it is named, and an unknown name is
         refused here rather than silently falling back three stages later."""
-        guard(slopgen)
-        b = await request.json()
         orch = str(b.get("orchestration", ""))
         if orch and orch not in store.orchestrations:
             raise HTTPException(status_code=404, detail=f"no orchestration {orch!r}")
-        params = RunParams(
+        return RunParams(
             lang=str(b.get("lang", "ru")), content_type="", mode="drama",
             scenario=str(b.get("scenario", "")),
             # the cast is resolved to the full character cards here rather than passed
@@ -877,7 +913,18 @@ def create_app(store: ConfigStore) -> FastAPI:
             clip_seconds=float(b.get("clip_seconds", 0.0)),
             **_common(b),
         )
-        return sup.start(params, title=str(b.get("title", "")) or _t("web.mode.drama")).as_dict()
+
+    @app.post("/api/runs/drama")
+    async def start_drama(request: Request,
+                          slopgen: str | None = Cookie(default=None)) -> dict:
+        """Start a drama run, or a loop of them."""
+        guard(slopgen)
+        b = await request.json()
+        params = _drama_params(b)
+        title = str(b.get("title", "")) or _t("web.mode.drama")
+        loop = _loop_of(b)
+        return sup.start_loop(params, title, **loop).as_dict() if loop \
+            else sup.start(params, title=title).as_dict()
 
     @app.post("/api/runs")
     async def start_run(request: Request,
@@ -896,6 +943,83 @@ def create_app(store: ConfigStore) -> FastAPI:
             raise HTTPException(status_code=422, detail=f"bad run parameters: {e}")
         run = sup.start(params, title=str(body.get("title", "")))
         return run.as_dict()
+
+    @app.get("/api/loops")
+    async def loops(slopgen: str | None = Cookie(default=None)) -> list[dict]:
+        """Every loop this server started, newest first. A loop is read off its plan
+        file on each request rather than remembered: a terminal may have steered it
+        since, and the file is the loop."""
+        guard(slopgen)
+        out = []
+        for lp in sorted(sup.loops.values(), key=lambda x: -x.started_at):
+            try:
+                out.append(lp.as_dict())
+            except Exception:  # its folder was deleted under us; not worth a 500
+                continue
+        return out
+
+    @app.put("/api/loops/{loop_id}")
+    async def steer_loop(loop_id: str, request: Request,
+                         slopgen: str | None = Cookie(default=None)) -> dict:
+        """Change a running loop: who picks the topics, how many are left, which stages
+        stop for review, what a parked video means. Every field is optional and every
+        one of them lands on the NEXT video."""
+        guard(slopgen)
+        b = await request.json()
+        fields: dict = {}
+        if b.get("source") in ("ai", "me"):
+            fields["source"] = b["source"]
+        if b.get("on_park") in ("hold", "go_on"):
+            fields["on_park"] = b["on_park"]
+        if "limit" in b:
+            fields["limit"] = max(0, int(b.get("limit") or 0))
+        if isinstance(b.get("topics"), list):
+            fields["topics"] = [str(t) for t in b["topics"]]
+        if isinstance(b.get("add_topics"), list):
+            fields["add_topics"] = [str(t) for t in b["add_topics"]]
+        if isinstance(b.get("breakpoints"), list):
+            loop = sup.loops.get(loop_id)
+            mode = loop.params.mode if loop else "info"
+            fields["breakpoints"] = [str(x) for x in b["breakpoints"]
+                                     if str(x) in review.available(mode)]
+        loop = sup.edit_loop(loop_id, **fields)
+        if loop is None:
+            raise HTTPException(status_code=404, detail="no such loop")
+        return loop.as_dict()
+
+    @app.put("/api/loops/{loop_id}/params")
+    async def retune_loop(loop_id: str, request: Request,
+                          slopgen: str | None = Cookie(default=None)) -> dict:
+        """Rewrite everything a loop's next video is made on.
+
+        The body is the mode's own start form, unchanged — the page fills that form
+        from the loop and sends it back here instead of to `/api/runs/<mode>`, so
+        "every setting" means literally the same set either way and neither door can
+        drift from the other. What a loop may not change about itself (its mode, its
+        count, its output folder, the topic — that is the queue's) is taken back off
+        the result by `loop.retune`, so a form carrying those cannot smuggle them in."""
+        guard(slopgen)
+        loop = sup.loops.get(loop_id)
+        if loop is None:
+            raise HTTPException(status_code=404, detail="no such loop")
+        b = await request.json()
+        build = {"info": _info_params, "drama": _drama_params,
+                 "fandom": _fandom_params}[loop.params.mode]
+        params = build(b)
+        problems = check_params(store, params)
+        if problems:  # a name no config has; the run would fail hours from now
+            raise HTTPException(status_code=422, detail="; ".join(problems))
+        if _loop_of(b):  # the loop card sends the loop block back with the form
+            sup.edit_loop(loop_id, **{k: v for k, v in _loop_of(b).items()
+                                      if k != "topics"})
+        return sup.retune_loop(loop_id, params).as_dict()
+
+    @app.post("/api/loops/{loop_id}/stop")
+    async def stop_loop(loop_id: str, slopgen: str | None = Cookie(default=None)) -> dict:
+        """Stop making new videos. The one being made now is left to finish — it has a
+        stop of its own in the runs list, and tearing it in half is a different act."""
+        guard(slopgen)
+        return {"ok": sup.stop_loop(loop_id)}
 
     @app.post("/api/runs/{run_id}/resume")
     async def resume_run(run_id: str, request: Request,

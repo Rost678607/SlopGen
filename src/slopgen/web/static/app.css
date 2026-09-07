@@ -157,6 +157,19 @@ aside h3 small{color:var(--dim);font-weight:400}
 .run .why{color:var(--warn);font-size:13px;margin-top:5px}
 .run .top button{white-space:nowrap}
 
+/* a loop: a run card whose body is controls rather than a log. The accent edge is the
+   whole visual difference, and it is enough — everything under it is the same
+   vocabulary the runs beneath it use. */
+#loops{display:grid;gap:10px;margin-bottom:10px}
+.run.loop{border-left:2px solid var(--accent)}
+.run.loop .row{margin-top:8px}
+.run.loop .lim{min-width:0;width:5.5em}
+.run.loop .queue{margin:6px 0 0;padding-left:22px;color:var(--dim);font-size:13px;display:grid;gap:3px}
+.run.loop .queue li button{padding:0 6px;margin-left:8px}
+.run.loop .its{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.run.loop .it{font:11px var(--mono);color:var(--dim);border:1px solid var(--line);
+  border-radius:20px;padding:1px 8px}
+
 .who{background:var(--bg);border:1px solid var(--line);border-radius:7px;
   padding:8px 10px;display:grid;gap:6px;margin-bottom:8px}
 .who .row{display:flex;gap:8px;align-items:center}

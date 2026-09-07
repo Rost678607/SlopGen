@@ -171,3 +171,26 @@ class Checkpoint:
         tmp = self.path.with_name(self.path.name + ".tmp")
         tmp.write_text(json.dumps(self.data, ensure_ascii=False, indent=1))
         os.replace(tmp, self.path)
+
+
+# What a whole run amounts to, most demanding first. A run is a batch of videos and
+# they need not agree: one failed, one waiting for pictures, one done is a run whose
+# single-word state has to be the one that asks something of the operator, because
+# that word is what a list shows and what a loop decides on.
+STATE_ORDER = ("failed", "review", "paused", "running", "pending", "done")
+
+
+def outcome(run_dir: Path, count: int = 0) -> str:
+    """The state that speaks for a whole run, read off its checkpoint.
+
+    Empty when there is no readable checkpoint — a run that never got that far. `count`
+    defaults to what the checkpoint itself says the batch was, which is what makes this
+    answerable about somebody else's run: the loop asks it about iterations it launched
+    and then forgot the shape of."""
+    try:
+        cp = Checkpoint.load(run_dir)
+    except Exception:
+        return ""
+    n = count or cp.params.count
+    states = {cp.status(i) for i in range(n)}
+    return next((s for s in STATE_ORDER if s in states), "done")

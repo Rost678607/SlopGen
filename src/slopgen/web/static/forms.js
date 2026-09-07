@@ -131,7 +131,8 @@ const FORMS = {
             "min": "1",
             "max": "20",
             "value": "1",
-            "l": "web.f.count"
+            "l": "web.f.count",
+            "when1": "loop_on!=*"
           }
         ],
         {
@@ -259,6 +260,59 @@ const FORMS = {
       "cls": [
         "w2"
       ],
+      "title": "web.card.loop",
+      "rows": [
+        {
+          "f": "loop_on",
+          "kind": "checkbox",
+          "inline": true,
+          "l": "web.f.loop"
+        },
+        {
+          "when": "loop_on=*",
+          "rows": [
+            [
+              "row2",
+              {
+                "f": "loop_source",
+                "kind": "select",
+                "cls": "f-loopsrc",
+                "l": "web.f.loopwho"
+              },
+              {
+                "f": "loop_limit",
+                "kind": "number",
+                "min": "0",
+                "step": "1",
+                "value": "0",
+                "l": "web.f.looplimit"
+              }
+            ],
+            {
+              "f": "loop_topics",
+              "kind": "text",
+              "rows": 3,
+              "ph": "web.a.looptopics",
+              "l": "web.f.looptopics"
+            },
+            {
+              "f": "loop_park",
+              "kind": "select",
+              "cls": "f-looppark",
+              "l": "web.f.looppark"
+            },
+            {
+              "note": "web.loop.note",
+              "cls": "dim"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "cls": [
+        "w2"
+      ],
       "title": "web.card.bps",
       "rows": [
         {
@@ -373,7 +427,8 @@ const FORMS = {
             "min": "1",
             "max": "20",
             "value": "1",
-            "l": "web.f.count"
+            "l": "web.f.count",
+            "when1": "loop_on!=*"
           }
         ],
         {
@@ -488,6 +543,59 @@ const FORMS = {
           "cls": "f-push",
           "l": "web.f.publish",
           "when1": "dry_run!=1"
+        }
+      ]
+    },
+    {
+      "cls": [
+        "w2"
+      ],
+      "title": "web.card.loop",
+      "rows": [
+        {
+          "f": "loop_on",
+          "kind": "checkbox",
+          "inline": true,
+          "l": "web.f.loop"
+        },
+        {
+          "when": "loop_on=*",
+          "rows": [
+            [
+              "row2",
+              {
+                "f": "loop_source",
+                "kind": "select",
+                "cls": "f-loopsrc",
+                "l": "web.f.loopwho"
+              },
+              {
+                "f": "loop_limit",
+                "kind": "number",
+                "min": "0",
+                "step": "1",
+                "value": "0",
+                "l": "web.f.looplimit"
+              }
+            ],
+            {
+              "f": "loop_topics",
+              "kind": "text",
+              "rows": 3,
+              "ph": "web.a.looptopics",
+              "l": "web.f.looptopics"
+            },
+            {
+              "f": "loop_park",
+              "kind": "select",
+              "cls": "f-looppark",
+              "l": "web.f.looppark"
+            },
+            {
+              "note": "web.loop.note",
+              "cls": "dim"
+            }
+          ]
         }
       ]
     },
@@ -640,7 +748,8 @@ const FORMS = {
             "min": "1",
             "max": "20",
             "value": "1",
-            "l": "web.f.count"
+            "l": "web.f.count",
+            "when1": "loop_on!=*"
           }
         ],
         {
@@ -763,6 +872,59 @@ const FORMS = {
           "cls": "f-push",
           "l": "web.f.publish",
           "when1": "dry_run!=1"
+        }
+      ]
+    },
+    {
+      "cls": [
+        "w2"
+      ],
+      "title": "web.card.loop",
+      "rows": [
+        {
+          "f": "loop_on",
+          "kind": "checkbox",
+          "inline": true,
+          "l": "web.f.loop"
+        },
+        {
+          "when": "loop_on=*",
+          "rows": [
+            [
+              "row2",
+              {
+                "f": "loop_source",
+                "kind": "select",
+                "cls": "f-loopsrc",
+                "l": "web.f.loopwho"
+              },
+              {
+                "f": "loop_limit",
+                "kind": "number",
+                "min": "0",
+                "step": "1",
+                "value": "0",
+                "l": "web.f.looplimit"
+              }
+            ],
+            {
+              "f": "loop_topics",
+              "kind": "text",
+              "rows": 3,
+              "ph": "web.a.looptopics",
+              "l": "web.f.looptopics"
+            },
+            {
+              "f": "loop_park",
+              "kind": "select",
+              "cls": "f-looppark",
+              "l": "web.f.looppark"
+            },
+            {
+              "note": "web.loop.note",
+              "cls": "dim"
+            }
+          ]
         }
       ]
     },

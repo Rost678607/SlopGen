@@ -28,6 +28,15 @@
   </nav>
 
   <section id="tab-gen">
+    <!-- The settings of a running loop are edited in the very form that starts a run:
+         same cards, same words, so "every setting" is true rather than nearly true.
+         This says which loop the form is pointed at while it is. -->
+    <div id="editing" class="panel" hidden>
+      <div class="row"><b id="editing-what"></b>
+        <span class="grow"></span>
+        <button id="editing-cancel" class="ghost" data-l="web.loop.leave">выйти из правки</button></div>
+    </div>
+
     <div class="chips big" id="mode-menu">
       <button data-mode="fandom" class="on" data-l="web.mode.fandom">фандом</button>
       <button data-mode="info" data-l="web.mode.info">инфо-ролик</button>
@@ -45,6 +54,10 @@
   </section>
 
   <section id="tab-runs" hidden>
+    <!-- Loops sit above the runs they make: the card is the controls (who picks the
+         topics, how many are left, which stages stop), and the videos it has made are
+         ordinary run rows underneath, indistinguishable from any other. -->
+    <div id="loops"></div>
     <div id="runs"></div>
   </section>
 

@@ -1326,6 +1326,9 @@ let genMode = "fandom";
 
 document.querySelectorAll("#mode-menu [data-mode]").forEach((b) => {
   b.onclick = () => {
+    // a loop's mode is the one thing about it that cannot change, so walking to
+    // another mode's form is walking out of the edit
+    if (editing && editing.mode !== b.dataset.mode) stopEditing();
     genMode = b.dataset.mode;
     document.querySelectorAll("#mode-menu [data-mode]").forEach((x) =>
       x.classList.toggle("on", x.dataset.mode === genMode));
@@ -1422,6 +1425,10 @@ async function loadOptions() {
       };
     });
   });
+  // the loop's two choices. Both are the loop's whole vocabulary — who picks the topic,
+  // what a parked video means — and both are changeable again while it runs.
+  document.querySelectorAll(".f-loopsrc").forEach((el) => fill(el, ["ai", "me"]));
+  document.querySelectorAll(".f-looppark").forEach((el) => fill(el, ["hold", "go_on"]));
   // the shared block: same controls in every mode, filled once
   document.querySelectorAll(".f-voice-pick").forEach((el) => fill(el, opts.cloned_voices, true));
   document.querySelectorAll(".f-tts").forEach((el) => fill(el, opts.tts_engines, true));
@@ -1494,12 +1501,13 @@ $("#startform").onsubmit = async (e) => {
     breakpoints: [...chosenBps.fandom],
     ...commonOf(e.target),
   };
+  if (editing && editing.mode === "fandom") return applyToLoop(body);
+  let out;
   try {
-    await api("/api/runs/fandom", { method: "POST",
+    out = await api("/api/runs/fandom", { method: "POST",
       headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
   } catch (err) { say(err.message, true); return; }
-  say(lab("js.the-run-has-started-it-is-on-the-runs-ta"));
-  loadRuns();
+  started(out);
 };
 
 $("#infoform").onsubmit = (e) => submitRun(e, "info", (f) => ({
@@ -1522,6 +1530,121 @@ $("#dramaform").onsubmit = (e) => submitRun(e, "drama", (f) => ({
   dry_run: f.get("dry_run") === "on", breakpoints: [...chosenBps.drama],
 }));
 
+// --------------------------------------------------- retuning a running loop
+//
+// Every setting of a loop can be changed while it runs, and "every" is only true if it
+// is the SAME set the form starts a run with — so it is that form, filled from the
+// loop, with its launch button pointed at the loop instead of at a new run. Nothing
+// here knows what the settings ARE; that is exactly why none of them can be forgotten.
+//
+// What the form may not say about a running loop is taken back off it by the server
+// (its mode, its count, where it writes), and the topic is left out here: while a loop
+// is running that is the queue's business, not the form's.
+let editing = null;  // {id, mode, title} while a loop's settings are open
+
+function launchLabel(form, key) {
+  const btn = form.querySelector(".card.launch button");
+  if (!btn) return;
+  btn.dataset.l = key;
+  applyLabels(btn.parentElement);
+}
+
+function editLoop(l) {
+  editing = { id: l.id, mode: l.mode, title: l.title };
+  const chip = document.querySelector(`#mode-menu [data-mode="${l.mode}"]`);
+  if (chip) chip.click();
+  fillForm(l);
+  const form = document.querySelector(`form.cards[data-mode="${l.mode}"]`);
+  launchLabel(form, "web.loop.apply");
+  $("#editing-what").textContent = `${lab("js.loop.editing")} ${l.title}`;
+  $("#editing").hidden = false;
+  openTab("gen");
+  compose();
+}
+
+function stopEditing() {
+  if (!editing) return;
+  const form = document.querySelector(`form.cards[data-mode="${editing.mode}"]`);
+  editing = null;
+  $("#editing").hidden = true;
+  if (!form) return;
+  form.querySelectorAll('[name="loop_on"], [name="loop_topics"]')
+      .forEach((el) => ((el.closest("label") || el).hidden = false));
+  launchLabel(form, "web.go");
+  applyConditions(form);
+  compose();
+}
+
+$("#editing-cancel").onclick = () => stopEditing();
+
+// The inverse of the submit builders: a loop's settings back into the controls that
+// mean them. Field names ARE the parameter names wherever they can be, so most of this
+// is one assignment; what is left is the handful the form says its own way — a
+// narrator, a picture source, a cast, the filters, the breakpoints.
+function fillForm(l) {
+  const form = document.querySelector(`form.cards[data-mode="${l.mode}"]`);
+  if (!form) return;
+  const p = l.params || {};
+  // first, because the source list is rebuilt from it
+  const medium = form.querySelector('[name="medium"]');
+  if (medium && p.medium) { medium.value = p.medium; if (medium.onchange) medium.onchange(); }
+  const src = form.querySelector('[name="source"]');
+  if (src && l.picture_source) { src.value = l.picture_source; if (src.onchange) src.onchange(); }
+  form.querySelectorAll("[name]").forEach((el) => {
+    const n = el.name;
+    if (n.startsWith("loop_") || ["title", "medium", "source"].includes(n)) return;
+    if (n === "idea" || n === "scenario") { el.value = ""; return; }  // the queue's
+    const v = n === "voice" ? p.fandom_voice : p[n];
+    if (v === undefined || v === null) return;
+    if (el.type === "checkbox") el.checked = !!v;
+    else el.value = v;
+  });
+  form.querySelectorAll("[data-fx]").forEach((r) => {
+    r.value = (p.filters || {})[r.dataset.fx] || 0;
+    r.dispatchEvent(new Event("input"));
+  });
+  form.querySelectorAll("input[type=range]").forEach((r) => r.dispatchEvent(new Event("input")));
+  const cast = new Set(l.cast || []);
+  form.querySelectorAll("[data-who]").forEach((b) => b.classList.toggle("on", cast.has(b.dataset.who)));
+  chosenBps[l.mode] = new Set(l.breakpoints || []);
+  form.querySelectorAll("[data-bp]").forEach((b) =>
+    b.classList.toggle("on", chosenBps[l.mode].has(b.dataset.bp)));
+  // the loop's own controls come along, minus the two questions that are not being
+  // asked here: whether to loop at all, and what the next topics are
+  const on = form.querySelector('[name="loop_on"]');
+  if (on) { on.checked = true; (on.closest("label") || on).hidden = true; }
+  const put = (n, v) => { const el = form.querySelector(`[name="${n}"]`); if (el) el.value = v; };
+  put("loop_source", l.source); put("loop_limit", l.limit); put("loop_park", l.on_park);
+  const topics = form.querySelector('[name="loop_topics"]');
+  if (topics) { topics.value = ""; (topics.closest("label") || topics).hidden = true; }
+  applyConditions(form);
+}
+
+async function applyToLoop(body) {
+  try {
+    await api(`/api/loops/${editing.id}/params`, { method: "PUT",
+      headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  } catch (err) { say(err.message, true); return; }
+  say(lab("js.loop.retuned"));
+  stopEditing();
+  openTab("runs");
+}
+
+// The loop block, read off the card every mode form carries. It is sent with every
+// run: `on` off means what it says, and the server starts a plain run — the loop is
+// one flag on the same settings rather than a second way of describing a video.
+function loopOf(form) {
+  const f = new FormData(form);
+  return {
+    on: f.get("loop_on") === "on",
+    source: f.get("loop_source") || "ai",
+    limit: +(f.get("loop_limit") || 0),
+    on_park: f.get("loop_park") || "hold",
+    topics: String(f.get("loop_topics") || "").split("\n")
+      .map((t) => t.trim()).filter(Boolean),
+  };
+}
+
 function commonOf(form) {
   const f = new FormData(form);
   const filters = {};
@@ -1538,19 +1661,30 @@ function commonOf(form) {
     visual_style: f.get("visual_style") || "",
     clean_subtitles: f.get("clean_subtitles") === "on",
     keep_temp: f.get("keep_temp") === "on",
+    loop: loopOf(form),
     filters,
   };
 }
 
 async function submitRun(e, mode, build) {
   e.preventDefault();
+  const body = { ...commonOf(e.target), ...build(new FormData(e.target)) };
+  if (editing && editing.mode === mode) return applyToLoop(body);
+  let out;
   try {
-    await api(`/api/runs/${mode}`, { method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ ...commonOf(e.target), ...build(new FormData(e.target)) }) });
+    out = await api(`/api/runs/${mode}`, { method: "POST",
+      headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
   } catch (err) { say(err.message, true); return; }
-  say(lab("js.the-run-has-started-it-is-on-the-runs-ta"));
+  started(out);
+}
+
+// A loop answers with a loop rather than a run — it has iterations where a run has a
+// count — and that is how the page tells which of the two it just started.
+function started(out) {
+  const looped = out && out.iterations !== undefined;
+  say(lab(looped ? "js.loop.started" : "js.the-run-has-started-it-is-on-the-runs-ta"));
   loadRuns();
+  if (looped) loadLoops();
 }
 
 // ---------------------------------------------------------------- model weights
@@ -1709,10 +1843,114 @@ $("#panel-apply").onclick = async () => {
 };
 $("#panel-close").onclick = () => { $("#panel").hidden = true; reviewState = null; };
 
+// ---------------------------------------------------------------- loops
+//
+// A loop is not a run and does not stream: it makes runs, and they stream. What it has
+// instead is a plan that may be edited between videos, so its card is CONTROLS — who
+// picks the topics, how many are left, which stages stop for review — and the videos it
+// has made are the ordinary run rows underneath.
+let loopTimer = null;
+
+async function loadLoops() {
+  let loops;
+  try { loops = await api("/api/loops"); } catch { return; }
+  $("#loops").innerHTML = loops.map(loopCard).join("");
+  bindLoops(loops);
+  // A loop has nothing to push, so the page asks. Only while one is alive: a settled
+  // loop changes when the operator changes it, and that redraws the card anyway.
+  clearTimeout(loopTimer);
+  if (loops.some((l) => l.live) && !$("#tab-runs").hidden)
+    loopTimer = setTimeout(loadLoops, 4000);
+}
+
+const LOOP_STATUS = { running: "js.running", queued: "js.queued", waiting: "js.loop.waiting",
+                      held: "js.loop.held", done: "js.done", failed: "js.failed",
+                      stopped: "js.stopped" };
+
+function chip(attr, value, on, text) {
+  return `<button type="button" data-${attr}="${esc(value)}" class="${on ? "on" : ""}">${esc(text)}</button>`;
+}
+
+function loopCard(l) {
+  const of = l.limit ? `${l.made}/${l.started} ${lab("js.loop.of")} ${l.limit}`
+                     : `${l.made}/${l.started} · ${lab("js.loop.nolimit")}`;
+  const bps = (opts && opts.breakpoints[l.mode]) || [];
+  return `
+    <div class="run loop" data-loop="${l.id}">
+      <div class="top">
+        <span class="st st-${l.live ? "running" : "done"}">${esc(lab(LOOP_STATUS[l.status] || l.status))}</span>
+        <b>${esc(l.title)}</b><span class="dim">${esc(of)}</span>
+        <span class="grow"></span>
+        <button data-loopact="edit" class="ghost">${esc(lab("js.loop.settings"))}</button>
+        ${l.live ? `<button data-loopact="stop" class="ghost">${esc(lab("js.loop.stop"))}</button>` : ""}
+      </div>
+      ${l.note ? `<div class="why">${esc(lab(l.note, humanise(l.note)))}</div>` : ""}
+      <div class="row">
+        <span class="dim">${esc(lab("js.loop.who"))}</span>
+        <span class="chips">${chip("src", "ai", l.source === "ai", word("ai"))}${chip("src", "me", l.source === "me", word("me"))}</span>
+        <span class="dim">${esc(lab("js.loop.limit"))}</span>
+        <input class="lim" type="number" min="0" value="${l.limit}">
+        <span class="dim">${esc(lab("js.loop.park"))}</span>
+        <span class="chips">${chip("park", "hold", l.on_park === "hold", word("hold"))}${chip("park", "go_on", l.on_park === "go_on", word("go_on"))}</span>
+      </div>
+      <div class="row">
+        <input class="topic" placeholder="${esc(lab("js.loop.addtopic"))}">
+        <button data-loopact="add" class="ghost">${esc(lab("web.add"))}</button>
+        <span class="grow"></span>
+        <span class="dim">${l.topics.length ? esc(lab("js.loop.queued")) + " " + l.topics.length : ""}</span>
+      </div>
+      ${l.topics.length ? `<ol class="queue">${l.topics.map((t, i) =>
+        `<li>${esc(t)}<button data-drop="${i}" class="ghost">×</button></li>`).join("")}</ol>` : ""}
+      ${bps.length ? `<div class="row"><span class="dim">${esc(lab("web.card.bps"))}</span>
+        <span class="chips">${bps.map((b) => chip("lbp", b, l.breakpoints.includes(b), word(b))).join("")}</span></div>` : ""}
+      <div class="its">${l.iterations.slice(-12).map((it) =>
+        `<span class="it">#${it.n} ${esc(lab(STATUS[it.status] || "js.running"))}${it.topic ? " · " + esc(it.topic) : ""}</span>`).join("")}</div>
+    </div>`;
+}
+
+function bindLoops(loops) {
+  const byId = Object.fromEntries(loops.map((l) => [l.id, l]));
+  const put = async (id, body) => {
+    try { await api(`/api/loops/${id}`, { method: "PUT",
+      headers: { "content-type": "application/json" }, body: JSON.stringify(body) }); }
+    catch (e) { say(e.message, true); }
+    loadLoops();
+  };
+  document.querySelectorAll("#loops .loop").forEach((box) => {
+    const id = box.dataset.loop, l = byId[id];
+    box.querySelectorAll("[data-src]").forEach((b) =>
+      (b.onclick = () => put(id, { source: b.dataset.src })));
+    box.querySelectorAll("[data-park]").forEach((b) =>
+      (b.onclick = () => put(id, { on_park: b.dataset.park })));
+    box.querySelectorAll("[data-lbp]").forEach((b) => (b.onclick = () => {
+      const on = new Set(l.breakpoints);
+      on.has(b.dataset.lbp) ? on.delete(b.dataset.lbp) : on.add(b.dataset.lbp);
+      put(id, { breakpoints: [...on] });
+    }));
+    box.querySelectorAll("[data-drop]").forEach((b) => (b.onclick = () =>
+      put(id, { topics: l.topics.filter((_, i) => i !== +b.dataset.drop) })));
+    const lim = box.querySelector(".lim");
+    if (lim) lim.onchange = () => put(id, { limit: +lim.value });
+    const topic = box.querySelector(".topic");
+    const add = () => {
+      const t = topic.value.trim();
+      if (t) { topic.value = ""; put(id, { add_topics: [t] }); }
+    };
+    if (topic) topic.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); add(); } };
+    box.querySelectorAll("[data-loopact]").forEach((b) => (b.onclick = async () => {
+      if (b.dataset.loopact === "add") return add();
+      if (b.dataset.loopact === "edit") return editLoop(l);
+      try { await api(`/api/loops/${id}/stop`, { method: "POST" }); } catch (e) { say(e.message, true); }
+      loadLoops();
+    }));
+  });
+}
+
 // ---------------------------------------------------------------- runs
 const streams = new Map();
 
 async function loadRuns() {
+  loadLoops();
   const runs = await api("/api/runs");
   $("#runs").innerHTML = runs.map((r) => `
     <div class="run" data-id="${r.id}">

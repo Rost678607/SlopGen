@@ -20,6 +20,12 @@ in half it would leave that half on disk with nothing recording that it is half.
 Between stages the checkpoint is current, so a stop is indistinguishable from a crash
 the resume already survives (see `Orchestrator.should_stop`).
 
+**A loop is a producer of ordinary runs.** `start_loop` puts `pipeline.loop` on a thread
+of its own — not a pool slot, which it would hold for hours while making nothing — and
+each iteration goes through `start` like anything else. So a looped video is reviewable,
+resumable and stoppable by everything already written here, and the loop is the only new
+thing: a plan on disk that can be edited between videos (see `pipeline/loop.py`).
+
 One thing is serialised beyond the pool: two runs of the same WORLD. Both would write
 into `configs/fandoms/<name>/` — the canon sheet after a lore change, a delivered
 frame card — and `ConfigStore` is one object per process that both would mutate. They
@@ -39,8 +45,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..config import ConfigStore, RunParams
-from ..pipeline.checkpoint import Checkpoint
+from ..pipeline.checkpoint import Checkpoint, outcome
 from ..pipeline.context import AppContext
+from ..pipeline.loop import LaunchResult, LoopFile, LoopRunner, loop_dir_name
 from ..pipeline.orchestrator import Orchestrator
 
 log = logging.getLogger(__name__)
@@ -78,6 +85,10 @@ class Run:
     finished_at: float = 0.0
     run_dir: Path | None = None
     resume_dir: Path | None = None
+    # the loop that started this run, if one did. A looped video is an ordinary run in
+    # every other respect — it parks, it is reviewed, it is resumed the same way — and
+    # this is only so the page can say which loop it came out of.
+    loop_id: str = ""
     events: deque[Event] = field(default_factory=lambda: deque(maxlen=BACKLOG))
     progress: tuple[str, int, int] | None = None
     _seq: int = 0
@@ -91,7 +102,7 @@ class Run:
             "finished_at": self.finished_at,
             "run_dir": str(self.run_dir) if self.run_dir else "",
             "mode": self.params.mode, "fandom": self.params.fandom,
-            "count": self.params.count,
+            "count": self.params.count, "loop_id": self.loop_id,
             "progress": {"unit": self.progress[0], "done": self.progress[1],
                          "total": self.progress[2]} if self.progress else None,
             "events": len(self.events),
@@ -105,12 +116,57 @@ class Run:
         }
 
 
+@dataclass
+class Loop:
+    """A loop and the videos it has made.
+
+    Almost nothing is kept here: the plan on disk is the loop, and it is re-read on
+    every request rather than cached, because the point of the file is that anything may
+    have edited it — this server, a terminal, the operator with an editor open."""
+
+    id: str
+    title: str
+    file: LoopFile
+    params: RunParams
+    started_at: float = 0.0
+    finished_at: float = 0.0
+    run_ids: list[str] = field(default_factory=list)
+    _stop: bool = False
+
+    def as_dict(self) -> dict:
+        plan = self.file.read()
+        return {
+            "id": self.id, "title": self.title, "dir": str(self.file.dir),
+            "status": plan.status, "note": plan.note, "live": plan.live,
+            "mode": plan.params.mode, "fandom": plan.params.fandom,
+            "source": plan.source, "topics": plan.topics, "limit": plan.limit,
+            "breakpoints": plan.breakpoints, "on_park": plan.on_park,
+            "started": plan.started, "made": plan.made,
+            "started_at": self.started_at, "finished_at": self.finished_at,
+            "iterations": [it.model_dump(mode="json") for it in plan.iterations],
+            "run_ids": list(self.run_ids),
+            # The settings every next video is built from — sent whole, because the page
+            # edits them in the same form that starts a run and a form cannot be filled
+            # from a summary. The two ad-hoc configs a form can express are sent beside
+            # them as what the form actually shows: a cast is its names, a picture
+            # source is the one generator its chain names.
+            "params": plan.params.model_dump(mode="json",
+                                             exclude={"manual_cast", "manual_visuals",
+                                                      "manual_ad", "manual_orchestration"}),
+            "cast": [c.name for c in plan.params.manual_cast],
+            "picture_source": (plan.params.manual_orchestration.stages[0].model
+                               if plan.params.manual_orchestration
+                               and plan.params.manual_orchestration.stages else ""),
+        }
+
+
 class Supervisor:
     """Every run this server knows about, and the pool they take turns in."""
 
     def __init__(self, store: ConfigStore, max_parallel: int = 2):
         self.store = store
         self.runs: dict[str, Run] = {}
+        self.loops: dict[str, Loop] = {}
         self._pool = ThreadPoolExecutor(max_workers=max(1, max_parallel),
                                         thread_name_prefix="slopgen-run")
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -125,8 +181,9 @@ class Supervisor:
 
     # -- starting ----------------------------------------------------------
 
-    def start(self, params: RunParams, title: str = "") -> Run:
-        run = Run(id=uuid.uuid4().hex[:12], title=title or _title(params), params=params)
+    def start(self, params: RunParams, title: str = "", loop_id: str = "") -> Run:
+        run = Run(id=uuid.uuid4().hex[:12], title=title or _title(params), params=params,
+                  loop_id=loop_id)
         self._register(run)
         self._pool.submit(self._work, run, None)
         return run
@@ -219,6 +276,82 @@ class Supervisor:
             self._emit(run, -1, "run", "stopping", "will stop after the current stage")
         return True
 
+    # -- loops -------------------------------------------------------------
+
+    def start_loop(self, params: RunParams, title: str = "", **control) -> Loop:
+        """Begin a loop on these settings: one video at a time, steerable while it goes.
+
+        The thread is its own rather than a pool slot. A loop lives for hours and spends
+        most of them waiting — for a topic, for a review, for the video it started to
+        finish — and a waiting loop holding one of two worker slots would be a loop that
+        makes the server look busy while nothing is being made."""
+        loop_dir = Path(self.store.global_cfg.paths.output) / loop_dir_name(params)
+        file = LoopFile.create(loop_dir, params,
+                               breakpoints=list(params.breakpoints), **control)
+        loop = Loop(id=uuid.uuid4().hex[:12], title=title or _title(params),
+                    file=file, params=params, started_at=time.time())
+        with self._lock:
+            self.loops[loop.id] = loop
+        threading.Thread(target=self._loop_work, args=(loop,),
+                         name=f"slopgen-loop-{loop.id}", daemon=True).start()
+        return loop
+
+    def retune_loop(self, loop_id: str, params: RunParams) -> Loop | None:
+        """Rewrite the settings every next video is built from. What a loop may not
+        change about itself is taken back off them by `loop.retune`, so a form that
+        carries a mode and a count cannot smuggle either past this."""
+        loop = self.loops.get(loop_id)
+        if loop is None:
+            return None
+        loop.file.write_params(params)
+        return loop
+
+    def edit_loop(self, loop_id: str, **fields) -> Loop | None:
+        """Change what the loop does next. Anything not named is left alone, and nothing
+        reaches the video being made now — it was launched on the settings that stood
+        when it started, which is the only way a setting can mean one thing for a whole
+        video."""
+        loop = self.loops.get(loop_id)
+        if loop is None:
+            return None
+        add = fields.pop("add_topics", None)
+        if add:
+            loop.file.add_topics([str(t) for t in add])
+        loop.file.write_control(**fields)
+        return loop
+
+    def stop_loop(self, loop_id: str) -> bool:
+        """End the loop after the video it is making now — that video is left to finish,
+        because stopping it is a different act with its own button."""
+        loop = self.loops.get(loop_id)
+        if loop is None:
+            return False
+        loop._stop = True
+        loop.file.write_control(stop=True)
+        return True
+
+    def _loop_work(self, loop: Loop) -> None:
+        def launch(params: RunParams, n: int) -> LaunchResult:
+            run = self.start(params, title=f"{loop.title} #{n}", loop_id=loop.id)
+            loop.run_ids.append(run.id)
+            # The loop is the run's caller here, so it waits for it the way the terminal
+            # does — except the run is on a pool thread, so waiting is watching. A run
+            # that parks (review, pictures owed) settles too: it is finished as far as
+            # this pass is concerned, and the loop decides what a parked one means.
+            while run.status in ("queued", "running"):
+                time.sleep(1.0)
+            return LaunchResult(run.run_dir, run.status, run.message)
+
+        try:
+            LoopRunner(loop.file, launch, should_stop=lambda: loop._stop).run()
+        except Exception as e:  # a broken loop is a state, not a crash of the server
+            log.exception("loop %s failed", loop.id)
+            plan = loop.file.read()
+            plan.status, plan.note = "failed", f"{type(e).__name__}: {e}"
+            loop.file.write_log(plan)
+        finally:
+            loop.finished_at = time.time()
+
     # -- the worker --------------------------------------------------------
 
     def _world_lock(self, name: str) -> threading.Lock:
@@ -292,6 +425,8 @@ class Supervisor:
         return [e for e in run.events if e.seq > after]
 
     def shutdown(self) -> None:
+        for loop in self.loops.values():
+            loop._stop = True
         for run in self.runs.values():
             run._stop = True
         self._pool.shutdown(wait=False, cancel_futures=True)
@@ -306,15 +441,7 @@ def _final_status(orch: Orchestrator, run: Run) -> Status:
         return run.status
     if orch.run_dir is None:
         return "done"
-    try:
-        cp = Checkpoint.load(orch.run_dir)
-    except Exception:
-        return "done"
-    states = {cp.status(i) for i in range(run.params.count)}
-    for bad in ("failed", "paused", "review"):
-        if bad in states:
-            return bad
-    return "done"
+    return outcome(orch.run_dir, run.params.count) or "done"
 
 
 def _title(p: RunParams) -> str:
