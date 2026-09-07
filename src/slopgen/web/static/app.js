@@ -103,6 +103,7 @@ const CFG = [
   ["accounts", "js.accounts", "list"],
   ["orchestration", "js.generator-chains", "orch"],
   ["presets", "js.presets", "list"],
+  ["access", "js.access", "access"],
 ];
 let cfgSection = null;
 const drawCfgMenu = () => ($("#cfg-menu").innerHTML = CFG.map(([k, key, how]) =>
@@ -126,15 +127,98 @@ function openCfg(key) {
   $("#cfg-tts").hidden = how !== "tts";
   $("#cfg-voices").hidden = how !== "voices";
   $("#cfg-orch").hidden = how !== "orch";
+  $("#cfg-access").hidden = how !== "access";
   $("#cfg-todo").hidden = !!how;
   if (how === "world") openSub(sub);
   else if (how === "keys") loadKeys();
   else if (how === "tts") loadTts();
   else if (how === "voices") loadVoices();
   else if (how === "orch") loadOrch();
+  else if (how === "access") loadAccess();
   else if (how === "list") loadConfigs(key, lab(entry[1]));
   else $("#cfg-todo-title").textContent = lab(entry[1]);
 }
+
+// ------------------------------------------------------------------ access
+//
+// Only the host is editable here. The password is what unlocks the network, so a page
+// that may itself be ON the network does not get to set it — that stays a line in
+// `configs/slopgen.toml`, typed by somebody sitting at the machine.
+// Two states, so a checkbox: an operator either keeps this to themselves or lets the
+// phone on the same wifi in. Binding to one specific interface address is a thing the
+// config file can still say, and a checkbox cannot express three states — so a
+// hand-written address is kept as it is, said out loud on the screen, and only
+// replaced if the operator actually unticks the box.
+const LOOPBACK_HOST = "127.0.0.1";
+const NETWORK_HOST = "0.0.0.0";
+let accessHost = LOOPBACK_HOST;   // what the file says, which may be neither of those
+
+async function loadAccess() {
+  const w = await api("/api/web");
+  accessHost = w.host;
+  const custom = ![LOOPBACK_HOST, NETWORK_HOST].includes(w.host);
+  $("#acc-net").checked = w.host !== LOOPBACK_HOST;
+  $("#acc-custom").hidden = !custom;
+  $("#acc-custom").textContent = custom ? `${lab("js.set-in-the-file")} ${w.host}` : "";
+  $("#acc-pass").value = "";
+  $("#acc-pass-state").textContent = w.has_password ? lab("js.set") : lab("js.empty");
+  // Editable only at the machine itself. The server refuses the write anyway, so this
+  // is not the lock — it is saying which one this is, because a field that takes
+  // typing and then rejects it is worse than a field that does not take typing.
+  for (const el of [$("#acc-net"), $("#acc-pass")]) el.disabled = !w.local;
+  $("#acc-save").hidden = !w.local;
+  $("#acc-remote").hidden = w.local;
+  accessRows(w);
+  showBound(w);
+}
+
+// A password on loopback protects nothing and only asks the operator to type one, so
+// the field appears when they tick the box — which is the moment it starts mattering.
+function accessRows(w) {
+  $("#acc-pass-row").hidden = !$("#acc-net").checked;
+  $("#acc-clear").hidden = !w.local || !w.has_password;
+}
+
+// The setting and what it actually bound to are two different facts, and the screen
+// shows both: asking for the network without a password silently stays on loopback,
+// and a box that just echoes what was ticked would show a machine reachable from the
+// network that is not. Either change only takes effect on restart, which is the other
+// half of why the reading and the setting have to be shown apart.
+function showBound(w) {
+  const parts = [lab("js.bound-now") + " " + w.bound + ":" + w.port];
+  if (!w.has_password && w.host !== w.bound) parts.push(lab("js.no-password-loopback"));
+  $("#acc-state").textContent = parts.join(" · ");
+}
+
+// Ticking the box keeps a hand-written address if there is one — it is already a
+// network address, and replacing it with 0.0.0.0 would widen what somebody narrowed
+// on purpose.
+const wantedHost = () => !$("#acc-net").checked ? LOOPBACK_HOST
+  : (accessHost !== LOOPBACK_HOST ? accessHost : NETWORK_HOST);
+
+async function saveAccess(body) {
+  try {
+    const w = await api("/api/web", { method: "PUT",
+      headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    accessHost = w.host;
+    $("#acc-pass").value = "";
+    $("#acc-pass-state").textContent = w.has_password ? lab("js.set") : lab("js.empty");
+    accessRows(w);
+    showBound(w);
+    // Saying "saved" for a setting that will be ignored is the lie this screen exists
+    // to avoid: without a password the server comes back up on loopback regardless.
+    const idle = w.host !== LOOPBACK_HOST && !w.has_password;
+    say(idle ? lab("js.network-needs-a-password") : lab("js.saved-restart-to-apply"), idle);
+  } catch (e) { say(e.message, true); }
+}
+
+$("#acc-net").onchange = () =>
+  accessRows({ local: true, has_password: $("#acc-pass-state").textContent === lab("js.set") });
+$("#acc-save").onclick = () =>
+  saveAccess({ host: wantedHost(), password: $("#acc-pass").value });
+// Clearing is its own button because an empty box means "leave the password alone":
+// the form never shows what is set, so it cannot be the thing that unsets it.
+$("#acc-clear").onclick = () => saveAccess({ host: wantedHost(), clear_password: true });
 
 // ------------------------------------------------------------------ API keys
 async function loadKeys() {

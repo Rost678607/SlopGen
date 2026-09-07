@@ -104,6 +104,24 @@
       </div>
     </div>
 
+    <div id="cfg-access" hidden>
+      <div class="panel">
+        <h3 data-l="web.cfg.access">доступ</h3>
+        <label class="inline"><input type="checkbox" id="acc-net">
+          <span data-l="web.cfg.access.net">пустить в локальную сеть</span></label>
+        <p class="dim" data-l="web.cfg.access.note">без галочки морда открыта только с этой машины. Та же морда запускает прогоны и тратит квоту, поэтому в сеть она выходит только под паролем.</p>
+        <p class="dim" id="acc-custom" hidden></p>
+        <label id="acc-pass-row" data-l="web.cfg.access.pass" hidden>пароль <span id="acc-pass-state" class="dim"></span>
+          <input id="acc-pass" type="password" autocomplete="new-password" data-lp="web.a.pass"></label>
+        <div class="row">
+          <button id="acc-save" class="primary" data-l="web.save"></button>
+          <button id="acc-clear" class="ghost" data-l="web.cfg.access.clear" hidden></button>
+        </div>
+        <p class="dim" id="acc-state"></p>
+        <p class="dim" id="acc-remote" data-l="web.cfg.access.remote" hidden></p>
+      </div>
+    </div>
+
     <div id="cfg-list" hidden>
       <div class="panel">
         <div class="row"><b id="cl-title"></b>

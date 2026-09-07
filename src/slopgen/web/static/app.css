@@ -206,9 +206,14 @@ aside h3 small{color:var(--dim);font-weight:400}
 .panel .grid label{display:grid;gap:4px;font-size:12.5px;color:var(--dim);min-width:0}
 /* a checkbox reads box-then-words on one line, and takes the whole row so the words
    are not cut off by the next column */
-.panel .grid label.inline{display:flex;gap:8px;align-items:center;
-  color:var(--ink);font-size:13.5px;grid-column:1 / -1}
-.panel .grid label.inline input{width:auto;flex:0 0 auto}
+/* A checkbox reads box-then-words on one line, wherever it sits. Matching only the
+   ones inside `.grid` left a checkbox placed straight into a panel to the rule above,
+   which stacks a label over its control and dims it — so the box floated on its own
+   row, full width, with its words underneath in grey. */
+.panel label.inline{display:flex;gap:8px;align-items:center;
+  color:var(--ink);font-size:13.5px}
+.panel .grid label.inline{grid-column:1 / -1}
+.panel label.inline input{width:auto;flex:0 0 auto}
 .panel .grid label.wide{grid-column:1 / -1}
 /* a line of controls: they sit together, they wrap rather than overflow, and a select
    in one is sized by its content instead of eating the row */

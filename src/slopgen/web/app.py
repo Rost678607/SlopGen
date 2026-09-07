@@ -57,7 +57,7 @@ HERE = Path(__file__).parent
 ALLOWED_SUFFIXES = IMAGE_EXTS | VIDEO_EXTS
 
 
-def create_app(store: ConfigStore) -> FastAPI:
+def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0) -> FastAPI:
     cfg = store.global_cfg.web
     app = FastAPI(title="slopgen", docs_url=None, redoc_url=None)
     sup = Supervisor(store, cfg.max_parallel)
@@ -394,6 +394,59 @@ def create_app(store: ConfigStore) -> FastAPI:
         value = str((await request.json()).get("value", "")).strip()
         set_env_var(var, value)
         return {"var": var, "set": bool(value), "count": len(env_keys(var))}
+
+    # --- how this server is reached ------------------------------------------
+
+    LOOPBACK = {"127.0.0.1", "::1", "localhost", "::ffff:127.0.0.1"}
+
+    def at_the_machine(request: Request) -> bool:
+        """Is the caller sitting at the machine the server runs on?
+
+        This setting decides whether the server answers the network at all, so it is
+        editable only from the machine itself. Changing it over the very network it
+        opens would mean a password, once guessed, is enough to widen the hole it came
+        through."""
+        client = request.client.host if request.client else ""
+        return client in LOOPBACK
+
+    @app.get("/api/web")
+    async def web_settings(request: Request,
+                           slopgen: str | None = Cookie(default=None)) -> dict:
+        """The setting, what it actually bound to, and whether this caller may change it.
+
+        Those first two are different facts and the screen shows both: asking for the
+        network without a password silently stays on loopback, so a field that merely
+        echoed what was typed would show a machine reachable from the network that is
+        not. The password itself is never sent, in either direction."""
+        guard(slopgen)
+        w = store.global_cfg.web
+        return {"host": w.host, "has_password": bool(w.password),
+                "bound": bound or w.host, "port": bound_port or w.port,
+                "local": at_the_machine(request)}
+
+    @app.put("/api/web")
+    async def set_web_settings(request: Request,
+                               slopgen: str | None = Cookie(default=None)) -> dict:
+        guard(slopgen)
+        if not at_the_machine(request):
+            raise HTTPException(status_code=403,
+                                detail="this can only be changed at the machine itself")
+        body = await request.json()
+        values: dict = {"host": str(body.get("host", "")).strip() or "127.0.0.1"}
+        # An empty box means "leave it", not "clear it": the form never shows the
+        # current password, so it cannot tell those two apart, and submitting it after
+        # editing only the address would silently drop the one setting that keeps the
+        # network binding shut. Clearing is therefore its own explicit flag.
+        if body.get("password"):
+            values["password"] = str(body["password"])
+        elif body.get("clear_password"):
+            values["password"] = ""
+        update_global("web", values)
+        for k, v in values.items():
+            setattr(store.global_cfg.web, k, v)
+        w = store.global_cfg.web
+        return {"host": w.host, "has_password": bool(w.password),
+                "bound": bound or w.host, "port": bound_port or w.port, "local": True}
 
     @app.get("/api/tts")
     async def tts_settings(slopgen: str | None = Cookie(default=None)) -> dict:
@@ -1399,4 +1452,5 @@ def serve(store: ConfigStore) -> None:
     if not cfg.password and host not in ("127.0.0.1", "localhost", "::1"):
         log.warning("web.host is %s but no web.password is set — staying on loopback", host)
         host = "127.0.0.1"
-    uvicorn.run(create_app(store), host=host, port=cfg.port, log_level="warning")
+    uvicorn.run(create_app(store, bound=host, bound_port=cfg.port),
+                host=host, port=cfg.port, log_level="warning")

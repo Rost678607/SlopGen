@@ -2021,3 +2021,22 @@ EN["w.usher"] = "speaks to you"
 RU["fandom_voice_usher"] = "обращается к тебе, своему"
 EN["fandom_voice_usher"] = "speaks to you, one of them"
 
+# The access screen: what the server listens on, editable only at the machine
+# itself. The password is not among these — it stays a line in the config file.
+RU.update({'js.access': 'Доступ', 'web.cfg.access': 'доступ', 'web.cfg.access.host': 'какой адрес слушать', 'web.cfg.access.note': '127.0.0.1 — только с этой машины. Чтобы пустить в локальную сеть, поставь 0.0.0.0 и задай пароль в configs/slopgen.toml', 'web.cfg.access.remote': 'это меняется только с самой машины, на которой запущен slopgen', 'web.a.host': '127.0.0.1', 'js.no-password-loopback': 'пароля нет — сидим на локалхосте', 'js.bound-now': 'сейчас слушает', 'js.saved-restart-to-apply': 'сохранено — применится после перезапуска'})
+EN.update({'js.access': 'Access', 'web.cfg.access': 'access', 'web.cfg.access.host': 'what address to listen on', 'web.cfg.access.note': '127.0.0.1 is this machine only. To let the local network in, set 0.0.0.0 and put a password in configs/slopgen.toml', 'web.cfg.access.remote': 'this can only be changed at the machine slopgen runs on', 'web.a.host': '127.0.0.1', 'js.no-password-loopback': 'no password — staying on loopback', 'js.bound-now': 'listening on', 'js.saved-restart-to-apply': 'saved — takes effect on restart'})
+
+# The access screen, second pass: the password is set HERE now rather than in
+# the config file — safe because the same loopback gate covers it, and a screen
+# whose advice is to go and edit a file is a screen that should not exist.
+RU.update({'web.cfg.access.note': '127.0.0.1 — открыто только с этой машины. 0.0.0.0 — пустить и локальную сеть, но тогда нужен пароль: та же морда запускает прогоны и тратит квоту.', 'web.cfg.access.pass': 'пароль', 'web.cfg.access.clear': 'убрать пароль', 'web.a.pass': 'оставь пустым — не менять', 'js.no-password-loopback': 'пароля нет, поэтому в сеть не вышли'})
+EN.update({'web.cfg.access.note': '127.0.0.1 is this machine only. 0.0.0.0 lets the local network in, and then a password is required: this same page starts runs and spends quota.', 'web.cfg.access.pass': 'password', 'web.cfg.access.clear': 'remove the password', 'web.a.pass': 'leave empty to keep it', 'js.no-password-loopback': 'no password, so it did not go to the network'})
+
+# The access screen, third pass: a switch, because there are two answers.
+RU.update({'web.cfg.access.who': 'кто может открыть', 'web.cfg.access.note': 'та же морда запускает прогоны и тратит квоту, поэтому в сеть она выходит только под паролем', 'js.only-this-machine': 'только эта машина', 'js.this-machine-and-the-network': 'эта машина и локальная сеть', 'js.set-in-the-file': 'задано в файле:', 'js.network-needs-a-password': 'для сети нужен пароль — пока его нет, остаёмся на локалхосте'})
+EN.update({'web.cfg.access.who': 'who can open it', 'web.cfg.access.note': 'this same page starts runs and spends quota, so it only goes to the network behind a password', 'js.only-this-machine': 'this machine only', 'js.this-machine-and-the-network': 'this machine and the local network', 'js.set-in-the-file': 'set in the file:', 'js.network-needs-a-password': 'the network needs a password — without one it stays on loopback'})
+
+# The access screen, fourth pass: a checkbox, because there are two states.
+RU.update({'web.cfg.access.net': 'пустить в локальную сеть', 'web.cfg.access.note': 'без галочки морда открыта только с этой машины. Та же морда запускает прогоны и тратит квоту, поэтому в сеть она выходит только под паролем.'})
+EN.update({'web.cfg.access.net': 'let the local network in', 'web.cfg.access.note': 'unticked, this page is open only from this machine. It also starts runs and spends quota, so it goes to the network behind a password and not otherwise.'})
+
