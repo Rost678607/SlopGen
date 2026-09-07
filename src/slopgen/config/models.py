@@ -777,11 +777,14 @@ class OrchestrationConfig(BaseModel):
 
 
 Mode = Literal["info", "drama", "fandom"]
-# fandom mode: WHO is telling it, both of them from inside the world.
+# fandom mode: WHO is telling it, all of them from inside the world.
 #   resident   — a person who lives there, first person, the world as daily life
 #   chronicler — a chronicler/researcher/theorist of that world, no "I" protagonist,
 #                building theories out of its records as if they were real documents
-FandomVoice = Literal["resident", "chronicler"]
+#   usher      — speaks TO you, second person, and the "you" is a person in the world:
+#                a new hand being told how things are done here, warned, or offered a
+#                choice. Not an address to a viewer, which stays forbidden
+FandomVoice = Literal["resident", "chronicler", "usher"]
 
 
 class RunParams(BaseModel):

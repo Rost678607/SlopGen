@@ -1948,3 +1948,10 @@ EN.update({'w.frames': 'frame base', 'w.manual': 'I make it', 'w.search': 'I fin
 RU.update({'content.cyber': 'Загадки интернета: тёмная сеть, хакеры, страшилки про приватность', 'content.facts': 'Странная наука и факты, от которых отвисает челюсть', 'content.psych': 'Психология: когнитивные искажения, манипуляции, поведение людей', 'content.story': 'Захватывающие истории с крючком и поворотом', 'visuals.ai_broll': 'Видеоперебивки от нейронки (бесплатно, медленно) под озвучку', 'visuals.ai_manual': 'Видео твоими руками: каждый клип делаешь сам, без API', 'visuals.ai_slideshow': 'Слайдшоу из картинок от нейронки (бесплатно), синхронно с озвучкой', 'visuals.classic': 'Стоковые видеоперебивки под озвучку', 'visuals.gameplay': 'Один непрерывный геймплей фоном, вставки озвучки поверх', 'visuals.search': 'Поиск твоими руками: slopgen говорит что искать, съёмки находишь ты', 'visuals.slideshow': 'Фотографии под озвучку с движением Кена Бёрнса'})
 EN.update({'content.cyber': 'Internet mysteries: dark web, hackers, digital privacy scares', 'content.facts': 'Weird science and mind-blowing facts', 'content.psych': 'Psychology: cognitive biases, manipulation, human behavior', 'content.story': 'Gripping narrative stories with a hook and a twist', 'visuals.ai_broll': 'AI-generated video b-roll (free, slow) matching the narration', 'visuals.ai_manual': 'User-assisted video: you generate each clip by hand, no API', 'visuals.ai_slideshow': 'AI-generated photo slideshow (free) synced to the narration', 'visuals.classic': 'Stock video b-roll matching the narration', 'visuals.gameplay': 'One continuous gameplay loop behind, narration inserts in front', 'visuals.search': 'User-assisted search: slopgen briefs you, you find the footage', 'visuals.slideshow': 'Narration-synced photos with Ken Burns motion'})
 
+RU["w.usher"] = "обращается к тебе"
+EN["w.usher"] = "speaks to you"
+
+# the third fandom narrator, in the frozen terminal UI as well
+RU["fandom_voice_usher"] = "обращается к тебе, своему"
+EN["fandom_voice_usher"] = "speaks to you, one of them"
+

@@ -568,6 +568,7 @@ I18N: dict[str, dict[str, str]] = {
         "fandom_voice": "Narrator",
         "fandom_voice_resident": "someone who lives there",
         "fandom_voice_chronicler": "a chronicler of that world",
+        "fandom_voice_usher": "speaks to you, one of them",
         "fandom_tone": "Tone / register note (optional)",
         "fandom_docs": "Documents, in reading order (comma-separated; empty = every *.md)",
         "fandom_lore_tool": "Let the writer query the full lore (librarian tool)",
@@ -577,7 +578,7 @@ I18N: dict[str, dict[str, str]] = {
         "help.step.fandom": "The world this story happens in. Pick a fandom, edit its lore documents, and choose who is telling it. The canon sheet below is what the writer actually holds while writing — rebuild it after you change the lore.",
         "help.fandom_pick": "Which world to narrate. Fandoms are folders under configs/fandoms/ — a fandom.toml, one or more markdown lore documents, and the world's own cast.",
         "help.fandom_lore": "The world's lore, in markdown. This is the source of truth: the canon sheet is compiled from it, and the librarian tool reads it. Save to write the file and rebuild the sheet.",
-        "help.fandom_voice": "Who is telling it. A resident speaks in first person and treats the world as daily life; a chronicler researches its records and builds theories out of them. Either way the world is real to them — never a story, never someone's invention.",
+        "help.fandom_voice": "Who is telling it. A resident speaks in first person and treats the world as daily life; a chronicler researches its records and builds theories out of them; an usher speaks TO you, and the 'you' is a person standing in the world — a new hand being told how things are done here. Whichever it is, the world is real to them — never a story, never someone's invention.",
         "drama_cast_head": "Cast",
         "drama_add": "＋ Add character",
         "drama_plot_head": "— Plot —",
@@ -1177,6 +1178,7 @@ I18N: dict[str, dict[str, str]] = {
         "fandom_voice": "Рассказчик",
         "fandom_voice_resident": "житель этого мира",
         "fandom_voice_chronicler": "летописец этого мира",
+        "fandom_voice_usher": "обращается к тебе, своему",
         "fandom_tone": "Тон / манера речи (опционально)",
         "fandom_docs": "Документы в порядке чтения (через запятую; пусто = все *.md)",
         "fandom_lore_tool": "Разрешить сценаристу запрашивать полный лор (инструмент-архивариус)",
@@ -4326,7 +4328,8 @@ class FandomScreen(DramaScreen):
         self.f_voice = Form("wv", [
             Choice("voice", "fandom_voice",
                    options=[(t("fandom_voice_resident"), "resident"),
-                            (t("fandom_voice_chronicler"), "chronicler")],
+                            (t("fandom_voice_chronicler"), "chronicler"),
+                            (t("fandom_voice_usher"), "usher")],
                    value="resident"),
         ])
         # Where the shots come from: ONE list, the same one a drama's chain stage picks

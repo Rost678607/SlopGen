@@ -124,7 +124,7 @@ def create_app(store: ConfigStore) -> FastAPI:
             "labels": labels.table(lang),
             "ui_lang": lang,
             "worlds": sorted(store.fandoms),
-            "voices": ["resident", "chronicler"],
+            "voices": ["resident", "chronicler", "usher"],
             "fits": ["exact", "close", "loose", "any"],
             "breakpoints": {m: review.available(m) for m in ("info", "drama", "fandom")},
             "languages": ["ru", "en"],

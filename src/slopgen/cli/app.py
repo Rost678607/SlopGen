@@ -498,7 +498,7 @@ def fandom(
     lang: str = typer.Argument(..., help="narration language, e.g. ru / en"),
     world: str = typer.Argument(..., metavar="FANDOM", help="folder name under configs/fandoms/"),
     scenario: Optional[str] = typer.Option(None, "--scenario", help="what to tell about this world, or which theory to argue; omit to let the LLM pick"),
-    narrator: str = typer.Option("resident", "--narrator", help="who tells it: resident (lives there, first person) | chronicler (studies its records, builds theories)"),
+    narrator: str = typer.Option("resident", "--narrator", help="who tells it: resident (lives there, first person) | chronicler (studies its records, builds theories) | usher (speaks to you, and the you is someone in the world)"),
     medium: str = typer.Option("video", "--medium", help="what the picture is made of: video (clips) | photo (a slideshow of stills, held and slowly panned)"),
     source: Optional[str] = typer.Option(None, "--source", help="what makes the shots: a generator (wan2.1 | ltx-video | animatediff for video, flux | turbo for photo), `manual` (you generate them) or `search` (you find them; slopgen briefs you per shot). Default: wan2.1 for video, flux for photo"),
     orchestration: Optional[str] = typer.Option(None, "--orchestration", help="a full chain from configs/orchestration/, overriding --source when you want to mix"),
@@ -540,8 +540,9 @@ def fandom(
             fg="red",
         )
         raise typer.Exit(1)
-    if narrator not in ("resident", "chronicler"):
-        typer.secho(f"error: --narrator must be 'resident' or 'chronicler', not '{narrator}'", fg="red")
+    if narrator not in ("resident", "chronicler", "usher"):
+        typer.secho(f"error: --narrator must be 'resident', 'chronicler' or 'usher', "
+                    f"not '{narrator}'", fg="red")
         raise typer.Exit(1)
     if orchestration and orchestration not in store.orchestrations:
         typer.secho(

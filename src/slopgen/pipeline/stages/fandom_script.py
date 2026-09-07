@@ -15,13 +15,19 @@ are gaps in what is KNOWN, not gaps in what was written down — which is also w
 makes lore theories work, since a theory is only interesting if the thing it is about
 is real.
 
-Two narrators are on offer, chosen per run (`params.fandom_voice`):
+Three narrators are on offer, chosen per run (`params.fandom_voice`):
 
   * `resident` — someone who lives there, first person, the world as daily life. The
     drama's voice, pointed at a world instead of a plot.
   * `chronicler` — an archivist, researcher or crank OF that world, reading its
     records as real documents and building theories out of them. A video essay whose
     author happens to live inside its subject.
+  * `usher` — speaks TO you, and the "you" is a person in the world: a new hand told
+    how things are done here, warned about what the place costs, offered a choice
+    between its prizes. This is the one voice that uses the second person, and the
+    distinction it rests on is the whole reason it does not break the world: it
+    addresses a colleague, never a viewer. "What you were before here will be
+    forgotten" is inside the world; "as you can see in this video" is not.
 
 The world reaches the writer in three layers, cheapest first, because none of them
 works alone (see `llm/lore.py` for the full reasoning):
@@ -148,6 +154,10 @@ WORLD_RULE = (
     "Everything you invent to fill a gap must be the kind of thing this world already "
     "contains: no object, word, institution or turn of phrase that its records give you "
     "no reason to believe exists.\n"
+    "If you speak to someone as 'you', that someone is STANDING IN THE WORLD — a new "
+    "hand, a traveller, whoever the narration is aimed at. Never the person watching. "
+    "The line is not about the pronoun, it is about where the listener is: 'what you "
+    "were before you came here will be forgotten' is inside; 'as you can see' is not.\n"
 )
 
 # The canon sheet is an inventory, not prose, and a model handed an inventory tends to
@@ -320,6 +330,49 @@ SYSTEM_CHRONICLER = (
     "NEVER address an audience that might be unfamiliar with it. Everyone listening "
     "lives here too — what they lack is not the basics, it is what you found in the "
     "records.\n"
+    "{world_rule}"
+    "{world_block}"
+    "{roster_rule}"
+    "{cast_rule}"
+    "{brief_rule}"
+    "{fidelity_rule}"
+    "{premise_rule}"
+    "\nBreak the piece into BEATS. For each beat give:\n"
+    '  • "seconds": how long this beat is on screen (you choose — see the rule below);\n'
+    '  • "narration": the spoken text for this shot, in {lang}, sized to those seconds, '
+    "advancing the account or the argument;\n"
+    "{video_prompt_rule}"
+    '  • "characters": the list of named characters from the cast sheet visible in this '
+    "shot (subset of the cast; [] if none).\n"
+    "{window_rule}"
+    "\nTHE OUTPUT CONTRACT, which nothing above overrides:\n"
+    'Respond with JSON only: {{"title": "<short title in {lang}>", "scenes": '
+    '[{{"seconds": <number>, "narration": "...", "video_prompt": "...", '
+    '"characters": ["..."], "is_ad": false}}, ...]}}.'
+)
+
+
+SYSTEM_USHER = (
+    "You are writing a narrated vertical video, in {lang}, spoken TO one person by "
+    "someone who has been in this world far longer than they have. The listener is "
+    "IN the world — a new hand, a passer-by, someone who has just arrived and does "
+    "not yet know how things are done. You are telling THEM.\n"
+    "So the second person is the spine of it: what they will need, what will happen "
+    "to them, what they must not do, what they may choose. Instructions, warnings and "
+    "invitations, in that register — 'you will need', 'be careful, though', 'choose "
+    "wisely'. An imperative is welcome. A rhetorical question aimed at them is "
+    "welcome.\n"
+    "The 'you' is ALWAYS a person standing in this world. It is never someone "
+    "watching a video, never a reader, never a subscriber, never an audience. That "
+    "single distinction is what keeps this voice inside the world, and it is not "
+    "negotiable: the moment 'you' means the person holding a phone, everything else "
+    "in this prompt has been wasted.\n"
+    "The voice knows the place cold and says the strangest things about it flatly, as "
+    "arrangements everyone here has long since stopped questioning. It does not "
+    "explain what a word means; it uses it. It does not soften what the place costs.\n"
+    "Where the piece offers a choice, the options are a plain list of the world's own "
+    "things, named and not described, and the piece ENDS on that list — no summary "
+    "after it, no invitation to answer anywhere.\n"
     "{world_rule}"
     "{world_block}"
     "{roster_rule}"
@@ -517,9 +570,8 @@ class FandomWriter:
         that varies now lives in one block at the end (`window_rule`), where it cannot
         cost anything but itself."""
         template = (
-            SYSTEM_CHRONICLER
-            if ctx.params.fandom_voice == "chronicler"
-            else SYSTEM_RESIDENT
+            {"chronicler": SYSTEM_CHRONICLER, "usher": SYSTEM_USHER}
+            .get(ctx.params.fandom_voice, SYSTEM_RESIDENT)
         )
         tone = (ctx.fandom.tone if ctx.fandom else "").strip()
         # the varying tail, in one piece: how long this stretch runs, where in the
