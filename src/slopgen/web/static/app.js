@@ -389,17 +389,29 @@ function drawTakes() {
   });
 }
 
-// The picker offers what this engine can actually say: its own catalogue for the
-// chosen language, plus every clone card — one namespace, the same one the pipeline
-// resolves a --voice against, so what is heard here is what a run would say.
+// The picker offers what THIS engine can actually say, which is two different lists
+// and not always both: its catalogue for the chosen language, and the clone cards. A
+// clone is not a universal voice — `edge` and `azure` only read a catalogue, and handing
+// one of them a card's name fails in the engine with "Invalid voice", which is a wrong
+// answer to a question the form should not have asked. `qwen` has both, so where both
+// exist they are grouped and labelled rather than run together: they are resolved from
+// one namespace (the same one a run resolves --voice against) but they are not the same
+// kind of thing, and which one you picked decides what a missing card means later.
 function fillDemoVoices(d) {
-  const eng = d.engines.find((e) => e.id === d.engine);
+  const eng = d.engines.find((e) => e.id === d.engine) || {};
   const lang = $("#demo-lang").value || "ru";
-  const names = [...((eng && eng.presets && eng.presets[lang]) || []), ...(d.cloned || [])];
+  const groups = [
+    [lab("js.demo-catalogue"), (eng.catalogue && eng.presets && eng.presets[lang]) || []],
+    [lab("js.demo-clones"), eng.clones ? (d.cloned || []) : []],
+  ].filter(([, names]) => names.length);
   const keep = $("#demo-voice").value;
-  $("#demo-voice").innerHTML = names.map((n) =>
-    `<option${n === keep ? " selected" : ""}>${esc(n)}</option>`).join("")
-    || `<option value="">${lab("js.no-voices-yet")}</option>`;
+  const opt = (n) => `<option${n === keep ? " selected" : ""}>${esc(n)}</option>`;
+  $("#demo-voice").innerHTML = groups.length === 0
+    ? `<option value="">${lab("js.no-voices-yet")}</option>`
+    : groups.length === 1
+      ? groups[0][1].map(opt).join("")
+      : groups.map(([head, names]) =>
+          `<optgroup label="${esc(head)}">${names.map(opt).join("")}</optgroup>`).join("");
 }
 
 function wireDemo(d) {
