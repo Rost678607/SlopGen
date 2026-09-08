@@ -12,7 +12,7 @@ writers safe. The operator owns the CONTROL half — source, topics, limit, brea
 on_park, max_fails, stop, and the whole settings template with them — while the runner
 owns the LOG half (what has been made, where it went, what the loop is doing now). Each writes back only its own keys over whatever the
 file says at that moment, so a topic typed while an iteration is being recorded cannot
-lose the record, and the record cannot lose the topic. The one crossing is `take_topic`:
+lose the record, and the record cannot lose the topic. The one crossing is `take_next`:
 consuming a queued topic is a control write, because taking it off the queue IS what
 consuming it means.
 
@@ -21,6 +21,18 @@ runs out.** Under ``ai`` the model invents one and the loop never waits; under `
 loop waits for you. That is the whole of the switch, and it is why typing topics into a
 loop set to ``ai`` is not a contradiction — the first video keeps the idea it was started
 with either way.
+
+**A queued entry is a whole video, not a line of text.** It carries the topic and, when
+the operator wants this one video different, its OWN answers to the settings — a longer
+length, another voice, a breakpoint just this once (`QueueItem.over`). They are folded
+over the template when that entry comes up (`params_for`), so a queue of ten is ten
+videos already decided rather than ten reminders to come back and retune between them.
+That is the whole point of the thing: the operator fills it, starts it, and leaves.
+
+``ahead`` is the same idea pointed at the model. Set it, and a loop picking its own
+topics keeps that many of them WAITING in the queue instead of inventing each one at the
+moment it is needed — which is what makes an invented topic something you can read,
+rewrite, reorder or throw away before it becomes a video.
 
 The runs themselves are ORDINARY runs. They land in the output folder beside every other
 one, with their own checkpoints, and every existing way of picking a parked run back up —
@@ -41,13 +53,14 @@ from __future__ import annotations
 import json
 import os
 import time
+import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Literal
+from typing import Any, Callable, Iterable, Literal
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ValidationError, model_validator
 
 from ..config import RunParams
 from .checkpoint import outcome
@@ -70,6 +83,12 @@ MAX_FAILS = 3
 LOCK_WAIT_S = 5.0
 LOCK_STALE_S = 30.0
 
+# How long a loop leaves the model alone after it failed to think of a topic. Stocking
+# the queue ahead is a convenience, never a reason for anything to stop: a dead key or a
+# rate limit must cost the lookahead and nothing else, and retrying it every two seconds
+# would turn one broken minute into a thousand refused requests.
+STOCK_RETRY_S = 60.0
+
 Source = Literal["ai", "me"]
 OnPark = Literal["hold", "go_on"]
 
@@ -78,7 +97,7 @@ OnPark = Literal["hold", "go_on"]
 # not the runner's, which is what lets them be rewritten between two videos without the
 # next `write_log` putting the old ones back.
 CONTROL = ("params", "source", "topics", "limit", "breakpoints", "on_park", "max_fails",
-           "stop")
+           "ahead", "stop")
 
 # Loop states that mean it is still going. The two idle ones are deliberate: a loop that
 # is waiting for a topic or holding on a parked run has not stopped, it has asked.
@@ -174,12 +193,54 @@ def _locked(path: Path):
         lock.unlink(missing_ok=True)
 
 
+class QueueItem(BaseModel):
+    """One video the loop has not made yet: what it is about, and what it wants done
+    differently from the loop's own settings.
+
+    `over` is the second half and the reason this is a model rather than a string. A
+    queue of plain topics is a queue that has to be watched — every video that wanted a
+    different length or one breakpoint meant coming back between two videos and retuning
+    the loop by hand. With the settings on the ENTRY, the queue is the plan: ten entries
+    are ten decided videos, and the operator can go to bed.
+
+    The id is what an edit addresses. Positions move — that is what reordering IS — so
+    editing entry number three would mean editing whatever had drifted into third place
+    by the time the request arrived."""
+
+    id: str = ""
+    topic: str = ""  # empty = the writer invents this one, under these settings
+    by: Source = "me"  # who put it here; `ai` is one the model thought of ahead
+    # per-video settings, folded over the template when this entry comes up. Names are
+    # `RunParams` field names; what may be in here is `overridable()`.
+    over: dict[str, Any] = {}
+
+    @model_validator(mode="before")
+    @classmethod
+    def _from_text(cls, data):
+        """A bare string is an entry with nothing but a topic — which is what every
+        queue held before entries had settings, and what a person types at a terminal or
+        a chat. Both spellings arrive here and both mean the same entry."""
+        return {"topic": data} if isinstance(data, str) else data
+
+    def model_post_init(self, _context) -> None:
+        if not self.id:
+            self.id = uuid.uuid4().hex[:8]
+
+    @property
+    def empty(self) -> bool:
+        """Nothing was asked for at all. An entry with no topic but with settings is NOT
+        empty — "the model picks it, but make this one ninety seconds" is a real
+        instruction, and the commonest thing to queue behind a topic that took."""
+        return not self.topic.strip() and not self.over
+
+
 class Iteration(BaseModel):
     """One video the loop made, or is making."""
 
     n: int
     topic: str = ""  # empty = the model was left to invent one
     source: Source = "ai"
+    over: dict[str, Any] = {}  # what this one was asked to do differently, if anything
     run_dir: str = ""
     status: str = ""  # done | failed | review | paused | stopped (empty = still going)
     at: str = ""
@@ -198,11 +259,14 @@ class LoopPlan(BaseModel):
 
     # -- control (the operator's half; may change while the loop runs) ------
     source: Source = "ai"
-    topics: list[str] = []  # queued topics, taken from the front
+    topics: list[QueueItem] = []  # the queue, taken from the front
     limit: int = 0  # 0 = no limit
     breakpoints: list[str] = []
     on_park: OnPark = "hold"
     max_fails: int = MAX_FAILS
+    # how many topics the model keeps WAITING in the queue when it is the one picking
+    # them. 0 = none, and each is invented at the moment it is needed, unseen.
+    ahead: int = 0
     stop: bool = False
 
     # -- log (the runner's half) -------------------------------------------
@@ -226,15 +290,20 @@ class LoopPlan(BaseModel):
     def live(self) -> bool:
         return self.status in LIVE
 
-    def params_for(self, topic: str) -> RunParams:
+    def params_for(self, item: "QueueItem") -> RunParams:
         """One iteration's parameters: the template, with this video's topic in whichever
         field its mode calls it, the breakpoints as they stand right NOW, and a count of
-        one — the loop is the thing that repeats, so the batch inside it never does."""
-        return self.params.model_copy(update={
-            topic_field(self.params.mode): topic.strip(),
+        one — the loop is the thing that repeats, so the batch inside it never does.
+
+        The entry's own settings go on LAST, over all of that, because that is what an
+        override is for: it is this video's answer where the loop's answer would
+        otherwise stand, breakpoints included."""
+        fresh = self.params.model_copy(update={
+            topic_field(self.params.mode): item.topic.strip(),
             "breakpoints": list(self.breakpoints),
             "count": 1,
         })
+        return with_overrides(fresh, item.over)
 
 
 # -- the settings, rewritten while it runs -----------------------------------
@@ -257,6 +326,70 @@ def settable_names() -> list[str]:
     `manual_ad` — their named counterparts are `visuals` and `ad`)."""
     plain = [n for n in editable() if n not in ("manual_visuals", "manual_ad")]
     return sorted(set(plain) | set(ALIASES))
+
+
+# Settings a whole loop has and one queued video may NOT be given its own answer to.
+# All four are whole configs rather than values — a cast of character cards, a generator
+# chain, a visuals profile, an ad contract — and a queue entry is a line in a list. They
+# stay the loop's, which is where they are already edited, in the form that builds them.
+ADHOC = ("manual_cast", "manual_visuals", "manual_ad", "manual_orchestration")
+
+
+def overridable() -> list[str]:
+    """Every setting one queued video may answer for itself, in `RunParams` order."""
+    return [n for n in editable() if n not in ADHOC]
+
+
+def clean_overrides(base: RunParams, over: dict) -> dict[str, Any]:
+    """These per-video settings, checked against the settings they will be folded into.
+
+    Checked HERE, at the moment the operator types them, and not when the video comes up
+    — which may be tomorrow night with nobody watching. A refused override leaves the
+    queue exactly as it was; an accepted one is stored already coerced, so what the queue
+    shows is what the run will get."""
+    out: dict[str, Any] = {}
+    for key, value in over.items():
+        name = ALIASES.get(key, key)
+        if name not in overridable():
+            where = ("it is the loop's own — one queued video cannot have a different one"
+                     if name in ADHOC or name in PINNED else "no such setting")
+            raise ValueError(f"`{key}` is not a per-video setting — {where}")
+        out[name] = value
+    if out:
+        # Folded into a real copy of the settings, because the only honest test of a
+        # value is the model that will have to hold it — and then read back OFF that
+        # copy, so what the queue stores is the coerced value rather than whatever
+        # spelling it arrived in. `duration=90` typed at a terminal and `90` sent by a
+        # browser have to end up the same entry, or the two doors show different queues.
+        dump = with_overrides(base, out).model_dump(mode="json")
+        out = {k: dump[k] for k in out}
+    return out
+
+
+def with_overrides(params: RunParams, over: dict) -> RunParams:
+    """`params` with one video's own answers laid over it. Raises `ValueError` on a value
+    the settings cannot hold, in the same short shape `apply_settings` reports."""
+    if not over:
+        return params
+    data = params.model_dump(mode="json")
+    data.update(over)
+    try:
+        return RunParams.model_validate(data)
+    except ValidationError as e:
+        raise ValueError("; ".join(
+            f"{'.'.join(str(x) for x in err['loc'])}: {err['msg']}" for err in e.errors()
+        )) from e
+
+
+def as_items(raw: Iterable) -> list[QueueItem]:
+    """A queue out of whatever was handed over — entries, dicts, or the bare strings
+    every other door still speaks.
+
+    Blank entries are KEPT here, because a blank entry means something: "one more video,
+    the model picks what it is about". Only the doors where a blank is a slip rather than
+    an instruction throw them away, and that is exactly one door — typing nothing into
+    the add-a-topic box (see `add_topics`)."""
+    return [x if isinstance(x, QueueItem) else QueueItem.model_validate(x) for x in raw]
 
 
 def retune(current: RunParams, incoming: RunParams) -> RunParams:
@@ -441,8 +574,8 @@ class LoopFile:
         # the topic the run was started with is the first video's topic, whoever picks
         # the rest — a loop begun with an idea in hand does not throw it away
         seed = getattr(params, topic_field(params.mode), "").strip()
-        if seed and seed not in plan.topics:
-            plan.topics.insert(0, seed)
+        if seed and seed not in [i.topic for i in plan.topics]:
+            plan.topics.insert(0, QueueItem(topic=seed))
         f._write(plan.model_dump(mode="json"))
         return f
 
@@ -456,7 +589,25 @@ class LoopFile:
     # -- reading -----------------------------------------------------------
 
     def read(self) -> LoopPlan:
-        return LoopPlan.model_validate_json(self.path.read_text(encoding="utf-8"))
+        text = self.path.read_text(encoding="utf-8")
+        plan = LoopPlan.model_validate_json(text)
+        self._stamp(plan, text)
+        return plan
+
+    def _stamp(self, plan: LoopPlan, text: str) -> None:
+        """Give the queue ids if it is one written before entries had them.
+
+        Once, and back into the file, because an id is what every edit addresses: ids
+        invented afresh on each read would name a different video every time they were
+        read, and the bulk edit sent from a page would land on nothing. Best-effort — a
+        loop whose folder went away is not worth an exception on the way out of a
+        read."""
+        try:
+            raw = json.loads(text).get("topics") or []
+            if any(not (isinstance(t, dict) and t.get("id")) for t in raw):
+                self.write_control(topics=[i.model_dump(mode="json") for i in plan.topics])
+        except Exception:
+            pass
 
     def _raw(self) -> dict:
         try:
@@ -509,7 +660,7 @@ class LoopFile:
         must not stop being steerable because one of them sent a spare key."""
         vals = {k: v for k, v in fields.items() if k in CONTROL and v is not None}
         if "topics" in vals:
-            vals["topics"] = [str(t).strip() for t in vals["topics"] if str(t).strip()]
+            vals["topics"] = [i.model_dump(mode="json") for i in as_items(vals["topics"])]
         if "breakpoints" in vals:
             vals["breakpoints"] = [str(b) for b in vals["breakpoints"]]
         if not vals:
@@ -554,26 +705,120 @@ class LoopFile:
 
         return self._update(change)
 
-    def add_topics(self, topics: list[str]) -> LoopPlan:
+    # -- the queue ---------------------------------------------------------
+    #
+    # Every one of these is a read-modify-write of the whole list against the file as it
+    # stands, and every one of them addresses entries by ID rather than by position. Both
+    # follow from the same fact: the runner takes entries off the front while the
+    # operator edits the middle, so a position typed a second ago may already mean a
+    # different video, and a list read a second ago may already be one shorter.
+
+    @staticmethod
+    def _queue(data: dict) -> list[QueueItem]:
+        return as_items(data.get("topics") or [])
+
+    @staticmethod
+    def _store(data: dict, items: list[QueueItem]) -> None:
+        data["topics"] = [i.model_dump(mode="json") for i in items]
+
+    def add_topics(self, topics: Iterable, at: int | None = None) -> LoopPlan:
+        """Put entries in the queue: at the end, or at `at` when somewhere else is meant.
+
+        Takes bare strings as happily as entries — a topic typed at a terminal, a chat
+        or the browser's one-line box is a topic and nothing more, and having to build an
+        object around it at three call sites would be three ways to forget a field. It is
+        also the one door where a blank is a slip rather than an instruction: pressing
+        Enter on an empty box must queue nothing at all."""
+        fresh = [i for i in as_items(topics) if not i.empty]
+
         def change(data: dict) -> None:
-            queue = [str(t) for t in data.get("topics") or []]
-            data["topics"] = queue + [t.strip() for t in topics if t.strip()]
+            queue = self._queue(data)
+            cut = len(queue) if at is None else max(0, min(int(at), len(queue)))
+            self._store(data, queue[:cut] + fresh + queue[cut:])
 
         return self._update(change)
 
-    def take_topic(self) -> str | None:
-        """Take the next queued topic, or None when the queue is empty.
+    def set_queue(self, items: Iterable) -> LoopPlan:
+        """Replace the queue with this list — which is what reordering, retyping and
+        removing all are, once entries are addressed by id: the browser sends the list it
+        is showing, in the order it is showing it.
 
-        The runner's one write into the control half, and it has to be one: a topic that
-        is used but left on the queue is a topic that gets made twice."""
-        taken: list[str] = []
+        Overrides are validated against the settings on disk, so a queue carrying a value
+        the settings cannot hold is refused whole and nothing is written."""
 
         def change(data: dict) -> None:
-            queue = [str(t) for t in data.get("topics") or [] if str(t).strip()]
+            base = RunParams.model_validate(data["params"])
+            fresh = as_items(items)
+            for it in fresh:
+                it.over = clean_overrides(base, it.over)
+            self._store(data, fresh)
+
+        return self._update(change)
+
+    def patch_queue(self, ids: Iterable[str], sets: dict | None = None,
+                    clear: Iterable[str] = ()) -> LoopPlan:
+        """Change ONE thing about several queued videos at once, leaving everything else
+        about each of them alone.
+
+        This is the whole of bulk editing, and the shape is deliberate. A form filled in
+        for many entries can only say what all of them are to become, so it flattens the
+        differences between them — the operator who wanted six of ten videos two minutes
+        long would also, silently, have given all six the same voice. A field and a value
+        cannot do that: it touches the field it names and no other."""
+        want = [str(i) for i in ids]
+        gone = [ALIASES.get(str(c), str(c)) for c in clear]
+
+        def change(data: dict) -> None:
+            base = RunParams.model_validate(data["params"])
+            edits = clean_overrides(base, sets or {})
+            for name in gone:
+                if name not in overridable():
+                    raise ValueError(f"`{name}` is not a per-video setting")
+            queue = self._queue(data)
+            for it in queue:
+                if it.id not in want:
+                    continue
+                it.over = {k: v for k, v in {**it.over, **edits}.items() if k not in gone}
+            self._store(data, queue)
+
+        return self._update(change)
+
+    def move(self, item_id: str, to: int) -> LoopPlan:
+        """Put one queued video at position `to` (0-based), pulling it out of where it
+        was. Out-of-range lands it at whichever end it was reaching for."""
+
+        def change(data: dict) -> None:
+            queue = self._queue(data)
+            at = next((n for n, i in enumerate(queue) if i.id == item_id), None)
+            if at is None:
+                return
+            it = queue.pop(at)
+            queue.insert(max(0, min(int(to), len(queue))), it)
+            self._store(data, queue)
+
+        return self._update(change)
+
+    def drop(self, ids: Iterable[str]) -> LoopPlan:
+        want = {str(i) for i in ids}
+
+        def change(data: dict) -> None:
+            self._store(data, [i for i in self._queue(data) if i.id not in want])
+
+        return self._update(change)
+
+    def take_next(self) -> QueueItem | None:
+        """Take the next queued video, or None when the queue is empty.
+
+        The runner's one write into the control half, and it has to be one: an entry that
+        is used but left on the queue is a video that gets made twice."""
+        taken: list[QueueItem] = []
+
+        def change(data: dict) -> None:
+            queue = self._queue(data)
             if not queue:
                 return
-            taken.append(queue[0].strip())
-            data["topics"] = queue[1:]
+            taken.append(queue[0])
+            self._store(data, queue[1:])
 
         self._update(change)
         return taken[0] if taken else None
@@ -592,18 +837,25 @@ class LoopRunner:
     returns the topic, "" to let the model take this one, or None when it changed the
     plan instead (switched the source, set a limit, stopped) — after which the loop
     simply decides again.
+
+    `propose` is handed in for the same reason `launch` is: thinking of topics needs the
+    config library and an LLM, and neither belongs in a plan file's policy. It is
+    `(plan, n) -> [topic, ...]`, and it is what fills the queue ahead (see `_stock`).
     """
 
     def __init__(self, file: LoopFile, launch: Callable[[RunParams, int], LaunchResult],
                  on_event: Callable[[str, str], None] | None = None,
                  should_stop: Callable[[], bool] | None = None,
-                 ask: Callable[[LoopPlan], str | None] | None = None):
+                 ask: Callable[[LoopPlan], str | None] | None = None,
+                 propose: Callable[[LoopPlan, int], list[str]] | None = None):
         self.file = file
         self.launch = launch
         self.on_event = on_event or (lambda *a: None)
         self.should_stop = should_stop or (lambda: False)
         self.ask = ask
+        self.propose = propose
         self._last = ("", "")  # last event said, so a poll does not repeat itself
+        self._retry_at = 0.0   # when the model may be asked for topics again
 
     # -- the loop ----------------------------------------------------------
 
@@ -616,10 +868,11 @@ class LoopRunner:
                 return self._end(plan, *over)
             if not self._released(plan):
                 continue  # held on a parked run; the plan is read again
-            topic = self._topic(plan)
-            if topic is None:
+            plan = self._stock(plan)
+            item = self._next(plan)
+            if item is None:
                 continue  # waiting for one, or the plan changed under us
-            self._iteration(topic)
+            self._iteration(item)
 
     def _over(self, plan: LoopPlan) -> tuple[str, str] | None:
         """Whether this is the end, and why."""
@@ -656,16 +909,45 @@ class LoopRunner:
         time.sleep(POLL_S)
         return False
 
-    def _topic(self, plan: LoopPlan) -> str | None:
-        """This video's topic: from the queue, from the operator, or none at all (which
-        is what tells the writer to invent one). None means "decide again"."""
-        queued = self.file.take_topic()
+    def _stock(self, plan: LoopPlan) -> LoopPlan:
+        """Keep `ahead` topics waiting in the queue, when the model is the one picking.
+
+        Asked for BEFORE the video that needs them, which is the entire point: a topic
+        invented at the moment it is used is a topic nobody ever sees, and one waiting in
+        the queue can be read, rewritten, reordered or thrown out first. Everything here
+        is best-effort — a model that will not answer costs the lookahead and nothing
+        else, and the loop goes on to invent this one at the writing stage as it always
+        did."""
+        if self.propose is None or plan.source != "ai" or plan.ahead <= 0:
+            return plan
+        want = plan.ahead - len(plan.topics)
+        if want <= 0 or time.monotonic() < self._retry_at:
+            return plan
+        self._say("running", "js.loop.thinking")
+        try:
+            fresh = [str(t).strip() for t in self.propose(plan, want)]
+        except Exception as e:
+            self._retry_at = time.monotonic() + STOCK_RETRY_S
+            self.on_event("waiting", f"topics: {type(e).__name__}: {e}")
+            return plan
+        fresh = [t for t in fresh if t]
+        if not fresh:
+            self._retry_at = time.monotonic() + STOCK_RETRY_S
+            return plan
+        return self.file.add_topics([QueueItem(topic=t, by="ai") for t in fresh])
+
+    def _next(self, plan: LoopPlan) -> QueueItem | None:
+        """The next video: from the queue, from the operator, or an entry with no topic
+        at all (which is what tells the writer to invent one). None means "decide
+        again"."""
+        queued = self.file.take_next()
         if queued is not None:
             return queued
         if plan.source == "ai":
-            return ""
+            return QueueItem()
         if self.ask is not None:
-            return self.ask(plan)
+            said = self.ask(plan)
+            return None if said is None else QueueItem(topic=said)
         # a label key rather than a sentence: this note is fixed, it is the one an
         # operator sits looking at, and both frontends translate what they are given
         # (see labels.t, which is the identity for anything that is not a key)
@@ -673,17 +955,19 @@ class LoopRunner:
         time.sleep(POLL_S)
         return None
 
-    def _iteration(self, topic: str) -> None:
+    def _iteration(self, item: QueueItem) -> None:
         plan = self.file.read()
         n = plan.started + 1
+        topic = item.topic.strip()
         plan.iterations.append(
-            Iteration(n=n, topic=topic, source=plan.source, at=_now()))
+            Iteration(n=n, topic=topic, source=item.by if topic else "ai",
+                      over=dict(item.over), at=_now()))
         plan.status, plan.note = "running", topic or "the model picks the topic"
         self.file.write_log(plan)
         self._say("video", f"#{n} · {topic or 'the model picks the topic'}")
 
         try:
-            res = self.launch(plan.params_for(topic), n)
+            res = self.launch(plan.params_for(item), n)
         except Exception as e:  # a broken iteration is a state, not the end of the loop
             res = LaunchResult(None, "failed", f"{type(e).__name__}: {e}")
 

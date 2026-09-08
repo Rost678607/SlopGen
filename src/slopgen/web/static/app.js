@@ -1929,6 +1929,7 @@ function fillForm(l) {
   if (on) { on.checked = true; (on.closest("label") || on).hidden = true; }
   const put = (n, v) => { const el = form.querySelector(`[name="${n}"]`); if (el) el.value = v; };
   put("loop_source", l.source); put("loop_limit", l.limit); put("loop_park", l.on_park);
+  put("loop_ahead", l.ahead || 0);
   const topics = form.querySelector('[name="loop_topics"]');
   if (topics) { topics.value = ""; (topics.closest("label") || topics).hidden = true; }
   applyConditions(form);
@@ -1953,6 +1954,7 @@ function loopOf(form) {
     on: f.get("loop_on") === "on",
     source: f.get("loop_source") || "ai",
     limit: +(f.get("loop_limit") || 0),
+    ahead: +(f.get("loop_ahead") || 0),
     on_park: f.get("loop_park") || "hold",
     topics: String(f.get("loop_topics") || "").split("\n")
       .map((t) => t.trim()).filter(Boolean),
@@ -2192,16 +2194,56 @@ $("#panel-close").onclick = () => { $("#panel").hidden = true; reviewState = nul
 // ---------------------------------------------------------------- loops
 //
 // A loop is not a run and does not stream: it makes runs, and they stream. What it has
-// instead is a plan that may be edited between videos, so its card is CONTROLS — who
+// instead is a PLAN that may be edited between videos, so its card is controls — who
 // picks the topics, how many are left, which stages stop for review — and the videos it
 // has made are the ordinary run rows underneath.
+//
+// Most of the card is the queue, and the queue IS the plan. An entry in it is a whole
+// video: its topic, and its own answers to the settings where it wants to differ from
+// the loop (see pipeline/loop.QueueItem). All of it is edited here, in the card —
+// reordered, retyped, given a longer length, thrown away — because walking to another
+// tab to change one video's length is how a queue stops being worth keeping. The one
+// thing that still opens the big form is the loop's OWN settings, and that is right:
+// they are a whole run, and it is the whole form that describes one.
 let loopTimer = null;
+let loopsData = [];
+let dragQueue = null;
 
-async function loadLoops() {
+// What the operator has open, selected and half-typed, kept OUT of the DOM. The card is
+// redrawn every few seconds from the server and again after every edit; state that
+// lived in the markup would be lost each time — an open editor would slam shut under
+// the hand that opened it.
+const qUI = new Map();
+function uiOf(id) {
+  if (!qUI.has(id))
+    qUI.set(id, { open: new Set(), more: new Set(), sel: new Set(),
+                  // the bulk form: which fields are ticked, in the order they were
+                  // ticked, and what has been typed into them
+                  pick: [], vals: {}, bmore: false });
+  return qUI.get(id);
+}
+
+// Whether a redraw would land on top of somebody. Polling exists to show what the loop
+// is doing; it must never take the caret out of a field being typed in or shut a panel
+// mid-edit, so while the queue is being worked on the poll skips its turn. Every edit
+// forces a redraw of its own, so nothing is stale for longer than the operator's hands.
+function loopsBusy() {
+  const box = $("#loops");
+  const held = box && document.activeElement && document.activeElement !== document.body
+    && box.contains(document.activeElement);
+  return !!held || [...qUI.values()].some((u) => u.open.size || u.sel.size);
+}
+
+function renderLoops() {
+  $("#loops").innerHTML = loopsData.map(loopCard).join("");
+  bindLoops(loopsData);
+}
+
+async function loadLoops(force = false) {
   let loops;
   try { loops = await api("/api/loops"); } catch { return; }
-  $("#loops").innerHTML = loops.map(loopCard).join("");
-  bindLoops(loops);
+  loopsData = loops;
+  if (force || !loopsBusy()) renderLoops();
   // A loop has nothing to push, so the page asks. Only while one is alive: a settled
   // loop changes when the operator changes it, and that redraws the card anyway.
   clearTimeout(loopTimer);
@@ -2217,7 +2259,169 @@ function chip(attr, value, on, text) {
   return `<button type="button" data-${attr}="${esc(value)}" class="${on ? "on" : ""}">${esc(text)}</button>`;
 }
 
+// ---------------------------------------------- one queued video's settings
+//
+// Drawn from what the server says a video of this mode may be given (`/api/options` →
+// `overrides`), so nothing here knows what a narrator or a filter is. Two states per
+// field, and the difference between them is the whole idea: a field the entry does not
+// answer shows the LOOP's value, greyed — change it and it becomes this video's, press
+// ↺ and it goes back to being the loop's. That is what makes a queue of ten videos
+// editable one setting at a time rather than ten forms deep.
+
+const ovSpecs = (mode) => ((opts && opts.overrides && opts.overrides[mode]) || []);
+
+// What this entry would be made with if it said nothing: the loop's own answer.
+function inherited(l, f) {
+  if (f === "breakpoints") return l.breakpoints || [];
+  const v = (l.params || {})[f];
+  return v === undefined || v === null ? "" : v;
+}
+
+function ovControl(spec, value, own) {
+  const cls = own ? "" : " inherit";
+  const n = `data-ov="${esc(spec.f)}"`;
+  if (spec.kind === "check")
+    return `<input type="checkbox" ${n} class="${cls.trim()}"${value ? " checked" : ""}>`;
+  if (spec.kind === "select")
+    return `<select ${n} class="${cls.trim()}">` + (spec.options || []).map((o) =>
+      `<option value="${esc(o)}"${String(o) === String(value) ? " selected" : ""}>` +
+      `${esc(o ? word(o) : lab("w.none", "—"))}</option>`).join("") + "</select>";
+  if (spec.kind === "chips") {
+    const on = new Set(value || []);
+    return `<span class="chips${cls}" ${n}>` + (spec.options || []).map((o) =>
+      `<button type="button" data-c="${esc(o)}" class="${on.has(o) ? "on" : ""}">${esc(word(o))}</button>`
+    ).join("") + "</span>";
+  }
+  if (spec.kind === "fx") {
+    const dose = value || {};
+    return `<span class="fxset${cls}" ${n}>` + ((opts && opts.filters) || []).map((f) => `
+      <span class="slider" title="${esc(f.note)}">
+        <span class="top"><span>${esc(lab("fx." + f.key, f.key))}</span>
+          <span class="grow"></span><span class="dose">${+(dose[f.key] || 0)}</span></span>
+        <input type="range" data-fx="${esc(f.key)}" min="0" max="100" step="5" value="${+(dose[f.key] || 0)}">
+      </span>`).join("") + "</span>";
+  }
+  if (spec.kind === "range")
+    return `<span class="slider${cls}" ${n}><span class="top"><span class="grow"></span>` +
+      `<span class="dose">${esc(value)}</span></span>` +
+      `<input type="range" min="${spec.min}" max="${spec.max}" step="${spec.step || 1}" value="${esc(value)}"></span>`;
+  if (spec.kind === "area")
+    return `<textarea ${n} rows="2" class="${cls.trim()}">${esc(value)}</textarea>`;
+  const num = spec.kind === "number"
+    ? ` type="number" min="${spec.min}" max="${spec.max}" step="${spec.step || 1}"` : ' type="text"';
+  return `<input${num} ${n} class="${cls.trim()}" value="${esc(value)}">`;
+}
+
+// Read one field back out of the DOM, off the element that carries its name. The
+// inverse of `ovControl` and the only other place that knows the six kinds, which is
+// why the two sit together: adding a kind means editing both or neither.
+function ovRead(spec, el) {
+  if (!el) return null;
+  if (spec.kind === "chips") return [...el.querySelectorAll("button.on")].map((b) => b.dataset.c);
+  if (spec.kind === "fx") {
+    const out = {};
+    el.querySelectorAll("[data-fx]").forEach((r) => { if (+r.value > 0) out[r.dataset.fx] = +r.value; });
+    return out;
+  }
+  if (spec.kind === "range") return +el.querySelector("input").value;
+  if (spec.kind === "check") return el.checked;
+  if (spec.kind === "number") return +el.value;
+  return el.value;
+}
+
+function ovRow(l, item, spec) {
+  const own = Object.prototype.hasOwnProperty.call(item.over || {}, spec.f);
+  const value = own ? item.over[spec.f] : inherited(l, spec.f);
+  return `<div class="ovrow${own ? " own" : ""}" data-f="${esc(spec.f)}">
+    <div class="lab"><span>${esc(lab(spec.l, spec.f))}</span>
+      ${own ? `<button type="button" class="ghost undo" title="${esc(lab("js.q.inherit"))}">↺</button>` : ""}</div>
+    ${ovControl(spec, value, own)}</div>`;
+}
+
+function ovBlock(l, item, ui) {
+  const specs = ovSpecs(l.mode);
+  const more = ui.more.has(item.id);
+  const main = specs.filter((s) => s.main), extra = specs.filter((s) => !s.main);
+  return `<div class="qedit">
+    <div class="ovgrid">${main.map((s) => ovRow(l, item, s)).join("")}</div>
+    ${extra.length ? `<button type="button" class="ghost qmore">${
+      esc(lab(more ? "js.q.less" : "js.q.more"))}</button>` : ""}
+    ${more ? `<div class="ovgrid">${extra.map((s) => ovRow(l, item, s)).join("")}</div>` : ""}
+  </div>`;
+}
+
+// ---------------------------------------------------------------- the queue
+
+function queueRow(l, item, i, ui) {
+  const n = Object.keys(item.over || {}).length;
+  const open = ui.open.has(item.id);
+  return `<li data-item="${esc(item.id)}"${open ? ' class="open"' : ""}>
+    <div class="qrow">
+      <span class="handle" draggable="true" title="${esc(lab("js.q.drag"))}">⠿</span>
+      <input type="checkbox" class="qpick"${ui.sel.has(item.id) ? " checked" : ""}>
+      <span class="qn">${i + 1}</span>
+      <input class="qtopic" value="${esc(item.topic)}" placeholder="${esc(lab("js.q.blank"))}">
+      ${item.by === "ai" ? `<span class="qai" title="${esc(lab("js.q.byai"))}">✨</span>` : ""}
+      <button type="button" class="ghost qset${n ? " on" : ""}" title="${esc(lab("js.q.settings"))}">⚙${n || ""}</button>
+      <button type="button" class="ghost qup">↑</button>
+      <button type="button" class="ghost qdown">↓</button>
+      <button type="button" class="ghost qdel">×</button>
+    </div>
+    ${open ? ovBlock(l, item, ui) : ""}</li>`;
+}
+
+// The bulk form: as many fields as you like, applied to as many videos as you like, but
+// ONLY the ones you ticked. That tick is the whole design. A form filled in for six
+// entries and applied whole can only say what all six are to BECOME, so it flattens
+// every difference between them — the operator who wanted six of them two minutes long
+// would silently have given all six the same voice as well. Ticking is what turns "what
+// these videos are" into "what I am changing about them".
+//
+// A ticked field jumps to the top and lights up, so what is about to be written is one
+// short list at the top of the panel rather than something to find again among thirty
+// controls; touching a control ticks it, because touching it is what wanting it means.
+function bulkRow(l, ui, spec) {
+  const on = ui.pick.includes(spec.f);
+  const value = on && spec.f in ui.vals ? ui.vals[spec.f] : inherited(l, spec.f);
+  return `<div class="ovrow${on ? " own" : ""}" data-f="${esc(spec.f)}">
+    <div class="lab"><input type="checkbox" class="bpick"${on ? " checked" : ""}>
+      <span>${esc(lab(spec.l, spec.f))}</span></div>
+    ${ovControl(spec, value, on)}</div>`;
+}
+
+function bulkBar(l, ui) {
+  const specs = ovSpecs(l.mode);
+  if (!specs.length) return "";
+  const picked = ui.pick.map((f) => specs.find((s) => s.f === f)).filter(Boolean);
+  const rest = specs.filter((s) => !ui.pick.includes(s.f));
+  const main = rest.filter((s) => s.main), extra = rest.filter((s) => !s.main);
+  const grid = (list) => `<div class="ovgrid">${list.map((s) => bulkRow(l, ui, s)).join("")}</div>`;
+  return `<div class="bulk">
+    <div class="row"><b>${esc(lab("js.q.picked"))} ${ui.sel.size}</b>
+      <span class="dim">${esc(lab("js.q.bulknote"))}</span></div>
+    ${picked.length ? `<div class="picked">${grid(picked)}</div>` : ""}
+    ${main.length ? grid(main) : ""}
+    ${extra.length ? `<button type="button" class="ghost bmore">${
+      esc(lab(ui.bmore ? "js.q.less" : "js.q.more"))}</button>` : ""}
+    ${ui.bmore && extra.length ? grid(extra) : ""}
+    <div class="row">
+      <button type="button" class="primary bset"${picked.length ? "" : " disabled"}>${
+        esc(lab("js.q.applyto"))} ${ui.sel.size}</button>
+      <button type="button" class="ghost bclear"${picked.length ? "" : " disabled"}>${
+        esc(lab("js.q.inherit"))}</button>
+      <span class="grow"></span>
+      <button type="button" class="ghost bdup">${esc(lab("js.q.dup"))}</button>
+      <button type="button" class="ghost bdel">${esc(lab("js.q.drop"))}</button>
+    </div>
+  </div>`;
+}
+
 function loopCard(l) {
+  const ui = uiOf(l.id);
+  const items = l.topics || [];
+  const have = new Set(items.map((i) => i.id));
+  ui.sel = new Set([...ui.sel].filter((id) => have.has(id)));
+  ui.open = new Set([...ui.open].filter((id) => have.has(id)));
   const of = l.limit ? `${l.made}/${l.started} ${lab("js.loop.of")} ${l.limit}`
                      : `${l.made}/${l.started} · ${lab("js.loop.nolimit")}`;
   const bps = (opts && opts.breakpoints[l.mode]) || [];
@@ -2238,15 +2442,21 @@ function loopCard(l) {
         <input class="lim" type="number" min="0" value="${l.limit}">
         <span class="dim">${esc(lab("js.loop.park"))}</span>
         <span class="chips">${chip("park", "hold", l.on_park === "hold", word("hold"))}${chip("park", "go_on", l.on_park === "go_on", word("go_on"))}</span>
+        ${l.source === "ai" ? `<span class="dim" title="${esc(lab("js.loop.ahead.note"))}">${esc(lab("js.loop.ahead"))}</span>
+          <input class="ahead" type="number" min="0" max="50" value="${l.ahead || 0}">` : ""}
       </div>
-      <div class="row">
+      <div class="row qhead">
+        <span class="dim">${esc(lab("js.loop.queued"))} ${items.length}</span>
         <input class="topic" placeholder="${esc(lab("js.loop.addtopic"))}">
         <button data-loopact="add" class="ghost">${esc(lab("web.add"))}</button>
+        <button data-loopact="ai" class="ghost">✨ ${esc(lab("js.q.askai"))}</button>
         <span class="grow"></span>
-        <span class="dim">${l.topics.length ? esc(lab("js.loop.queued")) + " " + l.topics.length : ""}</span>
+        ${items.length ? `<button data-loopact="all" class="ghost">${
+          esc(lab(ui.sel.size === items.length ? "js.q.none" : "js.q.all"))}</button>` : ""}
       </div>
-      ${l.topics.length ? `<ol class="queue">${l.topics.map((t, i) =>
-        `<li>${esc(t)}<button data-drop="${i}" class="ghost">×</button></li>`).join("")}</ol>` : ""}
+      ${ui.sel.size ? bulkBar(l, ui) : ""}
+      ${items.length ? `<ol class="queue">${items.map((it, i) => queueRow(l, it, i, ui)).join("")}</ol>`
+                     : `<p class="dim qempty">${esc(lab("js.q.empty"))}</p>`}
       ${bps.length ? `<div class="row"><span class="dim">${esc(lab("web.card.bps"))}</span>
         <span class="chips">${bps.map((b) => chip("lbp", b, l.breakpoints.includes(b), word(b))).join("")}</span></div>` : ""}
       <div class="its">${l.iterations.slice(-12).map((it) =>
@@ -2260,10 +2470,32 @@ function bindLoops(loops) {
     try { await api(`/api/loops/${id}`, { method: "PUT",
       headers: { "content-type": "application/json" }, body: JSON.stringify(body) }); }
     catch (e) { say(e.message, true); }
-    loadLoops();
+    loadLoops(true);
   };
+  // The queue is sent WHOLE. Entries carry ids, so the server needs no telling which
+  // kind of edit this was — reordering, retyping and removing are all "the queue is now
+  // this", and one door is one thing that can go wrong.
+  const putQueue = async (l) => {
+    try {
+      await api(`/api/loops/${l.id}/queue`, { method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ items: l.topics }) });
+    } catch (e) { say(e.message, true); }
+    loadLoops(true);
+  };
+  const patch = async (l, body) => {
+    try {
+      await api(`/api/loops/${l.id}/queue`, { method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ids: [...uiOf(l.id).sel], ...body }) });
+    } catch (e) { say(e.message, true); }
+    loadLoops(true);
+  };
+
   document.querySelectorAll("#loops .loop").forEach((box) => {
-    const id = box.dataset.loop, l = byId[id];
+    const id = box.dataset.loop, l = byId[id], ui = uiOf(id);
+    const items = l.topics || [];
+    const specs = ovSpecs(l.mode);
     box.querySelectorAll("[data-src]").forEach((b) =>
       (b.onclick = () => put(id, { source: b.dataset.src })));
     box.querySelectorAll("[data-park]").forEach((b) =>
@@ -2273,23 +2505,205 @@ function bindLoops(loops) {
       on.has(b.dataset.lbp) ? on.delete(b.dataset.lbp) : on.add(b.dataset.lbp);
       put(id, { breakpoints: [...on] });
     }));
-    box.querySelectorAll("[data-drop]").forEach((b) => (b.onclick = () =>
-      put(id, { topics: l.topics.filter((_, i) => i !== +b.dataset.drop) })));
     const lim = box.querySelector(".lim");
     if (lim) lim.onchange = () => put(id, { limit: +lim.value });
+    const ahead = box.querySelector(".ahead");
+    if (ahead) ahead.onchange = () => put(id, { ahead: +ahead.value });
     const topic = box.querySelector(".topic");
     const add = () => {
       const t = topic.value.trim();
       if (t) { topic.value = ""; put(id, { add_topics: [t] }); }
     };
     if (topic) topic.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); add(); } };
+
     box.querySelectorAll("[data-loopact]").forEach((b) => (b.onclick = async () => {
-      if (b.dataset.loopact === "add") return add();
-      if (b.dataset.loopact === "edit") return editLoop(l);
+      const what = b.dataset.loopact;
+      if (what === "add") return add();
+      if (what === "edit") return editLoop(l);
+      if (what === "all") {
+        ui.sel = ui.sel.size === items.length ? new Set() : new Set(items.map((i) => i.id));
+        return renderLoops();
+      }
+      if (what === "ai") {
+        b.disabled = true;
+        say(lab("js.ai-working"));
+        try {
+          await api(`/api/loops/${id}/queue/ai`, { method: "POST",
+            headers: { "content-type": "application/json" }, body: JSON.stringify({ n: 3 }) });
+          say(lab("js.q.asked"));
+        } catch (e) { say(e.message, true); }
+        b.disabled = false;
+        return loadLoops(true);
+      }
       try { await api(`/api/loops/${id}/stop`, { method: "POST" }); } catch (e) { say(e.message, true); }
-      loadLoops();
+      loadLoops(true);
     }));
+
+    // ---- the rows ----
+    box.querySelectorAll(".queue > li").forEach((li, i) => {
+      const item = items[i];
+      if (!item) return;
+      const move = (to) => {
+        if (to < 0 || to >= items.length) return;
+        const [it] = l.topics.splice(i, 1);
+        l.topics.splice(to, 0, it);
+        putQueue(l);
+      };
+      li.querySelector(".qup").onclick = () => move(i - 1);
+      li.querySelector(".qdown").onclick = () => move(i + 1);
+      li.querySelector(".qdel").onclick = () => { l.topics.splice(i, 1); putQueue(l); };
+      li.querySelector(".qpick").onchange = (e) => {
+        e.target.checked ? ui.sel.add(item.id) : ui.sel.delete(item.id);
+        renderLoops();
+      };
+      li.querySelector(".qset").onclick = () => {
+        ui.open.has(item.id) ? ui.open.delete(item.id) : ui.open.add(item.id);
+        renderLoops();
+      };
+      const tp = li.querySelector(".qtopic");
+      tp.onchange = () => {
+        if (tp.value === item.topic) return;
+        item.topic = tp.value;
+        putQueue(l);
+      };
+      tp.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); tp.blur(); } };
+
+      // Dragging is the gesture the list's shape promises; the arrows are the one it
+      // keeps for a phone and for a keyboard. Only the handle starts a drag, so a row
+      // can still be selected and its topic still typed in.
+      const handle = li.querySelector(".handle");
+      handle.ondragstart = (e) => {
+        dragQueue = { loop: id, from: i };
+        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData("text/plain", String(i));
+        li.classList.add("dragging");
+      };
+      handle.ondragend = () => { li.classList.remove("dragging"); dragQueue = null; };
+      li.ondragover = (e) => {
+        if (!dragQueue || dragQueue.loop !== id) return;
+        e.preventDefault();
+        li.classList.add("over");
+      };
+      li.ondragleave = () => li.classList.remove("over");
+      li.ondrop = (e) => {
+        li.classList.remove("over");
+        if (!dragQueue || dragQueue.loop !== id) return;
+        e.preventDefault();
+        const from = dragQueue.from;
+        dragQueue = null;
+        if (from === i) return;
+        const [it] = l.topics.splice(from, 1);
+        l.topics.splice(i, 0, it);
+        putQueue(l);
+      };
+
+      const edit = li.querySelector(".qedit");
+      if (!edit) return;
+      const more = li.querySelector(".qmore");
+      if (more) more.onclick = () => {
+        ui.more.has(item.id) ? ui.more.delete(item.id) : ui.more.add(item.id);
+        renderLoops();
+      };
+      bindOv(edit, specs, (spec, value) => {
+        item.over = { ...(item.over || {}), [spec.f]: value };
+        putQueue(l);
+      }, (spec) => {
+        const over = { ...(item.over || {}) };
+        delete over[spec.f];
+        item.over = over;
+        putQueue(l);
+      });
+    });
+
+    // ---- the bulk form ----
+    const bulk = box.querySelector(".bulk");
+    if (!bulk) return;
+    const tick = (f, on) => {
+      ui.pick = ui.pick.filter((x) => x !== f);
+      if (on) ui.pick.push(f);
+      renderLoops();  // a ticked field moves to the top, so this has to redraw
+    };
+    bulk.querySelectorAll(".ovrow").forEach((row) => {
+      const f = row.dataset.f;
+      row.querySelector(".bpick").onchange = (e) => tick(f, e.target.checked);
+    });
+    // Touching a control is what wanting the field means, so it ticks it. Redrawing on
+    // `change` and not on `input` is what keeps that from happening under the hand: a
+    // text field commits on blur and a slider on release, both after the gesture.
+    bindOv(bulk, specs, (spec, value) => {
+      ui.vals[spec.f] = value;
+      tick(spec.f, true);
+    }, null);
+    if (bulk.querySelector(".bmore"))
+      bulk.querySelector(".bmore").onclick = () => { ui.bmore = !ui.bmore; renderLoops(); };
+    const picked = () => ui.pick.map((f) => specs.find((s) => s.f === f)).filter(Boolean);
+    bulk.querySelector(".bset").onclick = () => {
+      const set = {};
+      for (const spec of picked())
+        set[spec.f] = ovRead(spec, bulk.querySelector(`.ovrow[data-f="${spec.f}"] [data-ov]`));
+      ui.pick = [];
+      ui.vals = {};
+      patch(l, { set });
+    };
+    bulk.querySelector(".bclear").onclick = () => {
+      const fields = ui.pick.slice();
+      ui.pick = [];
+      ui.vals = {};
+      patch(l, { clear: fields });
+    };
+    bulk.querySelector(".bdel").onclick = () => {
+      l.topics = l.topics.filter((it) => !ui.sel.has(it.id));
+      ui.sel = new Set();
+      putQueue(l);
+    };
+    // A copy carries the settings and not the id: it is another video like this one,
+    // not another name for the same one.
+    bulk.querySelector(".bdup").onclick = () => {
+      const out = [];
+      for (const it of l.topics) {
+        out.push(it);
+        if (ui.sel.has(it.id)) out.push({ topic: it.topic, over: { ...(it.over || {}) }, by: it.by });
+      }
+      l.topics = out;
+      ui.sel = new Set();
+      putQueue(l);
+    };
   });
+}
+
+// Wire one block of override controls. `set` is called with the field and its new value
+// whenever a control is touched and `clear` when ↺ gives the field back to the loop;
+// both are null in the bulk bar, where nothing is committed until the button is.
+function bindOv(root, specs, set, clear) {
+  if (!root) return;
+  root.querySelectorAll("[data-ov]").forEach((el) => {
+    const spec = specs.find((s) => s.f === el.dataset.ov);
+    if (!spec) return;
+    const commit = () => {
+      el.classList.remove("inherit");
+      if (set) set(spec, ovRead(spec, el));
+    };
+    if (spec.kind === "chips") {
+      el.querySelectorAll("[data-c]").forEach((b) => (b.onclick = () => {
+        b.classList.toggle("on");
+        commit();
+      }));
+      return;
+    }
+    if (spec.kind === "fx" || spec.kind === "range") {
+      el.querySelectorAll("input[type=range]").forEach((r) => {
+        const dose = (r.closest(".slider") || el).querySelector(".dose");
+        r.oninput = () => { if (dose) dose.textContent = r.value; };
+        r.onchange = commit;
+      });
+      return;
+    }
+    el.onchange = commit;
+  });
+  root.querySelectorAll(".ovrow .undo").forEach((b) => (b.onclick = () => {
+    const spec = specs.find((s) => s.f === b.closest(".ovrow").dataset.f);
+    if (spec && clear) clear(spec);
+  }));
 }
 
 // ---------------------------------------------------------------- runs

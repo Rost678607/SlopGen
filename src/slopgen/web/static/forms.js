@@ -332,6 +332,16 @@ const FORMS = {
               "l": "web.f.looptopics"
             },
             {
+              "f": "loop_ahead",
+              "kind": "number",
+              "min": "0",
+              "max": "50",
+              "step": "1",
+              "value": "0",
+              "l": "web.f.loopahead",
+              "when1": "loop_source=ai"
+            },
+            {
               "f": "loop_park",
               "kind": "select",
               "cls": "f-looppark",
@@ -625,6 +635,16 @@ const FORMS = {
               "rows": 3,
               "ph": "web.a.looptopics",
               "l": "web.f.looptopics"
+            },
+            {
+              "f": "loop_ahead",
+              "kind": "number",
+              "min": "0",
+              "max": "50",
+              "step": "1",
+              "value": "0",
+              "l": "web.f.loopahead",
+              "when1": "loop_source=ai"
             },
             {
               "f": "loop_park",
@@ -959,6 +979,16 @@ const FORMS = {
               "rows": 3,
               "ph": "web.a.looptopics",
               "l": "web.f.looptopics"
+            },
+            {
+              "f": "loop_ahead",
+              "kind": "number",
+              "min": "0",
+              "max": "50",
+              "step": "1",
+              "value": "0",
+              "l": "web.f.loopahead",
+              "when1": "loop_source=ai"
             },
             {
               "f": "loop_park",

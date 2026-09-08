@@ -207,7 +207,7 @@ def _report(jobs, orch) -> None:
 
 
 def _go(store: ConfigStore, params: RunParams, loop: bool, limit: int,
-        topics: str, on_park: str) -> None:
+        topics: str, on_park: str, ahead: int = 0) -> None:
     """One batch, or a loop of them.
 
     The same settings mean both things: a loop is this run repeated with its topic left
@@ -221,7 +221,8 @@ def _go(store: ConfigStore, params: RunParams, loop: bool, limit: int,
     # The topic this run was started with is not dropped: `LoopFile.create` puts it at
     # the head of the queue, so the first video is the one that was asked for and the
     # source decides only what comes after it.
-    loop_cmd.start(store, params, source=topics, limit=limit, on_park=on_park)
+    loop_cmd.start(store, params, source=topics, limit=limit, on_park=on_park,
+                   ahead=ahead)
 
 
 def _execute(store: ConfigStore, params: RunParams) -> None:
@@ -448,6 +449,7 @@ def info(
     loop_limit: int = typer.Option(0, "--loop-limit", min=0, help="end the loop after this many videos (0 = no limit); implies --loop"),
     topics: str = typer.Option("ai", "--topics", help="who picks each looped video's topic once the queue is empty: ai | me (switchable while it runs)"),
     on_park: str = typer.Option("hold", "--on-park", help="what a loop does when a video stops for review or for hand-made clips: hold (wait for you) | go_on"),
+    loop_ahead: int = typer.Option(0, "--loop-ahead", min=0, max=50, help="how many topics the model keeps waiting in the loop's queue, where they can be read and changed before they become videos (0 = each invented as it is needed); implies --loop"),
 ) -> None:
     """Generate the minute-of-info clip (idea → script → voiceover → footage)."""
     from rich import print as rprint
@@ -476,7 +478,8 @@ def info(
         + (f" fx=\\[{describe_filters(params.filters)}]" if params.filters else "")
         + (" [yellow]\\[dry-run][/yellow]" if params.dry_run else "")
     )
-    _go(store, params, loop or bool(loop_limit), loop_limit, topics, on_park)
+    _go(store, params, loop or bool(loop_limit) or bool(loop_ahead), loop_limit, topics,
+        on_park, loop_ahead)
 
 
 # -- drama mode -------------------------------------------------------------
@@ -516,6 +519,7 @@ def drama(
     loop_limit: int = typer.Option(0, "--loop-limit", min=0, help="end the loop after this many videos (0 = no limit); implies --loop"),
     topics: str = typer.Option("ai", "--topics", help="who picks each looped video's topic once the queue is empty: ai | me (switchable while it runs)"),
     on_park: str = typer.Option("hold", "--on-park", help="what a loop does when a video stops for review or for hand-made clips: hold (wait for you) | go_on"),
+    loop_ahead: int = typer.Option(0, "--loop-ahead", min=0, max=50, help="how many topics the model keeps waiting in the loop's queue, where they can be read and changed before they become videos (0 = each invented as it is needed); implies --loop"),
 ) -> None:
     """Generate an AI web drama: a narrated story with a recurring cast and
     AI-generated shots orchestrated across free generators."""
@@ -585,7 +589,8 @@ def drama(
         + (f" fx=\\[{describe_filters(params.filters)}]" if params.filters else "")
         + (" [yellow]\\[dry-run][/yellow]" if params.dry_run else "")
     )
-    _go(store, params, loop or bool(loop_limit), loop_limit, topics, on_park)
+    _go(store, params, loop or bool(loop_limit) or bool(loop_ahead), loop_limit, topics,
+        on_park, loop_ahead)
 
 
 # -- fandom mode ------------------------------------------------------------
@@ -626,6 +631,7 @@ def fandom(
     loop_limit: int = typer.Option(0, "--loop-limit", min=0, help="end the loop after this many videos (0 = no limit); implies --loop"),
     topics: str = typer.Option("ai", "--topics", help="who picks each looped video's topic once the queue is empty: ai | me (switchable while it runs)"),
     on_park: str = typer.Option("hold", "--on-park", help="what a loop does when a video stops for review or for hand-made clips: hold (wait for you) | go_on"),
+    loop_ahead: int = typer.Option(0, "--loop-ahead", min=0, max=50, help="how many topics the model keeps waiting in the loop's queue, where they can be read and changed before they become videos (0 = each invented as it is needed); implies --loop"),
 ) -> None:
     """Generate a video set inside a world you wrote down: the narrator treats that
     world as the real one they live in, never as fiction being described.
@@ -718,7 +724,8 @@ def fandom(
         + (f" fx=\\[{describe_filters(params.filters)}]" if params.filters else "")
         + (" [yellow]\\[dry-run][/yellow]" if params.dry_run else "")
     )
-    _go(store, params, loop or bool(loop_limit), loop_limit, topics, on_park)
+    _go(store, params, loop or bool(loop_limit) or bool(loop_ahead), loop_limit, topics,
+        on_park, loop_ahead)
 
 
 # -- user-assisted clip gathering -------------------------------------------

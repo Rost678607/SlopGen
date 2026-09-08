@@ -156,6 +156,110 @@ def loop_of(b: dict) -> dict | None:
     return {
         "source": "me" if str(loop.get("source", "ai")) == "me" else "ai",
         "limit": max(0, int(loop.get("limit", 0) or 0)),
+        "ahead": max(0, min(int(loop.get("ahead", 0) or 0), 50)),
         "on_park": "go_on" if str(loop.get("on_park", "hold")) == "go_on" else "hold",
         "topics": [str(t).strip() for t in (loop.get("topics") or []) if str(t).strip()],
     }
+
+
+# -- what one queued video may be given of its own ---------------------------
+#
+# A queue entry carries settings as well as a topic (`loop.QueueItem.over`), and the
+# browser draws the controls for them off this table rather than out of a form written
+# by hand three times. Which is why the table is here, beside the functions that say
+# what a form MEANS: it is the same question — which settings exist and what each of
+# them is — asked about one video instead of about a whole run.
+#
+# Two things are decided per row and both are editorial, which is why they are written
+# down rather than derived from the model.
+#
+# `main` is the SHORT list: the three an entry is opened to change. Deliberately three
+# and not nine — a video that wants a different length or one breakpoint just this once
+# is the common case by a long way, and everything else is a property of the series
+# rather than of a video. The rest is one press below, in the same panel: what is not
+# shown at once must still never be somewhere else.
+#
+# `kind` is what the control is. The browser knows these six and nothing about what any
+# particular setting means, so adding one here is the whole of adding one.
+_FIELDS: list[dict] = [
+    # -- the short list ----------------------------------------------------
+    {"f": "duration_s", "kind": "number", "l": "web.f.len", "min": 0, "max": 900,
+     "main": True},
+    {"f": "breakpoints", "kind": "chips", "l": "web.card.bps", "opts": "breakpoints",
+     "main": True},
+    {"f": "dry_run", "kind": "check", "l": "web.f.dry", "main": True},
+    # -- and the rest ------------------------------------------------------
+    {"f": "lang", "kind": "select", "l": "web.f.lang", "opts": "languages"},
+    {"f": "content_type", "kind": "select", "l": "web.f.kind", "opts": "content_types",
+     "blank": True, "modes": ["info"]},
+    {"f": "visuals", "kind": "select", "l": "web.f.profile", "opts": "visuals",
+     "modes": ["info"]},
+    {"f": "parts", "kind": "number", "l": "web.f.eps", "min": 1, "max": 12,
+     "modes": ["drama"]},
+    {"f": "fandom_voice", "kind": "select", "l": "web.f.narrator", "opts": "voices",
+     "modes": ["fandom"]},
+    {"f": "fandom_invent", "kind": "check", "l": "web.f.invent", "modes": ["fandom"]},
+    {"f": "profanity", "kind": "range", "l": "web.f.swear", "min": 0, "max": 100,
+     "step": 10},
+    {"f": "viewer_role", "kind": "area", "l": "web.f.role", "modes": ["fandom"]},
+    {"f": "visual_style", "kind": "area", "l": "web.f.style"},
+    {"f": "visual_notes", "kind": "area", "l": "web.f.limits"},
+    {"f": "filters", "kind": "fx", "l": "web.card.fx"},
+    {"f": "tts_engine", "kind": "select", "l": "web.f.engine", "opts": "tts_engines",
+     "blank": True},
+    {"f": "voice_override", "kind": "select", "l": "web.f.clone", "opts": "cloned_voices",
+     "blank": True},
+    {"f": "tts_rate", "kind": "range", "l": "web.f.rate", "min": -50, "max": 50,
+     "step": 5},
+    {"f": "subtitle_style", "kind": "select", "l": "web.card.subs",
+     "opts": "subtitle_styles", "blank": True},
+    {"f": "clean_subtitles", "kind": "check", "l": "web.f.clean"},
+    {"f": "ad", "kind": "select", "l": "web.f.contract", "opts": "ads", "blank": True},
+    {"f": "ad_mode", "kind": "select", "l": "web.f.mode", "opts": "ad_modes"},
+    {"f": "push", "kind": "select", "l": "web.f.publish", "opts": "accounts",
+     "blank": True},
+    {"f": "duration_tol_s", "kind": "number", "l": "web.f.slack", "min": 0, "max": 120,
+     "modes": ["drama"]},
+    {"f": "clip_seconds", "kind": "number", "l": "web.f.clip", "min": 0, "max": 30,
+     "modes": ["drama"]},
+    {"f": "parts_iterative", "kind": "check", "l": "web.f.oneby", "modes": ["drama"]},
+    {"f": "orchestration", "kind": "select", "l": "web.f.chain", "opts": "orchestrations",
+     "blank": True, "modes": ["drama"]},
+    {"f": "frame_fit", "kind": "select", "l": "web.f.askwhen", "opts": "fits",
+     "modes": ["fandom"]},
+    {"f": "cut_sensitivity", "kind": "range", "l": "web.f.cutrate", "min": 0, "max": 1,
+     "step": 0.05, "modes": ["fandom"]},
+    {"f": "keep_temp", "kind": "check", "l": "web.f.keeptmp"},
+]
+
+
+def override_fields(options: dict, mode: str) -> list[dict]:
+    """The settings one queued video of this mode may answer for itself, with their
+    choices filled in from what the configs actually hold.
+
+    `options` is the very dict `/api/options` is about to hand the page, so a list of
+    worlds or of ad contracts is named once and cannot go stale against the form beside
+    it. A row whose choices turn out to be empty is dropped rather than shown: an
+    override that can only be set back to nothing is a control that does nothing."""
+    from ..pipeline.loop import overridable
+
+    allowed = set(overridable())
+    out: list[dict] = []
+    for spec in _FIELDS:
+        if spec["f"] not in allowed or mode not in spec.get("modes", [mode]):
+            continue
+        row = {k: v for k, v in spec.items() if k not in ("opts", "modes")}
+        row["main"] = bool(spec.get("main"))
+        if "opts" in spec:
+            choices = options.get(spec["opts"]) or []
+            if spec["opts"] == "breakpoints":
+                choices = choices.get(mode) or []
+            # a described entry is `{v, note}` on the wire; a queue row has no room for
+            # the note, and the value is the only half that is sent anywhere
+            row["options"] = [c["v"] if isinstance(c, dict) else c for c in choices]
+            if not row["options"]:
+                continue
+            if spec.get("blank"):
+                row["options"] = [""] + row["options"]
+        out.append(row)
+    return out

@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING
 
 from fastapi import Cookie, FastAPI, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
+from pydantic import ValidationError
 
 from ..config import ConfigStore, RunParams
 from ..config.loader import (delete_config, fandom_docs, file_sha, frames_dir,
@@ -54,7 +55,7 @@ from ..pipeline.checkpoint import Checkpoint
 from ..models import CATALOG as MODEL_CATALOG
 from ..models import ModelStore, human_size
 from .params import (FILTER_HELP, drama_params, fandom_params, info_params,
-                     loop_of)
+                     loop_of, override_fields)
 from .runs import Supervisor, parked
 
 if TYPE_CHECKING:  # the bot imports this module, never the other way round
@@ -191,7 +192,7 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
         a reason nobody can see from the message."""
         guard(slopgen)
         lang = store.global_cfg.ui.lang
-        return {
+        out = {
             "labels": labels.table(lang),
             "ui_lang": lang,
             "worlds": sorted(store.fandoms),
@@ -221,6 +222,11 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
             # rather than asked of any model, which is why every mode offers it
             "filters": [{"key": k, "note": v} for k, v in FILTER_HELP.items()],
         }
+        # What one QUEUED video may be given of its own, per mode — the controls the
+        # loop's queue draws for a single entry. Built off the lists above rather than
+        # beside them, so a world or an ad contract is named once (see params.override_fields).
+        out["overrides"] = {m: override_fields(out, m) for m in ("info", "drama", "fandom")}
+        return out
 
     @app.put("/api/ui")
     async def set_ui(request: Request,
@@ -1048,10 +1054,12 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
             fields["on_park"] = b["on_park"]
         if "limit" in b:
             fields["limit"] = max(0, int(b.get("limit") or 0))
+        if "ahead" in b:
+            fields["ahead"] = max(0, min(int(b.get("ahead") or 0), 50))
         if isinstance(b.get("topics"), list):
-            fields["topics"] = [str(t) for t in b["topics"]]
+            fields["topics"] = list(b["topics"])
         if isinstance(b.get("add_topics"), list):
-            fields["add_topics"] = [str(t) for t in b["add_topics"]]
+            fields["add_topics"] = list(b["add_topics"])
         if isinstance(b.get("breakpoints"), list):
             loop = sup.loops.get(loop_id)
             mode = loop.params.mode if loop else "info"
@@ -1088,6 +1096,77 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
             sup.edit_loop(loop_id, **{k: v for k, v in loop_of(b).items()
                                       if k != "topics"})
         return sup.retune_loop(loop_id, params).as_dict()
+
+    # -- the queue ---------------------------------------------------------
+    #
+    # Three doors onto one list, because they are three different acts. Replacing it is
+    # reordering, retyping and removing — everything the operator does by hand to the
+    # list they are looking at. Patching it is the bulk edit, which exists precisely so
+    # that changing one setting on six videos does not mean sending six whole videos
+    # back. And stocking it is asking the model, which is the only one of the three that
+    # can take ten seconds and fail.
+
+    def loop_or_404(loop_id: str):
+        loop = sup.loops.get(loop_id)
+        if loop is None:
+            raise HTTPException(status_code=404, detail="no such loop")
+        return loop
+
+    @app.put("/api/loops/{loop_id}/queue")
+    async def set_queue(loop_id: str, request: Request,
+                        slopgen: str | None = Cookie(default=None)) -> dict:
+        """Replace the queue with the list the page is showing.
+
+        Entries carry ids, so this says what the queue IS rather than what changed about
+        it — which is what makes reordering, retyping and deleting one operation instead
+        of three, and what keeps an edit from landing on the wrong video when the runner
+        took one off the front while the page was being read."""
+        guard(slopgen)
+        loop = loop_or_404(loop_id)
+        items = (await request.json()).get("items")
+        if not isinstance(items, list):
+            raise HTTPException(status_code=422, detail="a queue is a list of entries")
+        try:
+            loop.file.set_queue(items)
+        except (ValueError, ValidationError) as e:
+            raise HTTPException(status_code=422, detail=str(e))
+        return loop.as_dict()
+
+    @app.patch("/api/loops/{loop_id}/queue")
+    async def patch_queue(loop_id: str, request: Request,
+                          slopgen: str | None = Cookie(default=None)) -> dict:
+        """Set (or clear) ONE setting on several queued videos, leaving everything else
+        about each of them alone. See `LoopFile.patch_queue` for why bulk editing is
+        shaped as a field and a value rather than as a form."""
+        guard(slopgen)
+        loop = loop_or_404(loop_id)
+        b = await request.json()
+        ids = [str(i) for i in (b.get("ids") or [])]
+        if not ids:
+            raise HTTPException(status_code=422, detail="no videos named")
+        try:
+            loop.file.patch_queue(ids, b.get("set") or {}, b.get("clear") or [])
+        except (ValueError, ValidationError) as e:
+            raise HTTPException(status_code=422, detail=str(e))
+        return loop.as_dict()
+
+    @app.post("/api/loops/{loop_id}/queue/ai")
+    async def stock_queue(loop_id: str, request: Request,
+                          slopgen: str | None = Cookie(default=None)) -> dict:
+        """Ask the model for topics now, and put them in the queue as ordinary entries —
+        to be read, rewritten, reordered or thrown away like any other."""
+        guard(slopgen)
+        loop_or_404(loop_id)
+        n = max(1, min(int((await request.json()).get("n") or 1), 5))
+        try:
+            # off the request thread: this is one or more model calls, and holding the
+            # server's event loop for them stops every other page on it
+            loop = await asyncio.get_running_loop().run_in_executor(
+                None, sup.stock_loop, loop_id, n)
+        except Exception as e:
+            log.exception("loop topics failed")
+            raise HTTPException(status_code=502, detail=f"{type(e).__name__}: {e}")
+        return loop.as_dict()
 
     @app.post("/api/loops/{loop_id}/stop")
     async def stop_loop(loop_id: str, slopgen: str | None = Cookie(default=None)) -> dict:

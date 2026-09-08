@@ -48,7 +48,8 @@ from ..config import ConfigStore, RunParams
 from ..pipeline import manual
 from ..pipeline.checkpoint import Checkpoint, outcome
 from ..pipeline.context import AppContext
-from ..pipeline.loop import LaunchResult, LoopFile, LoopRunner, loop_dir_name
+from ..pipeline.loop import (LaunchResult, LoopFile, LoopRunner, QueueItem,
+                             loop_dir_name)
 from ..pipeline.orchestrator import Orchestrator
 
 log = logging.getLogger(__name__)
@@ -140,7 +141,10 @@ class Loop:
             "id": self.id, "title": self.title, "dir": str(self.file.dir),
             "status": plan.status, "note": plan.note, "live": plan.live,
             "mode": plan.params.mode, "fandom": plan.params.fandom,
-            "source": plan.source, "topics": plan.topics, "limit": plan.limit,
+            "source": plan.source, "limit": plan.limit, "ahead": plan.ahead,
+            # the queue as ENTRIES, not sentences: each one carries its own settings and
+            # the id every edit addresses it by (see pipeline/loop.QueueItem)
+            "topics": [i.model_dump(mode="json") for i in plan.topics],
             "breakpoints": plan.breakpoints, "on_park": plan.on_park,
             "started": plan.started, "made": plan.made,
             "started_at": self.started_at, "finished_at": self.finished_at,
@@ -360,8 +364,26 @@ class Supervisor:
             return None
         add = fields.pop("add_topics", None)
         if add:
-            loop.file.add_topics([str(t) for t in add])
+            loop.file.add_topics(add)
         loop.file.write_control(**fields)
+        return loop
+
+    def stock_loop(self, loop_id: str, n: int) -> Loop | None:
+        """Ask the model for `n` topics NOW and queue them.
+
+        The same thing a loop with `ahead` set does for itself, on a button — because
+        wanting to see what it would come up with is not the same as wanting it to keep
+        doing that, and a queue is easiest to judge when it is full. Failure is reported
+        rather than swallowed: this one was asked for, and somebody is looking at it."""
+        from ..pipeline.topics import proposer
+
+        loop = self.loops.get(loop_id)
+        if loop is None:
+            return None
+        plan = loop.file.read()
+        fresh = proposer(self.store)(plan, n)
+        if fresh:
+            loop.file.add_topics([QueueItem(topic=t, by="ai") for t in fresh])
         return loop
 
     def stop_loop(self, loop_id: str) -> bool:
@@ -386,8 +408,11 @@ class Supervisor:
                 time.sleep(1.0)
             return LaunchResult(run.run_dir, run.status, run.message)
 
+        from ..pipeline.topics import proposer
+
         try:
-            LoopRunner(loop.file, launch, should_stop=lambda: loop._stop).run()
+            LoopRunner(loop.file, launch, should_stop=lambda: loop._stop,
+                       propose=proposer(self.store)).run()
         except Exception as e:  # a broken loop is a state, not a crash of the server
             log.exception("loop %s failed", loop.id)
             plan = loop.file.read()

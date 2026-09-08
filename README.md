@@ -81,7 +81,9 @@ slopgen info en cyber --ad example_vpn --dry-run
 # on a loop: one video after another, until you stop it
 slopgen info ru facts --loop                          # topics from the model, no limit
 slopgen info ru --loop --loop-limit 20 --topics me    # twenty, each topic yours to give
+slopgen info ru facts --loop --loop-ahead 5           # ...and five topics kept ready to read
 slopgen loop topic "why bread goes stale"             # steer it from another terminal
+slopgen loop queue  /  loop for 1,3 duration=90       # the queue, and one video's own settings
 slopgen loop source ai   /   loop breaks script   /   loop limit 5   /   loop stop
 
 # from a browser, or from a phone: the same panel, the same runs
@@ -203,21 +205,28 @@ the first one begins. A loop is the same work one video at a time, with the deci
 open — three of them are read again before every video, and all three can be changed while
 it runs. Add `--loop` to any mode (`--loop-limit N` caps it, `0`/omitted = no limit;
 `--topics ai|me` says who picks each topic; `--on-park hold|go_on` says what a video that
-stops for review means). The topic you started it with is used for the first video whoever
-picks the rest.
+stops for review means; `--loop-ahead N` keeps N invented topics waiting where you can read
+them). The topic you started it with is used for the first video whoever picks the rest.
 
 **A topic in the queue is always used; the source only decides what happens when the queue
 runs out** — under `ai` the model invents one and the loop never waits, under `me` it waits
 for you. Standing in a terminal it ASKS: type a topic for the next video, press Enter to let
 the model take this one, or type a command — `!ai` `!me` `!limit N` `!breaks script,tts`
-`!park hold|go_on` `!stop`. From anywhere else, the same edits are subcommands, and each
-lands on the next video rather than in the middle of the one being made:
+`!park hold|go_on` `!ahead N` `!queue` `!stop`. From anywhere else, the same edits are
+subcommands, and each lands on the next video rather than in the middle of the one being
+made:
 
 | Command | What it does |
 | ------- | ------------ |
 | `slopgen loop status [DIR]` | what it is doing, what it has made, what is queued |
 | `slopgen loop list`         | every loop under the output folder, newest first |
-| `slopgen loop topic "..." [...]` | queue topics for the next videos (`--me` also hands the rest over to you) |
+| `slopgen loop queue [DIR]`  | the videos not made yet, numbered, with whatever each of them asks for |
+| `slopgen loop topic "..." [...]` | queue topics for the next videos (`--at N` puts them somewhere else than the end; `--me` also hands the rest over to you) |
+| `slopgen loop edit N "..."` | retype one queued video's topic, its own settings untouched |
+| `slopgen loop move N TO`    | put a queued video somewhere else in the queue |
+| `slopgen loop drop WHICH`   | take videos off the queue (`2` · `1,3` · `2-5` · `all`) |
+| `slopgen loop for WHICH KEY=VALUE ...` | give queued videos their **own** answer to a setting; `--clear KEY` hands it back to the loop |
+| `slopgen loop ahead N`      | how many topics the model keeps ready in the queue (`0` = one at a time, unseen) |
 | `slopgen loop source ai\|me` | who picks the topic once the queue runs out |
 | `slopgen loop limit N`      | cap it, or uncap it (`0`) |
 | `slopgen loop breaks [STAGES]` | which stages stop for review from the next video on; no argument = none |
@@ -231,6 +240,37 @@ Omit `DIR` and the loop most recently written to is the one meant. The plan live
 `output/loop_<stamp>_<type>_<lang>/loop.json` and is a plain file: anything that can edit it
 can steer the loop, including the browser, where a loop is a card at the top of the runs tab
 with the same controls on it.
+
+**The queue is the plan, and an entry in it is a whole video.** Not a line of text: it
+carries the topic *and* its own answers to the settings wherever it wants to differ from
+the loop — a longer length, one breakpoint just this once, no ad on this one. They are
+folded over the loop's settings when that entry comes up, and everything the entry does not
+answer stays the loop's. So a queue of ten is ten videos already decided rather than ten
+reminders to come back and retune between them, which is the point: fill it, start it, go
+to bed.
+
+```bash
+slopgen loop queue                                  # 1..N, with each one's own settings
+slopgen loop for 1,3 duration=90 breaks=script      # two of them, longer and reviewed
+slopgen loop for all fx=crt=40,grain=20             # all of them, nothing else touched
+slopgen loop for 2 --clear duration                 # #2 goes back to the loop's length
+slopgen loop move 4 1   /   loop drop 2-5           # reorder, or throw away
+```
+
+`for` takes one setting and any number of videos on purpose. An edit that carried a whole
+form would carry every setting you did not mean to change with it, and six videos would
+quietly come out identical. Names and values are the ones `loop set` takes, short names
+included, and a value the settings cannot hold is refused as you type it.
+
+**Topics thought of before they are needed (`--loop-ahead N`, `slopgen loop ahead N`).** A
+loop picking its own topics normally invents each one at the moment it is used, which means
+nobody ever sees it — you find out what the video was about by watching the video. Set
+`ahead` and the model instead keeps that many topics **waiting in the queue**, as ordinary
+entries you can read, rewrite, reorder, give their own settings, or throw away before they
+become anything. They are marked as the model's, and it is told what is already queued and
+what this loop has already made so it does not hand back the same topic twice. It is
+best-effort by design: a model that will not answer costs the lookahead and nothing else,
+and the loop goes on inventing that one at the writing stage as it always did.
 
 **Every setting, on the fly.** Not only who picks the topics: everything the run was
 started with is a setting of the loop, and any of it can be rewritten between two videos
@@ -258,6 +298,24 @@ and the **topic** — that is the queue's, above. Everything else is fair game. 
 browser it is the same set and literally the same form: the loop's card has a
 **settings** button that opens the mode's start form filled in from the loop, with its
 launch button reading *apply to the loop*.
+
+**In the browser the queue is edited where it is read.** The loop's card on the runs tab
+holds the whole list: drag a row by its handle (or **↑ ↓**) to reorder, type in it to
+retype the topic, **×** to drop it, **✨** to ask the model for three more. **⚙** opens
+that one video's settings *inside the row* — length, breakpoints, rehearsal at once, and
+everything else one press below under *more settings*; nothing here opens another tab,
+because walking to another screen to change one video's length is how a queue stops being
+worth keeping. A field the video does not answer shows the loop's own value, greyed:
+touch it and it becomes this video's, press **↺** and it is the loop's again. The **⚙** on
+a closed row carries a count, so a row says whether it differs from the loop without being
+opened.
+
+**Changing one setting across many videos** is the same panel with the videos ticked. Tick
+the rows, and a form appears above them with a tick beside every field: only the ticked
+fields are written, everything else about those videos is left exactly as it was. Touching
+a control ticks its field, and a ticked field jumps to the top of the panel and lights up,
+so what is about to be written is one short list rather than something to find again among
+thirty controls. The same bar duplicates and deletes the picked videos.
 
 **A change lands on the next video, never in the middle of one.** The video being made
 was launched on the settings that stood when it started, which is the only way a setting
@@ -639,7 +697,9 @@ slopgen --resume output/<время>_<тип|режим>_<язык>   # прод
 # в цикле: ролик за роликом, пока не остановишь
 slopgen info ru facts --loop                          # темы придумывает нейронка, без предела
 slopgen info ru --loop --loop-limit 20 --topics me    # двадцать штук, темы твои
+slopgen info ru facts --loop --loop-ahead 5           # ...и пять тем наготове, их видно
 slopgen loop topic "почему хлеб черствеет"            # рулить из другого терминала
+slopgen loop queue  /  loop for 1,3 duration=90       # очередь и своя настройка у ролика
 slopgen loop source ai   /   loop breaks script   /   loop limit 5   /   loop stop
 
 # из браузера или с телефона: та же панель, те же прогоны
@@ -678,21 +738,28 @@ slopgen bot --detach                                  # Telegram: чат + ми�
 та же работа по одному ролику, но решения оставлены открытыми: три из них перечитываются
 перед каждым роликом, и все три можно менять на ходу. Добавь `--loop` к любому режиму
 (`--loop-limit N` — предел, `0`/без флага — без предела; `--topics ai|me` — кто придумывает
-тему; `--on-park hold|go_on` — что значит вставший на проверке ролик). Тема, с которой цикл
-запущен, идёт в первый ролик, кто бы ни придумывал остальные.
+тему; `--on-park hold|go_on` — что значит вставший на проверке ролик; `--loop-ahead N` —
+сколько придуманных тем держать в очереди на виду). Тема, с которой цикл запущен, идёт в
+первый ролик, кто бы ни придумывал остальные.
 
 **Тема из очереди используется всегда, а источник решает лишь то, что будет, когда очередь
 кончится:** при `ai` нейронка придумывает свою и цикл никогда не ждёт, при `me` — ждёт тебя.
 Стоя в терминале, он СПРАШИВАЕТ: впиши тему следующего ролика, нажми Enter — и этот ролик
 придумает нейронка, — или набери команду: `!ai` `!me` `!limit N` `!breaks script,tts`
-`!park hold|go_on` `!stop`. Отовсюду ещё те же правки — это подкоманды, и каждая попадает в
-следующий ролик, а не в середину начатого:
+`!park hold|go_on` `!ahead N` `!queue` `!stop`. Отовсюду ещё те же правки — это подкоманды,
+и каждая попадает в следующий ролик, а не в середину начатого:
 
 | Команда | Что делает |
 | ------- | ---------- |
 | `slopgen loop status [ПАПКА]` | чем занят, что сделал, что в очереди |
 | `slopgen loop list`           | все циклы в папке вывода, свежие сверху |
-| `slopgen loop topic "..." [...]` | поставить темы в очередь (`--me` — заодно отдать тебе и остальные) |
+| `slopgen loop queue [ПАПКА]`  | ещё не снятые ролики, по номерам, и что каждый просит для себя |
+| `slopgen loop topic "..." [...]` | поставить темы в очередь (`--at N` — не в конец, а на это место; `--me` — заодно отдать тебе и остальные) |
+| `slopgen loop edit N "..."`   | переписать тему одного ролика из очереди, его настройки не трогая |
+| `slopgen loop move N КУДА`    | переставить ролик в очереди |
+| `slopgen loop drop КАКИЕ`     | убрать ролики из очереди (`2` · `1,3` · `2-5` · `all`) |
+| `slopgen loop for КАКИЕ КЛЮЧ=ЗНАЧЕНИЕ ...` | дать роликам из очереди **свой** ответ на настройку; `--clear КЛЮЧ` возвращает её циклу |
+| `slopgen loop ahead N`        | сколько тем нейронка держит наготове в очереди (`0` — придумывать по одной, не показывая) |
 | `slopgen loop source ai\|me`  | кто придумывает тему, когда очередь кончилась |
 | `slopgen loop limit N`        | поставить предел или снять его (`0`) |
 | `slopgen loop breaks [СТАДИИ]` | какие стадии встают на проверку со следующего ролика; без аргументов — никакие |
@@ -706,6 +773,36 @@ slopgen bot --detach                                  # Telegram: чат + ми�
 `output/loop_<время>_<тип>_<язык>/loop.json` и это обычный файл: рулить циклом может всё, что
 умеет его править, — в том числе браузер, где цикл выглядит карточкой наверху вкладки
 «прогоны» с теми же органами управления.
+
+**Очередь и есть план, а запись в ней — целый ролик.** Не строчка текста: она несёт тему
+*и* свои ответы на настройки везде, где хочет отличаться от цикла — длину подлиннее, один
+брейкпоинт только на этот раз, без рекламы вот тут. Они накладываются на настройки цикла в
+тот момент, когда до записи доходит очередь, а всё, на что запись не отвечает, остаётся
+общим. Поэтому очередь из десяти — это десять уже решённых роликов, а не десять напоминаний
+вернуться и перенастроить между ними. В этом весь смысл: набил, запустил, пошёл спать.
+
+```bash
+slopgen loop queue                                  # 1..N и своё у каждого
+slopgen loop for 1,3 duration=90 breaks=script      # двум — подлиннее и с проверкой
+slopgen loop for all fx=crt=40,grain=20             # всем, остальное не тронуто
+slopgen loop for 2 --clear duration                 # №2 возвращается к общей длине
+slopgen loop move 4 1   /   loop drop 2-5           # переставить или выкинуть
+```
+
+`for` берёт одну настройку и сколько угодно роликов намеренно. Правка, которая тащила бы за
+собой целую форму, тащила бы и все настройки, которые ты менять не собирался, — и шесть
+роликов молча вышли бы одинаковыми. Имена и значения те же, что у `loop set`, включая
+короткие, а значение, которого настройки не удержат, отвергается **в момент набора**.
+
+**Темы, придуманные заранее (`--loop-ahead N`, `slopgen loop ahead N`).** Цикл, придумывающий
+темы сам, обычно придумывает каждую в момент, когда она понадобилась, — то есть её никто не
+видит: о чём был ролик, узнаёшь из самого ролика. Поставь `ahead` — и нейронка вместо этого
+держит столько тем **в очереди**, обычными записями: их можно прочитать, переписать,
+переставить, дать им свои настройки или выкинуть до того, как они станут чем-то. Они
+помечены как придуманные нейронкой, а сама нейронка знает, что уже стоит в очереди и что
+этот цикл уже снял, — чтобы не выдать ту же тему дважды. Всё это по возможности и не
+обязательно: молчащая нейронка стоит запаса тем и ничего больше, а цикл идёт дальше и
+придумывает эту тему на этапе сценария, как делал всегда.
 
 **Любая настройка на ходу.** Не только «кто придумывает тему»: всё, с чем прогон был
 запущен, — настройка цикла, и что угодно из этого переписывается между двумя роликами:
@@ -732,6 +829,23 @@ slopgen loop show                                        # на чём он ст
 см. выше. Всё остальное можно. В браузере это тот же набор и буквально та же форма: у
 карточки цикла есть кнопка **настройки**, открывающая форму запуска этого режима,
 заполненную из цикла, а кнопка запуска в ней читается как *применить к циклу*.
+
+**В браузере очередь правится там же, где её читаешь.** Карточка цикла на вкладке «прогоны»
+держит весь список: тащишь строку за ручку (или **↑ ↓**) — переставилась, пишешь в ней —
+переписал тему, **×** — выкинул, **✨** — попросил у нейронки ещё три. **⚙** открывает
+настройки этого ролика **прямо в строке**: длина, брейкпоинты и репетиция сразу, всё
+остальное на одно нажатие ниже, под *ещё параметры*. Никуда не проваливаешься: ходить на
+другой экран ради длины одного ролика — это ровно то, из-за чего очередь перестаёт быть
+нужной. Параметр, на который ролик не отвечает, показывает значение цикла серым: тронул —
+стало своим, нажал **↺** — снова общее. У закрытой строки на **⚙** написано число, так что
+видно, отличается ролик от цикла или нет, не открывая его.
+
+**Менять одну настройку сразу у многих** — та же панель с отмеченными роликами. Отмечаешь
+строки галочками, и над ними появляется форма, где галочка стоит у каждого параметра:
+записываются только отмеченные, всё прочее у этих роликов остаётся как было. Тронул
+контрол — параметр отметился сам, а отмеченный уезжает наверх панели и подсвечивается,
+чтобы то, что сейчас запишется, было коротким списком сверху, а не искалось заново среди
+тридцати контролов. Там же — «дублировать» и «удалить» для отмеченных роликов.
 
 **Правка попадает в следующий ролик и никогда в середину начатого.** Тот, который делают
 сейчас, запущен на настройках, стоявших в момент его старта, — только так настройка может

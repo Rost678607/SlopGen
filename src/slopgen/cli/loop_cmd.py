@@ -35,12 +35,16 @@ from ..pipeline.loop import (
     LoopFile,
     LoopPlan,
     LoopRunner,
+    QueueItem,
     all_loops,
     check_params,
+    clean_overrides,
     describe,
     direct_launcher,
     latest_loop,
     loop_dir_name,
+    overridable,
+    parse_setting,
     settable_names,
 )
 
@@ -51,7 +55,7 @@ app = typer.Typer(add_completion=False, help="steer a running loop (see `--loop`
 # about.
 PROMPT_HELP = (
     "[dim]enter = let the model pick · !ai · !me · !limit N · !breaks a,b (!breaks none)"
-    " · !park hold|go_on · !set key=value … · !show · !stop[/dim]"
+    " · !park hold|go_on · !ahead N · !queue · !set key=value … · !show · !stop[/dim]"
 )
 
 
@@ -78,14 +82,66 @@ def _file(store: ConfigStore, loop_dir: Optional[Path]) -> LoopFile:
 def _echo(plan: LoopPlan, where: Path) -> None:
     who = "the model picks" if plan.source == "ai" else "yours to give"
     limit = plan.limit or "∞"
+    ahead = f" · {plan.ahead} kept ahead" if plan.ahead else ""
     rprint(
         f"[bold]{where.name}[/bold] · [cyan]{plan.status}[/cyan] {plan.note}\n"
         f"  made [bold]{plan.made}[/bold] of {plan.started} started, limit {limit}\n"
-        f"  topics: {who} · {len(plan.topics)} queued\n"
+        f"  topics: {who} · {len(plan.topics)} queued{ahead}\n"
         f"  breaks: {', '.join(plan.breakpoints) or '—'} · when parked: {plan.on_park}"
     )
     for it in plan.iterations[-8:]:
         rprint(f"  [dim]#{it.n}[/dim] {it.status or 'running':7} {it.topic or '(model)'}")
+
+
+def _over(item: QueueItem) -> str:
+    """One queued video's own settings, short enough to sit on the end of its line."""
+    return ", ".join(f"{k}={_short(v)}" for k, v in item.over.items())
+
+
+def _short(value) -> str:
+    if isinstance(value, list):
+        return "/".join(str(v) for v in value) or "—"
+    if isinstance(value, dict):
+        return ",".join(f"{k}:{v}" for k, v in value.items()) or "—"
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    return str(value)
+
+
+def _queue(plan: LoopPlan) -> None:
+    """The videos not made yet, numbered as the other commands name them."""
+    if not plan.topics:
+        rprint("[dim]nothing queued[/dim]")
+        return
+    for n, item in enumerate(plan.topics, 1):
+        mark = "[magenta]✨[/magenta]" if item.by == "ai" else "  "
+        over = _over(item)
+        rprint(f"  [bold]{n:>2}[/bold] {mark} {item.topic or '[dim](the model picks)[/dim]'}"
+               + (f"  [cyan]{over}[/cyan]" if over else ""))
+
+
+def _pick(plan: LoopPlan, which: str) -> list[QueueItem]:
+    """The queued videos a `1,3,5-7` (or `all`) names, in the order they are queued.
+
+    Positions rather than ids, because a person reading a numbered list types the
+    numbers they can see — the ids exist so that two frontends editing at once cannot
+    hit the wrong video, and a terminal reading the list a line before it edits it is
+    not in that race."""
+    if which.strip().lower() in ("all", "*"):
+        return list(plan.topics)
+    want: list[int] = []
+    for part in which.replace(",", " ").split():
+        if "-" in part[1:]:
+            lo, _, hi = part.partition("-")
+            want += list(range(int(lo), int(hi) + 1))
+        else:
+            want.append(int(part))
+    out = []
+    for n in want:
+        if not 1 <= n <= len(plan.topics):
+            raise ValueError(f"there is no video {n} in the queue (1..{len(plan.topics)})")
+        out.append(plan.topics[n - 1])
+    return out
 
 
 # -- the remote control -----------------------------------------------------
@@ -117,13 +173,127 @@ def list_loops(ctx: typer.Context) -> None:
 def add_topic(ctx: typer.Context,
               topics: list[str] = typer.Argument(..., help="one or more topics, queued in this order"),
               loop_dir: Optional[Path] = typer.Option(None, "--dir"),
+              at: Optional[int] = typer.Option(None, "--at", help="put them at this position instead of the end (1 = next)"),
               mine: bool = typer.Option(False, "--me", help="also hand the topics over to you from now on")) -> None:
     """Queue topics for the next videos. Used whoever picks the rest."""
     f = _file(ctx.obj, loop_dir)
-    plan = f.add_topics(list(topics))
+    plan = f.add_topics(list(topics), None if at is None else max(0, at - 1))
     if mine:
         plan = f.write_control(source="me")
     rprint(f"queued {len(topics)} · {len(plan.topics)} waiting")
+
+
+@app.command("queue")
+def show_queue(ctx: typer.Context,
+               loop_dir: Optional[Path] = typer.Argument(None, help="a loop's folder; omit for the latest")) -> None:
+    """The videos this loop has not made yet, with whatever each of them asks for.
+
+    The numbers are what `edit`, `move`, `drop` and `for` take."""
+    f = _file(ctx.obj, loop_dir)
+    _queue(f.read())
+
+
+@app.command("edit")
+def edit_topic(ctx: typer.Context,
+               n: int = typer.Argument(..., help="which queued video (see `slopgen loop queue`)"),
+               topic: str = typer.Argument(..., help="what it is about now; \"\" hands it back to the model"),
+               loop_dir: Optional[Path] = typer.Option(None, "--dir")) -> None:
+    """Retype one queued video's topic, leaving its own settings alone."""
+    f = _file(ctx.obj, loop_dir)
+    plan = f.read()
+    try:
+        item = _pick(plan, str(n))[0]
+    except ValueError as e:
+        typer.secho(f"error: {e}", fg="red")
+        raise typer.Exit(1)
+    item.topic = topic
+    f.set_queue(plan.topics)
+    rprint(f"#{n}: [bold]{topic or '(the model picks)'}[/bold]")
+
+
+@app.command("move")
+def move_topic(ctx: typer.Context,
+               n: int = typer.Argument(..., help="which queued video"),
+               to: int = typer.Argument(..., help="where it goes; 1 is next"),
+               loop_dir: Optional[Path] = typer.Option(None, "--dir")) -> None:
+    """Put a queued video somewhere else in the queue."""
+    f = _file(ctx.obj, loop_dir)
+    plan = f.read()
+    try:
+        item = _pick(plan, str(n))[0]
+    except ValueError as e:
+        typer.secho(f"error: {e}", fg="red")
+        raise typer.Exit(1)
+    _queue(f.move(item.id, max(0, to - 1)))
+
+
+@app.command("drop")
+def drop_topics(ctx: typer.Context,
+                which: str = typer.Argument(..., help="which queued videos: 2 · 1,3 · 2-5 · all"),
+                loop_dir: Optional[Path] = typer.Option(None, "--dir")) -> None:
+    """Take videos off the queue. Nothing already being made is touched."""
+    f = _file(ctx.obj, loop_dir)
+    plan = f.read()
+    try:
+        gone = _pick(plan, which)
+    except ValueError as e:
+        typer.secho(f"error: {e}", fg="red")
+        raise typer.Exit(1)
+    left = f.drop([i.id for i in gone])
+    rprint(f"dropped {len(gone)} · {len(left.topics)} left")
+
+
+@app.command("for")
+def set_over(
+    ctx: typer.Context,
+    which: str = typer.Argument(..., help="which queued videos: 2 · 1,3 · 2-5 · all"),
+    settings: Optional[list[str]] = typer.Argument(None, help="key=value, repeatable: duration=90 breaks=script"),
+    clear: Optional[list[str]] = typer.Option(None, "--clear", help="give a setting back to the loop, repeatable"),
+    loop_dir: Optional[Path] = typer.Option(None, "--dir"),
+) -> None:
+    """Give queued videos their OWN answer to a setting — one setting, any number of
+    videos, and nothing else about them touched.
+
+    That is the whole shape of it, and it is deliberate: an edit that carried a whole
+    form would also carry every setting the operator did not mean to change, and six
+    videos would quietly come out identical. `--clear duration` hands the setting back
+    to the loop, which is the undo.
+
+        slopgen loop for 1,3 duration=90
+        slopgen loop for all breaks=script --clear voice
+    """
+    store: ConfigStore = ctx.obj
+    f = _file(store, loop_dir)
+    plan = f.read()
+    try:
+        chosen = _pick(plan, which)
+        # typed values, coerced exactly as `loop set` coerces them, so `breaks=a,b` and
+        # `fx=crt=40` mean at a queued video what they mean at a whole loop
+        parsed = {k: parse_setting(k, v, store)
+                  for k, v in _pairs(list(settings or [])).items()}
+        clean_overrides(plan.params, parsed)
+    except ValueError as e:
+        typer.secho(f"error: {e}", fg="red")
+        typer.secho(f"per-video settings: {', '.join(overridable())}", fg="yellow")
+        raise typer.Exit(1)
+    if not parsed and not clear:
+        typer.secho("nothing to change — give key=value or --clear key", fg="yellow")
+        raise typer.Exit(1)
+    plan = f.patch_queue([i.id for i in chosen], parsed, list(clear or []))
+    _queue(plan)
+
+
+@app.command("ahead")
+def set_ahead(ctx: typer.Context,
+              n: int = typer.Argument(..., min=0, max=50, help="topics to keep waiting; 0 = invent each one as it is needed"),
+              loop_dir: Optional[Path] = typer.Option(None, "--dir")) -> None:
+    """How many topics the model keeps ready in the queue.
+
+    It only applies while the model is the one picking. The point is not speed — it is
+    that a topic waiting in the queue can be read, rewritten, reordered or thrown away
+    before it becomes a video, and one invented at the moment it is needed cannot."""
+    _file(ctx.obj, loop_dir).write_control(ahead=n)
+    rprint(f"topics kept ahead: [bold]{n or 'none'}[/bold]")
 
 
 @app.command("source")
@@ -301,6 +471,13 @@ def _command(f: LoopFile, line: str, store: ConfigStore | None = None) -> str:
             return "park takes `hold` or `go_on`"
         f.write_control(on_park=rest)
         return f"when parked: {rest}"
+    if word == "ahead":
+        n = max(0, min(int(rest or 0), 50))
+        f.write_control(ahead=n)
+        return f"topics kept ahead: {n or 'none'}"
+    if word == "queue":
+        _queue(f.read())
+        return "— `slopgen loop for 1,3 duration=90` gives one of them its own settings"
     if word == "stop":
         f.write_control(stop=True)
         return "stopping"
@@ -361,7 +538,8 @@ def _event(state: str, message: str) -> None:
 
 
 def start(store: ConfigStore, params: RunParams, *, source: str, limit: int,
-          topics: Optional[list[str]] = None, on_park: str = "hold") -> None:
+          topics: Optional[list[str]] = None, on_park: str = "hold",
+          ahead: int = 0) -> None:
     """Begin a loop on these run settings and drive it from this terminal."""
     if source not in ("ai", "me"):
         typer.secho("--topics must be `ai` or `me`", fg="red")
@@ -372,19 +550,21 @@ def start(store: ConfigStore, params: RunParams, *, source: str, limit: int,
     loop_dir = _output(store) / loop_dir_name(params)
     f = LoopFile.create(
         loop_dir, params, source=source, limit=limit, on_park=on_park,
-        breakpoints=list(params.breakpoints),
+        breakpoints=list(params.breakpoints), ahead=max(0, min(ahead, 50)),
         topics=[t for t in (topics or []) if t.strip()],
     )
     rprint(f"[bold]loop[/bold] in [cyan]{loop_dir}[/cyan] · "
            f"{'no limit' if not limit else f'{limit} videos'} · topics from "
-           f"{'the model' if source == 'ai' else 'you'}")
-    rprint(f"[dim]steer it from anywhere: slopgen loop status | topic \"...\" | source ai|me "
-           f"| limit N | breaks ... | stop[/dim]")
+           f"{'the model' if source == 'ai' else 'you'}"
+           + (f", {ahead} kept ahead" if ahead else ""))
+    rprint(f"[dim]steer it from anywhere: slopgen loop status | queue | topic \"...\" | "
+           f"for 1,3 duration=90 | source ai|me | limit N | breaks ... | stop[/dim]")
     drive(store, f)
 
 
 def drive(store: ConfigStore, f: LoopFile) -> None:
     """Run the loop here, printing what every video does as it does it."""
+    from ..pipeline.topics import proposer
     from .app import _console_event
 
     # Asking only makes sense on a terminal a person is standing at. Piped into a file
@@ -395,6 +575,7 @@ def drive(store: ConfigStore, f: LoopFile) -> None:
         launch=direct_launcher(store, on_event=_console_event),
         on_event=_event,
         ask=ask,
+        propose=proposer(store),
     )
     try:
         plan = runner.run()
