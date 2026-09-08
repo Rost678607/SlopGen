@@ -1,0 +1,49 @@
+[Unit]
+Description=slopgen — the Telegram bot, the panel and the tunnel
+Documentation=file:///opt/slopgen/current/src/slopgen/bot/README.md
+After=network-online.target
+Wants=network-online.target
+# A tunnel that cannot resolve Cloudflare on a cold boot dies and is raised again on
+# a backoff, so this is ordering and not a dependency: the bot comes up either way.
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=simple
+User=slopgen
+Group=slopgen
+# The STATE, not the code. Everything slopgen reads is relative to where it is
+# started — configs/, assets/, output/, .env — so the working directory is what
+# decides which machine's settings a release runs with. The code is a symlink one
+# level away and is read-only to this service.
+WorkingDirectory=/opt/slopgen/.state
+Environment=PYTHONPATH=/opt/slopgen/current/src
+Environment=PYTHONUNBUFFERED=1
+# `-m slopgen` rather than an installed console script: the venv is shared across
+# releases and an editable install would pin it to one of them, which is exactly the
+# thing a rollback has to be able to undo.
+ExecStart=/opt/slopgen/.venv/bin/python -m slopgen bot
+Restart=always
+RestartSec=15
+# ffmpeg renders are the point of this machine, and they should lose to anything
+# interactive rather than to nothing.
+Nice=5
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+# The one writable path, and it holds everything that is not code: configs, the
+# guest list, .env, the frame bases, every run's output and the downloaded weights.
+# The release itself stays read-only so a running service cannot damage the code it
+# might be rolled back to.
+ReadWritePaths=/opt/slopgen/.state
+
+[Install]
+WantedBy=multi-user.target

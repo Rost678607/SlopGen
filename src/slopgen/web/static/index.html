@@ -214,6 +214,11 @@
   <div id="panel-body"></div>
 </div>
 
+<!-- Telegram's own shim, and the only script here that comes from off this server.
+     Outside Telegram it defines an object with an empty initData and the page
+     carries on as an ordinary web page; inside, it is what hands us the signature
+     that signs us in without a password (see /api/tg-login). -->
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
 <script src="/static/forms.js"></script>
 <script src="/static/app.js"></script>
 </body>

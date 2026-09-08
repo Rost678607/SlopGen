@@ -45,6 +45,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..config import ConfigStore, RunParams
+from ..pipeline import manual
 from ..pipeline.checkpoint import Checkpoint, outcome
 from ..pipeline.context import AppContext
 from ..pipeline.loop import LaunchResult, LoopFile, LoopRunner, loop_dir_name
@@ -158,6 +159,49 @@ class Loop:
                                if plan.params.manual_orchestration
                                and plan.params.manual_orchestration.stages else ""),
         }
+
+
+def parked(run: Run) -> dict:
+    """What this run is actually waiting for, read off its own folder.
+
+    A status is not enough to decide what may be done with a run. "stopped" says
+    nothing about whether it was sitting on a breakpoint when it stopped, and
+    "paused" says nothing about how many pictures are still owed. Offering every
+    action to every settled run was the first version, and it meant most buttons did
+    nothing when pressed — which reads as a broken page rather than as an answer.
+
+    The checkpoint is small and this is cached against its mtime, so a list of forty
+    runs costs forty stat calls and nothing else. It lives here rather than in the
+    browser's routes because the chat asks the same question: a bot that says "parked"
+    and nothing else is exactly the broken page again, in fewer pixels."""
+    if run.run_dir is None:
+        return {"review_stage": "", "asks": 0, "video": False}
+    cp_file = run.run_dir / "checkpoint.json"
+    try:
+        stamp = cp_file.stat().st_mtime
+    except OSError:
+        return {"review_stage": "", "asks": 0, "video": False}
+    cached = getattr(run, "_parked", None)
+    if cached and cached[0] == stamp:
+        return cached[1]
+    info = {"review_stage": "", "asks": 0, "video": False}
+    try:
+        cp = Checkpoint.load(run.run_dir)
+        for i in range(run.params.count):
+            info["review_stage"] = info["review_stage"] or cp.review_stage(i)
+    except Exception:
+        pass
+    for work in (p for p in run.run_dir.iterdir() if p.is_dir()):
+        mp = manual.manifest_path(work)
+        if mp.is_file():
+            try:
+                mf = manual.ManualManifest.model_validate_json(mp.read_text(encoding="utf-8"))
+                info["asks"] += sum(1 for sh in mf.shots if sh.status != "delivered")
+            except Exception:
+                pass
+        info["video"] = info["video"] or any(work.glob("*.mp4"))
+    run._parked = (stamp, info)
+    return info
 
 
 class Supervisor:

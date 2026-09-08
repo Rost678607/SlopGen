@@ -9,6 +9,8 @@ dist/
 
 # --- Secrets & runtime output ---
 .env
+# The deploy target: it names your server, which is nobody else's business.
+deploy.env
 secrets/
 output/
 state/
@@ -29,6 +31,9 @@ Thumbs.db
 # template instead; users copy it to configs/slopgen.toml and edit locally.
 configs/slopgen.toml
 !configs/slopgen.toml.example
+# Who the Telegram bot talks to. A list of real people's account ids — personal in
+# the same way the voices are, and the bot writes the file itself on first start.
+configs/bot_allow.txt
 # Personal LLM connection profiles; the three provider presets ship as examples.
 configs/llm/*.toml
 !configs/llm/deepseek.toml

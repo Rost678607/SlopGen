@@ -127,6 +127,43 @@ class WebConfig(BaseModel):
     max_parallel: int = 2
 
 
+class BotConfig(BaseModel):
+    """The Telegram front door (`slopgen bot`): a chat, and the browser UI inside it.
+
+    One process holds all three parts, and that is the whole design. The bot serves
+    the same FastAPI app `slopgen web` serves, so a run started by a button in the
+    chat and a run started in the Mini App are the same run in the same supervisor —
+    two servers would have been two lists of runs that disagree about what is going on.
+
+    `public_url` is what the Mini App button opens, and Telegram will only open HTTPS.
+    Left empty, the bot raises a Cloudflare quick tunnel and uses the address that
+    comes back. That address changes every time the tunnel restarts, which sounds bad
+    and costs nothing: the button is rebuilt from whatever the tunnel currently says,
+    so the churn is invisible unless you were reading the URL out loud.
+
+    Nobody is served without being on the list. `allow_file` is plain text, one
+    Telegram id per line, re-read whenever it changes — adding somebody is an edit,
+    not a restart — and the first id on it is the owner, who gets the notices nobody
+    asked for (a tunnel that moved, a run that failed)."""
+
+    token_env: str = "TELEGRAM_BOT_TOKEN"
+    allow_file: Path = Path("configs/bot_allow.txt")
+    # serve the browser UI in-process, which is what the Mini App button opens
+    web: bool = True
+    # "cloudflared" = raise a free quick tunnel and take whatever address it gives;
+    # "off" = no tunnel, and then the Mini App exists only if `public_url` is set
+    tunnel: Literal["cloudflared", "off"] = "cloudflared"
+    cloudflared: str = "cloudflared"  # the binary, if it is not on PATH
+    public_url: str = ""  # your own HTTPS address; set it and no tunnel is raised
+    # Push a finished cut into the chat. Telegram refuses uploads over 50 MB from a
+    # bot, so a longer video is announced with a link into the Mini App instead.
+    deliver_video: bool = True
+    max_upload_mb: int = 50
+    # how often the bot looks at the supervisor for runs that finished, failed or
+    # parked while nobody was watching, in seconds
+    poll_s: float = 3.0
+
+
 class UIConfig(BaseModel):
     lang: Literal["en", "ru"] = "en"  # TUI interface language
     theme: str = "minecraft"  # persisted Textual theme name
@@ -258,6 +295,7 @@ class GlobalConfig(BaseModel):
     llm: LLMConfig = LLMConfig()
     ui: UIConfig = UIConfig()
     web: WebConfig = WebConfig()
+    bot: BotConfig = BotConfig()
     footage: FootageConfig = FootageConfig()
     defaults: DefaultsConfig = DefaultsConfig()
     tts: TTSConfig = TTSConfig()

@@ -83,6 +83,10 @@ slopgen info ru facts --loop                          # topics from the model, n
 slopgen info ru --loop --loop-limit 20 --topics me    # twenty, each topic yours to give
 slopgen loop topic "why bread goes stale"             # steer it from another terminal
 slopgen loop source ai   /   loop breaks script   /   loop limit 5   /   loop stop
+
+# from a browser, or from a phone: the same panel, the same runs
+slopgen web                                           # http://127.0.0.1:8770
+slopgen bot --detach                                  # Telegram: chat + Mini App
 ```
 
 Single-part output lands in `output/<timestamp>_<type|mode>_<lang>/<n>/final.mp4` + `metadata.json`.
@@ -281,6 +285,86 @@ unlimited loop and a dead API key would otherwise spend the night failing in a t
 - **Progress** — while a run works, a bar tracks the stage it is inside: voiced fragments, generated video fragments, assembled scenes and rendered files, each as `done/total`, over a per-video queue table and a live log.
 - **Configuration** — sections on the left: LLM profiles (profile tabs, per-provider model presets, API-key input auto-saved to `.env`, ★ activation), footage/generator keys, the character library, the fandoms (world settings, its lore documents in the same editor, its own cast), ad contracts, accounts, presets. Entity sections have a tab per existing config file on top plus `+ new`; forms are prefilled, with 💾 save and 🗑 delete (confirmed).
 - The chosen color theme persists across runs (`[ui].theme`).
+
+## Telegram bot and Mini App (`slopgen bot`)
+
+```bash
+pip install -r requirements.txt         # nothing new; the bot rides on httpx
+# 1. make a bot with @BotFather, put the token in .env:
+#      TELEGRAM_BOT_TOKEN=123456:AA...
+# 2. (optional but wanted) install cloudflared — it is what gives the Mini App an
+#    https address:  https://github.com/cloudflare/cloudflared/releases
+slopgen bot                             # foreground
+slopgen bot --detach                    # ...or in the background, terminal free
+slopgen bot --status                    # running? where is the panel?
+slopgen bot --stop
+```
+
+Message it once and it replies with your own Telegram id; put that id into
+`configs/bot_allow.txt` (one per line, `#` comments, the **first** id is the owner) and
+it starts talking to you. The file is re-read whenever it changes — adding somebody is
+an edit, not a restart — and **nobody who is not on it is served**, in the chat or in
+the Mini App.
+
+**The Mini App is the browser UI, not a copy of it.** The button opens the very same
+page `slopgen web` serves, inside Telegram, on a phone. Signing in needs no password:
+Telegram hands the page a signature only the bot's token can produce, the server checks
+it and then checks the id against the same allow-list. One consequence worth knowing:
+when the bot is serving, the panel has no anonymous door any more, password or not.
+
+**The address is free and disposable.** Telegram opens a Mini App only over HTTPS, which
+a machine under a desk does not have — so the bot raises a Cloudflare quick tunnel
+(`cloudflared tunnel --url`) and takes whatever `*.trycloudflare.com` name comes back.
+It changes on every restart, and that costs exactly one message: the button is rebuilt
+from the current address, and the owner is told when it moves. Own a domain? Put it in
+`[bot].public_url` and no tunnel is raised.
+
+**Most of it works in the chat too**, and one part belongs there. Start a run by picking
+a mode and a world (`/new`) — every other setting is what your configs already say,
+because the parameters are built by the same code the browser's forms go through. Watch
+them with `/runs`, stop them, release a breakpoint, and get the finished cut **sent into
+the chat** as a video. Above all, hand material over: this pipeline asks a person for
+pictures at unpredictable hours, and a parked run posts each shot it is owed as its own
+message — reply to one with a photo or a clip and it lands in the run's inbox under that
+shot's id, exactly where `slopgen gather` and the panel's upload put it. Send it as a
+*file* rather than a photo and it keeps its full quality.
+
+| `[bot]` in `configs/slopgen.toml` | what it does |
+| --- | --- |
+| `token_env` | which env var holds the token (default `TELEGRAM_BOT_TOKEN`) |
+| `allow_file` | the guest list; first id is the owner |
+| `web` | serve the panel in-process — this is what the Mini App opens |
+| `tunnel` | `cloudflared` or `off` |
+| `public_url` | your own https address; set it and no tunnel is raised |
+| `deliver_video` | push a finished cut into the chat (≤ `max_upload_mb`, Telegram caps bots at 50) |
+
+## Deploy to a server (`./deploy.sh`)
+
+A Debian box with systemd, one script, no container.
+
+```bash
+cp deploy.env.example deploy.env        # SSH_HOST and SSH_USER, that is all
+./deploy.sh bootstrap                   # packages, service user, venv, cloudflared, unit
+./deploy.sh setenv TELEGRAM_BOT_TOKEN 123456:AA...
+./deploy.sh allow 123456789             # your Telegram id
+./deploy.sh restart && ./deploy.sh url  # where the panel is now
+
+./deploy.sh push                        # a new release, switched only if it imports
+./deploy.sh rollback                    # back to the previous one
+./deploy.sh status | logs | pull        # what is up · journal · fetch finished videos
+./deploy.sh run -- --list-types         # run the CLI on the server, same configs
+```
+
+A push does not copy files over running code: it builds the release beside the live one,
+checks it imports in the venv that will run it, flips the `current` symlink and restarts
+— and if the service does not come up, it flips back and restarts again in the same
+breath. Rollback is therefore a symlink and not a backup you do not have.
+
+State never travels with code. `configs/`, `.env`, `assets/`, `output/` and `models/`
+live in `/opt/slopgen/.state` and stay the server's: the guest list, the bot token and
+the finished videos were edited *there*, and a deploy that overwrote them would be a way
+to eventually switch the bot off. `./deploy.sh seed` pushes your local ones over the
+server's on purpose, by hand, and is the only thing that does.
 
 ## AI drama (`configs/characters/`, `configs/orchestration/`)
 
@@ -557,6 +641,10 @@ slopgen info ru facts --loop                          # темы придумы�
 slopgen info ru --loop --loop-limit 20 --topics me    # двадцать штук, темы твои
 slopgen loop topic "почему хлеб черствеет"            # рулить из другого терминала
 slopgen loop source ai   /   loop breaks script   /   loop limit 5   /   loop stop
+
+# из браузера или с телефона: та же панель, те же прогоны
+slopgen web                                           # http://127.0.0.1:8770
+slopgen bot --detach                                  # Telegram: чат + мини-приложение
 ```
 
 Одиночный результат: `output/<время>_<тип|режим>_<язык>/<n>/final.mp4` + `metadata.json`.
@@ -671,6 +759,87 @@ slopgen loop show                                        # на чём он ст
 - **Разбор** — туда, где прогон встал: экран брейкпоинта (слева карточки, справа поля открытой, под ними ИИ-строка) либо экран сбора материала от оператора. Поисковую задачу экран сбора рисует тем, что она есть, — поручением, а не промптом для вставки: в шапке написано «найти самому» и что просится, фото или видео, рядом с длиной кадра в секундах; под шапкой бриф, а под ним запросы, по одному на строку, чтобы копировать их по очереди, пока какой-нибудь не сработает. В списке поисковые строки помечены ещё и `[фото]`/`[видео]`. Задача на генерацию так и остаётся одним куском промпта. Оба экрана по завершении продолжают прогон; `slopgen review` / `slopgen gather` открывают их напрямую.
 - **Конфигурация** — секции слева: профили нейронок (табы профилей, пресеты моделей, ввод API-ключа с автосохранением в `.env`, активация ★), ключи стока и генераторов, библиотека персонажей, фандомы (настройки мира, его лор в том же редакторе, его собственный каст), рекламные контракты, аккаунты, пресеты. В секциях сущностей сверху табы — по одному на конфиг-файл плюс `+ новый`; формы предзаполнены, есть 💾 сохранение и 🗑 удаление с подтверждением.
 - Выбранная тема оформления сохраняется между запусками (`[ui].theme`).
+
+## Бот в Telegram и мини-приложение (`slopgen bot`)
+
+```bash
+pip install -r requirements.txt         # ничего нового: бот ездит на httpx
+# 1. заведи бота у @BotFather, положи токен в .env:
+#      TELEGRAM_BOT_TOKEN=123456:AA...
+# 2. (не обязательно, но нужно) поставь cloudflared — именно он даёт мини-приложению
+#    https-адрес:  https://github.com/cloudflare/cloudflared/releases
+slopgen bot                             # в терминале
+slopgen bot --detach                    # ...или в фоне, терминал свободен
+slopgen bot --status                    # работает? где панель?
+slopgen bot --stop
+```
+
+Напиши ему — он ответит твоим же Telegram-id; впиши этот id в `configs/bot_allow.txt`
+(по одному в строке, `#` — комментарий, **первый** id — владелец), и он начнёт с тобой
+разговаривать. Файл перечитывается при изменении — добавить человека это правка, а не
+перезапуск, — и **кого нет в списке, тому не отвечают**: ни в чате, ни в мини-приложении.
+
+**Мини-приложение — это и есть морда в браузере, а не её копия.** Кнопка открывает ту
+самую страницу, которую отдаёт `slopgen web`, — внутри Telegram, на телефоне. Пароль не
+нужен: Telegram кладёт странице подпись, которую умеет посчитать только держатель токена
+бота, сервер её проверяет, а потом сверяет id с тем же списком допущенных. Одно следствие
+стоит знать: пока панель отдаёт бот, анонимного входа у неё больше нет — с паролем или
+без.
+
+**Адрес бесплатный и одноразовый.** Telegram открывает мини-приложение только по HTTPS,
+а у машины под столом его нет — поэтому бот поднимает быстрый туннель Cloudflare
+(`cloudflared tunnel --url`) и берёт то имя `*.trycloudflare.com`, которое вернут. Оно
+меняется при каждом перезапуске, и стоит это ровно одного сообщения: кнопка строится из
+текущего адреса, а владельцу приходит уведомление, когда адрес переехал. Есть свой домен
+— впиши его в `[bot].public_url`, и туннель не поднимется вовсе.
+
+**Почти всё работает и в чате**, а кое-что там и должно жить. Запустить прогон — выбрать
+режим и мир (`/new`); все остальные настройки будут такими, как их описали конфиги,
+потому что параметры собирает тот же код, через который проходят формы браузера. Смотреть
+за ними — `/runs`: остановить, снять с брейкпоинта, получить готовый ролик **прямо в чат**
+видеофайлом. И главное — отдавать материал: конвейер просит у человека картинки в
+непредсказуемое время, и застывший прогон присылает каждый недостающий кадр отдельным
+сообщением — ответь на него фотографией или клипом, и файл ляжет во входящие прогона под
+id этого кадра, ровно туда же, куда его кладут `slopgen gather` и загрузка из панели.
+Отправишь **файлом**, а не фото — качество не пострадает от сжатия.
+
+| `[bot]` в `configs/slopgen.toml` | что делает |
+| --- | --- |
+| `token_env` | в какой переменной окружения лежит токен (по умолчанию `TELEGRAM_BOT_TOKEN`) |
+| `allow_file` | список допущенных; первый id — владелец |
+| `web` | отдавать панель тем же процессом — её и открывает мини-приложение |
+| `tunnel` | `cloudflared` или `off` |
+| `public_url` | свой https-адрес; задан — туннель не поднимается |
+| `deliver_video` | слать готовый ролик в чат (до `max_upload_mb`; Telegram не даёт боту больше 50) |
+
+## Выкат на сервер (`./deploy.sh`)
+
+Debian с systemd, один скрипт, без контейнеров.
+
+```bash
+cp deploy.env.example deploy.env        # SSH_HOST и SSH_USER, больше ничего
+./deploy.sh bootstrap                   # пакеты, служебный юзер, venv, cloudflared, юнит
+./deploy.sh setenv TELEGRAM_BOT_TOKEN 123456:AA...
+./deploy.sh allow 123456789             # твой Telegram-id
+./deploy.sh restart && ./deploy.sh url  # где панель прямо сейчас
+
+./deploy.sh push                        # новый релиз; переключится, только если импортируется
+./deploy.sh rollback                    # вернуть предыдущий
+./deploy.sh status | logs | pull        # что живо · журнал · забрать готовые ролики
+./deploy.sh run -- --list-types         # запустить CLI на сервере, с теми же конфигами
+```
+
+Выкат не копирует файлы поверх работающего кода: он собирает релиз рядом, проверяет, что
+тот импортируется тем самым venv, которым его будут запускать, переключает симлинк
+`current` и перезапускает сервис — а если тот не поднялся, тем же заходом возвращает
+симлинк назад и перезапускает снова. Поэтому откат — это `ln -sfn`, а не «восстановить из
+бэкапа, которого нет».
+
+Состояние никогда не ездит с кодом. `configs/`, `.env`, `assets/`, `output/` и `models/`
+лежат в `/opt/slopgen/.state` и остаются серверными: список допущенных, токен бота и
+готовые ролики правились *там*, и выкат, затирающий их, был бы способом однажды выключить
+бота. `./deploy.sh seed` заливает локальные поверх серверных нарочно, руками, и он
+единственный это делает.
 
 ## ИИ-дорама (`configs/characters/`, `configs/orchestration/`)
 

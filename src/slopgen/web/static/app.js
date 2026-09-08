@@ -18,8 +18,20 @@ const lab = (k, fallback) => {
 // job a terminal cannot do and the reason this frontend exists at all.
 "use strict";
 const $ = (s) => document.querySelector(s);
+
+// The session, when a cookie will not do. Inside Telegram this page can be a
+// third-party iframe whose cookie the browser is entitled to discard, so the server
+// also accepts the token as a header — and, for the things that cannot send one, as
+// a query parameter. Empty everywhere else, and then both of these do nothing.
+let TOK = "";
+// A URL for something the BROWSER fetches on its own: <img>, <video>, <audio>,
+// EventSource. None of them can carry a header, so the token rides in the query.
+const tokd = (u) => (TOK ? u + (u.includes("?") ? "&" : "?") + "t=" + encodeURIComponent(TOK) : u);
+
 const api = async (url, opts) => {
-  const r = await fetch(url, { credentials: "same-origin", ...opts });
+  const o = { credentials: "same-origin", ...opts };
+  if (TOK) o.headers = { ...(o.headers || {}), "X-Slopgen-Token": TOK };
+  const r = await fetch(url, o);
   if (r.status === 401) { show("login"); throw new Error("auth"); }
   if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
   return r.status === 204 ? null : r.json();
@@ -52,12 +64,42 @@ let world = null, cards = [], card = null, targets = [], sel = -1;
 // of it, so a region is a scaled copy of the frame and not a free rectangle.
 let videoAspect = 1080 / 1920;
 
+// Sign in as whoever Telegram says is holding the phone.
+//
+// `initData` is a signed query string the Mini App is handed on open; the server
+// checks the signature against the bot token and against the same allow-list the chat
+// is filtered by. So there is no password to type — which matters, because the Mini
+// App exists precisely for the times you are not at the machine.
+async function telegramSignIn() {
+  const tg = window.Telegram && window.Telegram.WebApp;
+  if (!tg || !tg.initData) return false;
+  try { tg.ready(); tg.expand(); } catch (e) { /* an older client; nothing depends on it */ }
+  document.body.classList.add("in-telegram");
+  const r = await fetch("/api/tg-login", {
+    method: "POST", credentials: "same-origin",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ init_data: tg.initData }),
+  }).catch(() => null);
+  if (!r || !r.ok) return false;
+  TOK = (await r.json()).token || "";
+  return true;
+}
+
 // ---------------------------------------------------------------- boot
 (async function boot() {
-  const me = await fetch("/api/me").then((r) => r.json());
-  if (!me.signed_in) return show("login");
+  let me = await fetch("/api/me").then((r) => r.json());
+  if (!me.signed_in && me.telegram && (await telegramSignIn())) me = { signed_in: true };
+  if (!me.signed_in) {
+    // A bot with no password has no form worth showing: the only way in is the button
+    // in the chat, and a password box that can never be right is worse than a sentence.
+    if (me.telegram && !me.needs_password) {
+      $("#loginform").hidden = true;
+      $("#loginerr").textContent = lab("js.open-from-bot");
+    }
+    return show("login");
+  }
   show("app");
-  const cfg = await fetch("/api/config").then((r) => r.json()).catch(() => null);
+  const cfg = await api("/api/config").catch(() => null);
   if (cfg) videoAspect = cfg.video.width / cfg.video.height;
   await loadWorlds();
   await loadOptions();
@@ -66,8 +108,9 @@ let videoAspect = 1080 / 1920;
 $("#loginform").onsubmit = async (e) => {
   e.preventDefault();
   const body = new FormData(e.target);
-  const r = await fetch("/api/login", { method: "POST", body });
+  const r = await fetch("/api/login", { method: "POST", body, credentials: "same-origin" });
   if (!r.ok) { $("#loginerr").textContent = lab("js.no-good"); return; }
+  TOK = (await r.json().catch(() => ({}))).token || "";
   show("app"); loadWorlds();
 };
 
@@ -294,7 +337,7 @@ async function loadVoices() {
         <span class="grow"></span>
         <button data-save class="primary">${lab("js.save")}</button>
         <button data-del class="ghost">${lab("js.delete")}</button></div>
-      ${v.has_sample ? `<audio controls preload="none" src="${v.url}"></audio>` : ""}
+      ${v.has_sample ? `<audio controls preload="none" src="${tokd(v.url)}"></audio>` : ""}
       <label>${lab("js.what-the-sample-says-word-for-word")}
         <textarea data-f="text" rows="2">${esc(v.text)}</textarea></label>
       <div class="grid">
@@ -576,7 +619,7 @@ async function loadCards() {
   $("#cards").innerHTML = cards.map((c) => `
     <div class="card ${c.retired ? "retired" : ""}" data-name="${esc(c.name)}">
       <div class="thumb ${c.usable ? "" : "none"}"
-           ${c.usable && c.kind === "image" ? `style="background-image:url('${c.url}')"` : ""}>
+           ${c.usable && c.kind === "image" ? `style="background-image:url('${tokd(c.url)}')"` : ""}>
         ${c.usable ? "" : lab("js.no-picture-yet")}
         ${c.targets.length ? `<span class="pill">${c.targets.length}</span>` : ""}
         ${c.kind === "video" ? `<span class="pill">${lab("js.clip")}</span>` : ""}
@@ -637,9 +680,9 @@ function openCard(name) {
     return;
   }
   if (card.kind === "video") {
-    vid.src = card.url; vid.hidden = false; img.hidden = true; vid.play().catch(() => {});
+    vid.src = tokd(card.url); vid.hidden = false; img.hidden = true; vid.play().catch(() => {});
   } else {
-    img.src = card.url; img.hidden = false; vid.hidden = true;
+    img.src = tokd(card.url); img.hidden = false; vid.hidden = true;
   }
   $("#editor").hidden = false;
   drawTargets();
@@ -1826,8 +1869,8 @@ async function openAsks(id, title) {
     // what arrived is shown, not merely reported: a wrong file under the right name
     // reads identically in a manifest
     const preview = sh.delivered
-      ? (sh.photo ? `<img class="got" src="${url}" alt="">`
-                  : `<video class="got" src="${url}" controls preload="metadata"></video>`)
+      ? (sh.photo ? `<img class="got" src="${tokd(url)}" alt="">`
+                  : `<video class="got" src="${tokd(url)}" controls preload="metadata"></video>`)
       : "";
     return `<div class="ask ${sh.status === "delivered" ? "done" : ""}" data-v="${esc(sh.video)}" data-s="${esc(sh.id)}">
       <div class="head"><b>${esc(sh.id)}</b>
@@ -2104,7 +2147,7 @@ async function act(what, r) {
     if (what === "stop") { await api(`/api/runs/${r.id}/stop`, { method: "POST" }); loadRuns(); }
     else if (what === "asks") await openAsks(r.id, r.title);
     else if (what === "review") await openReview(r.id, r.title);
-    else if (what === "video") window.open(`/api/runs/${r.id}/video`, "_blank");
+    else if (what === "video") window.open(tokd(`/api/runs/${r.id}/video`), "_blank");
     else if (what === "resume") {
       await api(`/api/runs/${r.id}/resume`, { method: "POST",
         headers: { "content-type": "application/json" },
@@ -2119,7 +2162,7 @@ async function act(what, r) {
 // page that shows up late still sees everything that happened.
 function watch(id) {
   if (streams.has(id)) { streams.get(id).lines.forEach((l) => appendLog(id, l)); return; }
-  const es = new EventSource(`/api/runs/${id}/events`);
+  const es = new EventSource(tokd(`/api/runs/${id}/events`));
   const state = { es, lines: [] };
   streams.set(id, state);
   es.onmessage = (m) => {

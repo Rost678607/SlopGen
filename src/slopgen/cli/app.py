@@ -22,6 +22,12 @@ A mode is chosen first (before the language), and it shapes the rest of the line
                                                    (one finished part is enough — it gets cut and published,
                                                     the rest of the drama waits for its clips)
     slopgen review [output/2026...]             -> inspect/edit a breakpoint, then resume
+    slopgen web                                 -> the browser UI
+    slopgen bot                                 -> the Telegram bot: chat + the same
+                                                   UI as a Mini App, on a public https
+                                                   address raised with cloudflared
+    slopgen bot --detach / --stop / --status    -> ...without holding the terminal
+
     slopgen --list-types / --list-ads / --list-accounts / --list-presets
             / --list-visuals / --list-characters / --list-orchestrations
 """
@@ -352,6 +358,64 @@ def web(
     rprint(f"[bold]slopgen[/bold] web on [cyan]http://{where}:{cfg.port}[/cyan]"
            + ("" if cfg.password else "  [dim](no password → loopback only)[/dim]"))
     serve(store)
+
+
+@app.command()
+def bot(
+    ctx: typer.Context,
+    detach: bool = typer.Option(False, "--detach", "-d", help="start it in the background and give the terminal back"),
+    stop: bool = typer.Option(False, "--stop", help="stop the backgrounded bot"),
+    status: bool = typer.Option(False, "--status", help="is it running, and where is the panel"),
+    tunnel: Optional[str] = typer.Option(None, "--tunnel", help="cloudflared | off — override the bot.tunnel setting for this start"),
+    url: Optional[str] = typer.Option(None, "--url", help="your own https address for the Mini App; skips the tunnel"),
+) -> None:
+    """Run the Telegram bot: the chat, and the browser UI inside it as a Mini App.
+
+    It talks only to the ids on the allow-list (bot.allow_file), raises a free
+    Cloudflare tunnel for the Mini App's HTTPS address, and serves the same panel
+    `slopgen web` serves — the same runs, in the same supervisor."""
+    import logging
+
+    from rich import print as rprint
+
+    from ..bot import BotError, alive, current_url, detach as detach_bot, halt, serve
+
+    store: ConfigStore = ctx.obj
+    cfg = store.global_cfg.bot
+    if tunnel:
+        cfg.tunnel = tunnel  # type: ignore[assignment]
+    if url:
+        cfg.public_url = url
+
+    if status:
+        pid = alive(store)
+        where = current_url(store)
+        rprint(f"[bold]slopgen[/bold] bot: " +
+               (f"[green]running[/green] (pid {pid})" if pid else "[yellow]not running[/yellow]"))
+        rprint(f"  panel: [cyan]{where}[/cyan]" if where else "  panel: [dim](no public address)[/dim]")
+        raise typer.Exit(0 if pid else 1)
+    if stop:
+        rprint("[bold]slopgen[/bold] bot stopped" if halt(store) else "[yellow]it was not running[/yellow]")
+        raise typer.Exit()
+    if detach:
+        try:
+            pid = detach_bot(store, [x for x in (["--tunnel", tunnel] if tunnel else [])
+                                     + (["--url", url] if url else [])])
+        except BotError as e:
+            typer.secho(f"error: {e}", fg="red")
+            raise typer.Exit(1)
+        rprint(f"[bold]slopgen[/bold] bot running in the background, pid [cyan]{pid}[/cyan]")
+        rprint(f"  log:  [dim]{store.global_cfg.paths.state}/bot.log[/dim]")
+        rprint(f"  stop: [dim]slopgen bot --stop[/dim]")
+        raise typer.Exit()
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s",
+                        datefmt="%H:%M:%S")
+    try:
+        serve(store)
+    except BotError as e:
+        typer.secho(f"error: {e}", fg="red")
+        raise typer.Exit(1)
 
 
 @app.command()

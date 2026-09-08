@@ -23,6 +23,7 @@ import secrets
 import shutil
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from fastapi import Cookie, FastAPI, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
@@ -34,7 +35,6 @@ from ..config.loader import (delete_config, fandom_docs, file_sha, frames_dir,
 from ..config.envfile import set_env_var
 from ..llm.client import MODEL_PRESETS, PROVIDERS
 from .. import labels
-from ..media.filters import CATALOGUE as FILTER_CATALOGUE
 from ..media.generate import (PHOTO_MODELS, VIDEO_MODELS, env_keys,
                               model_clip_seconds)
 from ..tts import ENGINES as TTS_ENGINES
@@ -49,7 +49,12 @@ from ..pipeline.loop import check_params
 from ..pipeline.checkpoint import Checkpoint
 from ..models import CATALOG as MODEL_CATALOG
 from ..models import ModelStore, human_size
-from .runs import Supervisor
+from .params import (FILTER_HELP, drama_params, fandom_params, info_params,
+                     loop_of)
+from .runs import Supervisor, parked
+
+if TYPE_CHECKING:  # the bot imports this module, never the other way round
+    from ..bot.auth import TelegramAuth
 
 log = logging.getLogger(__name__)
 HERE = Path(__file__).parent
@@ -57,7 +62,15 @@ HERE = Path(__file__).parent
 ALLOWED_SUFFIXES = IMAGE_EXTS | VIDEO_EXTS
 
 
-def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0) -> FastAPI:
+def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
+               tg: "TelegramAuth | None" = None) -> FastAPI:
+    """The app. `tg`, when given, is the bot serving this page as its Mini App.
+
+    It does two things and no more: it lets a Telegram user sign in with what Telegram
+    already signed for them (`/api/tg-login`), and — because a bot that has a Mini App
+    also has a public address — it closes the anonymous door. Without a password the
+    server is loopback-only and open, which is right at a desk and would be catastrophic
+    at the far end of a tunnel."""
     cfg = store.global_cfg.web
     app = FastAPI(title="slopgen", docs_url=None, redoc_url=None)
     sup = Supervisor(store, cfg.max_parallel)
@@ -89,21 +102,74 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0) -> Fast
 
     # -- auth --------------------------------------------------------------
 
+    @app.middleware("http")
+    async def carry_token(request: Request, call_next):
+        """Let the session arrive as a header or a `?t=` as well as a cookie.
+
+        Inside Telegram the page can be a third-party iframe (Telegram Web) where the
+        browser is entitled to drop our cookie on the floor, and a Mini App that works
+        on a phone and not on a laptop is a bug reported as "it just spins". So the
+        token has two other ways in — and the query one exists because `<img src>`,
+        `<video src>` and `EventSource` cannot send a header at all.
+
+        Rewriting the request's cookie header rather than teaching forty routes about
+        this is the whole trick: everything downstream keeps reading one cookie."""
+        token = request.query_params.get("t") or request.headers.get("x-slopgen-token")
+        if token and "slopgen" not in request.cookies:
+            jar = request.headers.get("cookie", "")
+            merged = f"{jar}; slopgen={token}" if jar else f"slopgen={token}"
+            request.scope["headers"] = [(k, v) for k, v in request.scope["headers"]
+                                        if k != b"cookie"] + [(b"cookie", merged.encode())]
+        return await call_next(request)
+
     def guard(token: str | None) -> None:
-        if not cfg.password:
+        if token in sessions:
             return
-        if token not in sessions:
+        # No password used to mean no door at all, which is safe on loopback and only
+        # there. A bot serving this page has an address on the open internet, so its
+        # presence is itself a reason to ask who is knocking.
+        if cfg.password or tg is not None:
             raise HTTPException(status_code=401, detail="not signed in")
 
-    @app.post("/api/login")
-    async def login(password: str = Form(...)) -> JSONResponse:
-        if not cfg.password or not secrets.compare_digest(password, cfg.password):
-            raise HTTPException(status_code=401, detail="wrong password")
+    def _issue(request: Request, payload: dict) -> JSONResponse:
+        """Hand out a session, as a cookie and as a token in the body.
+
+        Both, because they fail in different places: the cookie carries `<video src>`
+        and the event stream, and the token survives a browser that will not keep a
+        third-party cookie. `SameSite=None` needs `Secure`, and `Secure` needs the
+        request to have actually arrived over TLS — which behind the tunnel it did,
+        one hop upstream, hence the forwarded header."""
         token = secrets.token_urlsafe(32)
         sessions.add(token)
-        r = JSONResponse({"ok": True})
-        r.set_cookie("slopgen", token, httponly=True, samesite="lax")
+        https = (request.headers.get("x-forwarded-proto", request.url.scheme) == "https")
+        r = JSONResponse({**payload, "token": token})
+        r.set_cookie("slopgen", token, httponly=True,
+                     samesite="none" if https else "lax", secure=https)
         return r
+
+    @app.post("/api/login")
+    async def login(request: Request, password: str = Form(...)) -> JSONResponse:
+        if not cfg.password or not secrets.compare_digest(password, cfg.password):
+            raise HTTPException(status_code=401, detail="wrong password")
+        return _issue(request, {"ok": True})
+
+    @app.post("/api/tg-login")
+    async def tg_login(request: Request) -> JSONResponse:
+        """Sign in with what Telegram already signed.
+
+        `initData` is a query string the client hands the page, stamped with an HMAC
+        only somebody holding the bot token can produce — so verifying it is the whole
+        of authentication here, and there is no password to type on a phone. Being a
+        valid Telegram user is not enough: the same allow-list the chat is filtered by
+        decides this too, because the Mini App can start runs and spend real quota."""
+        if tg is None:
+            raise HTTPException(status_code=404, detail="this server has no bot")
+        body = await request.json()
+        who = tg.verify(str(body.get("init_data", "")))
+        if who is None:
+            raise HTTPException(status_code=401, detail="Telegram did not vouch for that")
+        log.info("web: %s signed in through Telegram", who)
+        return _issue(request, {"ok": True, "user": who})
 
     def _t(key: str) -> str:
         """A word the server itself has to produce — a run's default title, a queue
@@ -179,7 +245,10 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0) -> Fast
     @app.get("/api/me")
     async def me(slopgen: str | None = Cookie(default=None)) -> dict:
         return {"needs_password": bool(cfg.password),
-                "signed_in": not cfg.password or slopgen in sessions}
+                # whether the page may sign itself in with Telegram's own signature,
+                # which is the only way in when the bot is serving and no password is set
+                "telegram": tg is not None,
+                "signed_in": slopgen in sessions or not (cfg.password or tg)}
 
     @app.post("/api/reload")
     async def reload(slopgen: str | None = Cookie(default=None)) -> dict:
@@ -753,47 +822,6 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0) -> Fast
 
     # -- runs --------------------------------------------------------------
 
-    def parked(run) -> dict:
-        """What this run is actually waiting for, read off its own folder.
-
-        A status is not enough to decide what may be done with a run. "stopped" says
-        nothing about whether it was sitting on a breakpoint when it stopped, and
-        "paused" says nothing about how many pictures are still owed. Offering every
-        action to every settled run was the first version, and it meant most buttons
-        did nothing when pressed — which reads as a broken page rather than as an
-        answer.
-
-        The checkpoint is small and this is cached against its mtime, so a list of
-        forty runs costs forty stat calls and nothing else."""
-        if run.run_dir is None:
-            return {"review_stage": "", "asks": 0, "video": False}
-        cp_file = run.run_dir / "checkpoint.json"
-        try:
-            stamp = cp_file.stat().st_mtime
-        except OSError:
-            return {"review_stage": "", "asks": 0, "video": False}
-        cached = getattr(run, "_parked", None)
-        if cached and cached[0] == stamp:
-            return cached[1]
-        info = {"review_stage": "", "asks": 0, "video": False}
-        try:
-            cp = Checkpoint.load(run.run_dir)
-            for i in range(run.params.count):
-                info["review_stage"] = info["review_stage"] or cp.review_stage(i)
-        except Exception:
-            pass
-        for work in (p for p in run.run_dir.iterdir() if p.is_dir()):
-            mp = manual.manifest_path(work)
-            if mp.is_file():
-                try:
-                    mf = manual.ManualManifest.model_validate_json(mp.read_text(encoding="utf-8"))
-                    info["asks"] += sum(1 for sh in mf.shots if sh.status != "delivered")
-                except Exception:
-                    pass
-            info["video"] = info["video"] or any(work.glob("*.mp4"))
-        run._parked = (stamp, info)
-        return info
-
     @app.get("/api/runs")
     async def runs(slopgen: str | None = Cookie(default=None)) -> list[dict]:
         guard(slopgen)
@@ -812,49 +840,11 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0) -> Fast
             out.append(d)
         return out
 
-    # -- what a form MEANS, per mode -------------------------------------
+    # -- starting a run ----------------------------------------------------
     #
-    # One function per mode, and the endpoints below are three lines each on top of it.
-    # They were inline until a loop could be retuned: the browser edits a loop's
-    # settings in the same form that starts a run, so "what this form means" had to
-    # become something two doors can ask rather than something one of them does.
-
-    def _fandom_params(b: dict) -> RunParams:
-        """A fandom run, from the form's body.
-
-        The chain is built here rather than named, because a fandom's picture comes
-        from ONE source for the whole video — `frames` most of all, which is
-        all-or-nothing by construction (see framebase.active). So the form picks the
-        source and this turns it into a one-stage chain, which is what the pipeline
-        reads. Hardcoding `frames` was the first version, and it left the old
-        per-shot modes unreachable from the browser entirely."""
-        world = str(b.get("fandom", ""))
-        if world not in store.fandoms:
-            raise HTTPException(status_code=404, detail=f"no world named {world!r}")
-        medium = b.get("medium", "photo")
-        source = str(b.get("source") or ("frames" if medium == "photo" else "wan2.1"))
-        allowed = (list(PHOTO_MODELS) + ["manual", "search"]) if medium == "photo" \
-            else list(VIDEO_MODELS)
-        if source not in allowed:
-            raise HTTPException(status_code=422,
-                                detail=f"{source!r} does not make {medium}")
-        params = RunParams(
-            lang=str(b.get("lang", "ru")), content_type="", mode="fandom",
-            fandom=world, fandom_voice=b.get("voice", "resident"), medium=medium,
-            scenario=str(b.get("scenario", "")),
-            duration_s=float(b.get("duration_s", 45.0)),
-            count=int(b.get("count", 1)),
-            dry_run=bool(b.get("dry_run", True)),
-            breakpoints=[x for x in b.get("breakpoints", []) if isinstance(x, str)],
-            frame_fit=b.get("frame_fit", "close"),
-            cut_sensitivity=float(b.get("cut_sensitivity", 0.35)),
-            **_common(b),
-            manual_orchestration=OrchestrationConfig(
-                name=source,
-                stages=[OrchestrationStage(model=source, metric="percent", amount=100.0,
-                                           clip_seconds=model_clip_seconds(source))]),
-        )
-        return params
+    # Three lines each, because what a form MEANS lives in web/params.py — the chat
+    # reads the same functions, so a run started by a button in Telegram and one
+    # started by this form are the same run built the same way.
 
     @app.post("/api/runs/fandom")
     async def start_fandom(request: Request,
@@ -862,69 +852,11 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0) -> Fast
         """Start a fandom run, or a loop of them."""
         guard(slopgen)
         b = await request.json()
-        params = _fandom_params(b)
+        params = fandom_params(store, b)
         title = str(b.get("title", "")) or f'{_t("web.mode.fandom")} · {params.fandom}'
-        loop = _loop_of(b)
+        loop = loop_of(b)
         return sup.start_loop(params, title, **loop).as_dict() if loop \
             else sup.start(params, title=title).as_dict()
-
-    def _loop_of(b: dict) -> dict | None:
-        """The loop block a form may send, or None when it asked for a plain run.
-
-        The three mode forms send the same block, and it is deliberately the ONLY
-        difference between starting one video and starting a hundred: a loop is this run
-        with its topic left open, so every other setting on the form means exactly what
-        it meant before (see pipeline/loop.py)."""
-        loop = b.get("loop")
-        if not isinstance(loop, dict) or not loop.get("on"):
-            return None
-        return {
-            "source": "me" if str(loop.get("source", "ai")) == "me" else "ai",
-            "limit": max(0, int(loop.get("limit", 0) or 0)),
-            "on_park": "go_on" if str(loop.get("on_park", "hold")) == "go_on" else "hold",
-            "topics": [str(t).strip() for t in (loop.get("topics") or []) if str(t).strip()],
-        }
-
-    def _common(b: dict) -> dict:
-        """The settings every mode shares, read off one block rather than three.
-
-        They were missing from the browser entirely, and `filters` is the one that
-        mattered most: the montage look — grain, tape, tube, glitch — is most of how
-        this genre reads, and it is the only picture control that works in every mode
-        and from every source, because it is asked of ffmpeg rather than of a model."""
-        out: dict = {
-            "profanity": int(b.get("profanity", 0)),
-            "ad": str(b.get("ad", "")),
-            "ad_mode": b.get("ad_mode", "both"),
-            "push": str(b.get("push", "")),
-            "visual_notes": str(b.get("visual_notes", "")),
-            "visual_style": str(b.get("visual_style", "")),
-            "clean_subtitles": bool(b.get("clean_subtitles", False)),
-            "voice_override": str(b.get("voice_override", "")),
-            "tts_engine": str(b.get("tts_engine", "")),
-            "tts_rate": int(b.get("tts_rate", 0)),
-            "keep_temp": bool(b.get("keep_temp", False)),
-            "filters": {k: max(0, min(100, int(v)))
-                        for k, v in (b.get("filters") or {}).items()
-                        if k in FILTER_HELP and int(v) > 0},
-        }
-        if b.get("subtitle_style"):
-            out["subtitle_style"] = b["subtitle_style"]
-        return out
-
-    def _info_params(b: dict) -> RunParams:
-        """The minute-of-useless-info clip: a topic, or none and the model invents one."""
-        return RunParams(
-            lang=str(b.get("lang", "ru")),
-            content_type=str(b.get("content_type", "")),
-            mode="info", idea=str(b.get("idea", "")),
-            visuals=str(b.get("visuals", "classic")),
-            duration_s=float(b.get("duration_s", 45.0)),
-            count=int(b.get("count", 1)),
-            dry_run=bool(b.get("dry_run", True)),
-            breakpoints=[x for x in b.get("breakpoints", []) if isinstance(x, str)],
-            **_common(b),
-        )
 
     @app.post("/api/runs/info")
     async def start_info(request: Request,
@@ -932,40 +864,11 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0) -> Fast
         """Start an info run, or a loop of them."""
         guard(slopgen)
         b = await request.json()
-        params = _info_params(b)
+        params = info_params(store, b)
         title = str(b.get("title", "")) or _t("web.mode.info")
-        loop = _loop_of(b)
+        loop = loop_of(b)
         return sup.start_loop(params, title, **loop).as_dict() if loop \
             else sup.start(params, title=title).as_dict()
-
-    def _drama_params(b: dict) -> RunParams:
-        """The AI drama: a premise, a cast, and a generator chain.
-
-        The chain is the one thing this mode cannot default sensibly — it is what the
-        operator is rationing free tiers with — so it is named, and an unknown name is
-        refused here rather than silently falling back three stages later."""
-        orch = str(b.get("orchestration", ""))
-        if orch and orch not in store.orchestrations:
-            raise HTTPException(status_code=404, detail=f"no orchestration {orch!r}")
-        return RunParams(
-            lang=str(b.get("lang", "ru")), content_type="", mode="drama",
-            scenario=str(b.get("scenario", "")),
-            # the cast is resolved to the full character cards here rather than passed
-            # as names: `manual_cast` is what the pipeline reads, and a name it cannot
-            # find would otherwise become a person with no face three stages later
-            manual_cast=[store.characters[c] for c in b.get("cast", [])
-                         if isinstance(c, str) and c in store.characters],
-            orchestration=orch,
-            duration_s=float(b.get("duration_s", 45.0)),
-            parts=int(b.get("parts", 1)),
-            count=int(b.get("count", 1)),
-            dry_run=bool(b.get("dry_run", True)),
-            breakpoints=[x for x in b.get("breakpoints", []) if isinstance(x, str)],
-            duration_tol_s=float(b.get("duration_tol_s", 0.0)),
-            parts_iterative=bool(b.get("parts_iterative", True)),
-            clip_seconds=float(b.get("clip_seconds", 0.0)),
-            **_common(b),
-        )
 
     @app.post("/api/runs/drama")
     async def start_drama(request: Request,
@@ -973,9 +876,9 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0) -> Fast
         """Start a drama run, or a loop of them."""
         guard(slopgen)
         b = await request.json()
-        params = _drama_params(b)
+        params = drama_params(store, b)
         title = str(b.get("title", "")) or _t("web.mode.drama")
-        loop = _loop_of(b)
+        loop = loop_of(b)
         return sup.start_loop(params, title, **loop).as_dict() if loop \
             else sup.start(params, title=title).as_dict()
 
@@ -1056,14 +959,14 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0) -> Fast
         if loop is None:
             raise HTTPException(status_code=404, detail="no such loop")
         b = await request.json()
-        build = {"info": _info_params, "drama": _drama_params,
-                 "fandom": _fandom_params}[loop.params.mode]
-        params = build(b)
+        build = {"info": info_params, "drama": drama_params,
+                 "fandom": fandom_params}[loop.params.mode]
+        params = build(store, b)
         problems = check_params(store, params)
         if problems:  # a name no config has; the run would fail hours from now
             raise HTTPException(status_code=422, detail="; ".join(problems))
-        if _loop_of(b):  # the loop card sends the loop block back with the form
-            sup.edit_loop(loop_id, **{k: v for k, v in _loop_of(b).items()
+        if loop_of(b):  # the loop card sends the loop block back with the form
+            sup.edit_loop(loop_id, **{k: v for k, v in loop_of(b).items()
                                       if k != "topics"})
         return sup.retune_loop(loop_id, params).as_dict()
 
@@ -1319,9 +1222,6 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0) -> Fast
 
 # The API keys slopgen actually reads, and what each buys. `.env` may hold anything;
 # these are the ones a form has a reason to ask about.
-# The montage effects, as {key: what it does}. Read off the filter catalogue rather
-# than listed here, so an effect added there appears in the form on its own.
-FILTER_HELP = {e.key: e.note for e in FILTER_CATALOGUE}
 
 # What each key buys. The blurb is a label KEY, not the text: this list is read once
 # at import, while the interface language is a setting the operator changes at any

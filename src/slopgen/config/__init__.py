@@ -17,6 +17,7 @@ from .loader import (
 from .models import (
     AccountConfig,
     AdConfig,
+    BotConfig,
     CharacterConfig,
     ContentTypeConfig,
     CropTarget,
@@ -52,6 +53,7 @@ __all__ = [
     "write_frame_card",
     "AccountConfig",
     "AdConfig",
+    "BotConfig",
     "CharacterConfig",
     "ContentTypeConfig",
     "CropTarget",

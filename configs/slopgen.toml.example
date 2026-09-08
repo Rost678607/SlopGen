@@ -116,3 +116,34 @@ providers = [
 [defaults]
 count = 1
 ad_mode = "both"
+
+# The browser UI (`slopgen web`, and the same page the bot serves as a Mini App).
+# Loopback and no password is the only combination that is safe without thinking about
+# it; a password is what unlocks binding to the network, because this same page starts
+# runs and spends API quota.
+[web]
+host = "127.0.0.1"
+port = 8770
+password = ""
+max_parallel = 2
+
+# The Telegram front door (`slopgen bot`). The token lives in .env, never here.
+#
+# `allow_file` is the guest list: one Telegram id per line, re-read whenever it
+# changes, and the FIRST id is the owner — notices nobody asked for go there. The bot
+# writes an empty one on first start and tells anybody who messages it what their own
+# id is, which is the shortest path from "I made a bot" to "it answers me".
+#
+# Telegram opens a Mini App only over https, which a machine under a desk does not
+# have. `tunnel = "cloudflared"` raises a free Cloudflare quick tunnel and takes
+# whatever address comes back; it changes on every restart and that costs one message,
+# because the button is rebuilt from the current address rather than remembered. Have
+# your own domain? Put it in `public_url` and no tunnel is raised.
+[bot]
+token_env = "TELEGRAM_BOT_TOKEN"
+allow_file = "configs/bot_allow.txt"
+web = true
+tunnel = "cloudflared"
+public_url = ""
+deliver_video = true
+max_upload_mb = 50
