@@ -326,6 +326,124 @@ async function loadTts() {
       loadTts();
     };
   });
+  wireDemo(d);
+}
+
+// ------------------------------------------------------------- hearing a voice
+//
+// The terminal's demo spoke a line, played it once and was done: to hear it again you
+// paid for it again, which on the local model is another minute of CPU. Here a take is
+// KEPT — as a blob in this tab, with an <audio> of its own — so two voices can be put
+// next to each other and played back and forth, which is the actual question ("which
+// of these") rather than the one a single playthrough answers ("did that sound ok").
+//
+// The cache is deliberately the tab's memory and nothing else. The server streams the
+// audio back and keeps no file, so there is no folder anywhere filling up with takes,
+// and closing the tab is what clears them — no sweeping, no expiry, no surprise on
+// disk a week later. A reload costs the takes; that is the same bargain and the price
+// of it being honestly ephemeral.
+const demoTakes = new Map();  // key -> {id, url, engine, voice, lang, text}
+let takeSeq = 0;
+
+// What makes two takes the same take. Never put this in the markup: it joins free text
+// the operator typed, and a NUL separator does not survive the HTML parser — it comes
+// back as U+FFFD, so a `data-` attribute holding it stops matching the map it came
+// from and every row's button quietly does nothing. Rows carry a serial number and the
+// key stays in JS.
+const demoKey = (t) => [t.engine, t.voice, t.lang, t.text].join("\u0000");
+
+const takeRow = (id) => $(`#demo-takes [data-take="${id}"]`);
+
+function forgetTake(id) {
+  for (const [key, t] of demoTakes) {
+    if (t.id !== id) continue;
+    URL.revokeObjectURL(t.url);  // without this the blob outlives the row that played it
+    demoTakes.delete(key);
+    break;
+  }
+  drawTakes();
+}
+
+// Belt and braces: a closing tab frees its own blobs anyway, but revoking on the way
+// out says out loud that nothing here is meant to survive the tab.
+addEventListener("pagehide", () => {
+  demoTakes.forEach((t) => URL.revokeObjectURL(t.url));
+  demoTakes.clear();
+});
+
+function drawTakes() {
+  const box = $("#demo-takes");
+  if (!box) return;
+  if (!demoTakes.size) { box.innerHTML = ""; return; }
+  box.innerHTML = [...demoTakes.values()].reverse().map((t) => `
+    <div class="panel cfg-item" data-take="${t.id}">
+      <div class="row"><b>${esc(t.voice)}</b>
+        <span class="dim">${esc(t.engine)} · ${esc(t.lang)}</span>
+        <span class="grow"></span>
+        <button data-drop class="ghost">${lab("js.forget")}</button></div>
+      <audio controls preload="auto" src="${esc(t.url)}"></audio>
+      <p class="dim">${esc(t.text)}</p>
+    </div>`).join("");
+  box.querySelectorAll("[data-take]").forEach((el) => {
+    el.querySelector("[data-drop]").onclick = () => forgetTake(+el.dataset.take);
+  });
+}
+
+// The picker offers what this engine can actually say: its own catalogue for the
+// chosen language, plus every clone card — one namespace, the same one the pipeline
+// resolves a --voice against, so what is heard here is what a run would say.
+function fillDemoVoices(d) {
+  const eng = d.engines.find((e) => e.id === d.engine);
+  const lang = $("#demo-lang").value || "ru";
+  const names = [...((eng && eng.presets && eng.presets[lang]) || []), ...(d.cloned || [])];
+  const keep = $("#demo-voice").value;
+  $("#demo-voice").innerHTML = names.map((n) =>
+    `<option${n === keep ? " selected" : ""}>${esc(n)}</option>`).join("")
+    || `<option value="">${lab("js.no-voices-yet")}</option>`;
+}
+
+function wireDemo(d) {
+  const langs = Object.keys(d.demo_text || { ru: "", en: "" });
+  const langSel = $("#demo-lang"), voiceSel = $("#demo-voice"), textEl = $("#demo-text");
+  const wasLang = langSel.value;
+  langSel.innerHTML = langs.map((l) =>
+    `<option${l === wasLang ? " selected" : ""}>${esc(l)}</option>`).join("");
+  const setText = () => (textEl.value = d.demo_text[langSel.value] || "");
+  if (!textEl.value) setText();
+  langSel.onchange = () => { setText(); fillDemoVoices(d); };
+  fillDemoVoices(d);
+
+  $("#demo-go").onclick = async () => {
+    const t = { engine: d.engine, voice: voiceSel.value, lang: langSel.value,
+                text: textEl.value.trim() };
+    if (!t.voice) return say(lab("js.demo-no-voice"), true);
+    if (!t.text) return say(lab("js.demo-no-text"), true);
+    const key = demoKey(t);
+    // already spoken once — the whole point is not to pay for it twice
+    if (demoTakes.has(key)) {
+      const el = takeRow(demoTakes.get(key).id).querySelector("audio");
+      el.currentTime = 0;
+      el.play();
+      return say(lab("js.demo-cached"));
+    }
+    const btn = $("#demo-go");
+    btn.disabled = true;
+    $("#demo-status").textContent = lab("js.demo-working");
+    try {
+      const r = await fetch("/api/tts/demo", { method: "POST",
+        headers: { "content-type": "application/json" }, body: JSON.stringify(t) });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
+      const id = ++takeSeq;
+      demoTakes.set(key, { ...t, id, url: URL.createObjectURL(await r.blob()) });
+      drawTakes();
+      takeRow(id).querySelector("audio").play();
+      $("#demo-status").textContent = "";
+    } catch (err) {
+      $("#demo-status").textContent = "";
+      say(`${lab("js.demo-failed")}: ${err.message}`, true);
+    } finally { btn.disabled = false; }
+  };
+  drawTakes();
 }
 
 async function loadVoices() {

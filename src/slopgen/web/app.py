@@ -26,7 +26,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from fastapi import Cookie, FastAPI, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse, Response,
+                               StreamingResponse)
+from starlette.concurrency import run_in_threadpool
 from pydantic import ValidationError
 
 from ..config import ConfigStore, RunParams
@@ -43,6 +45,8 @@ from .. import labels
 from ..media.generate import (PHOTO_MODELS, VIDEO_MODELS, env_keys,
                               model_clip_seconds)
 from ..tts import ENGINES as TTS_ENGINES
+from ..tts.base import VOICE_PRESETS
+from ..tts.demo import DEMO_TEXT, speak as speak_demo
 from ..config.models import (AccountConfig, AdConfig, CharacterConfig, CropTarget,
                              FrameCard, LLMProfile, OrchestrationConfig,
                              OrchestrationConfig, OrchestrationStage, PresetConfig,
@@ -545,9 +549,14 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
                  "gives_timings": e.gives_timings, "clones": e.clones,
                  "catalogue": e.catalogue,
                  "keys": [{"var": v, "set": bool(env_keys(v))} for v in e.key_envs],
-                 "models": list(e.models), "packages": list(e.packages)}
+                 "models": list(e.models), "packages": list(e.packages),
+                 "presets": VOICE_PRESETS.get(e.id, {})}
                 for e in TTS_ENGINES.values()
             ],
+            # the clones are engine-independent: a card IS the voice, and any engine
+            # that clones can speak with it (see config/README on configs/voices)
+            "cloned": sorted(store.voices),
+            "demo_text": DEMO_TEXT,
         }
 
     @app.put("/api/tts")
@@ -569,6 +578,53 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
             update_global("tts", values)
         return {"engine": store.global_cfg.tts.engine,
                 "check_reference": store.global_cfg.tts.check_reference}
+
+    # Audio content types by container. The browser decides whether it can play a
+    # thing from this header, so guessing wrong is a silent failure to play.
+    _DEMO_MIME = {".mp3": "audio/mpeg", ".wav": "audio/wav", ".ogg": "audio/ogg",
+                  ".flac": "audio/flac", ".m4a": "audio/mp4"}
+
+    @app.post("/api/tts/demo")
+    async def tts_demo(request: Request,
+                       slopgen: str | None = Cookie(default=None)) -> Response:
+        """Speak one line and hand back the audio ITSELF, not a link to it.
+
+        Nothing is kept on this side. The take is synthesized into a temporary
+        directory, read out, and the directory goes away with the request — the copy
+        that survives is the one the browser holds, which is what makes "clear the
+        cache" mean closing the tab rather than remembering to sweep a folder. The
+        terminal's demo wrote takes into a shared temp directory and left them there,
+        which is fine for a process the operator quits and wrong for a server that
+        runs for days.
+
+        Run in a worker thread, not on the event loop: a local take costs about a
+        minute of CPU, and blocking here would stall every open run's event stream
+        for that minute."""
+        guard(slopgen)
+        b = await request.json()
+        engine = str(b.get("engine") or store.global_cfg.tts.engine)
+        if engine not in TTS_ENGINES:
+            raise HTTPException(status_code=404, detail=f"no engine {engine!r}")
+        lang = str(b.get("lang") or store.global_cfg.ui.lang or "ru")
+        voice = str(b.get("voice") or "").strip()
+        if not voice:
+            raise HTTPException(status_code=422, detail="pick a voice first")
+        text = str(b.get("text") or "").strip() or DEMO_TEXT.get(lang, DEMO_TEXT["en"])
+
+        def take() -> tuple[bytes, str]:
+            import tempfile
+
+            with tempfile.TemporaryDirectory(prefix="slopgen-demo-") as d:
+                out = speak_demo(store, engine, voice, lang, text, Path(d))
+                return out.read_bytes(), out.suffix
+
+        try:
+            data, suffix = await run_in_threadpool(take)
+        except Exception as e:  # noqa: BLE001 — a missing key, missing weights, bad take
+            raise HTTPException(status_code=502,
+                                detail=f"{type(e).__name__}: {e}") from e
+        return Response(content=data,
+                        media_type=_DEMO_MIME.get(suffix, "application/octet-stream"))
 
     @app.get("/api/voices")
     async def list_voices(slopgen: str | None = Cookie(default=None)) -> list[dict]:

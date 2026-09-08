@@ -573,3 +573,7 @@ input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;
     background:color-mix(in srgb, var(--accent) 12%, var(--panel))}
   .fxcard .fx-rows{grid-template-columns:1fr}
 }
+
+/* Two takes are put here to be compared, so both scrubbers want the width — the
+   default 300px player makes a ten-second line look like a dot. */
+#demo-takes audio{width:100%;margin:6px 0}

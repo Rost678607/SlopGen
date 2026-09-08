@@ -2241,3 +2241,41 @@ EN.update({
                      "stand. Empty takes the role from the world's fandom.toml, or "
                      "works it out from the lore itself.",
 })
+
+# Hearing a voice before a video is committed to it. The take is kept in the tab so
+# two voices can be compared, and closing the tab is what clears them.
+RU.update({
+    "web.demo.head": "послушать",
+    "web.demo.note": "Одна реплика, прямо сейчас, выбранным выше движком — без "
+                     "конвейера и субтитров, только голос. На локальной модели первый "
+                     "раз это займёт около минуты, пока грузятся веса. Записи остаются "
+                     "здесь, пока вкладка открыта: их можно переслушивать и сравнивать "
+                     "между собой, а на диске не остаётся ничего.",
+    "web.demo.voice": "голос",
+    "web.demo.text": "что сказать",
+    "web.demo.go": "🔊 послушать",
+    "js.forget": "убрать",
+    "js.demo-working": "говорит…",
+    "js.demo-cached": "эта запись уже есть — играю её",
+    "js.demo-failed": "не смог сказать",
+    "js.demo-no-voice": "сначала выбери голос",
+    "js.demo-no-text": "напиши, что сказать",
+})
+EN.update({
+    "web.demo.head": "listen",
+    "web.demo.note": "One line, spoken right now by the engine above — no pipeline, no "
+                     "subtitles, just the voice. On the local model the first take "
+                     "takes about a minute while the weights load. Takes stay here for "
+                     "as long as this tab is open, to be replayed and compared against "
+                     "each other; nothing is left on disk.",
+    "web.demo.voice": "voice",
+    "web.demo.text": "what it should say",
+    "web.demo.go": "🔊 speak a demo",
+    "js.forget": "forget",
+    "js.demo-working": "speaking…",
+    "js.demo-cached": "already spoken — playing it back",
+    "js.demo-failed": "could not speak it",
+    "js.demo-no-voice": "pick a voice first",
+    "js.demo-no-text": "type something for it to say",
+})
+

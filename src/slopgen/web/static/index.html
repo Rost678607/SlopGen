@@ -138,6 +138,19 @@
         <div id="engines"></div>
         <label class="inline"><input type="checkbox" id="tts-check" data-l="web.cfg.tts.check"> проверять референс перед клонированием</label>
       </div>
+      <div class="panel">
+        <h3 data-l="web.demo.head">послушать</h3>
+        <p class="dim" data-l="web.demo.note"></p>
+        <div class="grid">
+          <label data-l="web.f.lang">язык<select id="demo-lang"></select></label>
+          <label data-l="web.demo.voice">голос<select id="demo-voice"></select></label>
+        </div>
+        <label class="wide" data-l="web.demo.text">что сказать
+          <textarea id="demo-text" rows="2"></textarea></label>
+        <div class="row"><span class="dim" id="demo-status"></span><span class="grow"></span>
+          <button id="demo-go" class="primary" data-l="web.demo.go">🔊 послушать</button></div>
+        <div id="demo-takes"></div>
+      </div>
     </div>
 
     <div id="cfg-voices" hidden>

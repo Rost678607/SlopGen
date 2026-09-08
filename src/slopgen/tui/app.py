@@ -1789,16 +1789,9 @@ def _play_audio(host, path: Path) -> bool:
         return False
 
 
-# What a demo says. Long enough to judge a voice on — it has to carry a question, a
-# pause and a number, because a voice that reads a flat clause well can still fumble
-# all three — and short enough that the local model, at five minutes of CPU per minute
-# of speech, answers while you are still waiting for it.
-DEMO_TEXT = {
-    "ru": "Марта закрыла дверь и обернулась. «Ты правда думаешь, что это закончится хорошо?» "
-          "Их было двадцать семь, а осталось трое.",
-    "en": "Martha closed the door and turned around. \"Do you really think this ends well?\" "
-          "There were twenty-seven of them, and three are left.",
-}
+# The demo line, the voice-resolution rule and the clipper live in `tts/demo.py`, where
+# the browser reads them too. This file stays their address for everything below.
+from ..tts.demo import DEMO_TEXT, clipper as _demo_clipper, voice_for  # noqa: E402,F401
 
 
 def demo_path(store: ConfigStore, engine: str, voice: str, suffix: str) -> Path:
@@ -6946,19 +6939,7 @@ class FootagePane(Vertical):
 
 
 def _voice_for_demo(store: ConfigStore, name: str, lang: str):
-    """A menu entry turned into something an engine can speak with, by the SAME rule
-    the pipeline uses (`stages/tts._resolve_voice`): a name that matches a card under
-    `configs/voices/` is a clone, anything else is a catalogue id. One namespace, so
-    what you hear here is what a run with that `--voice` will say."""
-    from ..tts import Voice
-
-    card = store.voices.get(name)
-    if card is None:
-        return Voice(name=name, lang=lang)
-    ref = card.ref_path
-    return Voice(name=name, lang=card.lang or lang,
-                 ref_audio=Path(ref) if ref else None,
-                 ref_text=card.text, ref_url=card.ref_url)
+    return voice_for(store, name, lang)
 
 
 class _DemoMixin:
@@ -7034,29 +7015,7 @@ class _DemoMixin:
             return
         self.app.call_from_thread(self._demo_done, status_id, None, time.time() - t0, last)
 
-    @staticmethod
-    def _clipper(store, lang: str):
-        """A function that cuts whatever a cloned take says outside the line, or None
-        when the recogniser it needs is not installed — a demo is worth hearing even
-        then, so this degrades rather than refuses."""
-        from ..models import ModelStore
-        from ..tts import align as aligner
-        from ..media.ffmpeg import duration_of
-
-        try:
-            model_dir = ModelStore(store.global_cfg.paths.models).require(
-                aligner.model_for(lang, store.global_cfg.tts))
-        except Exception:  # noqa: BLE001 — no recogniser, no clipping
-            return None
-
-        def _clip(engine, path, text: str, voice) -> None:
-            from ..tts import verify_take
-
-            _words, seconds, matched = aligner.clip_to_script(
-                path, text, model_dir, duration_of(path))
-            verify_take(engine, text, voice, seconds, matched)
-
-        return _clip
+    _clipper = staticmethod(_demo_clipper)
 
     def _demo_retrying(self, status_id: str, attempt: int, total: int) -> None:
         t = lambda k: _label(self.app, k)  # noqa: E731
