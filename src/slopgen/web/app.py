@@ -36,6 +36,7 @@ from ..config.envfile import set_env_var
 from ..llm import characters as char_ai
 from ..llm import lore as lore_ai
 from ..llm import rewrite as bp_ai
+from ..llm import topic as topic_ai
 from ..llm.client import ChatLLM, MODEL_PRESETS, PROVIDERS
 from .. import labels
 from ..media.generate import (PHOTO_MODELS, VIDEO_MODELS, env_keys,
@@ -874,6 +875,35 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
             log.exception("brief ai failed")
             raise HTTPException(status_code=502, detail=f"{type(e).__name__}: {e}")
         return {"brief": brief}
+
+    @app.post("/api/ai/topic")
+    async def ai_topic(request: Request, slopgen: str | None = Cookie(default=None)) -> dict:
+        """Info: what this clip is about, in one sentence.
+
+        The run invents this for itself when the idea is left blank — the point of
+        asking here is to SEE it, and change it, before it becomes a video. Same
+        prompt the stage uses, and the same history: topics already made in this niche
+        and language are named so the model does not hand back one of them."""
+        guard(slopgen)
+        b = await request.json()
+        lang = str(b.get("lang") or "en")
+        kind = str(b.get("content_type") or "")
+        ct = store.content_types.get(kind)
+        brief = (ct.idea_brief.get(lang) or next(iter(ct.idea_brief.values()), "")) if ct else ""
+        hist = store.global_cfg.paths.state / "history.json"
+        try:
+            recent = [h.get("topic", "") for h in json.loads(hist.read_text())[-30:]
+                      if h.get("content_type") == kind and h.get("lang") == lang]
+        except Exception:  # no history yet, or one written by a version that moved on
+            recent = []
+        try:
+            topic = topic_ai.write_topic(ChatLLM(store.active_llm_profile()), lang, brief,
+                                         recent, str(b.get("current", "")),
+                                         str(b.get("instruction", "")))
+        except Exception as e:
+            log.exception("topic ai failed")
+            raise HTTPException(status_code=502, detail=f"{type(e).__name__}: {e}")
+        return {"topic": topic}
 
     @app.post("/api/ai/story")
     async def ai_story(request: Request, slopgen: str | None = Cookie(default=None)) -> dict:

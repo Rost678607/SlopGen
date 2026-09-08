@@ -1715,6 +1715,18 @@ wireAi("f-brief-ai", async (instruction) => {
   return lab("js.ai-done");
 });
 
+wireAi("i-topic-ai", async (instruction) => {
+  const form = $("#infoform"), f = new FormData(form);
+  const r = await api("/api/ai/topic", { method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ lang: f.get("lang") || "ru",
+                           content_type: f.get("content_type") || "",
+                           current: f.get("idea") || "", instruction }) });
+  if (!r.topic) return lab("js.ai-nothing");
+  aiFilled(form.querySelector('[name="idea"]'), r.topic);
+  return lab("js.ai-done");
+});
+
 wireAi("d-story-ai", async (instruction) => {
   const form = $("#dramaform"), f = new FormData(form);
   const r = await api("/api/ai/story", { method: "POST",

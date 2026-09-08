@@ -382,6 +382,11 @@ const FORMS = {
           "l": "web.f.idea"
         },
         {
+          "ai": "i-topic-ai",
+          "ph": "web.a.aitopic",
+          "go": "web.f.writetopic"
+        },
+        {
           "f": "profanity",
           "kind": "range",
           "min": "0",

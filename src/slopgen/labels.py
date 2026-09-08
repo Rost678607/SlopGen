@@ -2155,3 +2155,12 @@ EN.update({
     'js.ai-cast': 'added to the cast:',
     'js.ai-invented': 'made up, but not saved:',
 })
+
+RU.update({
+    'web.f.writetopic': 'придумать тему',
+    'web.a.aitopic': 'о чём: про еду, спорнее, без цифр в начале',
+})
+EN.update({
+    'web.f.writetopic': 'come up with a topic',
+    'web.a.aitopic': 'what about: food, more arguable, no numbers up front',
+})
