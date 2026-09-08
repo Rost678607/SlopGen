@@ -91,11 +91,19 @@ SYSTEM = (
     "narrator furnishing the world out of our own.\n"
     '  • "register": how people here talk — vocabulary, formality, what they '
     "understate. One or two sentences.\n"
+    '  • "viewer_role": who a person newly arrived in this world becomes — what they '
+    "are called, what they are given, what they are set to doing, and what they may "
+    "and may not become from there. This is the position ANY of these records could be "
+    "explained TO, so give the commonest one rather than a remarkable one: the rank "
+    "most people here hold, not the one the stories are about. Where the records "
+    "describe no arrival at all, say instead what position a person here would be "
+    "assumed to hold unless told otherwise. One or two sentences, in the records' own "
+    "words, and name the term this world calls that person by.\n"
     "Write every field in {lang}, except proper nouns and terms, which keep the "
     "records' spelling.\n"
     'Respond with JSON only: {{"premise": "...", "rules": ["..."], "glossary": ["..."], '
     '"figures": ["..."], "places": ["..."], "factions": ["..."], "timeline": ["..."], '
-    '"taboos": ["..."], "register": "..."}}.'
+    '"taboos": ["..."], "register": "...", "viewer_role": "..."}}.'
 )
 
 # Rendered order = reading order for the writer: what the world IS, then what binds
@@ -103,6 +111,10 @@ SYSTEM = (
 _SECTIONS = [
     ("premise", "WHAT THIS WORLD IS"),
     ("register", "HOW PEOPLE HERE TALK"),
+    # Who any of this could be explained TO. The `usher` voice speaks to this person
+    # (see stages/fandom_script.ROLE_INFER); the other two simply gain a sense of whose
+    # eye level the world is described from, which costs one line.
+    ("viewer_role", "WHO A NEWCOMER HERE BECOMES"),
     ("rules", "HOW THE WORLD WORKS — never break these"),
     ("taboos", "WHAT DOES NOT EXIST HERE — never put these on screen or in the mouth"),
     ("glossary", "THE WORLD'S OWN WORDS"),

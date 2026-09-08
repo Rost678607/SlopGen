@@ -1629,6 +1629,10 @@ $("#startform").onsubmit = async (e) => {
   const f = new FormData(e.target);
   const body = {
     fandom: f.get("fandom"), voice: f.get("voice"), lang: f.get("lang") || "ru",
+    // sent whatever the narrator is: the field is hidden for the other two, and a
+    // hidden field still carries whatever was last typed in it, which the server
+    // ignores for anyone but the usher
+    viewer_role: f.get("viewer_role") || "",
     fandom_invent: f.get("fandom_invent") === "on",
     medium: f.get("medium"), source: f.get("source"),
     scenario: f.get("scenario"), title: f.get("title"),

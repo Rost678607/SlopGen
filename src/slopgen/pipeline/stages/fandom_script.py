@@ -433,6 +433,71 @@ SYSTEM_CHRONICLER = (
 )
 
 
+# --- who "you" is, for the usher voice -------------------------------------
+#
+# The voice needs an addressee before it can say a single sentence, and there are three
+# places that answer could come from, in falling order of authority: the run (`params.
+# viewer_role`), the world (`FandomConfig.viewer_role`), and — when neither is set —
+# the records themselves. The last one is not a fallback so much as the normal case:
+# the canon compiler already works out WHO A NEWCOMER HERE BECOMES from any lore handed
+# to it, so a world nobody has annotated still addresses the same person in every beat
+# instead of a different one per window.
+#
+# What the role fixes is the ADDRESSEE, never the subject. That distinction is the
+# whole value of the setting: a piece told to a clerk can be about the floor above
+# them, about a promotion they have not been offered, about a room they will never be
+# let into — it is simply told from where they stand, as what they would hear of it and
+# what it would cost them to go and look. Without the line below, a writer handed a
+# subject above its listener's station quietly promotes the listener to reach it.
+ROLE_RULE = (
+    "\nWHO 'YOU' IS: {role}\n"
+    "That is the person you speak to, for the whole piece, and it overrides anything "
+    "the records might suggest instead. Never swap them for someone else partway "
+    "through, and never widen them into everyone here.\n"
+    "It fixes WHO IS LISTENING, not what the piece is about. Where the material sits "
+    "above them, beside them or somewhere they have never been let into, tell it TO "
+    "them from where they stand: what reaches them of it, what it would mean for them, "
+    "what it would cost them to go and see. Do not promote them to reach the subject, "
+    "and do not shrink the subject to what they already know.\n"
+)
+ROLE_INFER = (
+    "\nWHO 'YOU' IS is not stated, so settle it before you write and keep it for the "
+    "whole piece. Read the records for the position a person newly arrived here ends "
+    "up in — what they are called, what they are given, what they are set to doing — "
+    "and speak to THAT person throughout. Take the commonest position, not a "
+    "remarkable one. Where the records describe no arrival, take the position a person "
+    "here would be assumed to hold unless told otherwise.\n"
+    "Whatever you settle on, it fixes WHO IS LISTENING, not what the piece is about: "
+    "material from above or beside them is told TO them from where they stand, not by "
+    "moving them to it.\n"
+)
+
+
+# The planner does not write a sentence, so the same block has to arrive saying what
+# an addressee changes about a PLAN: the shape of the stretches, not their wording.
+OUTLINE_ROLE_LEAD = (
+    "\nTHE PIECE IS SPOKEN TO ONE PERSON STANDING IN THIS WORLD, so plan it as "
+    "something said to them: what they will need, what will happen to them, what they "
+    "must not do, what they may choose. A stretch that merely describes the world is a "
+    "stretch written for the wrong voice.\n"
+)
+
+
+def outline_role_rule(ctx) -> str:
+    block = role_rule(ctx)
+    return OUTLINE_ROLE_LEAD + block if block else ""
+
+
+def role_rule(ctx) -> str:
+    """The addressee block for the usher voice, and nothing at all for the other two —
+    a resident's "I" and a chronicler's reader are already settled by their prompts."""
+    if ctx.params.fandom_voice != "usher":
+        return ""
+    role = (ctx.params.viewer_role
+            or (ctx.fandom.viewer_role if ctx.fandom else "")).strip()
+    return ROLE_RULE.format(role=role) if role else ROLE_INFER
+
+
 SYSTEM_USHER = (
     "You are writing a narrated vertical video, in {lang}, spoken TO one person by "
     "someone who has been in this world far longer than they have. The listener is "
@@ -448,6 +513,7 @@ SYSTEM_USHER = (
     "single distinction is what keeps this voice inside the world, and it is not "
     "negotiable: the moment 'you' means the person holding a phone, everything else "
     "in this prompt has been wasted.\n"
+    "{role_rule}"
     "The voice knows the place cold and says the strangest things about it flatly, as "
     "arrangements everyone here has long since stopped questioning. It does not "
     "explain what a word means; it uses it. It does not soften what the place costs.\n"
@@ -532,6 +598,7 @@ OUTLINE_SYSTEM = (
     "of the world and the last few lines written before it. Whatever you leave out of "
     "the outline never reaches the page.\n"
     "{world_rule}"
+    "{role_rule}"
     "{brief_rule}"
     "Read the WHOLE brief, then the records, then plan the whole piece before you write "
     "stretch 1. The stretches are consecutive slices of the brief, IN ITS ORDER: "
@@ -616,6 +683,7 @@ class FandomWriter:
         return OUTLINE_SYSTEM.format(
             wins=wins, lang=lang, part_rule=part_rule, part_json=part_json,
             world_rule=world_rule(self.invent), premise_rule=PREMISE_RULE,
+            role_rule=outline_role_rule(ctx),
             brief_rule=brief_rule(self.invent), fidelity_rule=FIDELITY_RULE,
             total=total, share=total / max(wins, 1),
             chars=char_budget(total, ctx.params.lang, ctx.params.tts_rate),
@@ -668,6 +736,7 @@ class FandomWriter:
             lang=lang,
             video_prompt_rule=VIDEO_PROMPT_RULE,
             world_rule=world_rule(self.invent),
+            role_rule=role_rule(ctx),
             cast_rule=CAST_RULE,
             premise_rule=PREMISE_RULE,
             world_block=self._world_block()

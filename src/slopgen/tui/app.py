@@ -7722,6 +7722,8 @@ class FandomPane(EntityPane):
             lore_tool=bool(vals.get("lore_tool", True)),
             canon=prev.canon if prev else "",
             docs_sha=prev.docs_sha if prev else "",
+            # no box for it in the frozen editor, so carry it rather than erase it
+            viewer_role=prev.viewer_role if prev else "",
             root=root,
         ))
 

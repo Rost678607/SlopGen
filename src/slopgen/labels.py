@@ -2175,3 +2175,25 @@ RU.update({'web.f.invent': 'можно придумывать своё по ло
            'web.invent.note': 'сценарист допишет то, чего в записях нет: имя, цену, обычай, привычку. Противоречить записям и разгадывать оставленное ими открытым он всё равно не станет — только фактура между строк.'})
 EN.update({'web.f.invent': "may invent, in the world's grain",
            'web.invent.note': 'the writer fills in what the records do not hold — a name, a price, a custom, a habit. It still never contradicts them and never settles what they leave open: texture between the lines, not revelation.'})
+
+# The usher's addressee. Shown only under that narrator, because the other two have
+# nobody to address — and left empty by preference: the canon sheet works the role out
+# of the world's own records, and this is the override for when it guesses wrong.
+RU.update({
+    "web.f.role": "роль зрителя",
+    "web.a.role": "кто он здесь: подстольный — стол, третья форма, строка в журнале. "
+                  "пусто — возьмётся из мира или выведется из лора",
+    "web.role.note": "Адресат, а не тема: ролик, обращённый к подстольному, может "
+                     "быть про пятый этаж — он просто рассказан оттуда, где адресат "
+                     "стоит. Пусто — берётся из fandom.toml мира, а если и там "
+                     "пусто, роль выводится из самого лора.",
+})
+EN.update({
+    "web.f.role": "who you are here",
+    "web.a.role": "who the listener is: a clerk with a desk, a third-form pass and a "
+                  "line in the ledger. empty = from the world, or worked out from its lore",
+    "web.role.note": "The addressee, not the subject: a piece spoken to a clerk may "
+                     "still be about the fifth floor — it is simply told from where "
+                     "the clerk stands. Empty takes the role from the world's "
+                     "fandom.toml, or works it out from the lore itself.",
+})

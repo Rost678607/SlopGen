@@ -43,6 +43,22 @@ const FORMS = {
           "l": "web.f.narrator"
         },
         {
+          "when": "voice=usher",
+          "rows": [
+            {
+              "f": "viewer_role",
+              "kind": "text",
+              "rows": 2,
+              "ph": "web.a.role",
+              "l": "web.f.role"
+            },
+            {
+              "note": "web.role.note",
+              "cls": "dim"
+            }
+          ]
+        },
+        {
           "f": "scenario",
           "kind": "text",
           "rows": 3,

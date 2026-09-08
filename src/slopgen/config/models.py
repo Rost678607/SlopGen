@@ -763,6 +763,16 @@ class FandomConfig(BaseModel):
     # in the folder, sorted by name.
     docs: list[str] = []
     tone: str = ""  # optional register/delivery note for the writer
+    # WHO the `usher` narrator is speaking to, in this world's own words — "you are a
+    # подстольный: a desk, a third-form pass and a line in the ledger". Only that voice
+    # uses it, and it fixes the ADDRESSEE, never the subject: a piece told to a clerk
+    # may still be about the fifth floor, told as what a clerk would hear of it.
+    # Empty is not a missing setting. The canon compiler works the same fact out of the
+    # records on its own (`llm/lore` — "WHO A NEWCOMER HERE BECOMES"), and the writer
+    # infers it in-window where there is no sheet, so a world nobody has annotated
+    # still gets a consistent "you". This field is the override for when it guesses a
+    # role the operator did not want, and a per-run one sits on `RunParams`.
+    viewer_role: str = ""
     # offer the writer the `lore_lookup` tool (a librarian LLM that reads the whole
     # document and answers questions). Off = the canon sheet is all it ever sees.
     lore_tool: bool = True
@@ -919,6 +929,11 @@ class RunParams(BaseModel):
     # what this world is made of, or settles a question the records leave open. See
     # stages/fandom_script.GAP_INVENT, which is where the whole of it lives.
     fandom_invent: bool = False
+    # This run's answer to "who is being spoken to", overriding the world's own
+    # `FandomConfig.viewer_role` and the sheet's inference. One world, many positions
+    # in it: the same records make a video for a new clerk and a video for the person
+    # who signs their pass, and which one this is is a property of the RUN.
+    viewer_role: str = ""
     # What the picture is made of, when the operator has said. Empty = whatever each
     # source produces, decided per shot where that is a question (a search brief picks
     # a still or a clip per beat; see llm/lookup). Set, it binds: the operator asked

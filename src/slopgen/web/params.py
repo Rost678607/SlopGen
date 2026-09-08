@@ -77,6 +77,7 @@ def fandom_params(store: ConfigStore, b: dict) -> RunParams:
     params = RunParams(
         lang=str(b.get("lang", "ru")), content_type="", mode="fandom",
         fandom=world, fandom_voice=b.get("voice", "resident"), medium=medium,
+        viewer_role=str(b.get("viewer_role", "")),
         fandom_invent=bool(b.get("fandom_invent", False)),
         scenario=str(b.get("scenario", "")),
         duration_s=float(b.get("duration_s", 45.0)),
