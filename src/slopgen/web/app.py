@@ -579,6 +579,20 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
         return {"engine": store.global_cfg.tts.engine,
                 "check_reference": store.global_cfg.tts.check_reference}
 
+    def _cause(e: Exception) -> str:
+        """The one line of an exception worth putting in a toast.
+
+        A native-extension import failure is the reason for this: numpy answers a
+        missing `libstdc++.so.6` with seven hundred characters of advice, and the
+        sentence that says what is actually wrong is the last one. Showing the whole
+        wall buries it, so the tail goes on screen and the traceback goes to the log —
+        which is where a reader who needs the rest already knows to look."""
+        text = " ".join(str(e).split())
+        if len(text) <= 200:
+            return text
+        tail = [ln.strip() for ln in str(e).splitlines() if ln.strip()][-1]
+        return tail[:400]
+
     # Audio content types by container. The browser decides whether it can play a
     # thing from this header, so guessing wrong is a silent failure to play.
     _DEMO_MIME = {".mp3": "audio/mpeg", ".wav": "audio/wav", ".ogg": "audio/ogg",
@@ -621,8 +635,9 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
         try:
             data, suffix = await run_in_threadpool(take)
         except Exception as e:  # noqa: BLE001 — a missing key, missing weights, bad take
+            log.exception("demo take failed (%s, %s)", engine, voice)
             raise HTTPException(status_code=502,
-                                detail=f"{type(e).__name__}: {e}") from e
+                                detail=f"{type(e).__name__}: {_cause(e)}") from e
         return Response(content=data,
                         media_type=_DEMO_MIME.get(suffix, "application/octet-stream"))
 
