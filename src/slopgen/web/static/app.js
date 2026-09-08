@@ -99,10 +99,13 @@ async function telegramSignIn() {
     return show("login");
   }
   show("app");
+  const wasOn = readPlace().tab;
+  showTab(TABS.includes(wasOn) ? wasOn : "gen");
   const cfg = await api("/api/config").catch(() => null);
   if (cfg) videoAspect = cfg.video.width / cfg.video.height;
   await loadWorlds();
   await loadOptions();
+  restorePlace();
 })();
 
 $("#loginform").onsubmit = async (e) => {
@@ -118,17 +121,68 @@ $("#loginform").onsubmit = async (e) => {
 // up, set things up — because an operator who knows one should not have to learn the
 // other. Everything else hangs under a door rather than lining up beside it.
 const TABS = ["gen", "runs", "cfg", "models"];
+
+// Where the operator was standing, kept per browser so a reload puts them back.
+//
+// This is a CONVENIENCE and is treated as one: it is read defensively, it is validated
+// against what exists now rather than trusted, and every failure lands on the default
+// door. A section renamed out of `CFG`, a world sub-tab that no longer exists, storage
+// that throws because the browser is set to block it — each of those has to be a page
+// that opens on "генерация", never a page that opens on nothing.
+const PLACE_KEY = "slopgen.place";
+
+function readPlace() {
+  try { return JSON.parse(localStorage.getItem(PLACE_KEY)) || {}; }
+  catch { return {}; }  // private window, blocked storage, or something else's key
+}
+
+function savePlace() {
+  try {
+    localStorage.setItem(PLACE_KEY, JSON.stringify(
+      { tab: curTab, cfg: cfgSection, sub, mode: genMode }));
+  } catch { /* not being able to remember is not worth interrupting anything for */ }
+}
+
+let curTab = "gen";
+
+// Split out of `openTab` so boot can put the right door on screen BEFORE the two round
+// trips it needs to fill anything in. Showing "генерация" for a third of a second and
+// then jumping is worse than the bug being fixed.
+function showTab(tab) {
+  curTab = tab;
+  document.querySelectorAll("nav [data-tab]").forEach((x) =>
+    x.classList.toggle("on", x.dataset.tab === tab));
+  TABS.forEach((t) => ($(`#tab-${t}`).hidden = t !== tab));
+}
+
 document.querySelectorAll("nav [data-tab]").forEach((b) => {
   b.onclick = () => openTab(b.dataset.tab);
 });
 function openTab(tab) {
-  document.querySelectorAll("nav [data-tab]").forEach((x) =>
-    x.classList.toggle("on", x.dataset.tab === tab));
-  TABS.forEach((t) => ($(`#tab-${t}`).hidden = t !== tab));
-  if (tab === "gen" && !opts) loadOptions();
+  showTab(tab);
+  savePlace();
+  // The grid is measured, so it has to be measured while it is on screen. Reloading
+  // into another door means the forms were last composed with no width to compose in.
+  if (tab === "gen") { if (opts) queueMicrotask(compose); else loadOptions(); }
   if (tab === "runs") { if (!opts) loadOptions(); loadRuns(); }
   if (tab === "cfg" && !cfgSection) openCfg("fandoms");
   if (tab === "models") loadModels();
+}
+
+// Put back what was open, once there is data behind it. Called at the end of boot: the
+// config sections read worlds and options, so restoring one any earlier would open a
+// screen with nothing in it and no second attempt coming.
+function restorePlace() {
+  const p = readPlace();
+  if (SUBS.some(([k]) => k === p.sub)) sub = p.sub;
+  if (document.querySelector(`#mode-menu [data-mode="${p.mode}"]`)) setMode(p.mode);
+  const tab = TABS.includes(p.tab) ? p.tab : "gen";
+  if (tab !== "cfg") return openTab(tab);
+  // set the section FIRST: `openTab` opens a default one only when none is chosen, and
+  // opening "worlds" on the way to "voices" costs two requests and a visible flinch
+  cfgSection = CFG.some(([k]) => k === p.cfg) ? p.cfg : "fandoms";
+  openTab(tab);
+  openCfg(cfgSection);
 }
 
 // The same sections the terminal's Configuration screen has, in the same order. The
@@ -160,6 +214,7 @@ function wireCfgMenu() {
 }
 function openCfg(key) {
   cfgSection = key;
+  savePlace();
   const entry = CFG.find(([k]) => k === key) || [key, key, null];
   const how = entry[2];
   $("#cfg-menu").querySelectorAll("[data-cfg]").forEach((b) =>
@@ -726,6 +781,7 @@ function wireSubMenu() {
 }
 function openSub(which) {
   sub = which;
+  savePlace();
   $("#w-sub").querySelectorAll("[data-sub]").forEach((b) =>
     b.classList.toggle("on", b.dataset.sub === which));
   $("#w-lore").hidden = which !== "lore";
@@ -1674,17 +1730,22 @@ function applyLabels(root = document) {
 const chosenBps = { fandom: new Set(), info: new Set(), drama: new Set() };
 let genMode = "fandom";
 
+function setMode(mode) {
+  genMode = mode;
+  document.querySelectorAll("#mode-menu [data-mode]").forEach((x) =>
+    x.classList.toggle("on", x.dataset.mode === genMode));
+  document.querySelectorAll("form[data-mode]").forEach((f) =>
+    (f.hidden = f.dataset.mode !== genMode));
+  savePlace();
+  compose();
+}
+
 document.querySelectorAll("#mode-menu [data-mode]").forEach((b) => {
   b.onclick = () => {
     // a loop's mode is the one thing about it that cannot change, so walking to
     // another mode's form is walking out of the edit
     if (editing && editing.mode !== b.dataset.mode) stopEditing();
-    genMode = b.dataset.mode;
-    document.querySelectorAll("#mode-menu [data-mode]").forEach((x) =>
-      x.classList.toggle("on", x.dataset.mode === genMode));
-    document.querySelectorAll("form[data-mode]").forEach((f) =>
-      (f.hidden = f.dataset.mode !== genMode));
-    compose();
+    setMode(b.dataset.mode);
   };
 });
 
