@@ -1029,6 +1029,91 @@ document.querySelectorAll("form.cards").forEach((form) => {
   form.addEventListener("input", () => applyConditions(form));
 });
 
+// ------------------------------------------------------------------ switches
+//
+// Every checkbox in the panel is drawn as a switch (see app.css), and a switch that
+// only takes a click is half of one: the shape says "push me across", so pushing it
+// across has to work. This is that gesture — press the knob, drag, let go where you
+// meant to land — and it is bound ONCE, at the document, for every checkbox there
+// will ever be: the cards are built from `forms.js` and the config panels are rebuilt
+// on every visit, so anything wired per element would have to be wired again after
+// each of them.
+//
+// All it writes is `--p`, how far across the switch is, 0 to 1. The stylesheet reads
+// the knob's position AND the track's colour off that one number, so the colour flows
+// with the finger for free, and letting go — where the inline value is dropped and
+// the property falls back to the state's own 0 or 1 — is a transition rather than a
+// jump. Nothing here knows a colour or a pixel.
+//
+// A click is left entirely alone. Under the slop threshold nothing here fires and the
+// browser toggles the box itself, which is what keeps the label, the keyboard and
+// every form reader working the way they did — this adds a way to reach the state, not
+// a second definition of it.
+(() => {
+  const SLOP = 3;      // below this the pointer was pressed, not dragged
+  const EDGE = 2;      // the knob's inset at either end, from the CSS
+  let sw = null, x0 = 0, from = 0, travel = 1, moved = false, swallow = false;
+
+  // where the switch would stand if the pointer stopped here
+  const at = (x) => Math.max(0, Math.min(1, from + (x - x0) / travel));
+
+  document.addEventListener("pointerdown", (e) => {
+    const t = e.target;
+    if (!(t instanceof HTMLInputElement) || t.type !== "checkbox" || t.disabled) return;
+    const r = t.getBoundingClientRect();
+    // the knob's width is asked of the stylesheet rather than known here, which is
+    // what lets the bigger switch a fingertip gets set one token and be done
+    const knob = parseFloat(getComputedStyle(t).getPropertyValue("--knob-w")) || 14;
+    // a new gesture disarms the previous one's leftovers: the click swallow below is
+    // released HERE rather than on a timer, because a timer races the click it is
+    // waiting for — and losing that race toggles the box straight back
+    sw = t; x0 = e.clientX; moved = false; swallow = false;
+    travel = Math.max(1, r.width - knob - EDGE * 2);
+    from = t.checked ? 1 : 0;
+    t.setPointerCapture(e.pointerId);
+  });
+
+  document.addEventListener("pointermove", (e) => {
+    if (!sw) return;
+    if (!moved) {
+      if (Math.abs(e.clientX - x0) < SLOP) return;
+      moved = true;
+      sw.classList.add("dragging");
+    }
+    sw.style.setProperty("--p", at(e.clientX));
+  });
+
+  const drop = (e, keep) => {
+    if (!sw) return;
+    const t = sw;
+    sw = null;
+    t.classList.remove("dragging");
+    t.style.removeProperty("--p");      // and it eases home to the state it lands in
+    if (!moved || keep) return;         // a press (the browser toggles it itself), or
+                                        // a gesture taken away mid-drag: leave it be
+    // The click that follows this pointerup would undo the drag — it toggles the box,
+    // and the box is already where the drag put it. So it is swallowed in the capture
+    // phase; if no click ever comes (a drag let go somewhere that dispatches none),
+    // the next pointerdown clears the flag before anything can be swallowed by it.
+    swallow = true;
+    const on = at(e.clientX) > 0.5;
+    if (on === t.checked) return;
+    t.checked = on;
+    t.dispatchEvent(new Event("input", { bubbles: true }));
+    t.dispatchEvent(new Event("change", { bubbles: true }));
+  };
+  document.addEventListener("pointerup", drop);
+  // cancelled, not finished — the system took the pointer (a scroll took over, a
+  // window went away). The knob springs back to the state nobody changed.
+  document.addEventListener("pointercancel", (e) => drop(e, true));
+  document.addEventListener("click", (e) => {
+    if (!swallow) return;
+    swallow = false;
+    e.preventDefault();
+    e.stopPropagation();
+  }, true);
+})();
+
 // Put the launch card on the LAST row of the last column. Grid cannot be told "last
 // row" — the row count is implicit and only known once everything is placed — so it
 // is measured after layout and pinned. Re-measured on resize, because the column

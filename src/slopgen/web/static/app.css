@@ -23,6 +23,58 @@ button.ghost{background:none}
 select,input,textarea{font:inherit;color:var(--ink);background:var(--panel);
   border:1px solid var(--line);border-radius:6px;padding:6px 10px;width:100%}
 textarea{resize:vertical;font-size:14px}
+
+/* Every checkbox in the app is a SWITCH, and it is done to the element itself rather
+   than to a widget somebody has to remember to use. A tick-box is the browser's, in
+   the browser's colours, and on a dark panel it reads as a hole; a switch says which
+   way it is set from across the room, which is what these actually are — «пустить в
+   сеть», «зациклить», «репетиция». Nothing in the markup changes: the input keeps its
+   name, its `checked`, its label and its keyboard, so every reader and writer of a
+   form goes on working through `el.checked`.
+
+   The track is the element and the knob is `::after`, which is why the size lives here
+   and not on a wrapper: a checkbox dropped anywhere — a card, a config panel, a row —
+   arrives already sized, and `width:100%` above (meant for text fields) has to lose to
+   it. Hence the attribute selector: it outranks the bare `input` rule. */
+/* HOW FAR ACROSS the switch is, 0 to 1, and everything about it is read off this one
+   number: where the knob sits, how lit the track is, how dark the knob is. Registering
+   it is what makes that work — an unregistered custom property is a string as far as
+   the engine is concerned, so it cannot be transitioned, and every colour built out of
+   it would jump. Registered, ONE transition on `--p` carries the whole control, and a
+   drag that writes it per pixel (see the switch block in app.js) gets a track whose
+   colour flows with the finger rather than flipping at the midpoint.
+   `inherits:true` is not decoration either: the knob is a pseudo-element, and a
+   pseudo-element only sees what its originating element passes down. */
+@property --p{syntax:"<number>";inherits:true;initial-value:0}
+
+input[type=checkbox]{
+  appearance:none;-webkit-appearance:none;flex:0 0 auto;
+  --p:0;--knob-w:14px;
+  width:34px;height:20px;padding:0;border-radius:999px;position:relative;cursor:pointer;
+  background:color-mix(in srgb, var(--accent) calc(var(--p) * 100%), var(--bg));
+  border:1px solid color-mix(in srgb, var(--accent) calc(var(--p) * 100%), var(--line));
+  /* `pan-y` keeps the page scrollable through the control while the horizontal axis
+     belongs to the drag */
+  touch-action:pan-y;user-select:none;-webkit-user-select:none;
+  transition:--p .16s ease}
+/* The travel is written as the box's own arithmetic rather than a second number to
+   keep in step: 2px of inset at each end, minus the knob. That is what lets the bigger
+   switch a fingertip gets (the coarse-pointer block below) change one size and be
+   done. */
+input[type=checkbox]::after{content:"";position:absolute;top:50%;
+  left:calc(2px + var(--p) * (100% - var(--knob-w) - 4px));
+  width:var(--knob-w);height:var(--knob-w);border-radius:50%;
+  /* the knob goes dark as the track lights, for the same reason a pressed button
+     does: the accent is a light colour, and a pale knob on it disappears */
+  background:color-mix(in srgb, #20101c calc(var(--p) * 100%), var(--dim));
+  transform:translateY(-50%)}
+input[type=checkbox]:hover{border-color:color-mix(in srgb, var(--accent) calc(var(--p) * 100%), var(--dim))}
+input[type=checkbox]:checked{--p:1}
+/* Under the finger the easing has to go: an animated `--p` chasing a pointer lags
+   behind it by exactly its own duration and feels like drag on wet paper. */
+input[type=checkbox].dragging{cursor:grabbing;transition:none}
+input[type=checkbox]:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+input[type=checkbox]:disabled{opacity:.5;cursor:default}
 .grow{flex:1}
 .err{color:var(--bad);min-height:1.2em}
 
@@ -227,7 +279,7 @@ aside h3 small{color:var(--dim);font-weight:400}
 .panel label.inline{display:flex;gap:8px;align-items:center;
   color:var(--ink);font-size:13.5px}
 .panel .grid label.inline{grid-column:1 / -1}
-.panel label.inline input{width:auto;flex:0 0 auto}
+.panel label.inline input:not([type=checkbox]){width:auto;flex:0 0 auto}
 .panel .grid label.wide{grid-column:1 / -1}
 /* a line of controls: they sit together, they wrap rather than overflow, and a select
    in one is sized by its content instead of eating the row */
@@ -244,7 +296,8 @@ aside h3 small{color:var(--dim);font-weight:400}
 
 @media (pointer: coarse) {
   /* about 9mm, which is what a fingertip actually covers */
-  button, select, input[type="checkbox"] { min-height: 40px; }
+  button, select { min-height: 40px; }
+  input[type=checkbox] { width: 44px; height: 26px; --knob-w: 20px; }
   input, select, textarea { font-size: 16px; }  /* under 16px iOS zooms on focus */
   .chips button { min-height: 36px; }
   #targets input { min-height: 34px; font-size: 15px; }
@@ -372,7 +425,7 @@ aside h3 small{color:var(--dim);font-weight:400}
 .card>.dim{margin:0;font-size:12px;line-height:1.45}
 .card label{display:grid;gap:4px;font-size:12.5px;color:var(--dim);min-width:0}
 .card label.inline{display:flex;gap:8px;align-items:center;color:var(--ink);font-size:13.5px}
-.card label.inline input{width:auto;flex:0 0 auto}
+.card label.inline input:not([type=checkbox]){width:auto;flex:0 0 auto}
 .card .row2{display:grid;gap:9px;grid-template-columns:1fr 1fr}
 .card.w2{grid-column:span min(2, var(--cols, 2))}
 
