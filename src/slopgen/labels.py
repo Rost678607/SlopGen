@@ -2128,3 +2128,9 @@ EN.update({
     "bot.ask.which": 'which shot? Open the run and press "give it pictures".',
     "bot.ask.wrong-kind": 'that is neither a picture nor a clip',
 })
+
+# The AI edit line on a breakpoint — the terminal has had it since the start
+# (`llm/rewrite.py`); this is the browser saying the same thing.
+RU.update({'web.bp.ai': 'переписать моделью', 'web.a.ai': 'что поправить: короче, злее, разбей на два бита', 'js.ai-working': 'модель правит…', 'js.ai-done': 'готово — посмотри и применяй', 'js.ai-nothing': 'модель ничего не изменила'})
+EN.update({'web.bp.ai': 'have the model edit it', 'web.a.ai': 'what to change: shorter, angrier, split this into two beats', 'js.ai-working': 'the model is editing…', 'js.ai-done': 'done — look it over, then apply', 'js.ai-nothing': 'the model changed nothing'})
+

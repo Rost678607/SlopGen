@@ -1864,6 +1864,8 @@ async function openAsks(id, title) {
   const d = await api(`/api/runs/${id}/asks`);
   $("#panel-title").textContent = `${title} ${lab("js.missing")} ${d.pending} ${lab("js.of")} ${d.shots.length}`;
   $("#panel-apply").hidden = true;
+  // the same panel carries both screens; asks have no rows to rewrite
+  $("#panel-ai").hidden = true;
   $("#panel-body").innerHTML = d.shots.length ? d.shots.map((sh) => {
     const url = `/api/runs/${id}/asks/${encodeURIComponent(sh.video)}/${encodeURIComponent(sh.id)}/file`;
     // what arrived is shown, not merely reported: a wrong file under the right name
@@ -1927,9 +1929,14 @@ let reviewState = null;
 async function openReview(id, title) {
   const d = await api(`/api/runs/${id}/review`);
   if (!d.stage) { say(lab("js.this-run-is-not-sitting-at-a-breakpoint"), true); return; }
-  reviewState = { id, video: d.video, stage: d.stage, rows: d.rows };
+  reviewState = { id, video: d.video, stage: d.stage, rows: d.rows,
+                  subject: d.subject, variable: d.variable };
   $("#panel-title").textContent = `${title} — ${word(d.stage)}`;
   $("#panel-apply").hidden = false;
+  // The AI edit line, on any breakpoint that has prose to edit. A chip set or a
+  // generator choice is not prose, so a document made only of those gets no line.
+  $("#panel-ai").hidden = !d.rows.some((r) => !r.readonly && (r.kind || "text") === "text");
+  $("#panel-ai-text").value = "";
   // one generic renderer for every breakpoint: review.py already says how each row is
   // edited (`kind`) and what it may become (`options`), so nothing here knows what a
   // canon sheet or a picture track is
@@ -1968,6 +1975,31 @@ $("#panel-apply").onclick = async () => {
   say(lab("js.changes-applied-the-run-goes-on"));
   loadRuns();
 };
+// Hand the model the lines and one instruction — "shorter", "make scene 3 angrier",
+// "split this into two beats" — and it returns the whole list edited. The reply is put
+// into the fields rather than applied: it is a draft to look at, and the operator still
+// presses the button that goes on.
+$("#panel-ai-go").onclick = async () => {
+  if (!reviewState) return;
+  const instruction = $("#panel-ai-text").value.trim();
+  if (!instruction) return;
+  const btn = $("#panel-ai-go");
+  btn.disabled = true;
+  say(lab("js.ai-working"));
+  try {
+    const r = await api(`/api/runs/${reviewState.id}/review/ai`, { method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ instruction, rows: reviewState.rows,
+                             subject: reviewState.subject, variable: reviewState.variable }) });
+    reviewState.rows = r.rows;
+    $("#panel-body").querySelectorAll("[data-i]").forEach((el) => {
+      el.value = reviewState.rows[+el.dataset.i].value;
+    });
+    $("#panel-ai-text").value = "";
+    say(r.changed ? lab("js.ai-done") : lab("js.ai-nothing"), !r.changed);
+  } catch (e) { say(e.message, true); } finally { btn.disabled = false; }
+};
+
 $("#panel-close").onclick = () => { $("#panel").hidden = true; reviewState = null; };
 
 // ---------------------------------------------------------------- loops

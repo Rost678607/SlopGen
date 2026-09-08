@@ -33,7 +33,8 @@ from ..config.loader import (delete_config, fandom_docs, file_sha, frames_dir,
                              lore_sha, read_lore, update_global, write_character,
                              write_config, write_frame_card)
 from ..config.envfile import set_env_var
-from ..llm.client import MODEL_PRESETS, PROVIDERS
+from ..llm import rewrite as bp_ai
+from ..llm.client import ChatLLM, MODEL_PRESETS, PROVIDERS
 from .. import labels
 from ..media.generate import (PHOTO_MODELS, VIDEO_MODELS, env_keys,
                               model_clip_seconds)
@@ -1133,11 +1134,56 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
                 for r in doc.rows:
                     if r.kind == "choice":
                         r.options = names
-            return {"video": i, "stage": stage, "rows": [
+            return {"video": i, "stage": stage,
+                    # what the AI edit line needs to know about this document
+                    "subject": doc.subject, "variable": doc.variable, "rows": [
                 {"label": r.label, "value": r.value, "src": r.src, "info": r.info,
                  "readonly": r.readonly, "field": r.field, "kind": r.kind,
                  "options": r.options} for r in doc.rows]}
         return {"video": -1, "stage": "", "rows": []}
+
+    @app.post("/api/runs/{run_id}/review/ai")
+    async def review_ai(run_id: str, request: Request,
+                        slopgen: str | None = Cookie(default=None)) -> dict:
+        """The AI edit line: the lines being reviewed plus one instruction, edited whole.
+
+        Only free-text rows go to the model — a cast chip set, a generator choice or a
+        clip length are not prose and must not be "rewritten". A mixed document tells
+        the model what each line IS (`kinds`), because a shot prompt and a spoken line
+        want opposite things and swapping their forms is the failure this prevents."""
+        guard(slopgen)
+        run = sup.runs.get(run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail="no such run")
+        b = await request.json()
+        instruction = str(b.get("instruction", "")).strip()
+        if not instruction:
+            raise HTTPException(status_code=400, detail="say what to change")
+        rows = list(b.get("rows", []))
+        editable = [i for i, r in enumerate(rows)
+                    if not r.get("readonly") and r.get("kind", "text") == "text"]
+        if not editable:
+            return {"rows": rows, "changed": 0}
+        fields = [str(rows[i].get("field", "text")) for i in editable]
+        try:
+            out = bp_ai.rewrite(
+                ChatLLM(store.active_llm_profile()),
+                [str(rows[i].get("value", "")) for i in editable], instruction,
+                lang=run.params.lang, subject=str(b.get("subject", "lines")),
+                variable=bool(b.get("variable")),
+                kinds=fields if any(f != "text" for f in fields) else None,
+            )
+        except Exception as e:
+            log.exception("review ai failed")
+            raise HTTPException(status_code=502, detail=f"{type(e).__name__}: {e}")
+        if not out:
+            return {"rows": rows, "changed": 0}
+        # A variable document may come back longer or shorter; a fixed one may not, and
+        # the model is told so — but the caller still only trusts what it can place.
+        for n, i in enumerate(editable):
+            if n < len(out):
+                rows[i]["value"] = out[n]
+        return {"rows": rows, "changed": min(len(out), len(editable))}
 
     @app.post("/api/runs/{run_id}/review")
     async def apply_review(run_id: str, request: Request,
