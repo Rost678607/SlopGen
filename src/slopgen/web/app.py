@@ -45,6 +45,7 @@ from .. import labels
 from ..media.generate import (PHOTO_MODELS, VIDEO_MODELS, env_keys,
                               model_clip_seconds)
 from ..tts import ENGINES as TTS_ENGINES
+from ..tts import refs
 from ..tts.base import VOICE_PRESETS
 from ..tts.demo import DEMO_TEXT, speak as speak_demo
 from ..config.models import (AccountConfig, AdConfig, CharacterConfig, CropTarget,
@@ -675,6 +676,12 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
         write_config("voices", name, v.model_dump(mode="json", exclude={"root"}))
         return _voice_json(v)
 
+    # What the upload box will take in. NOT what a sample may be on disk: everything
+    # here is converted on the way in (see `new_voice`), which is the only reason the
+    # list can be this wide.
+    SAMPLE_SUFFIXES = {".wav", ".mp3", ".m4a", ".ogg", ".flac", ".opus", ".aac",
+                       ".aiff", ".aif", ".wma", ".webm"}
+
     @app.post("/api/voices")
     async def new_voice(file: UploadFile, name: str = Form(...), text: str = Form(""),
                         lang: str = Form("ru"), description: str = Form(""),
@@ -683,18 +690,56 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
 
         They are written as a pair because they are worthless apart — cloning here is
         zero-shot, so the (sample, transcript) pair IS the voice, and a card whose
-        sample is missing clones nothing."""
+        sample is missing clones nothing.
+
+        The upload is CONVERTED rather than stored as it arrived, exactly as
+        `slopgen voices add` has always done it (`tts.refs.convert`): mono, 24 kHz,
+        rumble cut, peak-normalised WAV. Storing the file verbatim looked like it
+        worked — the card saved, the player on the card played it, because the browser
+        decodes far more than the engines do — and then cloning died on it, since the
+        engines read samples with libsndfile, which knows WAV, FLAC, OGG and MP3 and
+        has never heard of M4A or Opus. So a phone recording was accepted, listened
+        back to, and only failed at the moment it was asked to speak. Denoising is not
+        done here, matching the CLI, where it is opt-in: RNNoise changes the recording,
+        and that is a decision rather than an import step."""
         guard(slopgen)
         if not name.strip() or "/" in name:
             raise HTTPException(status_code=422, detail="unusable voice name")
         suffix = Path(file.filename or "").suffix.lower()
-        if suffix not in {".wav", ".mp3", ".m4a", ".ogg", ".flac", ".opus"}:
+        if suffix not in SAMPLE_SUFFIXES:
             raise HTTPException(status_code=415, detail=f"{suffix or 'that'} is not audio")
+        if not refs.have_ffmpeg():
+            raise HTTPException(status_code=503, detail="ffmpeg is not on PATH")
         root = Path("configs/voices")
         root.mkdir(parents=True, exist_ok=True)
-        dest = root / f"{name}{suffix}"
-        with open(dest, "wb") as out:
+        dest = root / f"{name}.wav"
+        raw = root / f"{name}{suffix}.upload"
+        with open(raw, "wb") as out:
             shutil.copyfileobj(file.file, out)
+        try:
+            # ffmpeg twice (a loudness pass, then the write), so off the event loop
+            await run_in_threadpool(refs.convert, raw, dest)
+        except Exception as e:  # noqa: BLE001 — a truncated upload, or not audio at all
+            # A CalledProcessError says only what was run, which here is a hundred
+            # characters of ffmpeg arguments and a temporary path — true, and no use to
+            # anybody. What went wrong is on ffmpeg's stderr, and that goes to the log;
+            # the operator gets the one thing they can act on.
+            err = getattr(e, "stderr", b"") or b""
+            log.error("could not convert the sample for %r: %s", name,
+                      err.decode("utf-8", "replace").strip() or e)
+            dest.unlink(missing_ok=True)  # never leave half a sample with no card
+            raise HTTPException(
+                status_code=422,
+                detail=f"ffmpeg could not read {file.filename or 'that file'} as audio",
+            ) from e
+        finally:
+            raw.unlink(missing_ok=True)
+        # A card imported before under another container leaves its sample behind, and
+        # a folder with both `марта.m4a` and `марта.wav` in it is a folder where the
+        # next reader has to guess which one the card means.
+        for old in root.glob(f"{name}.*"):
+            if old != dest and old.suffix.lower() in SAMPLE_SUFFIXES:
+                old.unlink(missing_ok=True)
         v = VoiceConfig(name=name, ref=dest.name, text=text, lang=lang,
                         description=description, root=root)
         write_config("voices", name, v.model_dump(mode="json", exclude={"root"}))
