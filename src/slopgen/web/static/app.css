@@ -577,3 +577,11 @@ input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;
 /* Two takes are put here to be compared, so both scrubbers want the width — the
    default 300px player makes a ten-second line look like a dot. */
 #demo-takes audio{width:100%;margin:6px 0}
+
+/* What a sample measured at. Two levels, because `tts/refs` grades its findings that
+   way: an error is a recording that will spoil every line made with it, a warning is
+   one that will merely cost something. */
+.report{margin:6px 0 2px;line-height:1.5;font-size:13px}
+.report .bad{color:var(--bad)}
+.report .warn{color:var(--warn)}
+

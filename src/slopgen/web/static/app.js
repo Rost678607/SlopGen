@@ -513,6 +513,35 @@ function wireDemo(d) {
   drawTakes();
 }
 
+// What a measurement looks like on screen.
+//
+// The numbers are rendered from the fields rather than from the server's own one-line
+// summary, because that summary is English prose and this screen is not. The PROBLEM
+// texts are shown as they come: each one is a measured explanation written once in
+// `tts/refs.py` — how far under it is, what it will do to every line made with it —
+// and the terminal shows them the same way rather than keeping a second copy.
+function dbLine(r) {
+  const db = (v, silent) => (silent ? lab("js.silent") : v === null ? "?" : `${v} ${lab("js.db")}`);
+  return `${r.duration.toFixed(1)} ${lab("js.sec")} · ${lab("js.peak")} ${db(r.peak_db, r.silent_peak)}` +
+         ` · RMS ${db(r.rms_db)} · ${lab("js.floor")} ${db(r.floor_db, r.silent_floor)}`;
+}
+
+function reportHTML(d) {
+  if (!d || !d.report) return "";
+  const rows = [];
+  if (d.before) rows.push(`<div class="dim">${lab("js.before")}: ${esc(dbLine(d.before))}</div>`);
+  rows.push(`<div>${d.before ? lab("js.after") + ": " : ""}${esc(dbLine(d.report))}</div>`);
+  if (d.said)
+    rows.push(`<div class="dim">${lab("js.heard")}: ` +
+      `${d.said.found}/${d.said.words} · ${Math.round(d.said.silent * 100)}% ` +
+      `${lab("js.silence")} · ${lab("js.longest")} ${d.said.gap.toFixed(1)} ${lab("js.sec")}</div>`);
+  const probs = [...(d.report.problems || []), ...((d.said && d.said.problems) || [])];
+  for (const p of probs)
+    rows.push(`<div class="${p.level === "error" ? "bad" : "warn"}">` +
+              `${p.level === "error" ? "\u2717" : "\u26a0"} ${esc(p.text)}</div>`);
+  return `<div class="report">${rows.join("")}</div>`;
+}
+
 async function loadVoices() {
   const vs = await api("/api/voices");
   $("#voices").innerHTML = vs.map((v) => `
@@ -520,8 +549,11 @@ async function loadVoices() {
       <div class="row"><b>${esc(v.name)}</b>
         <span class="dim">${v.has_sample ? `${v.seconds} c` : lab("js.the-sample-is-gone")} · ${esc(v.lang)}</span>
         <span class="grow"></span>
+        <button data-check class="ghost">${lab("js.check")}</button>
+        <button data-clean class="ghost">${lab("js.denoise")}</button>
         <button data-save class="primary">${lab("js.save")}</button>
         <button data-del class="ghost">${lab("js.delete")}</button></div>
+      <div data-report></div>
       ${v.has_sample ? `<audio controls preload="none" src="${tokd(v.url)}"></audio>` : ""}
       <label>${lab("js.what-the-sample-says-word-for-word")}
         <textarea data-f="text" rows="2">${esc(v.text)}</textarea></label>
@@ -544,17 +576,44 @@ async function loadVoices() {
       say(`${name} ${lab("js.deleted")}`);
       loadVoices();
     };
+    // Measuring and denoising are two buttons rather than one, and denoising is not
+    // something the card does to itself: it CHANGES the recording, in place, and
+    // RNNoise is not idempotent — pressing it twice keeps eating at what is left.
+    const work = async (btn, what, url) => {
+      const box = el.querySelector("[data-report]");
+      btn.disabled = true;
+      box.innerHTML = `<div class="dim">${what}</div>`;
+      try {
+        const r = await api(url, { method: "POST" });
+        box.innerHTML = reportHTML(r);
+        if (r.before) say(`${name} — ${lab("js.cleaned")}`);
+      } catch (err) { box.innerHTML = ""; say(err.message, true); }
+      finally { btn.disabled = false; }
+    };
+    const at = (verb) => `/api/voices/${encodeURIComponent(name)}/${verb}`;
+    el.querySelector("[data-check]").onclick = (e) =>
+      work(e.target, lab("js.measuring"), at("check"));
+    el.querySelector("[data-clean]").onclick = (e) =>
+      work(e.target, lab("js.cleaning"), at("clean"));
   });
 }
 
 $("#voice-new").onsubmit = async (e) => {
   e.preventDefault();
+  const btn = e.target.querySelector("button");
+  btn.disabled = true;
   try {
-    await api("/api/voices", { method: "POST", body: new FormData(e.target) });
+    const r = await api("/api/voices", { method: "POST", body: new FormData(e.target) });
     e.target.reset();
     say(lab("js.voice-added"));
-    loadVoices();
+    await loadVoices();
+    // the card is drawn fresh, so the measurement from the import goes on the new one
+    // rather than into a box that is about to be replaced
+    const box = document.querySelector(
+      `#voices [data-voice="${CSS.escape(r.name)}"] [data-report]`);
+    if (box) box.innerHTML = reportHTML(r);
   } catch (err) { say(err.message, true); }
+  finally { btn.disabled = false; }
 };
 
 // --------------------------------------------------------- generator chains

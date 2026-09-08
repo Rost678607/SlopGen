@@ -2283,3 +2283,43 @@ EN.update({
     "js.demo-no-text": "type something for it to say",
 })
 
+# Judging and repairing a cloned voice's sample — the terminal's "import + denoise" and
+# "check" carried across. The problem TEXTS are not here on purpose: each is a measured
+# explanation written once in `tts/refs.py`, and a second copy would drift from it.
+RU.update({
+    "web.f.denoise": "почистить от шума при импорте",
+    "js.check": "измерить",
+    "js.denoise": "🧹 шумодав",
+    "js.measuring": "меряю…",
+    "js.cleaning": "чищу…",
+    "js.cleaned": "почищено",
+    "js.before": "было",
+    "js.after": "стало",
+    "js.peak": "пик",
+    "js.floor": "шумовой пол",
+    "js.silent": "тишина",
+    "js.db": "дБ",
+    "js.sec": "с",
+    "js.heard": "слышно из расшифровки",
+    "js.silence": "тишины",
+    "js.longest": "самая длинная пауза",
+})
+EN.update({
+    "web.f.denoise": "denoise on import",
+    "js.check": "measure",
+    "js.denoise": "🧹 denoise",
+    "js.measuring": "measuring…",
+    "js.cleaning": "cleaning…",
+    "js.cleaned": "cleaned",
+    "js.before": "before",
+    "js.after": "after",
+    "js.peak": "peak",
+    "js.floor": "noise floor",
+    "js.silent": "silence",
+    "js.db": "dB",
+    "js.sec": "s",
+    "js.heard": "heard from the transcript",
+    "js.silence": "silence",
+    "js.longest": "longest pause",
+})
+

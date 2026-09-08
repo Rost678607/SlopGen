@@ -676,6 +676,62 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
         write_config("voices", name, v.model_dump(mode="json", exclude={"root"}))
         return _voice_json(v)
 
+    def _report_json(r) -> dict:
+        """A measurement in the shape the page draws it. `-inf` is a real answer here —
+        digital silence under the voice — and JSON has no word for it, so it travels as
+        None and is rendered as "тишина" rather than as a missing number."""
+        def num(v):
+            return None if v is None or v == float("-inf") else round(v, 1)
+        return {"duration": round(r.duration, 2), "peak_db": num(r.peak_db),
+                "rms_db": num(r.rms_db), "floor_db": num(r.floor_db),
+                "silent_peak": r.peak_db == float("-inf"),
+                "silent_floor": r.floor_db == float("-inf"),
+                "summary": r.summary(), "usable": r.usable,
+                "problems": [{"level": lv, "text": msg} for lv, msg in (r.problems or [])]}
+
+    def _said_json(name: str, path: Path, text: str, lang: str) -> dict | None:
+        """The strictest check there is: does the recording say what the transcript
+        claims? A pair that disagrees is not a worse voice — it is a model that
+        finishes the transcript out loud in the middle of a script.
+
+        None when there is nothing to check with: no transcript typed yet, or no
+        recogniser installed for that language. Skipped rather than installed, because
+        a check that first downloads 46 MiB is a check people press once."""
+        if not text.strip():
+            return None
+        from ..models import ModelStore
+        from ..tts import align as aligner
+
+        models = ModelStore(store.global_cfg.paths.models)
+        model_id = aligner.model_for(lang or "ru", store.global_cfg.tts)
+        if model_id not in models.installed():
+            return None
+        try:
+            r = refs.check_transcript(path, text, models.require(model_id))
+        except Exception:  # noqa: BLE001 — the strictest check, never the fatal one
+            log.exception("transcript check failed for %r", name)
+            return None
+        return {"words": r.words, "found": r.found, "heard": round(r.heard, 3),
+                "silent": round(r.silent, 3), "gap": round(r.gap, 2),
+                "gap_at": round(r.gap_at, 2), "summary": r.summary(),
+                "usable": r.usable,
+                "problems": [{"level": lv, "text": msg} for lv, msg in (r.problems or [])]}
+
+    def _rnnoise() -> Path:
+        """The denoiser's weights, or a 422 naming the model to install.
+
+        RNNoise and nothing else, which is measured rather than conventional: the
+        obvious chain — spectral denoising plus loudness normalisation — made this
+        project's own recordings worse, because `afftdn` leaves musical-noise artifacts
+        that a cloner imitates faithfully and `loudnorm` lifts the noise floor along
+        with the voice. See `tts/refs.py`."""
+        from ..models import ModelStore
+
+        try:
+            return ModelStore(store.global_cfg.paths.models).require("rnnoise-sh") / "sh.rnnn"
+        except Exception as e:  # noqa: BLE001 — not installed, and that is the message
+            raise HTTPException(status_code=422, detail=str(e)) from e
+
     # What the upload box will take in. NOT what a sample may be on disk: everything
     # here is converted on the way in (see `new_voice`), which is the only reason the
     # list can be this wide.
@@ -685,6 +741,7 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
     @app.post("/api/voices")
     async def new_voice(file: UploadFile, name: str = Form(...), text: str = Form(""),
                         lang: str = Form("ru"), description: str = Form(""),
+                        clean: bool = Form(False),
                         slopgen: str | None = Cookie(default=None)) -> dict:
         """Take in a new cloned voice: the sample and the card, together.
 
@@ -699,9 +756,13 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
         decodes far more than the engines do — and then cloning died on it, since the
         engines read samples with libsndfile, which knows WAV, FLAC, OGG and MP3 and
         has never heard of M4A or Opus. So a phone recording was accepted, listened
-        back to, and only failed at the moment it was asked to speak. Denoising is not
-        done here, matching the CLI, where it is opt-in: RNNoise changes the recording,
-        and that is a decision rather than an import step."""
+        back to, and only failed at the moment it was asked to speak.
+
+        `clean` runs RNNoise over the sample. It stays a choice rather than something
+        import does on its own, because denoising CHANGES the recording — so the reply
+        carries the measurement from before and after, which is the only way to see
+        whether it was worth doing. `/api/voices/{name}/clean` does the same to a
+        sample already in the library."""
         guard(slopgen)
         if not name.strip() or "/" in name:
             raise HTTPException(status_code=422, detail="unusable voice name")
@@ -716,9 +777,11 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
         raw = root / f"{name}{suffix}.upload"
         with open(raw, "wb") as out:
             shutil.copyfileobj(file.file, out)
+        rnnoise = _rnnoise() if clean else None
         try:
-            # ffmpeg twice (a loudness pass, then the write), so off the event loop
-            await run_in_threadpool(refs.convert, raw, dest)
+            # each of these is ffmpeg, and `convert` is two passes — off the event loop
+            before = await run_in_threadpool(refs.inspect, raw)
+            await run_in_threadpool(refs.convert, raw, dest, rnnoise)
         except Exception as e:  # noqa: BLE001 — a truncated upload, or not audio at all
             # A CalledProcessError says only what was run, which here is a hundred
             # characters of ffmpeg arguments and a temporary path — true, and no use to
@@ -744,7 +807,67 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
                         description=description, root=root)
         write_config("voices", name, v.model_dump(mode="json", exclude={"root"}))
         store.voices[name] = v
-        return _voice_json(v)
+        after = await run_in_threadpool(refs.inspect, dest)
+        return {**_voice_json(v), "before": _report_json(before),
+                "report": _report_json(after),
+                "said": await run_in_threadpool(_said_json, name, dest, text, lang)}
+
+    @app.post("/api/voices/{name}/check")
+    async def check_voice(name: str, slopgen: str | None = Cookie(default=None)) -> dict:
+        """Measure the sample a card already holds, without changing it.
+
+        Worth its own button because the numbers are what the denoiser's are compared
+        against, and because a card imported long ago has never been measured at all —
+        the checks used to run only in `slopgen voices add`."""
+        guard(slopgen)
+        v = store.voices.get(name)
+        if v is None or v.ref_path is None or not Path(v.ref_path).is_file():
+            raise HTTPException(status_code=404, detail="this card has no sample")
+        path = Path(v.ref_path)
+        return {"report": _report_json(await run_in_threadpool(refs.inspect, path)),
+                "said": await run_in_threadpool(_said_json, name, path, v.text, v.lang)}
+
+    @app.post("/api/voices/{name}/clean")
+    async def clean_voice(name: str, slopgen: str | None = Cookie(default=None)) -> dict:
+        """Run RNNoise over the sample this card already holds, in place.
+
+        This is the terminal's "import + denoise" pointed at a card instead of at a
+        file on disk, and it is the common case: the recording is already in the
+        library, it hisses, and re-finding the original on disk to import it again is
+        busywork. The reply carries before and after, because that comparison IS the
+        feature — a denoiser you cannot measure is one you have to take on faith.
+
+        Cleaning twice is not the same as cleaning once, and nothing here prevents it:
+        RNNoise is not idempotent, so a second pass keeps eating at what is left. The
+        page says so rather than blocking it — an operator who wants another pass on a
+        bad phone recording is not making a mistake."""
+        guard(slopgen)
+        v = store.voices.get(name)
+        if v is None or v.ref_path is None or not Path(v.ref_path).is_file():
+            raise HTTPException(status_code=404, detail="this card has no sample")
+        if not refs.have_ffmpeg():
+            raise HTTPException(status_code=503, detail="ffmpeg is not on PATH")
+        path = Path(v.ref_path)
+        rnnoise = _rnnoise()
+        before = await run_in_threadpool(refs.inspect, path)
+        # Via a temporary file: the source IS the destination here, and ffmpeg reading
+        # and writing one file at once produces silence — the terminal learned this the
+        # same way. The original is only replaced once the new one is written whole.
+        tmp = path.with_name(path.name + ".cleaning.wav")
+        try:
+            await run_in_threadpool(refs.convert, path, tmp, rnnoise)
+            tmp.replace(path)
+        except Exception as e:  # noqa: BLE001
+            tmp.unlink(missing_ok=True)
+            err = getattr(e, "stderr", b"") or b""
+            log.error("could not clean the sample for %r: %s", name,
+                      err.decode("utf-8", "replace").strip() or e)
+            raise HTTPException(status_code=422,
+                                detail="ffmpeg could not clean this sample") from e
+        after = await run_in_threadpool(refs.inspect, path)
+        return {**_voice_json(v), "before": _report_json(before),
+                "report": _report_json(after),
+                "said": await run_in_threadpool(_said_json, name, path, v.text, v.lang)}
 
     @app.delete("/api/voices/{name}")
     async def remove_voice(name: str, slopgen: str | None = Cookie(default=None)) -> dict:
