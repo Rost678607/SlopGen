@@ -33,6 +33,8 @@ from ..config.loader import (delete_config, fandom_docs, file_sha, frames_dir,
                              lore_sha, read_lore, update_global, write_character,
                              write_config, write_frame_card)
 from ..config.envfile import set_env_var
+from ..llm import characters as char_ai
+from ..llm import lore as lore_ai
 from ..llm import rewrite as bp_ai
 from ..llm.client import ChatLLM, MODEL_PRESETS, PROVIDERS
 from .. import labels
@@ -820,6 +822,92 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
         write_character(root / f"{c.name}.toml", c)
         return {"name": c.name, "appearance": c.appearance, "plurality": c.plurality,
                 "dirty": c.dirty, "has_look": bool(c.visual_prompt)}
+
+    # -- the wizard's AI help ----------------------------------------------
+    #
+    # Not the breakpoint rewrite. That one edits lines a run has already produced; this
+    # writes the brief you launch WITH, while there is no run and no job to attach to.
+    # The terminal's wizard has had both since the start (`llm/lore.write_brief` and
+    # `llm/characters.autofill_all`); this is the browser asking the same two questions.
+
+    # A world's own records where they fit, its compiled sheet where they do not. The
+    # sheet is one line per thing, and one line is exactly where two similarly-named
+    # institutions stop being distinguishable — so the records win whenever they can be
+    # afforded. Same number the terminal uses.
+    BRIEF_LORE_CHARS = 80_000
+
+    def narration_budget(seconds: float, lang: str, rate: int) -> int:
+        """How much this voice says in those seconds — zero when the length is free.
+
+        Told rather than hidden: with no budget the length is read off the very brief
+        the model is about to write, so a habitual five sentences would quietly decide
+        how long the video runs."""
+        from ..pipeline.drama import char_budget
+        return char_budget(seconds, lang, rate) if seconds > 0 else 0
+
+    @app.post("/api/ai/brief")
+    async def ai_brief(request: Request, slopgen: str | None = Cookie(default=None)) -> dict:
+        """Fandom: propose, or rewrite, what this video is about.
+
+        It never touches the world's people. They are the world's, and inventing one
+        here would be inventing a person into a place that does not have them."""
+        guard(slopgen)
+        b = await request.json()
+        cfg = store.fandoms.get(str(b.get("fandom", "")))
+        if cfg is None:
+            raise HTTPException(status_code=404, detail="no such world")
+        lore = read_lore(cfg)
+        world = lore if lore and len(lore) <= BRIEF_LORE_CHARS else ((cfg.canon or "").strip() or lore)
+        if not world:
+            raise HTTPException(status_code=409,
+                                detail="this world has nothing written down to read")
+        lang = str(b.get("lang") or "en")
+        seconds = float(b.get("duration_s") or 0.0)
+        try:
+            brief = lore_ai.write_brief(
+                ChatLLM(store.active_llm_profile()), world,
+                str(b.get("current", "")), str(b.get("instruction", "")), lang,
+                duration_s=seconds,
+                chars=narration_budget(seconds, lang, int(b.get("tts_rate") or 0)),
+            )
+        except Exception as e:
+            log.exception("brief ai failed")
+            raise HTTPException(status_code=502, detail=f"{type(e).__name__}: {e}")
+        return {"brief": brief}
+
+    @app.post("/api/ai/story")
+    async def ai_story(request: Request, slopgen: str | None = Cookie(default=None)) -> dict:
+        """Drama: the story polish — the plot, and who is in it.
+
+        The browser's cast is a set of chips over the saved library, so of what the
+        model may answer only two halves land here: the plot, and saved people it wants
+        added. People it MAKES UP are reported by name and not created — a character
+        invented as a side effect of pressing this would be a character the operator
+        never agreed to keep."""
+        guard(slopgen)
+        b = await request.json()
+        picked = [str(x) for x in (b.get("cast") or [])]
+        library = [{"name": c.name, "age": c.age, "appearance": c.appearance}
+                   for c in store.characters.values()]
+        by_name = {c["name"]: c for c in library}
+        cast = [by_name.get(n, {"name": n, "age": "", "appearance": ""}) for n in picked]
+        try:
+            res = char_ai.autofill_all(
+                ChatLLM(store.active_llm_profile()), cast,
+                str(b.get("lang") or "en"), str(b.get("scenario", "")),
+                str(b.get("instruction", "")), library=library,
+            )
+        except Exception as e:
+            log.exception("story ai failed")
+            raise HTTPException(status_code=502, detail=f"{type(e).__name__}: {e}")
+        chosen = {n.casefold() for n in picked}
+        add = [str(n) for n in (res.get("add_global") or [])
+               if str(n) in by_name and str(n).casefold() not in chosen]
+        invented = [str(r.get("name", "")).strip()
+                    for r in (res.get("new_characters") or []) if isinstance(r, dict)]
+        return {"scenario": str(res.get("scenario") or ""), "add": add,
+                "invented": [n for n in invented if n and n not in by_name],
+                "duration_min": res.get("recommended_duration_min")}
 
     # -- runs --------------------------------------------------------------
 

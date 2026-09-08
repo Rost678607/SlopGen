@@ -1044,6 +1044,14 @@ function fieldHTML(f) {
     return `<div class="row2">${f.slice(1).map(fieldHTML).join("")}</div>`;
   if (f.when)
     return `<div data-when="${esc(f.when)}">${f.rows.map(fieldHTML).join("")}</div>`;
+  // The wizard's AI line: an instruction to the model and the button that acts on it.
+  // Same shape as the one over a breakpoint's rows, and for the same reason — you tell
+  // it what to change in words, not by hunting for the setting that means it.
+  if (f.ai)
+    return `<div class="row airow" id="${esc(f.ai)}">` +
+           `<span class="mark">\u2728</span>` +
+           `<input data-lp="${esc(f.ph)}">` +
+           `<button type="button" class="ghost" data-l="${esc(f.go)}"></button></div>`;
   if (f.slot) {  // an empty box some other code fills in, with whatever it is found by
     const at = Object.entries(f).filter(([k]) => k !== "slot")
       .map(([k, v]) => `${k}="${esc(v)}"`).join(" ");
@@ -1473,6 +1481,7 @@ async function loadOptions() {
   wireCfgMenu();
   wireSubMenu();
   watchCards();
+  wireWizardAi();
   const langs = $("#ui-lang");
   langs.innerHTML = [["ru", "Русский"], ["en", "English"]]
     .map(([v, n]) => `<option value="${v}"${v === opts.ui_lang ? " selected" : ""}>${n}</option>`).join("");
@@ -1656,6 +1665,82 @@ $("#dramaform").onsubmit = (e) => submitRun(e, "drama", (f) => ({
   profanity: +f.get("profanity"), ad: f.get("ad"), push: f.get("push"),
   dry_run: f.get("dry_run") === "on", breakpoints: [...chosenBps.drama],
 }));
+
+// ------------------------------------------------ the wizard's AI help
+//
+// The terminal's wizard has this under the plot: a line where you say what you want in
+// words and a button that writes it. It is NOT the rewrite that sits over a parked
+// breakpoint — that one edits lines a run has already produced; this one writes the
+// brief you launch WITH, while there is no run yet.
+//
+// What comes back is put in the field and tinted, never sent anywhere: it is a
+// proposal, and the launch button is still yours to press.
+function wireAi(boxId, act) {
+  const box = document.querySelector(`#${boxId}`);
+  if (!box) return;
+  const input = box.querySelector("input"), btn = box.querySelector("button");
+  const go = async () => {
+    btn.disabled = true;
+    say(lab("js.ai-working"));
+    try { say(await act(input.value.trim()) || lab("js.ai-done")); }
+    catch (e) { say(e.message, true); }
+    finally { btn.disabled = false; }
+  };
+  btn.onclick = go;
+  // Enter in the instruction must not reach the form: this line lives INSIDE the
+  // generation form, and a stray submit would launch the run instead of asking.
+  input.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); go(); } };
+}
+
+// Tint what the model wrote, and drop the tint the moment a hand touches it — the mark
+// says "this text is the model's", and after an edit that is no longer true.
+function aiFilled(el, text) {
+  el.value = text;
+  el.classList.add("ai-filled");
+  el.addEventListener("input", () => el.classList.remove("ai-filled"), { once: true });
+}
+
+// Called from `loadOptions`, not here: the cards these live in are built there.
+function wireWizardAi() {
+wireAi("f-brief-ai", async (instruction) => {
+  const form = $("#startform"), f = new FormData(form);
+  const r = await api("/api/ai/brief", { method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ fandom: f.get("fandom"), lang: f.get("lang") || "ru",
+                           current: f.get("scenario") || "", instruction,
+                           duration_s: +f.get("duration_s") || 0,
+                           tts_rate: +(f.get("tts_rate") || 0) }) });
+  if (!r.brief) return lab("js.ai-nothing");
+  aiFilled(form.querySelector('[name="scenario"]'), r.brief);
+  return lab("js.ai-done");
+});
+
+wireAi("d-story-ai", async (instruction) => {
+  const form = $("#dramaform"), f = new FormData(form);
+  const r = await api("/api/ai/story", { method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ lang: f.get("lang") || "ru", scenario: f.get("scenario") || "",
+                           instruction,
+                           cast: [...$("#d-cast").querySelectorAll(".on")].map((b) => b.dataset.who),
+                           duration_s: +f.get("duration_s") || 0,
+                           tts_rate: +(f.get("tts_rate") || 0) }) });
+  const said = [];
+  if (r.scenario) { aiFilled(form.querySelector('[name="scenario"]'), r.scenario); said.push(lab("js.ai-plot")); }
+  // Saved characters it wants in this run: the chips are the cast, so turning them on
+  // IS adding them.
+  const add = new Set(r.add || []);
+  let on = 0;
+  $("#d-cast").querySelectorAll("[data-who]").forEach((b) => {
+    if (add.has(b.dataset.who) && !b.classList.contains("on")) { b.classList.add("on"); on++; }
+  });
+  if (on) said.push(`${lab("js.ai-cast")} ${on}`);
+  // People it made up. They are not in the library, so there is no chip to light and
+  // nothing here may quietly create one — the names are reported and the choice is the
+  // operator's, in the character editor.
+  if ((r.invented || []).length) said.push(`${lab("js.ai-invented")} ${r.invented.join(", ")}`);
+  return said.length ? said.join(" · ") : lab("js.ai-nothing");
+});
+}
 
 // --------------------------------------------------- retuning a running loop
 //

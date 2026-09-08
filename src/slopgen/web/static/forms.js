@@ -50,6 +50,11 @@ const FORMS = {
           "l": "web.f.brief"
         },
         {
+          "ai": "f-brief-ai",
+          "ph": "web.a.aibrief",
+          "go": "web.f.writebrief"
+        },
+        {
           "f": "profanity",
           "kind": "range",
           "min": "0",
@@ -656,6 +661,11 @@ const FORMS = {
           "rows": 3,
           "ph": "web.a.blank",
           "l": "web.f.plot"
+        },
+        {
+          "ai": "d-story-ai",
+          "ph": "web.a.aistory",
+          "go": "web.f.polish"
         },
         {
           "f": "profanity",

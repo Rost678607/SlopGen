@@ -138,13 +138,20 @@ aside h3 small{color:var(--dim);font-weight:400}
 #panel{position:fixed;inset:0;background:var(--bg);display:flex;flex-direction:column;z-index:11}
 #panel header{display:flex;gap:10px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--line)}
 #panel-body{flex:1;overflow:auto;padding:14px;display:grid;gap:10px;align-content:start}
-/* The AI edit line. It acts on every row at once, so it stands above them all rather
-   than inside the list — but without padding of its own it sat flush against the window
-   edge under the header and read as a leftover instead of a control, and the input,
-   held to `.row`'s auto width, cut its own placeholder off. */
-#panel-ai{padding:10px 14px;gap:8px;border-bottom:1px solid var(--line);background:var(--panel)}
-#panel-ai .mark{font-size:15px;line-height:1}
-#panel-ai input{flex:1 1 240px;min-width:0}
+/* The AI lines — one over a breakpoint's rows, one under the plot in each wizard.
+   Same shape on purpose: ✨, a sentence of instruction, the button that acts on it.
+   The input has to be told to grow; left on `.row`'s auto width it cut its own
+   placeholder off at about two hundred pixels. */
+.airow{gap:8px}
+.airow .mark{font-size:15px;line-height:1}
+.row.airow input{flex:1 1 160px;min-width:0;width:auto}
+.card .airow{margin-top:2px}
+/* The breakpoint one spans the window between the header and the rows, so it needs
+   the padding and the seam the panel's own blocks have. */
+#panel-ai{padding:10px 14px;border-bottom:1px solid var(--line);background:var(--panel)}
+#panel-ai input{flex:1 1 240px}
+/* What the model wrote, until a hand touches it. */
+.ai-filled{border-color:var(--accent)}
 .ask{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 12px;display:grid;gap:8px}
 .ask .head{display:flex;gap:10px;align-items:center;font-size:13px}
 .ask pre{margin:0;white-space:pre-wrap;font:12px/1.5 var(--mono);color:var(--dim);

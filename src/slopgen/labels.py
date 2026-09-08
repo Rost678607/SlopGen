@@ -2134,3 +2134,24 @@ EN.update({
 RU.update({'web.bp.ai': 'переписать моделью', 'web.a.ai': 'что поправить: короче, злее, разбей на два бита', 'js.ai-working': 'модель правит…', 'js.ai-done': 'готово — посмотри и применяй', 'js.ai-nothing': 'модель ничего не изменила'})
 EN.update({'web.bp.ai': 'have the model edit it', 'web.a.ai': 'what to change: shorter, angrier, split this into two beats', 'js.ai-working': 'the model is editing…', 'js.ai-done': 'done — look it over, then apply', 'js.ai-nothing': 'the model changed nothing'})
 
+
+# The wizard's AI help — the line under the plot that the terminal has always had.
+# `web.f.*` name the buttons, `web.a.*` the instruction fields, `js.*` what comes back.
+RU.update({
+    'web.f.writebrief': 'написать бриф',
+    'web.a.aibrief': 'что за ролик: короче, про одного жителя, без имён',
+    'web.f.polish': 'доработать сюжет',
+    'web.a.aistory': 'что поправить в сюжете: добавь конфликт, убери второго',
+    'js.ai-plot': 'сюжет переписан',
+    'js.ai-cast': 'добавлено в каст:',
+    'js.ai-invented': 'придумано, но не заведено:',
+})
+EN.update({
+    'web.f.writebrief': 'write the brief',
+    'web.a.aibrief': 'what this video is: shorter, about one resident, no names',
+    'web.f.polish': 'polish the story',
+    'web.a.aistory': 'what to change: add a conflict, drop the second one',
+    'js.ai-plot': 'the plot was rewritten',
+    'js.ai-cast': 'added to the cast:',
+    'js.ai-invented': 'made up, but not saved:',
+})
