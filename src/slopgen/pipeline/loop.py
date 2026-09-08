@@ -109,6 +109,7 @@ ALIASES = {
     "subs": "subtitle_style", "clean_subs": "clean_subtitles",
     "style": "visual_style", "notes": "visual_notes", "fx": "filters",
     "cast": "manual_cast", "narrator": "fandom_voice", "world": "fandom",
+    "invent": "fandom_invent",
     "breaks": "breakpoints", "source": "manual_orchestration",
     "type": "content_type", "swearing": "profanity",
 }

@@ -598,6 +598,7 @@ def fandom(
     world: str = typer.Argument(..., metavar="FANDOM", help="folder name under configs/fandoms/"),
     scenario: Optional[str] = typer.Option(None, "--scenario", help="what to tell about this world, or which theory to argue; omit to let the LLM pick"),
     narrator: str = typer.Option("resident", "--narrator", help="who tells it: resident (lives there, first person) | chronicler (studies its records, builds theories) | usher (speaks to you, and the you is someone in the world)"),
+    invent: bool = typer.Option(False, "--invent/--no-invent", help="let the writer add what the records do not hold — a name, a price, a custom, a habit — in this world's own grain. It never contradicts a record and never settles a question they leave open; off (the default) the records are the whole world and a gap is simply not known"),
     medium: str = typer.Option("video", "--medium", help="what the picture is made of: video (clips) | photo (a slideshow of stills, held and slowly panned)"),
     source: Optional[str] = typer.Option(None, "--source", help="what makes the shots: a generator (wan2.1 | ltx-video | animatediff for video, flux | turbo for photo), `manual` (you generate them) or `search` (you find them; slopgen briefs you per shot). Default: wan2.1 for video, flux for photo"),
     orchestration: Optional[str] = typer.Option(None, "--orchestration", help="a full chain from configs/orchestration/, overriding --source when you want to mix"),
@@ -684,7 +685,7 @@ def fandom(
         params = RunParams(
             lang=lang, content_type="", mode="fandom",
             manual_orchestration=manual_orch, medium=medium,
-            fandom=world, fandom_voice=narrator,
+            fandom=world, fandom_voice=narrator, fandom_invent=invent,
             scenario=scenario or "",
             orchestration=orchestration or "",
             duration_s=0.0 if duration <= 0 else max(duration, 5.0),

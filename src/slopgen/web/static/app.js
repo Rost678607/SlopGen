@@ -1629,6 +1629,7 @@ $("#startform").onsubmit = async (e) => {
   const f = new FormData(e.target);
   const body = {
     fandom: f.get("fandom"), voice: f.get("voice"), lang: f.get("lang") || "ru",
+    fandom_invent: f.get("fandom_invent") === "on",
     medium: f.get("medium"), source: f.get("source"),
     scenario: f.get("scenario"), title: f.get("title"),
     duration_s: +f.get("duration_s"), count: +f.get("count"),

@@ -911,6 +911,14 @@ class RunParams(BaseModel):
     # and parts/clip_seconds/orchestration/cast work identically.
     fandom: str = ""  # folder name under configs/fandoms/; the world being narrated
     fandom_voice: FandomVoice = "resident"  # who is telling it (see FandomVoice)
+    # May the writer ADD to this world? Off, the records are the whole of it: where
+    # they stop, the piece says a thing is not known and never fills the hole with a
+    # specific of its own. On, they are only what was written down about the world,
+    # and the writer may invent the texture between them — a name, a price, a custom,
+    # someone's habit — as long as nothing it adds contradicts a record, steps outside
+    # what this world is made of, or settles a question the records leave open. See
+    # stages/fandom_script.GAP_INVENT, which is where the whole of it lives.
+    fandom_invent: bool = False
     # What the picture is made of, when the operator has said. Empty = whatever each
     # source produces, decided per shot where that is a question (a search brief picks
     # a still or a clip per beat; see llm/lookup). Set, it binds: the operator asked

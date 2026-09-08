@@ -39,6 +39,18 @@ works alone (see `llm/lore.py` for the full reasoning):
   3. `lore_lookup`, the archivist tool, for the detail the writer knows it is missing
      — the only layer that costs a full reading of the documents per question.
 
+What happens where all three layers are silent is the operator's to answer, per run
+(`params.fandom_invent`, the checkbox next to the narrator). Off — the default, and
+what this mode did before there was a switch — the records are the whole world: a gap
+is something nobody knows, said as a fact about the place, and never filled with a
+specific of the writer's own. On, the records are only what was WRITTEN DOWN about the
+world, and the writer may invent the texture between them — a name, a price, a custom,
+a habit — under the four limits in `GAP_INVENT`, of which the load-bearing one is that
+invention is texture and never revelation: what the records leave open stays open.
+Both answers are right for different worlds, which is why this is a question and not a
+rule — thin lore is unwritable under the first, and a world someone is genuinely
+archiving is ruined by the second.
+
 The world's cast is not a fourth layer, and the mode is careful to say so (see
 `CAST_RULE`). It is a WARDROBE: a list of what things look like, where one entry may be
 one character, a body of identical faceless ones, or a whole kind of them. Everything a
@@ -151,14 +163,59 @@ WORLD_RULE = (
     "ledger for that winter is missing the page', 'she never told anyone'. If you "
     "cannot name them, the thing is simply unknown, and you say so as a fact about the "
     "world rather than about a record of it.\n"
-    "Everything you invent to fill a gap must be the kind of thing this world already "
-    "contains: no object, word, institution or turn of phrase that its records give you "
-    "no reason to believe exists.\n"
+    "{gap}"
     "If you speak to someone as 'you', that someone is STANDING IN THE WORLD — a new "
     "hand, a traveller, whoever the narration is aimed at. Never the person watching. "
     "The line is not about the pronoun, it is about where the listener is: 'what you "
     "were before you came here will be forgotten' is inside; 'as you can see' is not.\n"
 )
+
+# What happens where the records stop, which is the one question about this world the
+# operator answers per run (`params.fandom_invent`) rather than once per world. Both
+# answers are defensible and they want different videos: a world whose lore is thin is
+# unwritable under the first, and a world someone is genuinely archiving is ruined by
+# the second — an invented price in a finished video is indistinguishable from a
+# recorded one, and the operator who wrote the records is the only person who can tell.
+GAP_STRICT = (
+    "WHAT THE RECORDS DO NOT CONTAIN, YOU DO NOT ADD: no name, no number, no custom, "
+    "no place, no institution, no incident and no turn of phrase that its records give "
+    "you no reason to believe exists. Where a gap is load-bearing, the honest line is "
+    "that nobody knows — said in the world's own terms — and never a specific of your "
+    "own, which a listener cannot tell from a recorded fact.\n"
+)
+
+# The licence, and it is deliberately four-fifths limits: told merely that it may
+# invent, a model does not add a street name, it explains the mystery — the one thing
+# the operator's records were keeping.
+GAP_INVENT = (
+    "THE RECORDS ARE WHAT WAS WRITTEN DOWN, NOT THE WHOLE WORLD, and you may know more "
+    "of it than they do — the operator has asked you to. So where they stop and the "
+    "piece needs something, invent it: a name, a price, a custom, a tool, a street, "
+    "someone's habit, the phrase people here use for a thing. Say it flatly, as fact, "
+    "the way everything else here is said — never hedged into a guess ('perhaps', "
+    "'possibly', 'some say') unless the doubt is itself the point.\n"
+    "Four limits, and they are the whole of what makes this safe:\n"
+    "  • NOTHING YOU ADD MAY CONTRADICT A RECORD. Where a record speaks it wins "
+    "outright, and what you invent has to survive being read next to it.\n"
+    "  • IT STAYS IN THE WORLD'S GRAIN — its materials, its scale, its craft, its "
+    "institutions, its manners of speech. Ask what this place is made of and add only "
+    "more of the same; a thing of a kind these records give you no reason to believe "
+    "could exist here does not exist here.\n"
+    "  • IT IS TEXTURE, NEVER REVELATION. You fill in what nobody bothered to write "
+    "down — the ordinary, the small, the daily. You do NOT settle what the records "
+    "leave open: a question this world argues about, a mystery nobody has solved, a "
+    "thing a record pointedly does not say, all stay exactly as unsettled as they "
+    "were.\n"
+    "  • WHERE NOT KNOWING IS ITSELF THE FACT, IT STAYS THE FACT. Nobody came back, "
+    "the page for that winter is missing, she never told anyone — that is something "
+    "the world CONTAINS, not a hole left for you to fill.\n"
+)
+
+
+def world_rule(invent: bool) -> str:
+    """The world contract, with the operator's answer to the gap question in it."""
+    return WORLD_RULE.format(gap=GAP_INVENT if invent else GAP_STRICT)
+
 
 # The canon sheet is an inventory, not prose, and a model handed an inventory tends to
 # recite it. What it is FOR is knowing the world well enough to speak casually about
@@ -235,10 +292,9 @@ BRIEF_RULE = (
     "THE RECORDS ABOVE ARE A CONSTRAINT, NOT MATERIAL. They say what this world "
     "contains, what its words are, and what nothing you write may contradict. They "
     "never add a subject the brief did not raise and never earn a beat of their own: "
-    "you use them the way you use grammar — everywhere, and invisibly. So they are "
-    "never a reason to fill a gap either: where the brief says a rule is kept and does "
-    "not say why, then why is not known, and you say THAT — not a reason the records "
-    "let you assemble. And where the records say a thing has never been seen clearly, "
+    "you use them the way you use grammar — everywhere, and invisibly. "
+    "{gap}"
+    " And where the records say a thing has never been seen clearly, "
     "it has not: neither the narration nor a video_prompt may show it plainly, and the "
     "shot is built around what people did see.\n"
     "The brief's own furniture is not narration. A heading, a numbering, a note about "
@@ -246,6 +302,31 @@ BRIEF_RULE = (
     "instruction') — that is scaffolding you write TO, never text you read out. Nor is "
     "an instruction the operator addressed to you rather than to the world.\n"
 )
+
+# The second half of the gap question (see GAP_STRICT / GAP_INVENT), asked where the
+# brief meets the records rather than where the world runs out. The failure it is
+# written against survives the licence intact: a reason ASSEMBLED out of the records
+# reads, in the finished video, as a record saying something it never said — which is a
+# different and worse thing than inventing openly out of the world.
+BRIEF_GAP_STRICT = (
+    "So they are never a reason to fill a gap either: where the brief says a rule is "
+    "kept and does not say why, then why is not known, and you say THAT — not a reason "
+    "the records let you assemble."
+)
+BRIEF_GAP_INVENT = (
+    "So they are not what a gap gets filled with either. A reason ASSEMBLED out of "
+    "them — 'the ledger lists six, so the sixth must be the one they fear' — is "
+    "inference wearing a record's coat, and it is not what you were licensed to do. "
+    "What you may do in a gap is invent, openly, out of the world, as a plain fact of "
+    "the place, and only where the brief leaves the writing to you (the rule below "
+    "says where that is)."
+)
+
+
+def brief_rule(invent: bool) -> str:
+    """The brief contract, with the same answer carried through to the records."""
+    return BRIEF_RULE.format(gap=BRIEF_GAP_INVENT if invent else BRIEF_GAP_STRICT)
+
 
 # What the cast sheet is, and — more importantly — what it is NOT. A world's sheet is a
 # wardrobe, not a cast list: it holds looks and nothing else, because everything a
@@ -496,9 +577,12 @@ class FandomWriter:
     fallback_title = "Хроника"
     self_timed = True  # the writer sizes every shot (see SHOT_RULE below)
 
-    def __init__(self, canon: str, lore: str, lore_tool: bool, photo: bool = False):
+    def __init__(self, canon: str, lore: str, lore_tool: bool, photo: bool = False,
+                 invent: bool = False):
         self.canon = canon
         self.lore = lore
+        # may the writer add to this world where its records stop (see GAP_INVENT)
+        self.invent = invent
         # the tool earns its cost only when the records hold more than the sheet does
         self.lore_tool = lore_tool and bool(canon)
         # a slideshow is written differently from a run of clips: a still cannot hold
@@ -531,8 +615,8 @@ class FandomWriter:
         total = ctx.params.duration_s
         return OUTLINE_SYSTEM.format(
             wins=wins, lang=lang, part_rule=part_rule, part_json=part_json,
-            world_rule=WORLD_RULE, premise_rule=PREMISE_RULE, brief_rule=BRIEF_RULE,
-            fidelity_rule=FIDELITY_RULE,
+            world_rule=world_rule(self.invent), premise_rule=PREMISE_RULE,
+            brief_rule=brief_rule(self.invent), fidelity_rule=FIDELITY_RULE,
             total=total, share=total / max(wins, 1),
             chars=char_budget(total, ctx.params.lang, ctx.params.tts_rate),
         )
@@ -583,14 +667,14 @@ class FandomWriter:
         return template.format(
             lang=lang,
             video_prompt_rule=VIDEO_PROMPT_RULE,
-            world_rule=WORLD_RULE,
+            world_rule=world_rule(self.invent),
             cast_rule=CAST_RULE,
             premise_rule=PREMISE_RULE,
             world_block=self._world_block()
             + (f"\nHOW THIS ONE IS TOLD — the operator's note on register: {tone}\n"
                if tone else ""),
             roster_rule=ROSTER_RULE.format(roster=roster),
-            brief_rule=BRIEF_RULE,
+            brief_rule=brief_rule(self.invent),
             fidelity_rule=FIDELITY_RULE,
             window_rule=window_rule,
         )
@@ -627,4 +711,5 @@ def run(job: VideoJob, ctx: AppContext) -> None:
         lore=ctx.lore,
         lore_tool=bool(fandom and fandom.lore_tool),
         photo=ctx.params.medium == "photo",
+        invent=ctx.params.fandom_invent,
     ))

@@ -55,6 +55,21 @@ const FORMS = {
           "go": "web.f.writebrief"
         },
         {
+          "f": "fandom_invent",
+          "kind": "checkbox",
+          "inline": true,
+          "l": "web.f.invent"
+        },
+        {
+          "when": "fandom_invent=*",
+          "rows": [
+            {
+              "note": "web.invent.note",
+              "cls": "dim"
+            }
+          ]
+        },
+        {
           "f": "profanity",
           "kind": "range",
           "min": "0",

@@ -2164,3 +2164,14 @@ EN.update({
     'web.f.writetopic': 'come up with a topic',
     'web.a.aitopic': 'what about: food, more arguable, no numbers up front',
 })
+
+# The fandom's gap question — what the writer may do where the records stop — asked
+# per run, next to the narrator (see stages/fandom_script.GAP_INVENT).
+RU["fandom_invent"] = "Разрешить додумывать то, чего нет в записях"
+EN["fandom_invent"] = "Let the writer invent what the records do not hold"
+RU["help.fandom_invent"] = "Что делать там, где лор кончается. Выключено — записи и есть весь мир: сценарист говорит, что этого никто не знает, и ничего своего не выдумывает. Включено — записи это лишь то, что записали, и сценарист дописывает фактуру между ними: имя, цену, обычай, чью-то привычку. Противоречить записям, вылезать за пределы того, из чего этот мир сделан, и разгадывать то, что записи оставили открытым, ему нельзя в любом случае. Тонкому лору без этого тесно; мир, который ты всерьёз архивируешь, безопаснее держать с выключенной галочкой."
+EN["help.fandom_invent"] = "What happens where the lore stops. Off, the records are the whole world: the piece says a thing is not known and invents no specific of its own. On, they are only what was written down, and the writer fills in the texture between them — a name, a price, a custom, someone's habit. Either way it may never contradict a record, step outside what this world is made of, or settle a question the records leave open. Thin lore is cramped without this; a world you are genuinely archiving is safer with it off."
+RU.update({'web.f.invent': 'можно придумывать своё по лору',
+           'web.invent.note': 'сценарист допишет то, чего в записях нет: имя, цену, обычай, привычку. Противоречить записям и разгадывать оставленное ими открытым он всё равно не станет — только фактура между строк.'})
+EN.update({'web.f.invent': "may invent, in the world's grain",
+           'web.invent.note': 'the writer fills in what the records do not hold — a name, a price, a custom, a habit. It still never contradicts them and never settles what they leave open: texture between the lines, not revelation.'})
