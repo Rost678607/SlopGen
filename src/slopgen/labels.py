@@ -2181,19 +2181,19 @@ EN.update({'web.f.invent': "may invent, in the world's grain",
 # of the world's own records, and this is the override for when it guesses wrong.
 RU.update({
     "web.f.role": "роль зрителя",
-    "web.a.role": "кто он здесь: подстольный — стол, третья форма, строка в журнале. "
+    "web.a.role": "кто слушает: новичок, которому объясняют, как здесь заведено. "
                   "пусто — возьмётся из мира или выведется из лора",
-    "web.role.note": "Адресат, а не тема: ролик, обращённый к подстольному, может "
-                     "быть про пятый этаж — он просто рассказан оттуда, где адресат "
-                     "стоит. Пусто — берётся из fandom.toml мира, а если и там "
-                     "пусто, роль выводится из самого лора.",
+    "web.role.note": "Адресат, а не тема: ролик может быть и про то, куда адресату "
+                     "хода нет, — он просто рассказан оттуда, где адресат стоит. "
+                     "Пусто — берётся из fandom.toml мира, а если и там пусто, роль "
+                     "выводится из самого лора.",
 })
 EN.update({
     "web.f.role": "who you are here",
-    "web.a.role": "who the listener is: a clerk with a desk, a third-form pass and a "
-                  "line in the ledger. empty = from the world, or worked out from its lore",
-    "web.role.note": "The addressee, not the subject: a piece spoken to a clerk may "
-                     "still be about the fifth floor — it is simply told from where "
-                     "the clerk stands. Empty takes the role from the world's "
-                     "fandom.toml, or works it out from the lore itself.",
+    "web.a.role": "who is listening: a newcomer being told how things are done here. "
+                  "empty = from the world, or worked out from its lore",
+    "web.role.note": "The addressee, not the subject: a piece may be about somewhere "
+                     "the listener is not allowed — it is simply told from where they "
+                     "stand. Empty takes the role from the world's fandom.toml, or "
+                     "works it out from the lore itself.",
 })

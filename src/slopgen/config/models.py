@@ -764,9 +764,9 @@ class FandomConfig(BaseModel):
     docs: list[str] = []
     tone: str = ""  # optional register/delivery note for the writer
     # WHO the `usher` narrator is speaking to, in this world's own words — "you are a
-    # подстольный: a desk, a third-form pass and a line in the ledger". Only that voice
-    # uses it, and it fixes the ADDRESSEE, never the subject: a piece told to a clerk
-    # may still be about the fifth floor, told as what a clerk would hear of it.
+    # new carrier, handed a two-part satchel and the winter path". Only that voice uses
+    # it, and it fixes the ADDRESSEE, never the subject: a piece told to a carrier may
+    # still be about the sealed bag nobody lets them open, told as what reaches them.
     # Empty is not a missing setting. The canon compiler works the same fact out of the
     # records on its own (`llm/lore` — "WHO A NEWCOMER HERE BECOMES"), and the writer
     # infers it in-window where there is no sheet, so a world nobody has annotated
