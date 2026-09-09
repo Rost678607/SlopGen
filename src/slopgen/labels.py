@@ -2323,3 +2323,14 @@ EN.update({
     "js.longest": "longest pause",
 })
 
+# Taking a run off the list. Two keys, because the button is its own confirmation:
+# pressing it once turns it into the question.
+RU.update({
+    "js.forget-run": "удалить",
+    "js.forget-run-sure": "удалить вместе с папкой?",
+})
+EN.update({
+    "js.forget-run": "delete",
+    "js.forget-run-sure": "delete it and its folder?",
+})
+

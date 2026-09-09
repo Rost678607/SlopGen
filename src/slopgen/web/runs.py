@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shutil
 import threading
 import time
 import uuid
@@ -323,6 +324,49 @@ class Supervisor:
         else:
             self._emit(run, -1, "run", "stopping", "will stop after the current stage")
         return True
+
+    def forget(self, run_id: str, output: Path) -> str:
+        """Take a settled run off the list, folder and all. Returns what was deleted.
+
+        Forgetting it in memory alone would be a lie: `adopt_all` walks the output
+        folder for `checkpoint.json` on every start, so a run removed from the list
+        comes back with the next restart. The folder IS the run — hence a real delete,
+        and hence a caller that has to mean it.
+
+        Only a settled run. A live one is refused rather than raced: the worker thread
+        writes checkpoints and part files under that folder, and pulling it out from
+        under ffmpeg mid-stage produces a half-written video and a stack trace instead
+        of an answer. Stop it first, which the page already offers.
+
+        The folder must sit INSIDE the output folder, and not BE it. This is the only
+        place in slopgen that removes a tree the operator did not name, so it checks
+        rather than trusts: a checkpoint carrying an edited path, or an output folder
+        that moved since the run, must fail here rather than take a directory with it."""
+        run = self.runs.get(run_id)
+        if run is None:
+            raise KeyError(run_id)
+        if run.status in ("running", "queued") or (run._stop and run.status == "stopping"):
+            raise RuntimeError("stop it first — a running video is still writing files")
+        target = run.run_dir or run.resume_dir
+        removed = ""
+        if target is not None:
+            root = Path(output).resolve()
+            d = Path(target).resolve()
+            if d != root and root in d.parents and d.is_dir():
+                shutil.rmtree(d)
+                removed = str(d)
+            elif d.exists():
+                raise RuntimeError(f"{d} is not inside {root} — refusing to delete it")
+        with self._lock:
+            self.runs.pop(run_id, None)
+        for loop in self.loops.values():
+            if run_id in loop.run_ids:
+                loop.run_ids.remove(run_id)
+        # A page watching this run is holding a queue that will never be fed again.
+        # Dropping the subscriptions ends those streams rather than leaving them on a
+        # twenty-second keepalive forever.
+        run._subs.clear()
+        return removed
 
     # -- loops -------------------------------------------------------------
 

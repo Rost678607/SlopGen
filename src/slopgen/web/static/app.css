@@ -585,3 +585,8 @@ input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;
 .report .bad{color:var(--bad)}
 .report .warn{color:var(--warn)}
 
+/* A button that has been pressed once and is now asking. Not a colour a button wears
+   at rest anywhere on this page, which is the point: it should not look like the thing
+   it looked like a second ago. */
+button.danger{border-color:var(--bad);color:var(--bad)}
+

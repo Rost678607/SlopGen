@@ -2962,6 +2962,11 @@ const streams = new Map();
 async function loadRuns() {
   loadLoops();
   const runs = await api("/api/runs");
+  // The list redraws on every event, and a half-asked question cannot survive the row
+  // it was asked on being replaced — leaving it armed would turn the next click on a
+  // fresh-looking button into a delete.
+  armed.forEach(clearTimeout);
+  armed.clear();
   $("#runs").innerHTML = runs.map((r) => `
     <div class="run" data-id="${r.id}">
       <div class="top">
@@ -2976,7 +2981,7 @@ async function loadRuns() {
     </div>`).join("") || `<p class="empty">${lab("js.no-runs-yet")}</p>`;
   const byId = Object.fromEntries(runs.map((r) => [r.id, r]));
   document.querySelectorAll("#runs [data-act]").forEach((b) => {
-    b.onclick = () => act(b.dataset.act, byId[b.dataset.id]);
+    b.onclick = () => act(b.dataset.act, byId[b.dataset.id], b);
   });
   // Only LIVE runs get a stream. Watching every run in the list was a quiet disaster
   // once the server started finding old ones on disk: forty runs meant forty
@@ -3012,6 +3017,8 @@ function actions(r) {
   else if (r.status === "failed") out.push({ act: "resume", label: lab("js.try-again") });
   else if (r.status !== "done") out.push({ act: "resume", label: lab("js.resume") });
   if (p.video) out.push({ act: "video", label: lab("js.watch-the-video") });
+  // Last, and only on a settled run: this deletes the folder, video included.
+  out.push({ act: "forget", label: lab("js.forget-run") });
   return out;
 }
 
@@ -3024,10 +3031,35 @@ function waitingFor(r) {
   return bits.length ? `<div class="why">${esc(bits.join(" · "))}</div>` : "";
 }
 
-async function act(what, r) {
+// Deleting a run deletes its folder, and a finished video is in there. So the button
+// asks: the first press turns it into the question, a second press within five seconds
+// answers it, and walking away answers "no". A modal would do the same job by taking
+// the whole screen hostage over one row.
+const armed = new Map();  // run id -> timer that disarms it
+
+function armForget(btn, id) {
+  clearTimeout(armed.get(id));
+  armed.set(id, setTimeout(() => {
+    armed.delete(id);
+    btn.textContent = lab("js.forget-run");
+    btn.classList.remove("danger");
+  }, 5000));
+  btn.textContent = lab("js.forget-run-sure");
+  btn.classList.add("danger");
+}
+
+async function act(what, r, btn) {
   if (!r) return;
   try {
     if (what === "stop") { await api(`/api/runs/${r.id}/stop`, { method: "POST" }); loadRuns(); }
+    else if (what === "forget") {
+      if (!armed.has(r.id)) return armForget(btn, r.id);
+      clearTimeout(armed.get(r.id));
+      armed.delete(r.id);
+      await api(`/api/runs/${r.id}`, { method: "DELETE" });
+      say(`${r.title} ${lab("js.deleted")}`);
+      loadRuns();
+    }
     else if (what === "asks") await openAsks(r.id, r.title);
     else if (what === "review") await openReview(r.id, r.title);
     else if (what === "video") window.open(tokd(`/api/runs/${r.id}/video`), "_blank");

@@ -1440,6 +1440,26 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
             raise HTTPException(status_code=404, detail="no such run")
         return run
 
+    @app.delete("/api/runs/{run_id}")
+    async def forget_run(run_id: str,
+                         slopgen: str | None = Cookie(default=None)) -> dict:
+        """Take a settled run off the list and delete its folder.
+
+        There was no way to do this at all, which showed up the moment somebody
+        launched the same run twice: stopping the second one leaves it sitting in the
+        list forever, offering to resume something nobody wants resumed.
+
+        This deletes real output — a finished video lives in that folder — so the page
+        asks twice before calling it."""
+        guard(slopgen)
+        try:
+            removed = sup.forget(run_id, Path(store.global_cfg.paths.output))
+        except KeyError:
+            raise HTTPException(status_code=404, detail="no such run") from None
+        except RuntimeError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from None
+        return {"deleted": True, "removed": removed}
+
     @app.get("/api/runs/{run_id}/asks")
     async def run_asks(run_id: str, slopgen: str | None = Cookie(default=None)) -> dict:
         """What a parked run is waiting for, read off the manifest on disk.
