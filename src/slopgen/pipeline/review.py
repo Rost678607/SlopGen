@@ -132,7 +132,17 @@ class Group:
 # item actually IS — a scene is its spoken "text", a registry entry is its "name" —
 # because the TUI labels each row from its field, and a registry entry headed "text"
 # would be captioned "voiceover".
-HEAD_FIELDS = frozenset({"text", "name", "part"})
+HEAD_FIELDS = frozenset({"text", "name", "part", "plan_subject"})
+
+# The fandom plan (`pipeline.job.ScriptPlan`) shown above the scenes at the `script`
+# breakpoint. Its head is the subject, so the whole plan is ONE item; the rest hang
+# off it as fields. Everything that walks a script document scene by scene has to
+# step over these first — they are an item to the grouping machinery and not a scene
+# to anything else.
+PLAN_HEAD = "plan_subject"
+PLAN_FIELDS = frozenset({
+    PLAN_HEAD, "plan_shape", "plan_opens", "plan_steps", "plan_turn", "plan_close",
+})
 
 # The field of a part separator: the marker that one episode ends here and the next
 # begins. It is a head field, so a separator is an item of its own — which is what
@@ -299,11 +309,53 @@ def _canon_doc(job: VideoJob, mode: str) -> Doc:
     )
 
 
-def _script_doc(job: VideoJob, mode: str) -> Doc:
+def _plan_rows(job: VideoJob, mode: str, shapes: list[str]) -> list[Row]:
+    """The PLAN the beats were written from, as one editable item at the top.
+
+    Only fandom has one (`pipeline.job.ScriptPlan`), and showing it is what turns
+    this breakpoint from proofreading into directing. The decision that makes a piece
+    good or bad — what it is about, which form it takes, what the turn is — is taken
+    in six fields before a beat exists; without them the operator can only edit the
+    six consequences, one at a time, after the fact.
+
+    It is ONE item and not six, which is a deliberate loss of the move/drop machinery:
+    a plan's fields are not a list, none of them may be missing, and their order means
+    nothing. The steps ARE a list, and they are one text row with a step per line for
+    the same reason — a document where the operator may drop "the turn" or shuffle
+    "the subject" below "the close" is a document that can express a plan no writer
+    could be handed.
+
+    An absent plan still draws the block, empty: a run whose brief was already the
+    piece has none, and writing one by hand and pressing the rewrite button is a
+    perfectly good way to take the wheel."""
+    if not _beats(mode) or mode != "fandom":
+        return []
+    plan = job.plan
+    return [
+        Row(label="bp.f.plan_subject", value=(plan.subject if plan else ""),
+            src=0, field=PLAN_HEAD),
+        Row(label="bp.f.plan_shape", value=(plan.shape if plan else ""), src=0,
+            field="plan_shape", kind="choice", options=[""] + shapes),
+        Row(label="bp.f.plan_opens", value=(plan.opens if plan else ""), src=0,
+            field="plan_opens"),
+        Row(label="bp.f.plan_steps", value="\n".join(plan.steps) if plan else "",
+            src=0, field="plan_steps"),
+        Row(label="bp.f.plan_turn", value=(plan.turn if plan else ""), src=0,
+            field="plan_turn"),
+        Row(label="bp.f.plan_close", value=(plan.close if plan else ""), src=0,
+            field="plan_close"),
+    ]
+
+
+def _script_doc(job: VideoJob, mode: str, shapes: list[str] | None = None) -> Doc:
     """The script as written, not just what is spoken: every scene shows its
     narration AND what will be put on screen for it. The visual half is only
     editable here — by the footage breakpoint the clips already exist (and in the
-    user-assisted flow the operator has already made them by hand)."""
+    user-assisted flow the operator has already made them by hand).
+
+    A fandom script opens with the PLAN it was written from (see :func:`_plan_rows`);
+    `shapes` is the run's shape catalogue, for that block's choice of form, and the
+    caller supplies it because this module has no run to read it off."""
     rows: list[Row] = []
     for i, s in enumerate(job.scenes):
         label = _scene_label(i, s)
@@ -329,6 +381,10 @@ def _script_doc(job: VideoJob, mode: str) -> Doc:
             rows.append(Row(label=label, value=", ".join(s.keywords), src=i, field="keywords"))
     if _beats(mode):
         rows = with_part_rows(rows, job.scenes, always=True)
+    # the plan goes in FRONT of the part separators as well as the scenes: it is not
+    # part of any episode, and `with_part_rows` places the first separator before the
+    # first row carrying a scene's `src`, which the plan's rows deliberately do not
+    rows = _plan_rows(job, mode, shapes or []) + rows
     return Doc(
         stage="script",
         rows=rows,
@@ -561,9 +617,17 @@ _READERS = {
 }
 
 
-def read(stage: str, job: VideoJob, mode: str) -> Doc:
-    """The editable view of what `stage` left on the job."""
+def read(stage: str, job: VideoJob, mode: str, shapes: list[str] | None = None) -> Doc:
+    """The editable view of what `stage` left on the job.
+
+    `shapes` is the run's catalogue of piece forms, and only the fandom `script`
+    document has any use for it (the plan block's choice of form). It is optional
+    because most callers have no run to read one off, and a plan whose form is not
+    offered as a choice is still perfectly editable — the field simply lists what it
+    already holds."""
     reader = _READERS.get(stage)
+    if reader is _script_doc:
+        return _script_doc(job, mode, shapes)
     return reader(job, mode) if reader else Doc(stage=stage)
 
 
@@ -650,11 +714,52 @@ def _apply_canon(job: VideoJob, rows: list[Row], mode: str) -> bool:
     return False
 
 
+def _apply_plan(job: VideoJob, rows: list[Row]) -> list[Row]:
+    """Fold the plan block back onto the job, and return the rows without it.
+
+    An edited plan is stored whether or not the operator then asks for the script to
+    be written from it: they may simply be correcting the record of what this video
+    was meant to be, and a resumed run reads the plan off the job.
+
+    A plan emptied to nothing is a plan REMOVED — the operator saying this piece has
+    no plan any more — rather than an empty one to write from, because a `ScriptPlan`
+    with no subject is exactly what `plan_spine` refuses to return."""
+    from .job import ScriptPlan
+
+    plan_rows = [r for r in rows if r.field in PLAN_FIELDS]
+    if not plan_rows:
+        return rows
+    by_field = {r.field: r.value.strip() for r in plan_rows}
+    steps = [s.strip() for s in by_field.get("plan_steps", "").splitlines() if s.strip()]
+    if not any(by_field.values()) and not steps:
+        job.plan = None
+        return [r for r in rows if r.field not in PLAN_FIELDS]
+    shape = by_field.get("plan_shape", "")
+    plan = ScriptPlan(
+        subject=by_field.get(PLAN_HEAD, ""), shape=shape,
+        opens=by_field.get("plan_opens", ""), steps=steps,
+        turn=by_field.get("plan_turn", ""), close=by_field.get("plan_close", ""),
+        # The ending rule belongs to the SHAPE, so an operator who changed the form
+        # must not keep the old form's ending. Dropped here and refilled from the
+        # catalogue when the script is written again
+        # (`stages.fandom_script.rewrite_from_plan`): stale is worse than absent,
+        # because nothing downstream could tell that it was stale.
+        ends=(job.plan.ends if job.plan and job.plan.shape == shape else ""),
+    )
+    job.plan = plan
+    return [r for r in rows if r.field not in PLAN_FIELDS]
+
+
 def _apply_script(job: VideoJob, rows: list[Row], mode: str) -> bool:
     """Rebuild the scenes from the multi-row script document. A "text" row opens a
     scene; the rows after it (prompt / keywords) belong to that same scene, so an
     operator-added line becomes a new scene with an empty visual — which the AI edit
     line or the footage stage's fallback then fills."""
+    # The plan comes off first and out of the way. Everything below counts items to
+    # match scenes against separators, and a plan left in the list would be counted as
+    # one — the first scene would take the plan's rows for its own and every episode
+    # boundary would sit one item too high.
+    rows = _apply_plan(job, rows)
     old = job.scenes
     out: list[Scene] = []
     labels = parts_from_rows(rows)  # where the separators now sit

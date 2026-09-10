@@ -1,0 +1,61 @@
+# The shapes a fandom video may take, and how a piece of each kind ENDS.
+#
+# The planner (`stages/fandom_script.plan_spine`) picks one of these per video unless
+# the run names one itself. Copy this file to a name of your own, cut what your world
+# does not do, add what it does, and point the world at it with `shapes = "<name>"` in
+# its fandom.toml — or a single run at it with `--shapes <name>`.
+#
+# `ends` is the field that earns the catalogue. The general rule for these pieces is
+# "one turn late, then a line that stops without explaining", and it is wrong for some
+# of them: a piece offering a choice ends ON the list of options, a vignette ends
+# unfinished. Whatever a shape writes in `ends` replaces that default; `turn` does the
+# same for the turn, and both may be left empty to keep the default.
+#
+# Write them in whatever language you write your lore in.
+
+name = "default"
+
+[[shapes]]
+name = "mechanism"
+use_when = "One arrangement of this world, taken apart: what it is, how it is actually done, and what it costs the people it is done to."
+ends = "On the price. The last line names what the arrangement takes, flatly, as something everybody here has long since stopped arguing with."
+
+[[shapes]]
+name = "duties"
+use_when = "Somebody has been put somewhere, and this is what that means for them: what they will do, in what order, and what it earns them."
+ends = "On the one thing they must NOT do — the prohibition nobody wrote down, given as advice from someone who has been here longer."
+
+[[shapes]]
+name = "rule"
+use_when = "A thing that must be done a certain way here: the conditions it holds under, and what reaches you when it does not."
+ends = "On the consequence, said as a fact rather than a threat: what happens, to whom, and how soon."
+turn = "The turn is the exception — the condition under which the rule stops protecting you, or protects somebody else instead."
+
+[[shapes]]
+name = "vignette"
+use_when = "One named someone wants one concrete thing, and the piece is the getting of it: what is in the way, what they try."
+ends = "UNFINISHED. They have not got it yet, and the last line is where it stands when the time runs out — a want still open, or a question nobody in the piece answers."
+turn = "The turn is what gets in the way, and it is ordinary rather than dramatic: a shortage, a rule, somebody else's claim on the same thing."
+
+[[shapes]]
+name = "choice"
+use_when = "The listener is offered several of something and has to take one — a post, a route, a favour, an allowance, a tool."
+ends = "ON THE LIST ITSELF. The options are named in the world's own words and not described, one after another, and the piece STOPS on the last of them: no summary, no recommendation, no asking anybody to answer anywhere."
+turn = "The turn comes BEFORE the list, not after it: what every one of the options quietly costs, or the fact that the choice is less free than it looks."
+
+[[shapes]]
+name = "procedure"
+use_when = "How a thing here is made, prepared or carried out, in order, by whoever does it — a recipe, a drill, a round, a rite of the ordinary kind."
+ends = "On the step people get wrong, or on what is done with the result. Never on a summary of the steps."
+
+[[shapes]]
+name = "creature"
+use_when = "One inhabitant of this world — a person, an animal, a thing that behaves like one — introduced by name to somebody who has not met it."
+ends = "On what it does to you, or what it wants from you. The listener is left knowing how to behave around it, not what it is."
+turn = "The turn is the part of it that its reputation leaves out — the harmless one is not, or the dreaded one is mostly a nuisance."
+
+[[shapes]]
+name = "incident"
+use_when = "One thing that happened here, once, and is still referred to: a night, a loss, a visit, a year the records are odd about."
+ends = "On what was written down about it afterwards, or on what people say now — the version that survived, not the event."
+turn = "The turn is the discrepancy: what the account says against what anybody who was there says."

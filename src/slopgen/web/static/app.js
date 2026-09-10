@@ -1900,6 +1900,9 @@ async function loadOptions() {
   };
   fill($("#f-world"), opts.worlds);
   fill($("#f-voice"), opts.voices);
+  // blank is the ordinary answer: the world names its own catalogue, and this is the
+  // override for a run that wants a different set of forms than the world usually does
+  fill($("#f-shapes"), opts.shape_catalogues || [], true);
   fill($("#f-fit"), opts.fits);
   $("#f-fit").value = "close";
   document.querySelectorAll(".f-lang, #f-lang").forEach((el) => fill(el, opts.languages));
@@ -2422,8 +2425,9 @@ async function openAsks(id, title) {
   const d = await api(`/api/runs/${id}/asks`);
   $("#panel-title").textContent = `${title} ${lab("js.missing")} ${d.pending} ${lab("js.of")} ${d.shots.length}`;
   $("#panel-apply").hidden = true;
-  // the same panel carries both screens; asks have no rows to rewrite
+  // the same panel carries both screens; asks have no rows to rewrite and no plan
   $("#panel-ai").hidden = true;
+  $("#panel-replan").hidden = true;
   const base = d.base || [];
   $("#panel-body").innerHTML = d.shots.length ? d.shots.map((sh) => {
     const url = `/api/runs/${id}/asks/${encodeURIComponent(sh.video)}/${encodeURIComponent(sh.id)}/file`;
@@ -2564,8 +2568,12 @@ let dragGroup = null;
 
 // The row field that opens a new item — the same set as `review.HEAD_FIELDS`, and it
 // has to stay the same: `apply` groups the rows it gets back by exactly this rule.
-const HEAD_FIELDS = new Set(["text", "name", "part"]);
+const HEAD_FIELDS = new Set(["text", "name", "part", "plan_subject"]);
 const PART_FIELD = "part";
+// The head of the fandom plan block (`review.PLAN_HEAD`). Its presence in a document
+// is what says this script was written from a plan, and therefore can be written from
+// one again — which is the whole of how the rewrite button decides to show itself.
+const PLAN_HEAD = "plan_subject";
 
 // Rows into items. A row whose field is a head field opens one; the rest attach to
 // whatever is open (see `review.group_rows`).
@@ -2759,6 +2767,10 @@ async function openReview(id, title) {
                   note_key: d.note_key, note_extra: d.note_extra };
   $("#panel-title").textContent = `${title} — ${word(d.stage)}`;
   $("#panel-apply").hidden = false;
+  // Rewriting from the plan is offered exactly where there IS one: the plan block is
+  // in the document or it is not, and asking the rows is how the browser finds out
+  // without being told which modes plan and which do not.
+  $("#panel-replan").hidden = !d.rows.some((r) => (r.field || "") === PLAN_HEAD);
   // The AI edit line, on any breakpoint that has prose to edit. A chip set or a
   // generator choice is not prose, so a document made only of those gets no line.
   $("#panel-ai").hidden = !d.rows.some((r) => !r.readonly && (r.kind || "text") === "text");
@@ -2797,6 +2809,30 @@ $("#panel-apply").onclick = async () => {
   say(lab("js.changes-applied-the-run-goes-on"));
   loadRuns();
 };
+// Write the beats again from the plan above them. The one breakpoint action that does
+// not end the review: the run stays parked, the document is fetched again, and what
+// comes back is a new script under the same plan — so the operator can argue with the
+// plan several times over without the pipeline moving on behind their back.
+$("#panel-replan").onclick = async () => {
+  if (!reviewState) return;
+  const btn = $("#panel-replan");
+  btn.disabled = true;
+  // it is several LLM calls and a minute or two of them; a button that merely goes
+  // quiet for that long reads as a button that did nothing
+  say(lab("js.replan-working"));
+  try {
+    const { id, video, stage, rows } = reviewState;
+    const r = await api(`/api/runs/${id}/review/replan`, { method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ video, stage, rows }) });
+    // refetched rather than patched: the rewrite decides how many beats there are,
+    // and the document is the server's to describe
+    const title = $("#panel-title").textContent.split(" — ")[0];
+    await openReview(id, title);
+    say(`${lab("js.replan-done")} ${r.beats}`);
+  } catch (e) { say(e.message, true); } finally { btn.disabled = false; }
+};
+
 // Hand the model the lines and one instruction — "shorter", "make scene 3 angrier",
 // "split this into two beats" — and it returns the whole list edited. The reply is put
 // into the fields rather than applied: it is a draft to look at, and the operator still

@@ -605,6 +605,8 @@ def fandom(
     narrator: str = typer.Option("resident", "--narrator", help="who tells it: resident (lives there, first person) | chronicler (studies its records, builds theories) | usher (speaks to you, and the you is someone in the world)"),
     viewer_role: str = typer.Option("", "--viewer-role", help="usher only: who the 'you' is, in the world's own words ('a new carrier, handed a two-part satchel and the winter path'). Empty = taken from the world's fandom.toml, or worked out from its records"),
     invent: str = typer.Option("no", "--invent", help="how far the writer may add to this world where its records stop. `no` (the default) — the records are the whole world and a gap is simply not known. `gaps` — it may invent, but only where a beat cannot be written otherwise, and only the smallest ordinary detail that unblocks it. `free` — it furnishes the world at will, in the world's own grain. Under all three it never contradicts a record, never invents the subject of the piece, never coins a name for something the records leave unnamed, and never settles what they leave open"),
+    shapes: Optional[str] = typer.Option(None, "--shapes", help="which catalogue of PIECE SHAPES to plan out of, by name under configs/shapes/. Default: the world's own `shapes`, else the shipped `default`"),
+    shape: Optional[str] = typer.Option(None, "--shape", help="force the shape of this piece — a name from the catalogue above (mechanism, duties, rule, vignette, choice, procedure, creature, incident in the shipped one). Omit and the plan picks one from the brief and the records; naming one is how a run of alike videos is made"),
     medium: str = typer.Option("video", "--medium", help="what the picture is made of: video (clips) | photo (a slideshow of stills, held and slowly panned)"),
     source: Optional[str] = typer.Option(None, "--source", help="what makes the shots: a generator (wan2.1 | ltx-video | animatediff for video, flux | turbo for photo), `manual` (you generate them) or `search` (you find them; slopgen briefs you per shot). Default: wan2.1 for video, flux for photo"),
     orchestration: Optional[str] = typer.Option(None, "--orchestration", help="a full chain from configs/orchestration/, overriding --source when you want to mix"),
@@ -659,6 +661,30 @@ def fandom(
         typer.secho(f"error: --invent must be 'no', 'gaps' or 'free', not '{invent}'",
                     fg="red")
         raise typer.Exit(1)
+    if shapes and shapes not in store.shapes:
+        typer.secho(
+            f"error: shape catalogue '{shapes}' not found "
+            f"(available: {', '.join(store.shapes) or 'none'})",
+            fg="red",
+        )
+        raise typer.Exit(1)
+    # The catalogue this run will actually plan out of, resolved the same three ways
+    # `stages.fandom_script.catalogue` resolves it — a named form has to be checked
+    # against the catalogue it will be looked up in, not against every one on disk.
+    _world = store.fandoms.get(world)
+    _cat = next(
+        (store.shapes[n] for n in (shapes, (_world.shapes if _world else ""), "default")
+         if n and n in store.shapes and store.shapes[n].shapes),
+        None,
+    )
+    if shape and (_cat is None or _cat.get(shape) is None):
+        typer.secho(
+            f"error: no shape '{shape}' in catalogue "
+            f"'{_cat.name if _cat else 'none'}' "
+            f"(it has: {', '.join(s.name for s in _cat.shapes) if _cat else 'nothing'})",
+            fg="red",
+        )
+        raise typer.Exit(1)
     if orchestration and orchestration not in store.orchestrations:
         typer.secho(
             f"error: orchestration '{orchestration}' not found "
@@ -697,6 +723,7 @@ def fandom(
             lang=lang, content_type="", mode="fandom",
             manual_orchestration=manual_orch, medium=medium,
             fandom=world, fandom_voice=narrator, fandom_invent=invent,
+            fandom_shapes=shapes or "", fandom_shape=shape or "",
             viewer_role=viewer_role,
             scenario=scenario or "",
             orchestration=orchestration or "",

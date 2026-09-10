@@ -776,6 +776,12 @@ class FandomConfig(BaseModel):
     # offer the writer the `lore_lookup` tool (a librarian LLM that reads the whole
     # document and answers questions). Off = the canon sheet is all it ever sees.
     lore_tool: bool = True
+    # which catalogue of PIECE SHAPES this world's videos are planned out of, by name
+    # under `configs/shapes/` (see :class:`ShapesConfig`). Empty = the shipped
+    # `default` one. A world is the right place for this: the kinds of short piece a
+    # place affords — duty rosters, warnings, recipes, creatures, choices — are a fact
+    # about the place, and switching the whole set is one word here.
+    shapes: str = ""
     # -- LLM-compiled, rebuilt when `docs_sha` stops matching (see above) --
     canon: str = ""  # the canon sheet: rules, glossary, factions, timeline, taboos
     docs_sha: str = ""  # sha1 of the documents `canon` was compiled from
@@ -819,6 +825,49 @@ class OrchestrationConfig(BaseModel):
 
     name: str
     stages: list[OrchestrationStage] = []
+
+
+class ShapeSpec(BaseModel):
+    """One KIND of short piece a fandom video may be, and how a piece of that kind
+    ends.
+
+    The mode's planner used to hold four of these as a closed list inside a prompt,
+    and closed it was on purpose: asked to choose a form freely, a model chooses "an
+    atmospheric exploration of", which is the survey the whole spine exists to stop.
+    But four was the wrong number, and worse, the list was the wrong PLACE — the
+    shapes a world wants are a property of the world. A place with a duty roster and
+    a place with a bestiary want different ones, and neither is a code change.
+
+    `ends` is what makes this more than a label. A piece that offers a choice ends on
+    the list of options and not on a warning; a vignette ends unfinished; a mechanism
+    ends on the price. Those are contradictory endings, so the general rule ("one turn
+    late, then a line that stops") has to be overridable per shape rather than
+    universal — which is exactly what a closed list in a prompt could not express."""
+
+    name: str  # what the planner answers with, and what the operator sees
+    use_when: str = ""  # when this shape fits, in one line
+    ends: str = ""  # how a piece of this kind ENDS; overrides the default close rule
+    turn: str = ""  # what its turn is, where the default (a hidden price) is wrong
+
+
+class ShapesConfig(BaseModel):
+    """A named CATALOGUE of shapes, picked per world (`FandomConfig.shapes`) or per
+    run. One file under `configs/shapes/`, like an orchestration or a visuals profile.
+
+    A catalogue rather than a flat list of shapes because switching the whole set at
+    once is the operation that gets used: one world's pieces are duty rosters, oaths
+    and warnings, another's are recipes and creatures, and moving between them should
+    be one field and not a re-tick of eight checkboxes."""
+
+    name: str
+    shapes: list[ShapeSpec] = []
+
+    def get(self, name: str) -> ShapeSpec | None:
+        """The shape by name, case- and space-insensitively — it arrives from an LLM
+        answer, an operator's typing and a TOML, and none of the three can be relied
+        on to agree about capitals."""
+        key = name.strip().casefold()
+        return next((s for s in self.shapes if s.name.strip().casefold() == key), None)
 
 
 # --- resolved parameters of a single run ----------------------------------
@@ -945,6 +994,15 @@ class RunParams(BaseModel):
     # and parts/clip_seconds/orchestration/cast work identically.
     fandom: str = ""  # folder name under configs/fandoms/; the world being narrated
     fandom_voice: FandomVoice = "resident"  # who is telling it (see FandomVoice)
+    # WHICH catalogue of piece shapes this run plans out of, overriding the world's
+    # own `FandomConfig.shapes`. Empty = the world's, or the shipped `default`.
+    fandom_shapes: str = ""
+    # The shape of THIS piece, forced. Empty — the ordinary case — means the spine
+    # pass reads the brief and the records and picks one out of the catalogue, which
+    # is what a topic queue wants. Naming one here is how a series of alike videos is
+    # made, and how an operator overrules a planner that keeps reaching for the same
+    # form (see `stages.fandom_script.plan_spine`).
+    fandom_shape: str = ""
     # How far the writer may ADD to this world where its records stop: not at all,
     # only where a beat cannot otherwise be written, or freely. See `InventLevel`
     # above and stages/fandom_script, which is where the whole of it lives.

@@ -89,6 +89,16 @@ const FORMS = {
           "cls": "dim invent-note"
         },
         {
+          "f": "fandom_shapes",
+          "kind": "select",
+          "id": "f-shapes",
+          "l": "web.f.shapes"
+        },
+        {
+          "note": "web.shapes.note",
+          "cls": "dim"
+        },
+        {
           "f": "profanity",
           "kind": "range",
           "min": "0",

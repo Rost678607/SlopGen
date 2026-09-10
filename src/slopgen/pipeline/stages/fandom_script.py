@@ -74,8 +74,10 @@ middle of itself, taken apart in an order where every sentence is caused by the 
 turned once near the end when the arrangement turns out to have a price, and stopped
 on a line that explains nothing. That shape is written down twice here — as rules
 every pass is held to (`PIECE_RULES`), and as this particular video's own plan, made
-before a beat is written (`Spine`, `plan_spine`). The section above `PIECE_RULES` has
-the measured failure that made both necessary.
+before a beat is written (`plan_spine`, kept on the job as `job.ScriptPlan` so that a
+resumed run and the review breakpoint both reach it). The section above `PIECE_RULES`
+has the measured failure that made both necessary, and the shapes a plan may choose
+between are the operator's, in `configs/shapes/` (`config.models.ShapesConfig`).
 
 The world's cast is not a fourth layer, and the mode is careful to say so (see
 `CAST_RULE`). It is a WARDROBE: a list of what things look like, where one entry may be
@@ -89,11 +91,11 @@ sheets is how a video ends up about four people standing in a place.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
 
+from ...config.models import ShapeSpec, ShapesConfig
 from ...llm.tools import LORE_LOOKUP_TOOL, make_lore_lookup
 from ..context import AppContext
-from ..job import VideoJob
+from ..job import ScriptPlan, VideoJob
 from .beats import (
     FIDELITY_RULE,
     MAX_BEAT_S,
@@ -493,7 +495,7 @@ def brief_rule(invent: str) -> str:
 # itself, taken apart in an order where each sentence is caused by the last, turned
 # once near the end when the arrangement turns out to have a price, and stopped on a
 # line that explains nothing. Sixty words, one subject, no survey. That is a shape,
-# and it can be said in rules (`PIECE_RULES`) and decided per video (`Spine`).
+# and it can be said in rules (`PIECE_RULES`) and decided per video (`ScriptPlan`).
 #
 # The spine is also where the mode gets back something the short pieces never had:
 # a pass that reads the WHOLE records against the brief before a beat is written.
@@ -530,6 +532,10 @@ PIECE_RULES = (
     "a warning, an instruction, a question nobody there answers, one flat sentence "
     "that lands. Never a summary of what was just said, never a moral, never a line "
     "telling the listener what they have heard.\n"
+    "    These last two describe the ORDINARY piece. Where the plan below names the "
+    "kind of piece this is and how a piece of that kind ends, that wins over both — "
+    "some forms turn early and some end on a list rather than on a line, and being "
+    "held to a late turn and a closing sentence is what would ruin them.\n"
     "  • THIS WORLD'S WORDS, IN EVERY BEAT. At least one thing named the way the "
     "records name it, every time, and never glossed — no 'so-called', no 'that is to "
     "say', no explaining a word to somebody who lives here. Those names are most of "
@@ -551,22 +557,74 @@ PIECE_RULES = (
     "and it outranks all six.\n"
 )
 
-# The four shapes, and they are a closed list on purpose. Asked to pick a form freely
-# a model picks "an atmospheric exploration of", which is the survey again under a
-# better name. Each of these four has a spine that cannot be written as a list.
-SPINE_SHAPES = (
-    "\nFOUR KINDS OF PIECE. One of them fits what the brief asks for better than the "
-    "others; pick it and say which:\n"
-    "  • MECHANISM — one arrangement of this world taken apart: what it is, how it is "
-    "actually done, and what it costs the people it is done to.\n"
-    "  • DUTIES — somebody has been put somewhere, and this is what that means for "
-    "them: what they will do, in what order, and what it earns them.\n"
-    "  • RULE — a thing that must be done a certain way here: the conditions under "
-    "which it holds, and what reaches you when it does not.\n"
-    "  • VIGNETTE — one named someone wants one concrete thing, and the piece is the "
-    "getting of it: what is in the way, what they try, where it stands when the time "
-    "runs out. It ends unfinished.\n"
+# The shapes are a CLOSED list and not a free choice — asked to pick a form freely a
+# model picks "an atmospheric exploration of", which is the survey again under a better
+# name — but the list itself is the operator's, in `configs/shapes/` (see
+# `config.models.ShapesConfig`). Four of them lived here as prose for exactly as long
+# as it took to want a fifth: a world with a duty roster and a world with a bestiary
+# want different forms, and neither should be a code change.
+#
+# `_FALLBACK_SHAPES` is what happens when there is no catalogue on disk at all. Not a
+# second copy of the shipped file to drift against it — the two smallest, most general
+# forms, enough to keep the mode working in a checkout whose configs/ is missing.
+_FALLBACK_SHAPES = ShapesConfig(name="fallback", shapes=[
+    ShapeSpec(
+        name="mechanism",
+        use_when="One arrangement of this world, taken apart: what it is, how it is "
+                 "actually done, and what it costs the people it is done to.",
+        ends="On the price — what the arrangement takes, said flatly.",
+    ),
+    ShapeSpec(
+        name="vignette",
+        use_when="One named someone wants one concrete thing, and the piece is the "
+                 "getting of it.",
+        ends="UNFINISHED: where it stands when the time runs out.",
+    ),
+])
+
+SHAPES_LEAD = (
+    "\nWHAT KIND OF PIECE THIS IS. One of the forms below fits what the brief asks "
+    "for better than the others; pick it, and answer with its name exactly as it is "
+    "spelled here. Do not invent a form of your own and do not blend two — a piece "
+    "that is a bit of several is the survey this plan exists to prevent.\n"
 )
+SHAPES_FORCED = (
+    "\nWHAT KIND OF PIECE THIS IS: it has already been decided, and it is "
+    "**{name}**. Plan that form and answer with that name. The other forms are "
+    "listed for context only; if the brief seems to want a different one, it is the "
+    "brief that bends — the operator chose this deliberately, usually to keep a run "
+    "of videos alike.\n"
+)
+SHAPE_ENTRY = "  • {name} — {use_when}\n    it ends: {ends}\n"
+
+
+def shapes_block(cat: ShapesConfig, forced: str = "") -> str:
+    """The catalogue as the planner sees it: every form, with how each one ENDS.
+
+    The ending is in here rather than only in the chosen shape's own block because it
+    is most of what distinguishes one form from another. A piece that ends on a list
+    of options and a piece that ends on a warning are different pieces from their
+    first sentence onward, and a planner that learns the difference only after
+    choosing has already planned the wrong steps."""
+    lead = (SHAPES_FORCED.format(name=forced) if forced else SHAPES_LEAD)
+    return lead + "".join(
+        SHAPE_ENTRY.format(
+            name=s.name, use_when=s.use_when or "—",
+            ends=s.ends or "on one turn, late, and then a line that simply stops",
+        )
+        for s in cat.shapes
+    )
+
+
+def catalogue(ctx: AppContext) -> ShapesConfig:
+    """Which catalogue of shapes this run plans out of: the run's, else the world's,
+    else the shipped `default`, else the two-form fallback above."""
+    for name in (ctx.params.fandom_shapes,
+                 (ctx.fandom.shapes if ctx.fandom else ""), "default"):
+        cat = ctx.store.shapes.get(name.strip()) if name and name.strip() else None
+        if cat and cat.shapes:
+            return cat
+    return _FALLBACK_SHAPES
 
 # The planner. It writes no narration at all, and saying so twice is not redundant:
 # handed a world and a topic, a model's first instinct is to start the video.
@@ -603,13 +661,17 @@ SPINE_SYSTEM = (
     "the material a listener has to have before anything can be worth turning. A plan "
     "that spends all its steps on getting somewhere and none on being there has "
     "described a corridor.\n"
-    '  • "turn": what follows from THE LAST STEP and is worse, stranger or costlier '
+    '  • "turn": where the form you picked says what its turn is, that. Otherwise, '
+    "what follows from THE LAST STEP and is worse, stranger or costlier "
     "than the steps sounded. One thing, and it has to GROW OUT of them — read your "
     "last step and your turn together, and if the turn introduces something the steps "
     "never touched, then either the steps are the wrong ones or the turn is, and you "
     "fix that here rather than leaving the writer to bridge it.\n"
-    '  • "close": what the last line does — the warning, the instruction, the '
-    "question nobody answers. One line, and it explains nothing.\n"
+    '  • "close": what the last line does. THE FORM YOU PICKED SAYS HOW A PIECE OF '
+    "its kind ends, and that wins over anything general: where it ends on a list of "
+    "options, the close IS that list; where it ends unfinished, the close is where "
+    "things stand. Otherwise: the warning, the instruction, the question nobody "
+    "answers. One line either way, and it explains nothing.\n"
     "Write all of it in {lang}. This is a plan, not narration: no beats, no seconds, "
     "no shot descriptions, and nothing written out in the narrator's voice.\n"
     'Respond with JSON only: {{"subject": "...", "shape": "...", "open": "...", '
@@ -628,6 +690,7 @@ SPINE_RULE = (
     "  THEN, IN THIS ORDER:\n{steps}\n"
     "  THE TURN, LATE: {turn}\n"
     "  IT STOPS ON: {close}\n"
+    "{ends}"
     "The steps are the ORDER of the piece and not its beats: one step may take two "
     "beats, and two small steps may share one. Spend them all, in that order, and add "
     "no step of your own — a subject the spine does not name is a subject this video "
@@ -646,10 +709,13 @@ SPINE_RULE = (
     "  • THE TURN IS THIS TURN. You do not substitute a different one, however good, "
     "and you do not fall back on a warning you have already used elsewhere. It was "
     "chosen because it grows out of the last step.\n"
-    "  • THE PIECE ENDS ON THE CLOSING LINE GIVEN. Word it as you need to word it; do "
-    "not replace it with a closing line of your own. Where the close is a saying, an "
-    "omen or a piece of advice people here repeat, it is quoted as the saying it is — "
-    "that is texture the plan went and found, and writing past it throws it away.\n"
+    "  • THE PIECE ENDS AS THE PLAN SAYS IT ENDS. Word it as you need to word it; do "
+    "not replace it with an ending of your own. Where the close is a saying, an omen "
+    "or a piece of advice people here repeat, it is quoted as the saying it is — that "
+    "is texture the plan went and found, and writing past it throws it away. Where "
+    "this kind of piece ends on a LIST — options, names, things to pick between — the "
+    "last beat IS that list, given in the world's own words and not described, and "
+    "nothing follows it: no summary, no recommendation, no asking anybody to answer.\n"
 )
 
 # A brief this short is a line off a queue (see `llm.lore.SHAPE_TOPIC`) or a phrase
@@ -688,27 +754,23 @@ ARC_FANDOM = (
 SPINE_MAX_BRIEF = 600
 
 
-@dataclass
-class Spine:
-    """One video's plan: what it is about, and the order it comes apart in."""
+def spine_block(plan: ScriptPlan) -> str:
+    """The plan as the writer is handed it (see `SPINE_RULE`).
 
-    subject: str
-    shape: str = ""
-    opens: str = ""
-    steps: list[str] = field(default_factory=list)
-    turn: str = ""
-    close: str = ""
-
-    def block(self) -> str:
-        return SPINE_RULE.format(
-            subject=self.subject, shape=self.shape or "—", opens=self.opens or "—",
-            steps="\n".join(f"    {i + 1}. {s}" for i, s in enumerate(self.steps)),
-            turn=self.turn or "—", close=self.close or "—",
-        )
+    A function rather than a method on the plan, because the plan itself lives on the
+    job (`pipeline.job.ScriptPlan`) — where a resumed run and the review breakpoint
+    can both reach it — and a data model on the job has no business importing a
+    stage's prompt constants."""
+    return SPINE_RULE.format(
+        subject=plan.subject, shape=plan.shape or "—", opens=plan.opens or "—",
+        steps="\n".join(f"    {i + 1}. {s}" for i, s in enumerate(plan.steps)),
+        turn=plan.turn or "—", close=plan.close or "—",
+        ends=(f"    A piece of this kind ENDS: {plan.ends}\n" if plan.ends else ""),
+    )
 
 
 def plan_spine(ctx: AppContext, writer: "FandomWriter", *, brief: str, beats: int,
-               lang: str) -> Spine | None:
+               lang: str) -> ScriptPlan | None:
     """Decide what this video is about, once, before any of it is written.
 
     Returns None when the answer is unusable, and the piece is then written under
@@ -721,9 +783,17 @@ def plan_spine(ctx: AppContext, writer: "FandomWriter", *, brief: str, beats: in
     from ..drama import char_budget
     from ...llm.client import LLMError
 
+    cat = catalogue(ctx)
+    forced = ctx.params.fandom_shape.strip()
+    if forced and cat.get(forced) is None:
+        # named a shape this catalogue does not hold: say so and let the planner
+        # choose, rather than forcing a form nothing downstream can describe
+        log.warning("no shape %r in catalogue %r (it has: %s) — letting the plan choose",
+                    forced, cat.name, ", ".join(s.name for s in cat.shapes))
+        forced = ""
     system = SPINE_SYSTEM.format(
         world_rule=world_rule(writer.invent), world_block=writer.spine_world(ctx),
-        piece_rules=PIECE_RULES, shapes=SPINE_SHAPES, lang=lang,
+        piece_rules=PIECE_RULES, shapes=shapes_block(cat, forced), lang=lang,
         # The planner has to know WHO IS BEING SPOKEN TO, and leaving it out cost the
         # first measured piece its whole register. Planning «первый день» for nobody
         # in particular produces a procedure — a thing that is done, by unnamed people,
@@ -757,11 +827,21 @@ def plan_spine(ctx: AppContext, writer: "FandomWriter", *, brief: str, beats: in
         log.warning("the spine came back without a subject or an order — writing "
                     "this piece without one")
         return None
-    return Spine(
-        subject=subject, shape=str(data.get("shape") or "").strip(),
+    # The shape the plan came back with, matched against the catalogue it was chosen
+    # from. A forced one wins outright; an answer naming nothing recognisable is kept
+    # as the plan's own word for the piece, but earns no ending rule — better an
+    # unlabelled plan than one silently held to the wrong form's ending.
+    shape = forced or str(data.get("shape") or "").strip()
+    spec = cat.get(shape)
+    if shape and spec is None:
+        log.warning("the plan called this piece %r, which is not a shape in %r",
+                    shape, cat.name)
+    return ScriptPlan(
+        subject=subject, shape=spec.name if spec else shape,
         opens=str(data.get("open") or data.get("opens") or "").strip(), steps=steps,
         turn=str(data.get("turn") or "").strip(),
         close=str(data.get("close") or "").strip(),
+        ends=spec.ends if spec else "",
     )
 
 
@@ -1115,7 +1195,7 @@ class FandomWriter:
     self_timed = True  # the writer sizes every shot (see SHOT_RULE below)
 
     def __init__(self, canon: str, lore: str, lore_tool: bool, photo: bool = False,
-                 invent: str = "no"):
+                 invent: str = "no", spine: ScriptPlan | None = None):
         self.canon = canon
         self.lore = lore
         # how far the writer may add to this world where its records stop: "no",
@@ -1126,10 +1206,12 @@ class FandomWriter:
         # a slideshow is written differently from a run of clips: a still cannot hold
         # an action, so the shot descriptions have to be photographs (see SHAPE_PHOTO)
         self.photo = photo
-        # what this video is about and the order it comes apart in, settled by
-        # `prepare` before a beat is written — None when the brief already is the
-        # piece, or when the pass came back unusable (see `plan_spine`)
-        self.spine: Spine | None = None
+        # What this video is about and the order it comes apart in. Normally settled
+        # by `prepare` before a beat is written, and None when the brief already is
+        # the piece or the pass came back unusable (see `plan_spine`). Passed in when
+        # the operator has edited a plan and asked for the script to be written from
+        # it again, in which case `prepare` plans nothing.
+        self.spine: ScriptPlan | None = spine
         # whether the brief names a subject rather than carrying one (BRIEF_TOPIC)
         self.topic = False
 
@@ -1168,6 +1250,13 @@ class FandomWriter:
         any kind (see the section above)."""
         text = brief.strip()
         self.topic = 0 < len(text) <= TOPIC_CHARS
+        if self.spine is not None:
+            # handed a plan at construction: the operator's own, off the breakpoint
+            # (see :func:`rewrite_from_plan`). Planning again would throw away the
+            # very edit that asked for this run.
+            log.info("writing to the plan as edited:\n%s",
+                     spine_block(self.spine).strip())
+            return
         if len(text) > SPINE_MAX_BRIEF:
             return  # the operator wrote the piece; it is its own spine
         self.spine = plan_spine(ctx, self, brief=brief, beats=beats, lang=lang)
@@ -1177,14 +1266,14 @@ class FandomWriter:
             # back flat, the plan turned out to have held a saying, a turn and a naming
             # phrase that the writer had quietly dropped, and none of that was
             # recoverable from a log line carrying the subject alone.
-            log.info("the plan for this one:\n%s", self.spine.block().strip())
+            log.info("the plan for this one:\n%s", spine_block(self.spine).strip())
             ctx.progress("spine", 1, 1)
 
     def piece_rule(self) -> str:
         """The shape block every pass gets: what kind of brief this is, how a piece of
         this kind is built, and this particular one's spine."""
         return ((BRIEF_TOPIC if self.topic else "") + PIECE_RULES
-                + (self.spine.block() if self.spine else ""))
+                + (spine_block(self.spine) if self.spine else ""))
 
     def whole_arc(self, ctx: AppContext, *, beats: int) -> str:
         """One window is the whole video (see `beats.write_beats`)."""
@@ -1297,12 +1386,48 @@ class FandomWriter:
         return {"lore_lookup": (LORE_LOOKUP_TOOL, make_lore_lookup(ctx.llm, self.lore))}
 
 
-def run(job: VideoJob, ctx: AppContext) -> None:
+def _writer(job: VideoJob, ctx: AppContext,
+            spine: ScriptPlan | None = None) -> FandomWriter:
     fandom = ctx.fandom
-    write_beats(job, ctx, FandomWriter(
+    return FandomWriter(
         canon=job.canon,
         lore=ctx.lore,
         lore_tool=bool(fandom and fandom.lore_tool),
         photo=ctx.params.medium == "photo",
         invent=ctx.params.fandom_invent,
-    ))
+        spine=spine,
+    )
+
+
+def run(job: VideoJob, ctx: AppContext) -> None:
+    writer = _writer(job, ctx)
+    write_beats(job, ctx, writer)
+    # The plan goes onto the job, which is what makes it survive the run: a resumed
+    # run writes against the plan it started on the way it writes against the canon
+    # sheet it started on, and the `script` breakpoint has something to show the
+    # operator besides the six beats that came out of it.
+    job.plan = writer.spine
+
+
+def rewrite_from_plan(job: VideoJob, ctx: AppContext) -> None:
+    """Write the script again from the plan already on the job, planning nothing.
+
+    What the button at the `script` breakpoint calls. The plan is the half of the run
+    an operator can actually argue with — a wrong turn is one field here and six
+    beats downstream — so editing it and asking for the beats again is a cheaper loop
+    than rewriting six narrations by hand, and a truer one: the beats come out of the
+    plan the operator now agrees with rather than being patched into agreement.
+
+    A plan too thin to write from (no subject, or fewer than two steps) falls back to
+    planning one, since the alternative is asking the writer to work from nothing."""
+    plan = job.plan if job.plan and job.plan.usable else None
+    if job.plan and not plan:
+        log.warning("the edited plan has no subject or too few steps — planning afresh")
+    if plan and plan.shape and not plan.ends:
+        # the operator changed the form, so the ending rule that came with the old one
+        # was dropped on the way in (see `review._apply_plan`); take this form's
+        spec = catalogue(ctx).get(plan.shape)
+        plan = plan.model_copy(update={"ends": spec.ends if spec else ""})
+    writer = _writer(job, ctx, spine=plan)
+    write_beats(job, ctx, writer)
+    job.plan = writer.spine

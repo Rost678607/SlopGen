@@ -20,6 +20,7 @@ from .models import (
     OrchestrationConfig,
     PresetConfig,
     RunParams,
+    ShapesConfig,
     VisualsConfig,
     VoiceConfig,
 )
@@ -325,6 +326,7 @@ class ConfigStore:
         for v in self.voices.values():
             v.root = CONFIGS_DIR / "voices"
         self.orchestrations: dict[str, OrchestrationConfig] = _load_dir("orchestration", OrchestrationConfig)
+        self.shapes: dict[str, ShapesConfig] = _load_dir("shapes", ShapesConfig)
         self.fandoms: dict[str, FandomConfig] = _load_fandoms()
 
     def active_llm_profile(self) -> LLMProfile:

@@ -32,6 +32,7 @@ from .models import (
     PresetConfig,
     Rect,
     RunParams,
+    ShapesConfig,
     VisualsConfig,
     VoiceConfig,
 )
@@ -68,6 +69,7 @@ __all__ = [
     "PresetConfig",
     "Rect",
     "RunParams",
+    "ShapesConfig",
     "VisualsConfig",
     "VoiceConfig",
 ]

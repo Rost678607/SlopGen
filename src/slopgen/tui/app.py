@@ -1070,6 +1070,15 @@ I18N: dict[str, dict[str, str]] = {
         "bp.down": "▼",
         "bp.f.topic": "topic",
         "bp.f.canon": "canon sheet",
+        # the fandom plan, shown above the beats at the `script` breakpoint. The
+        # terminal draws the block read-only-ish (it has no rewrite button, that is
+        # the browser's) but it must not caption six fields with their raw keys.
+        "bp.f.plan_subject": "what it is about, in one line",
+        "bp.f.plan_shape": "what kind of piece",
+        "bp.f.plan_opens": "what it opens inside",
+        "bp.f.plan_steps": "how it works, in order (one step per line)",
+        "bp.f.plan_turn": "the turn: what follows and is worse than it sounded",
+        "bp.f.plan_close": "what it stops on",
         "bp.f.title": "title",
         "bp.f.description": "description",
         "bp.f.tags": "tags (comma-separated)",
@@ -1696,6 +1705,12 @@ I18N: dict[str, dict[str, str]] = {
         "bp.down": "▼",
         "bp.f.topic": "тема",
         "bp.f.canon": "канон-справка",
+        "bp.f.plan_subject": "про что это, одной строкой",
+        "bp.f.plan_shape": "какого рода кусок",
+        "bp.f.plan_opens": "с чего начинается — уже изнутри",
+        "bp.f.plan_steps": "как это устроено, по шагам (по одному в строке)",
+        "bp.f.plan_turn": "поворот: что из этого следует и хуже, чем звучало",
+        "bp.f.plan_close": "чем заканчивается",
         "bp.f.title": "заголовок",
         "bp.f.description": "описание",
         "bp.f.tags": "теги (через запятую)",

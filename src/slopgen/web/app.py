@@ -212,6 +212,12 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
             # how far the writer may add to a world where its records stop, in order,
             # because the wizard draws it as a slider (see config.models.InventLevel)
             "invent_levels": ["no", "gaps", "free"],
+            # Catalogues of PIECE SHAPES (configs/shapes/). The catalogue is what the
+            # wizard offers, and not the shapes inside it: which form a particular
+            # video takes is a decision with the plan in front of you, and the
+            # `script` breakpoint is where that plan is. Empty here means "the
+            # world's own, else the shipped default" (see fandom_script.catalogue).
+            "shape_catalogues": sorted(store.shapes),
             "fits": ["exact", "close", "loose", "any"],
             "breakpoints": {m: review.available(m) for m in ("info", "drama", "fandom")},
             "languages": ["ru", "en"],
@@ -1517,6 +1523,18 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
             raise HTTPException(status_code=404, detail="no such run")
         return run
 
+    def run_shapes(params) -> list[str]:
+        """The names of the piece forms this run may plan in, for the plan block's
+        choice at the `script` breakpoint (see `stages.fandom_script.catalogue`, which
+        resolves the same three places in the same order and is the authority)."""
+        for name in (params.fandom_shapes,
+                     (store.fandoms.get(params.fandom).shapes
+                      if store.fandoms.get(params.fandom) else ""), "default"):
+            cat = store.shapes.get((name or "").strip()) if (name or "").strip() else None
+            if cat and cat.shapes:
+                return [s.name for s in cat.shapes]
+        return []
+
     @app.delete("/api/runs/{run_id}")
     async def forget_run(run_id: str,
                          slopgen: str | None = Cookie(default=None)) -> dict:
@@ -1847,7 +1865,7 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
             job = cp.load_job(i)
             if job is None:
                 continue
-            doc = review.read(stage, job, run.params.mode)
+            doc = review.read(stage, job, run.params.mode, shapes=run_shapes(run.params))
             # `review._picture_doc` can only offer the cards the plan already uses: it
             # is handed a job and nothing else, and a job does not know which world it
             # came from. That is exactly backwards on the run that needs it most — one
@@ -1961,6 +1979,69 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
         stale = review.apply(stage, job, rows, run.params.mode)
         cp.review_done(job, cp.completed(i), stage, rerun=bool(stale))
         return {"ok": True, "rerun": bool(stale)}
+
+    @app.post("/api/runs/{run_id}/review/replan")
+    async def replan_review(run_id: str, request: Request,
+                            slopgen: str | None = Cookie(default=None)) -> dict:
+        """Write the script again from the plan as edited, and park here again.
+
+        The one action at a breakpoint that is not "apply and go on". What it exists
+        for is the asymmetry in a fandom run: the piece is decided in six fields
+        before a beat is written, and by the time the operator sees the beats, a wrong
+        turn has already been spent across all of them. Editing six narrations into
+        agreement with a plan you would rather have had is the expensive way round;
+        editing the plan and asking for the beats again is the cheap one, and the
+        beats then come out of a plan the operator actually agrees with rather than
+        being patched into looking like it.
+
+        The run does NOT resume. `awaiting_review` re-parks it on the same stage,
+        carrying `reviewed` across untouched — `review_done` is what would append this
+        stage to it and stop the breakpoint firing again, and the whole point here is
+        that the operator has not finished with it yet. `completed` keeps `script`
+        too: its output is fresh, just written a second time.
+
+        It runs off the request thread. The rewrite is several LLM calls and a minute
+        or two of them, and the event loop serves the page that is waiting for it."""
+        import asyncio
+
+        from ..pipeline.context import AppContext
+        from ..pipeline.stages import fandom_script
+
+        guard(slopgen)
+        run = run_or_404(run_id)
+        if run.run_dir is None:
+            raise HTTPException(status_code=409, detail="this run has no folder yet")
+        b = await request.json()
+        i, stage = int(b.get("video", 0)), str(b.get("stage", ""))
+        cp = Checkpoint.load(run.run_dir)
+        job = cp.load_job(i)
+        if job is None or cp.review_stage(i) != stage:
+            raise HTTPException(status_code=409, detail="nothing is parked for review here")
+        if stage != "script" or cp.params.mode != "fandom":
+            raise HTTPException(status_code=409,
+                                detail="only a fandom script is written from a plan")
+        rows = [review.Row(label=str(r.get("label", "")), value=str(r.get("value", "")),
+                           src=r.get("src"), field=str(r.get("field", "text")),
+                           kind=str(r.get("kind", "text")), info=str(r.get("info", "")),
+                           options=list(r.get("options", [])))
+                for r in b.get("rows", []) if isinstance(r, dict)]
+        # fold the edit in first, so an interrupted rewrite still leaves the operator's
+        # plan on the job rather than losing it along with the run
+        review.apply(stage, job, rows, cp.params.mode)
+        cp.awaiting_review(job, cp.completed(i), stage)
+
+        def write() -> None:
+            ctx = AppContext(store=store, params=cp.params)
+            ctx.usage.stage = stage
+            fandom_script.rewrite_from_plan(job, ctx)
+
+        try:
+            await asyncio.to_thread(write)
+        except Exception as e:  # noqa: BLE001 — a failed rewrite must not kill the park
+            log.exception("rewriting the script from the plan failed")
+            raise HTTPException(status_code=500, detail=str(e))
+        cp.awaiting_review(job, cp.completed(i), stage)
+        return {"ok": True, "beats": len(job.scenes)}
 
     @app.get("/api/runs/{run_id}/video")
     async def run_video(run_id: str, slopgen: str | None = Cookie(default=None)):

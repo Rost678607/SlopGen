@@ -182,11 +182,46 @@ class FrameAsk(BaseModel):
     card: str = ""  # the card it became, once delivered and filed
 
 
+class ScriptPlan(BaseModel):
+    """What one fandom video is ABOUT, and the order it comes apart in — decided by
+    one pass before a beat is written (`stages.fandom_script.plan_spine`).
+
+    It lives on the job rather than on the writer that made it for two reasons, and
+    the second is the important one. A resumed run must write against the plan it
+    started on, like the canon sheet beside it. And the plan is the half of the run
+    the operator most wants to argue with: a bad turn costs one field here and six
+    beats downstream, so the `script` breakpoint shows it, and re-writing the script
+    from an edited plan is one button rather than six rewrites.
+
+    Empty is normal, not broken: only fandom mode plans, and only where the brief is
+    short enough that it is not already the piece (`SPINE_MAX_BRIEF`)."""
+
+    subject: str = ""  # the ONE thing this video is about, in the world's own words
+    shape: str = ""  # which form, by name, out of the run's shape catalogue
+    opens: str = ""  # the fact the piece starts inside
+    steps: list[str] = Field(default_factory=list)  # how it works, in causal order
+    turn: str = ""  # what follows from the last step and is worse than it sounded
+    close: str = ""  # what the last line does
+    # How a piece of this SHAPE ends, copied off the catalogue entry when the plan
+    # was made (`config.models.ShapeSpec.ends`). Carried rather than looked up again,
+    # so the writer's copy and the plan the operator was shown cannot disagree.
+    ends: str = ""
+
+    @property
+    def usable(self) -> bool:
+        """A subject and an order are the two things a writer cannot supply for
+        itself; a plan missing either is a topic said twice."""
+        return bool(self.subject.strip() and len([s for s in self.steps if s.strip()]) >= 2)
+
+
 class VideoJob(BaseModel):
     index: int
     workdir: Path
     topic: str = ""
     scenes: list[Scene] = []
+    # fandom: what this video is about and in what order (see :class:`ScriptPlan`).
+    # None everywhere else, and on a fandom run whose brief was already the piece.
+    plan: ScriptPlan | None = None
     # frame-base mode: the picture track, planned over the whole video rather than
     # per scene (see pipeline/framebase.py). Empty in every other mode.
     frame_shots: list[FrameShot] = Field(default_factory=list)

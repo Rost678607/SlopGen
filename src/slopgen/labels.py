@@ -2392,3 +2392,34 @@ EN.update({
     "js.forget-parked-sure": "it is waiting to be reviewed — delete it and its folder?",
 })
 
+# The PLAN a fandom script was written from, shown above the beats at the `script`
+# breakpoint (see pipeline/review._plan_rows) — and the button that writes the beats
+# again from it. The captions say what each field DOES to the piece rather than naming
+# it, because "поворот" alone is not a field anybody can fill in correctly.
+RU.update({
+    "bp.f.plan_subject": "про что это, одной строкой",
+    "bp.f.plan_shape": "какого рода кусок",
+    "bp.f.plan_opens": "с чего начинается — уже изнутри",
+    "bp.f.plan_steps": "как это устроено, по шагам (по одному в строке)",
+    "bp.f.plan_turn": "поворот: что из этого следует и хуже, чем звучало",
+    "bp.f.plan_close": "чем заканчивается",
+    "web.bp.replan": "переписать по плану",
+    "js.replan-working": "переписываю сценарий по плану — это пара минут",
+    "js.replan-done": "сценарий переписан, битов:",
+    "web.f.shapes": "каталог форм",
+    "web.shapes.note": "из какого набора форм планировать этот ролик — механизм, обязанности, правило, выбор, рецепт. Пусто — набор самого мира, а если он его не назвал, то стандартный. Форму конкретного ролика выбирает план, и поменять её можно на брейкпоинте, где этот план виден.",
+})
+EN.update({
+    "bp.f.plan_subject": "what it is about, in one line",
+    "bp.f.plan_shape": "what kind of piece",
+    "bp.f.plan_opens": "what it opens inside",
+    "bp.f.plan_steps": "how it works, in order (one step per line)",
+    "bp.f.plan_turn": "the turn: what follows and is worse than it sounded",
+    "bp.f.plan_close": "what it stops on",
+    "web.bp.replan": "rewrite from the plan",
+    "js.replan-working": "writing the script again from the plan — a couple of minutes",
+    "js.replan-done": "the script is rewritten, beats:",
+    "web.f.shapes": "catalogue of forms",
+    "web.shapes.note": "which set of forms this video is planned out of — mechanism, duties, rule, choice, recipe. Empty is the world's own set, or the shipped default where it names none. Which form a particular video takes is the plan's choice, and it is changed at the breakpoint, where that plan is on screen.",
+})
+
