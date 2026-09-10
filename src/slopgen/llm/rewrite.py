@@ -32,6 +32,20 @@ _VARIABLE = (
 )
 
 
+# Said before the world itself, because the instruction is an operator's shorthand and
+# the model has to be stopped from completing it out of its own vocabulary. Everything
+# under this heading is what the writing stages are already held to.
+_WORLD = (
+    "\nWHERE THIS IS SET. Everything below is the world these lines come from, and it "
+    "is the ONLY place their words mean what they mean. A word in a line, or in the "
+    "operator's instruction, names a thing in THIS world whenever this world has one — "
+    "never the thing the same word would mean anywhere else. If the instruction points "
+    "at something the records do not hold, it is pointing at whatever here it most "
+    "nearly describes; find that and edit toward it, and never furnish the lines out of "
+    "the ordinary meaning of the words.\n"
+)
+
+
 _KINDS = (
     "\nEach line comes with a `kind` saying what it is; rewrite every line in the form its "
     "kind demands and never turn one kind into another. In particular a `prompt` line is an "
@@ -49,13 +63,21 @@ def rewrite(
     subject: str = "lines",
     variable: bool = False,
     kinds: list[str] | None = None,
+    world: str = "",
 ) -> list[str] | None:
     """Apply `instruction` to `lines`. Returns the new lines, or None when the model
     gave nothing usable (a fixed-length document also rejects a changed count).
 
     `kinds` labels each line for documents that mix several sorts of line (the script
     shows narration and shot prompts together); labelling pins the count, because a
-    line the model invents would have no kind to belong to."""
+    line the model invents would have no kind to belong to.
+
+    `world` is where the video is SET, when it is set anywhere — the posture and the
+    canon sheet, built by `pipeline.review.world_context`. Editing lines from a world
+    without it is editing them in a language whose words mean something else: the lines
+    name the world's own things and explain none of them, because they were written for
+    somebody who lives there, so the only reading available to a model that was handed
+    nothing else is the ordinary one."""
     if kinds:
         variable = False
     system = _SYSTEM.format(
@@ -63,6 +85,8 @@ def rewrite(
     )
     if kinds:
         system += _KINDS
+    if world:
+        system += _WORLD + world
     payload = (
         [{"kind": k, "text": t} for k, t in zip(kinds, lines)] if kinds else lines
     )
@@ -113,6 +137,7 @@ def rewrite_scenes(
     lang: str = "en",
     roster: list[str] | None = None,
     models: list[str] | None = None,
+    world: str = "",
 ) -> list[dict] | None:
     """Apply a free-form instruction to a whole scene list — the structured sibling of
     :func:`rewrite`. Unlike a flat line rewrite this can reorder, add, drop and retype
@@ -125,6 +150,10 @@ def rewrite_scenes(
         roster=", ".join(roster or []) or "(no fixed cast)",
         models=", ".join(models or []) or "(leave as is)",
     )
+    # the whole scene list is the document where this matters most: it may ADD scenes,
+    # and a scene invented without the world is invented out of ours
+    if world:
+        system += _WORLD + world
     user = (
         f"Instruction: {instruction}\n"
         f"Scenes:\n{json.dumps(scenes, ensure_ascii=False, indent=1)}"

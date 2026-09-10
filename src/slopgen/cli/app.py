@@ -604,7 +604,7 @@ def fandom(
     scenario: Optional[str] = typer.Option(None, "--scenario", help="what to tell about this world, or which theory to argue; omit to let the LLM pick"),
     narrator: str = typer.Option("resident", "--narrator", help="who tells it: resident (lives there, first person) | chronicler (studies its records, builds theories) | usher (speaks to you, and the you is someone in the world)"),
     viewer_role: str = typer.Option("", "--viewer-role", help="usher only: who the 'you' is, in the world's own words ('a new carrier, handed a two-part satchel and the winter path'). Empty = taken from the world's fandom.toml, or worked out from its records"),
-    invent: bool = typer.Option(False, "--invent/--no-invent", help="let the writer add what the records do not hold — a name, a price, a custom, a habit — in this world's own grain. It never contradicts a record and never settles a question they leave open; off (the default) the records are the whole world and a gap is simply not known"),
+    invent: str = typer.Option("no", "--invent", help="how far the writer may add to this world where its records stop. `no` (the default) — the records are the whole world and a gap is simply not known. `gaps` — it may invent, but only where a beat cannot be written otherwise, and only the smallest ordinary detail that unblocks it. `free` — it furnishes the world at will, in the world's own grain. Under all three it never contradicts a record, never invents the subject of the piece, never coins a name for something the records leave unnamed, and never settles what they leave open"),
     medium: str = typer.Option("video", "--medium", help="what the picture is made of: video (clips) | photo (a slideshow of stills, held and slowly panned)"),
     source: Optional[str] = typer.Option(None, "--source", help="what makes the shots: a generator (wan2.1 | ltx-video | animatediff for video, flux | turbo for photo), `manual` (you generate them) or `search` (you find them; slopgen briefs you per shot). Default: wan2.1 for video, flux for photo"),
     orchestration: Optional[str] = typer.Option(None, "--orchestration", help="a full chain from configs/orchestration/, overriding --source when you want to mix"),
@@ -654,6 +654,10 @@ def fandom(
     if narrator not in ("resident", "chronicler", "usher"):
         typer.secho(f"error: --narrator must be 'resident', 'chronicler' or 'usher', "
                     f"not '{narrator}'", fg="red")
+        raise typer.Exit(1)
+    if invent not in ("no", "gaps", "free"):
+        typer.secho(f"error: --invent must be 'no', 'gaps' or 'free', not '{invent}'",
+                    fg="red")
         raise typer.Exit(1)
     if orchestration and orchestration not in store.orchestrations:
         typer.secho(

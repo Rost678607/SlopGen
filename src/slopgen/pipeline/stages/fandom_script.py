@@ -40,16 +40,33 @@ works alone (see `llm/lore.py` for the full reasoning):
      — the only layer that costs a full reading of the documents per question.
 
 What happens where all three layers are silent is the operator's to answer, per run
-(`params.fandom_invent`, the checkbox next to the narrator). Off — the default, and
-what this mode did before there was a switch — the records are the whole world: a gap
-is something nobody knows, said as a fact about the place, and never filled with a
-specific of the writer's own. On, the records are only what was WRITTEN DOWN about the
-world, and the writer may invent the texture between them — a name, a price, a custom,
-a habit — under the four limits in `GAP_INVENT`, of which the load-bearing one is that
-invention is texture and never revelation: what the records leave open stays open.
-Both answers are right for different worlds, which is why this is a question and not a
-rule — thin lore is unwritable under the first, and a world someone is genuinely
-archiving is ruined by the second.
+(`params.fandom_invent`, the slider next to the narrator), and it has three positions
+rather than two:
+
+  * `no` — the records are the whole world. A gap is something nobody knows, said as
+    a fact about the place, and never filled with a specific of the writer's own.
+  * `gaps` — invention is a REPAIR, not a licence: it happens only where the beat in
+    hand cannot otherwise be written, and only as much of it as unblocks that beat.
+  * `free` — the records are merely what somebody WROTE DOWN, and the writer furnishes
+    the rest of the world at will, in its own grain.
+
+The middle rung exists because the two-position version did not work, and the way it
+failed is worth writing down. Told merely that it MAY invent, a model does not add a
+lantern-maker's price. It invents the thing the piece is about. A measured run against
+a world of mountain post-runners, with a brief asking about a term that world does not
+contain, came back with a whole coinage — "so we call it the Object: the place that
+answers" — a proper noun minted for the one thing the records deliberately leave open,
+in a piece whose every other sentence was faithful. That is the shape of the failure
+every time: the invention lands on the subject, on a name, or on the mystery, because
+those are the places a gap is most keenly felt. So the limits in `INVENT_LIMITS` bind
+BOTH licences — no subject, no proper noun, nothing near an open question, and nothing
+the rest of the piece then leans on — and `gaps` adds the one thing that actually
+holds the reflex down: a budget. Where you can write the beat without inventing, you
+did not need to.
+
+All three answers are right for different worlds, which is why this is a question and
+not a rule — thin lore is unwritable under the first, and a world someone is genuinely
+archiving is ruined by the third.
 
 The world's cast is not a fourth layer, and the mode is careful to say so (see
 `CAST_RULE`). It is a WARDROBE: a list of what things look like, where one entry may be
@@ -171,12 +188,13 @@ WORLD_RULE = (
 )
 
 # What happens where the records stop, which is the one question about this world the
-# operator answers per run (`params.fandom_invent`) rather than once per world. Both
-# answers are defensible and they want different videos: a world whose lore is thin is
-# unwritable under the first, and a world someone is genuinely archiving is ruined by
-# the second — an invented price in a finished video is indistinguishable from a
-# recorded one, and the operator who wrote the records is the only person who can tell.
-GAP_STRICT = (
+# operator answers per run (`params.fandom_invent`) rather than once per world. Three
+# answers, and all three are defensible for different worlds: a world whose lore is
+# thin is unwritable under the first, and a world someone is genuinely archiving is
+# ruined by the third — an invented price in a finished video is indistinguishable
+# from a recorded one, and the operator who wrote the records is the only person who
+# can tell.
+GAP_NONE = (
     "WHAT THE RECORDS DO NOT CONTAIN, YOU DO NOT ADD: no name, no number, no custom, "
     "no place, no institution, no incident and no turn of phrase that its records give "
     "you no reason to believe exists. Where a gap is load-bearing, the honest line is "
@@ -184,37 +202,82 @@ GAP_STRICT = (
     "own, which a listener cannot tell from a recorded fact.\n"
 )
 
-# The licence, and it is deliberately four-fifths limits: told merely that it may
-# invent, a model does not add a street name, it explains the mystery — the one thing
-# the operator's records were keeping.
-GAP_INVENT = (
-    "THE RECORDS ARE WHAT WAS WRITTEN DOWN, NOT THE WHOLE WORLD, and you may know more "
-    "of it than they do — the operator has asked you to. So where they stop and the "
-    "piece needs something, invent it: a name, a price, a custom, a tool, a street, "
-    "someone's habit, the phrase people here use for a thing. Say it flatly, as fact, "
-    "the way everything else here is said — never hedged into a guess ('perhaps', "
-    "'possibly', 'some say') unless the doubt is itself the point.\n"
-    "Four limits, and they are the whole of what makes this safe:\n"
+# The limits, written once and attached to BOTH licences. Every clause is an observed
+# failure of the two-position version, and they share one cause: told it may invent, a
+# model spends the licence at the exact point where the gap hurts most — which is
+# never the lantern-maker's price. It is the subject, the name, or the mystery.
+INVENT_LIMITS = (
+    "Five limits, and they are the whole of what makes this safe:\n"
     "  • NOTHING YOU ADD MAY CONTRADICT A RECORD. Where a record speaks it wins "
     "outright, and what you invent has to survive being read next to it.\n"
     "  • IT STAYS IN THE WORLD'S GRAIN — its materials, its scale, its craft, its "
     "institutions, its manners of speech. Ask what this place is made of and add only "
     "more of the same; a thing of a kind these records give you no reason to believe "
     "could exist here does not exist here.\n"
+    "  • YOU NEVER INVENT WHAT THE PIECE IS ABOUT. The subject — the place, the "
+    "custom, the event, the person the video is FOR — comes from the records, always. "
+    "A licence to fill in texture is not a licence to manufacture the thing being "
+    "described, and a piece resting on something you made up is a piece about nothing, "
+    "however faithful every sentence in it sounds.\n"
+    "  • YOU NEVER COIN A PROPER NOUN. No name for a place, a rite, a body, an office, "
+    "an instrument or a phenomenon the records leave unnamed, and no term of art the "
+    "world does not already use. Naming a thing is the strongest claim a narrator can "
+    "make about it: a coinage is heard as the world's own word, and it cannot be told "
+    "apart from one afterwards. Where a thing has no name here, describe it — 'the "
+    "place under the ninth marker', not a word you invented for it.\n"
     "  • IT IS TEXTURE, NEVER REVELATION. You fill in what nobody bothered to write "
     "down — the ordinary, the small, the daily. You do NOT settle what the records "
     "leave open: a question this world argues about, a mystery nobody has solved, a "
     "thing a record pointedly does not say, all stay exactly as unsettled as they "
-    "were.\n"
-    "  • WHERE NOT KNOWING IS ITSELF THE FACT, IT STAYS THE FACT. Nobody came back, "
-    "the page for that winter is missing, she never told anyone — that is something "
-    "the world CONTAINS, not a hole left for you to fill.\n"
+    "were, and you do not invent NEAR one either — a detail added beside an open "
+    "question reads as a hint at its answer. Where not knowing is itself the fact, it "
+    "stays the fact: nobody came back, the page for that winter is missing, she never "
+    "told anyone. That is something the world CONTAINS, not a hole left for you to "
+    "fill.\n"
 )
 
+# The bounded licence, and the default answer for most worlds. What makes it different
+# from the free one is not a longer list of prohibitions — the list is the same — but a
+# BUDGET: invention has to be earned by a beat that cannot be written without it, and
+# the writer is asked to notice that this is almost never the case.
+GAP_GAPS = (
+    "WHERE THE RECORDS STOP, YOU MAY INVENT — BUT ONLY TO GET UNSTUCK. This is a "
+    "repair, not a licence. Before you add anything, try writing the beat without it: "
+    "nine times in ten the sentence works with the records' own material, or with one "
+    "concrete detail less, and then you did not need to invent. Reach for it only when "
+    "the beat genuinely cannot be written otherwise, and then add the SMALLEST "
+    "ordinary thing that unblocks it — a habit, a price, a tool, the order things are "
+    "done in — said flatly, in one clause, in passing. Nothing later in the piece may "
+    "lean on it: if dropping your invention would break a beat further down, it was "
+    "not texture and you should not have added it.\n"
+    + INVENT_LIMITS
+)
 
-def world_rule(invent: bool) -> str:
+# The open licence: the records are a starting point and the writer furnishes the rest.
+# For a world with three paragraphs of lore, which is unwritable under either of the
+# other two. The limits above still bind it — they are not about how MUCH is invented.
+GAP_FREE = (
+    "THE RECORDS ARE WHAT WAS WRITTEN DOWN, NOT THE WHOLE WORLD, and you may know more "
+    "of it than they do — the operator has asked you to. So where they stop and the "
+    "piece needs something, invent it: a price, a custom, a tool, a street, someone's "
+    "habit, the phrase people here use for a thing. Say it flatly, as fact, the way "
+    "everything else here is said — never hedged into a guess ('perhaps', "
+    "'possibly', 'some say') unless the doubt is itself the point.\n"
+    + INVENT_LIMITS
+)
+
+GAP_RULES = {"no": GAP_NONE, "gaps": GAP_GAPS, "free": GAP_FREE}
+
+
+def invents(invent: str) -> bool:
+    """Whether this run's answer permits invention at all. Every caller that used to
+    read the checkbox asks this instead, so a fourth rung would reach them all."""
+    return invent in ("gaps", "free")
+
+
+def world_rule(invent: str) -> str:
     """The world contract, with the operator's answer to the gap question in it."""
-    return WORLD_RULE.format(gap=GAP_INVENT if invent else GAP_STRICT)
+    return WORLD_RULE.format(gap=GAP_RULES.get(invent, GAP_NONE))
 
 
 # The canon sheet is an inventory, not prose, and a model handed an inventory tends to
@@ -269,6 +332,15 @@ LORE_TOOL_RULE = (
 # whose records say nobody has ever got a good look at one. And the scaffolding: 'the
 # instruction ends here', a line of the brief's furniture, read out loud in the voice.
 #
+# The newest of them is `BRIEF_UNKNOWN`, and it is the one the brief's own authority
+# creates. A brief asking «Что такое Объект?» about a world holding no such word is a
+# question with no answer in the records — and a writer told the brief IS the piece,
+# and separately that it may invent, resolves the collision the obvious way: it mints
+# the brief's word as a name of the world and writes three faithful beats about a thing
+# that does not exist. The brief decides WHAT IS TALKED ABOUT; it has no power to
+# create what is talked about, and once that is said outright the writer reaches for
+# the real thing the brief was pointing at instead.
+#
 # What this rule no longer carries is HOW CLOSELY the brief is to be followed word for
 # word — that question is not the world's, it is every mode's, and it lives one rule
 # further down in `beats.FIDELITY_RULE`. What stays here is only what the records
@@ -294,6 +366,7 @@ BRIEF_RULE = (
     "never add a subject the brief did not raise and never earn a beat of their own: "
     "you use them the way you use grammar — everywhere, and invisibly. "
     "{gap}"
+    "{unknown}"
     " And where the records say a thing has never been seen clearly, "
     "it has not: neither the narration nor a video_prompt may show it plainly, and the "
     "shot is built around what people did see.\n"
@@ -303,7 +376,7 @@ BRIEF_RULE = (
     "an instruction the operator addressed to you rather than to the world.\n"
 )
 
-# The second half of the gap question (see GAP_STRICT / GAP_INVENT), asked where the
+# The second half of the gap question (see GAP_NONE / GAP_GAPS / GAP_FREE), asked where the
 # brief meets the records rather than where the world runs out. The failure it is
 # written against survives the licence intact: a reason ASSEMBLED out of the records
 # reads, in the finished video, as a record saying something it never said — which is a
@@ -318,14 +391,39 @@ BRIEF_GAP_INVENT = (
     "them — 'the ledger lists six, so the sixth must be the one they fear' — is "
     "inference wearing a record's coat, and it is not what you were licensed to do. "
     "What you may do in a gap is invent, openly, out of the world, as a plain fact of "
-    "the place, and only where the brief leaves the writing to you (the rule below "
-    "says where that is)."
+    "the place, as far as the gap rule above allows and only where the brief leaves "
+    "the writing to you (the rule below says where that is)."
 )
 
 
-def brief_rule(invent: bool) -> str:
+# The brief's authority runs to the SUBJECT and stops there. Nothing above says so,
+# and the omission is expensive: a brief naming a thing this world does not hold reads,
+# to a writer told the brief is the piece, as proof that the thing exists — after which
+# every rule here is obeyed to the letter around a fabricated centre. This clause binds
+# under all three gap answers, the free one included: a licence to furnish a world is
+# not a licence to install the operator's word in it as a name.
+BRIEF_UNKNOWN = (
+    "\nA WORD IN THE BRIEF IS NOT A FACT OF THE WORLD. The brief decides what is "
+    "talked about; it cannot bring a thing into existence. So where it names something "
+    "the records do not hold — a place, a term, an institution, a rite, a person — you "
+    "do not create it, whatever else you are permitted to invent. Ask what the brief "
+    "is POINTING AT and answer about that, in this world's own word for it: a brief "
+    "asking about a thing under a name nobody here uses is almost always asking about "
+    "something real under the wrong name, and the piece is written about the real one. "
+    "If the records hold nothing the brief could mean, say so plainly and inside the "
+    "world — no such thing is known here, nobody uses that word — and spend the piece "
+    "on the nearest thing that is real. Never adopt the brief's word as a name this "
+    "world uses, and never build the piece on a thing you had to invent to have a "
+    "subject at all.\n"
+)
+
+
+def brief_rule(invent: str) -> str:
     """The brief contract, with the same answer carried through to the records."""
-    return BRIEF_RULE.format(gap=BRIEF_GAP_INVENT if invent else BRIEF_GAP_STRICT)
+    return BRIEF_RULE.format(
+        gap=BRIEF_GAP_INVENT if invents(invent) else BRIEF_GAP_STRICT,
+        unknown=BRIEF_UNKNOWN,
+    )
 
 
 # What the cast sheet is, and — more importantly — what it is NOT. A world's sheet is a
@@ -645,10 +743,11 @@ class FandomWriter:
     self_timed = True  # the writer sizes every shot (see SHOT_RULE below)
 
     def __init__(self, canon: str, lore: str, lore_tool: bool, photo: bool = False,
-                 invent: bool = False):
+                 invent: str = "no"):
         self.canon = canon
         self.lore = lore
-        # may the writer add to this world where its records stop (see GAP_INVENT)
+        # how far the writer may add to this world where its records stop: "no",
+        # "gaps" or "free" (see GAP_RULES)
         self.invent = invent
         # the tool earns its cost only when the records hold more than the sheet does
         self.lore_tool = lore_tool and bool(canon)

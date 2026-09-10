@@ -304,6 +304,31 @@ def _slug(text: str, taken: set[str]) -> str:
     return name
 
 
+def ask_note(ask_id: str) -> str:
+    """What a card filed against an ask writes in its note — and the mark that says it
+    was filed by slopgen rather than put in the base by hand, which is what lets a
+    delivery be taken back without retiring a picture somebody chose themselves."""
+    return f"доставлено по запросу {ask_id}"
+
+
+def card_for_file(world, delivered: Path) -> FrameCard | None:
+    """The card this exact picture is ALREADY filed as, matched on its checksum.
+
+    A picture reaches the base by two roads now — the browser files it the moment it is
+    handed over, so there is something to draw crop regions ON while the operator is
+    still sitting there, and the resume files whatever arrived any other way. Both call
+    :func:`file_card`, and without this they would file the same file twice: a duplicate
+    card, and the run using the copy nobody marked up. The checksum is the honest
+    identity here — the card already carries one for exactly this kind of question (see
+    `config.models.FrameCard`), and a name cannot be trusted because `_slug` invents a
+    new one on a collision."""
+    p = Path(delivered)
+    if world is None or not p.is_file():
+        return None
+    sha = file_sha(p)
+    return next((c for c in world.frames if c.file_sha and c.file_sha == sha), None)
+
+
 def file_card(world, asked: FrameAsk, delivered: Path) -> FrameCard:
     """Take one delivered picture into the world's frame base, and return its card.
 
@@ -315,6 +340,15 @@ def file_card(world, asked: FrameAsk, delivered: Path) -> FrameCard:
     is built once per run, so a card that reached the folder and not the list would be
     invisible until the next process — and the whole point of delivering it now is that
     this run uses it."""
+    already = card_for_file(world, delivered)
+    if already is not None:
+        # somebody has taken this exact picture in already — the browser does it at the
+        # moment of delivery — and filing it again would cost the markup drawn since
+        if already.retired:
+            # a retired card being handed over as an answer is a card wanted back
+            already.retired = False
+            write_frame_card(already)
+        return already
     root = frames_dir(world)
     root.mkdir(parents=True, exist_ok=True)
     name = _slug(asked.description or asked.prompt, {c.name for c in world.frames})
@@ -322,11 +356,47 @@ def file_card(world, asked: FrameAsk, delivered: Path) -> FrameCard:
     shutil.copy2(delivered, dest)
     card = FrameCard(
         name=name, file=dest.name, prompt=asked.prompt, description=asked.description,
-        note=f"доставлено по запросу {asked.id}", file_sha=file_sha(dest), root=root,
+        note=ask_note(asked.id), file_sha=file_sha(dest), root=root,
     )
     write_frame_card(card)
     world.frames.append(card)
     return card
+
+
+def pin_card(job: VideoJob, ask: FrameAsk, card: FrameCard,
+             rng: random.Random | None = None) -> None:
+    """Answer one ask with a card, and lay it onto every shot the ask covers.
+
+    There are two ways an ask gets answered and this is the half they share. One is a
+    picture the operator makes and hands over, which becomes a card first
+    (:func:`file_card`) and arrives here second. The other is a card the base ALREADY
+    holds, chosen by the operator in the browser because the matcher was wrong about it
+    — a picture is not a paragraph, and the model reading a card's description was never
+    going to outvote somebody looking at the thing. Either way what happens next is
+    identical: the ask records which card it became, and its shots are pinned to it.
+
+    `pinned` is what protects the choice from being made again. It says the operator
+    decided this one, and `_fuse` may not overrule it on the next pass — which matters
+    here more than on a delivery, since the whole point of picking from the base is that
+    it is a picture the automatic pass had already declined to use."""
+    rng = rng or random.Random(f"{job.index}|{ask.id}|{card.name}")
+    ask.card = card.name
+    for i in ask.shots:
+        s = job.frame_shots[i]
+        s.card, s.pinned = card.name, True
+        s.move = framebase.move_for(card, s.referents, s.duration, "", rng)
+
+
+def unpin_card(job: VideoJob, ask: FrameAsk) -> None:
+    """Undo :func:`pin_card` — the ask is owed a picture again.
+
+    Every shot it covers goes back to uncovered rather than to whatever the matcher had
+    thought, because it had thought nothing: an ask exists precisely for the stretches
+    no card could be found for (see :func:`_asks_for`), so "" is where these came from."""
+    ask.card = ""
+    for i in ask.shots:
+        s = job.frame_shots[i]
+        s.card, s.pinned, s.move = "", False, None
 
 
 def collect(job: VideoJob, ctx: AppContext) -> None:
@@ -368,11 +438,7 @@ def collect(job: VideoJob, ctx: AppContext) -> None:
                 continue
             card = file_card(world, a, path)
             cards.append(card)
-            a.card = card.name
-            for i in a.shots:
-                s = job.frame_shots[i]
-                s.card, s.pinned = card.name, True
-                s.move = framebase.move_for(card, s.referents, s.duration, "", rng)
+            pin_card(job, a, card, rng)
 
     job.frame_shots = _fuse(job.frame_shots, cards, {}, frozenset(), job)
     framebase.apply_to_scenes(job, cards)

@@ -72,18 +72,21 @@ const FORMS = {
         },
         {
           "f": "fandom_invent",
-          "kind": "checkbox",
-          "inline": true,
-          "l": "web.f.invent"
+          "kind": "range",
+          "min": "0",
+          "max": "2",
+          "step": "1",
+          "value": "0",
+          "id": "f-invent",
+          "l": "web.f.invent",
+          "dose": {
+            "v": "",
+            "cls": "invent-val"
+          }
         },
         {
-          "when": "fandom_invent=*",
-          "rows": [
-            {
-              "note": "web.invent.note",
-              "cls": "dim"
-            }
-          ]
+          "note": "",
+          "cls": "dim invent-note"
         },
         {
           "f": "profanity",

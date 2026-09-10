@@ -224,6 +224,35 @@ def move_group(rows: list[Row], index: int, delta: int) -> list[Row]:
 # -- reading a job into rows -----------------------------------------------
 
 
+def world_context(job: VideoJob, mode: str, invent: str = "no") -> str:
+    """What the AI edit line has to be told about WHERE the video it is editing is set.
+
+    Without this the edit line is the only thing in a fandom run that has never heard of
+    the world. Every stage that writes a word gets the posture and the canon sheet; the
+    rewrite got the lines and an instruction, so it read them as ordinary sentences in
+    ordinary Russian and answered in kind — «расскажи про мой первый день на объекте»
+    came back as a construction site with an alarm clock and a hard hat, because that is
+    what those words mean to anyone who has not read the records. The lines it is handed
+    are the LEAST likely place to find the world out from, too: they are already written
+    from inside it, so they name things without explaining them.
+
+    The same two blocks the writer gets, quoted from the one place they are written
+    (`stages.fandom_script`) rather than said again here, because a second copy of the
+    posture is a second copy to drift. `invent` comes along for the same reason: an edit
+    is held to the same answer about the gaps in the records that the run was started
+    with, or the edit line becomes the way round it.
+
+    Imported inside the function: `review` is what a frontend imports to draw a
+    breakpoint, and it has no business dragging a script stage in behind it on every
+    other mode.
+    """
+    if mode != "fandom" or not job.canon.strip():
+        return ""
+    from .stages.fandom_script import CANON_RULE, world_rule
+
+    return world_rule(invent) + CANON_RULE.format(canon=job.canon.strip())
+
+
 def generator_names() -> list[str]:
     """Every generator a scene may be pinned to (same names the orchestration uses)."""
     from ..media.generate import PHOTO_MODELS, VIDEO_MODELS

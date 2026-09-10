@@ -56,6 +56,7 @@ from ..config.models import (AccountConfig, AdConfig, CharacterConfig, CropTarge
 from ..media.stock import IMAGE_EXTS, VIDEO_EXTS
 from ..pipeline import manual, review
 from ..pipeline.loop import check_params
+from ..pipeline.stages import picture
 from ..pipeline.checkpoint import Checkpoint
 from ..models import CATALOG as MODEL_CATALOG
 from ..models import ModelStore, human_size
@@ -102,9 +103,15 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
     @app.on_event("startup")
     async def _bind() -> None:
         sup.bind(asyncio.get_running_loop())
-        found = sup.adopt_all(Path(store.global_cfg.paths.output))
+        out = Path(store.global_cfg.paths.output)
+        found = sup.adopt_all(out)
         if found:
             log.info("web: %d runs found on disk", found)
+        # and the loops that made some of them: their plans outlive this process
+        # exactly as checkpoints do, and only the thread was ever lost with it
+        loops = sup.adopt_loops(out)
+        if loops:
+            log.info("web: %d loops found on disk", loops)
 
     @app.on_event("shutdown")
     async def _stop() -> None:
@@ -202,6 +209,9 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
             "ui_lang": lang,
             "worlds": sorted(store.fandoms),
             "voices": ["resident", "chronicler", "usher"],
+            # how far the writer may add to a world where its records stop, in order,
+            # because the wizard draws it as a slider (see config.models.InventLevel)
+            "invent_levels": ["no", "gaps", "free"],
             "fits": ["exact", "close", "loose", "any"],
             "breakpoints": {m: review.available(m) for m in ("info", "drama", "fandom")},
             "languages": ["ru", "en"],
@@ -277,8 +287,11 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
         closures, this refills the one everybody already holds."""
         guard(slopgen)
         store.__init__()  # noqa: PLC2801 — deliberate in-place refill, see above
-        found = sup.adopt_all(Path(store.global_cfg.paths.output))
-        return {"worlds": len(store.fandoms), "visuals": len(store.visuals), "runs": found}
+        out = Path(store.global_cfg.paths.output)
+        found = sup.adopt_all(out)
+        loops = sup.adopt_loops(out)
+        return {"worlds": len(store.fandoms), "visuals": len(store.visuals),
+                "runs": found, "loops": loops}
 
     # -- the frame base ----------------------------------------------------
 
@@ -365,16 +378,43 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
         return _card_json(name, c)
 
     @app.delete("/api/worlds/{name}/cards/{card}")
-    async def retire_card(name: str, card: str,
+    async def retire_card(name: str, card: str, purge: bool = False,
                           slopgen: str | None = Cookie(default=None)) -> dict:
+        """Take a card out of the world — softly by default, for good on `purge`.
+
+        RETIRING is the ordinary gesture: the card keeps its place and its picture and
+        simply stops being spent. It may be in the plan of a parked run, and the picture
+        is something somebody made or paid for.
+
+        DELETING is the other half, and it was missing for the same reason the runs list
+        was missing one: refusing outright is the wrong end of it. A base collects cards
+        nobody wants — a delivery taken back, a duplicate, a picture that came back
+        broken — and one that can only ever grow sends the operator into the folder with
+        a file manager, which is where a card and its `.toml` get separated. So the ease
+        is what is guarded and not the existence: the page asks twice and says that the
+        picture goes with it. A parked run whose plan named this card does not break —
+        `framebase.apply_to_scenes` skips a name it cannot resolve, and that stretch goes
+        back to being uncovered, which is exactly what it is.
+
+        Only what is INSIDE the world's own frames folder is unlinked. This is the one
+        place here that removes a file the operator did not name, so it checks rather
+        than trusts: `file` is a line in a TOML somebody may have edited."""
         guard(slopgen)
         w = world_or_404(name)
         c = card_or_404(w, card)
-        # retired, never deleted: a card may be in the plan of a parked run, and its
-        # picture is something somebody made
-        c.retired = True
-        write_frame_card(c)
-        return _card_json(name, c)
+        if not purge:
+            c.retired = True
+            write_frame_card(c)
+            return _card_json(name, c)
+        root = frames_dir(w).resolve()
+        for path in (c.path, root / f"{c.name}.toml"):
+            if path is None:
+                continue
+            path = Path(path).resolve()
+            if path.is_file() and path.parent == root:
+                path.unlink()
+        w.frames.remove(c)
+        return {"deleted": True, "name": c.name}
 
     # -- the settings the terminal keeps under Configuration ---------------
 
@@ -1408,11 +1448,48 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
         return loop.as_dict()
 
     @app.post("/api/loops/{loop_id}/stop")
-    async def stop_loop(loop_id: str, slopgen: str | None = Cookie(default=None)) -> dict:
-        """Stop making new videos. The one being made now is left to finish — it has a
-        stop of its own in the runs list, and tearing it in half is a different act."""
+    async def stop_loop(loop_id: str, request: Request,
+                        slopgen: str | None = Cookie(default=None)) -> dict:
+        """Stop making new videos. The one being made now is left to finish by default —
+        tearing it in half spends its quota for nothing — and `{"now": true}` says to
+        stop that one too, which is the second, deliberate press on a loop that has been
+        asked to stop and is still working through the video it began."""
         guard(slopgen)
-        return {"ok": sup.stop_loop(loop_id)}
+        body = await request.json() if await request.body() else {}
+        return {"ok": sup.stop_loop(loop_id, now=bool(body.get("now")))}
+
+    @app.post("/api/loops/{loop_id}/start")
+    async def start_loop_again(loop_id: str,
+                               slopgen: str | None = Cookie(default=None)) -> dict:
+        """Run an ended loop again on the plan it already has.
+
+        The counterpart of `/stop`, and it was missing for as long as every loop on the
+        page was one the wizard had just made. Its queue, its settings and its tally
+        carry over untouched — this is "carry on", not "start the series again"."""
+        guard(slopgen)
+        loop = loop_or_404(loop_id)
+        try:
+            resumed = sup.resume_loop(loop.id)
+        except RuntimeError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from None
+        return resumed.as_dict() if resumed else {}
+
+    @app.delete("/api/loops/{loop_id}")
+    async def forget_loop(loop_id: str,
+                          slopgen: str | None = Cookie(default=None)) -> dict:
+        """Delete an ended loop's plan, queue and all. The videos it made stay.
+
+        Those are ordinary runs in folders of their own and are deleted from the runs
+        list if they are wanted gone — throwing away a plan is usually the opposite
+        wish, that the queue was wrong and the output was fine."""
+        guard(slopgen)
+        try:
+            removed = sup.forget_loop(loop_id, Path(store.global_cfg.paths.output))
+        except KeyError:
+            raise HTTPException(status_code=404, detail="no such loop") from None
+        except RuntimeError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from None
+        return {"deleted": True, "removed": removed}
 
     @app.post("/api/runs/{run_id}/resume")
     async def resume_run(run_id: str, request: Request,
@@ -1471,6 +1548,23 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
         run = run_or_404(run_id)
         if run.run_dir is None:
             return {"status": run.status, "shots": []}
+        world = frame_world(run)
+        # Which asks are already answered by a card, per video — read off the JOB, which
+        # is where that answer lives. An ask answered FROM THE BASE has nothing in the
+        # inbox to find it by, so without this the panel would show a row that is
+        # settled as a row still owing a picture.
+        pinned: dict[str, dict[str, str]] = {}
+        if world is not None:
+            try:
+                cp = Checkpoint.load(run.run_dir)
+                for i in range(run.params.count):
+                    job = cp.load_job(i)
+                    if job is None:
+                        continue
+                    pinned[Path(job.workdir).name] = {
+                        a.id: a.card for a in job.frame_asks if a.card}
+            except Exception:
+                log.debug("asks: no readable checkpoint at %s", run.run_dir)
         out = []
         for work in sorted(p for p in run.run_dir.iterdir() if p.is_dir()):
             path = manual.manifest_path(work)
@@ -1478,39 +1572,209 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
                 continue
             mf = manual.ManualManifest.model_validate_json(path.read_text(encoding="utf-8"))
             for sh in mf.shots:
+                delivered = bool(sh.clip and Path(sh.clip).is_file())
+                # For a FRAME ask the answer is a card in the world's base either way,
+                # and the card is the only thing crop regions can be drawn on — so the
+                # page is told which one, and can offer to mark it up instead of leaving
+                # the operator to go and find it in the Worlds tab by its filename.
+                name = pinned.get(work.name, {}).get(sh.id, "")
+                if not name and world is not None and delivered and sh.id.startswith("frame_"):
+                    got = picture.card_for_file(world, Path(sh.clip))
+                    name = got.name if got else ""
                 out.append({"video": work.name, "id": sh.id, "prompt": manual.task_text(sh),
                             "status": sh.status, "want": sh.want, "kind": sh.kind,
                             "size": [sh.width, sh.height], "target_s": sh.target_s,
-                            "photo": sh.photo,
-                            "delivered": bool(sh.clip and Path(sh.clip).is_file())})
+                            "photo": sh.photo, "card": name,
+                            # answered out of the base rather than by a new picture:
+                            # there is no file in the inbox, and the row says so
+                            "from_base": bool(name) and not delivered,
+                            "delivered": delivered})
         # what is still owed first: a drama can owe two hundred pictures and have
         # delivered fifty, and scrolling past the finished ones to find the work is
         # the wrong way round
         out.sort(key=lambda sh: (sh["status"] == "delivered", sh["video"], sh["id"]))
         return {"status": run.status, "message": run.message, "shots": out,
+                # the world a frame card belongs to, so the markup button can open one
+                "world": run.params.fandom if world is not None else "",
+                # and everything already IN it, so an ask can be answered without making
+                # anything: the matcher declined these, and it is wrong often enough that
+                # the operator gets to look for themselves (see `pin_ask`)
+                "base": [_card_json(run.params.fandom, c) for c in world.frames
+                         if c.usable] if world is not None else [],
                 "pending": sum(1 for sh in out if sh["status"] != "delivered")}
+
+    def shot_or_404(run, video: str, shot_id: str):
+        """One shot of one video's manifest, with the manifest it lives in.
+
+        Read fresh on every request and written straight back, never held: the manifest
+        on disk is the authority on what has arrived (see `pipeline/manual`), and a run
+        resuming between two requests would turn a cached copy into a lie."""
+        if run.run_dir is None:
+            raise HTTPException(status_code=409, detail="this run has no folder")
+        work = run.run_dir / video
+        path = manual.manifest_path(work)
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="no manifest for that video")
+        mf = manual.ManualManifest.model_validate_json(path.read_text(encoding="utf-8"))
+        shot = next((s for s in mf.shots if s.id == shot_id), None)
+        if shot is None:
+            raise HTTPException(status_code=404, detail=f"no shot {shot_id!r}")
+        return work, mf, shot
+
+    def frame_world(run):
+        """The world a run's FRAME asks belong to, or None when it has none.
+
+        Only a fandom run has a frame base to ask against — every other mode's manual
+        shots are clips for one video and belong to no world."""
+        if run.params.mode != "fandom":
+            return None
+        return store.fandoms.get(run.params.fandom)
+
+    def ask_job(run, video: str, shot_id: str):
+        """The job one frame ask lives on, as `(checkpoint, index, job, ask)`.
+
+        The JOB is where an ask is answered — `FrameAsk.card` is the field the picture
+        stage reads on the way back in — while the manifest only says what the operator
+        still owes. Both have to be written to answer an ask, and this is the half the
+        manifest cannot give: the checkpoint is per RUN and the manifest per video, so
+        the video folder's name is what ties one to the other.
+
+        Returns None rather than raising for a shot that is not a frame ask at all: an
+        info clip's `shot_00` reaches the same endpoints and simply has no job side."""
+        if run.run_dir is None or not shot_id.startswith("frame_"):
+            return None
+        if frame_world(run) is None:
+            return None
+        try:
+            cp = Checkpoint.load(run.run_dir)
+        except Exception:
+            return None
+        for i in range(run.params.count):
+            job = cp.load_job(i)
+            if job is None or Path(job.workdir).name != video:
+                continue
+            ask = next((a for a in job.frame_asks if a.id == shot_id), None)
+            return (cp, i, job, ask) if ask else None
+        return None
+
+    def save_parked_job(cp: Checkpoint, i: int, job) -> None:
+        """Write an edited job back under a PARKED run, changing nothing else.
+
+        A job is only ever rewritten from outside the pipeline while the run is not
+        moving, and `paused` is the only state this may touch: a run parked on a review
+        breakpoint is parked on something else entirely, and stamping it `paused` here
+        would lose the breakpoint it was waiting on. The completed stages and the note
+        the pause left are carried across verbatim — this edits the job, not the run."""
+        if cp.status(i) != "paused":
+            raise HTTPException(
+                status_code=409,
+                detail="this video is not parked waiting for pictures")
+        cp.paused(job, cp.completed(i), "", cp.manual_msg(i))
+
+    def file_frame_card(run, video: str, shot_id: str, delivered: Path):
+        """Take a delivered FRAME ask into the world's base right now, and return its
+        card — or None when this is not one.
+
+        Only a fandom run asks for frames, and only its job knows what this one was FOR:
+        the manifest carries the English prompt a picture model was given, while a card
+        wants the description the matcher wrote in the world's own language. When the
+        job cannot be read the picture is left in the inbox alone and the resume files
+        it, exactly as before — a card filed a minute later is better than a card filed
+        now with no description, because the description is what the matcher reads."""
+        found = ask_job(run, video, shot_id)
+        if found is None:
+            return None
+        _cp, _i, _job, ask = found
+        return picture.file_card(frame_world(run), ask, delivered)
 
     @app.post("/api/runs/{run_id}/asks/{video}/{shot_id}")
     async def deliver_ask(run_id: str, video: str, shot_id: str, file: UploadFile,
                           slopgen: str | None = Cookie(default=None)) -> dict:
-        """Drop one picture into the run's inbox, from the browser.
+        """Take one picture for one shot, from the browser.
 
-        It lands under the shot's own id, which is exactly what `manual.scan_inbox`
-        looks for — so a file handed over here and a file copied in by hand are the
-        same thing, and neither needs this server to be running afterwards."""
+        It lands in the run's inbox under the shot's own id, which is what
+        `manual.scan_inbox` looks for — a file handed over here and a file copied in by
+        hand are the same thing — and it is then ATTACHED in the manifest on the spot.
+        That second half was missing, and it is the half every screen reads: the
+        manifest is what says how many pictures are still owed (see `runs.parked`), so
+        the file arrived, the page said "accepted", and the run went on being described
+        as short of a picture that was already sitting in its inbox — until somebody
+        resumed it and the scan caught up. The terminal's gather screen has always
+        attached the moment a file is named.
+
+        A fandom frame also goes into the world's base immediately, because a card is
+        the only thing crop regions can be drawn ON and the operator is right here,
+        having just made the picture. `picture.file_card` matches on the checksum, so
+        the resume finds this card instead of filing a second copy of the same file, and
+        the regions drawn now are the ones the run uses."""
         guard(slopgen)
         run = run_or_404(run_id)
-        if run.run_dir is None:
-            raise HTTPException(status_code=409, detail="this run has no folder yet")
+        work, mf, shot = shot_or_404(run, video, shot_id)
         suffix = Path(file.filename or "").suffix.lower()
         if suffix not in ALLOWED_SUFFIXES:
             raise HTTPException(status_code=415, detail=f"{suffix or 'that'} is not a picture or a clip")
-        inbox = manual.inbox_dir(run.run_dir / video)
+        inbox = manual.inbox_dir(work)
         inbox.mkdir(parents=True, exist_ok=True)
         dest = inbox / f"{shot_id}{suffix}"
-        with open(dest, "wb") as out:
+        # Landed beside its own name and moved in only once it is known to be a
+        # picture. What the file IS gets asked of ffprobe rather than of its name —
+        # the same question `scan_inbox` asks, asked here so a file that would never
+        # be picked up is a message instead of silence. It matters that the upload
+        # does not write straight over `dest`: a bad file replacing a good delivery
+        # would take the good one with it on the way out. `.part` is already a suffix
+        # the inbox ignores, so one left behind by a crash is nobody's delivery.
+        part = dest.with_name(dest.name + ".part")
+        with open(part, "wb") as out:
             shutil.copyfileobj(file.file, out)
-        return {"ok": True, "at": str(dest)}
+        if not manual._valid_asset(part):
+            part.unlink(missing_ok=True)
+            raise HTTPException(status_code=415, detail="there is no picture in that file")
+        part.replace(dest)
+        manual.attach(shot, dest)
+        mf.save(work)
+        card = file_frame_card(run, video, shot_id, dest)
+        return {"ok": True, "at": str(dest), "photo": shot.photo,
+                "card": card.name if card else "",
+                "world": run.params.fandom if card else ""}
+
+    @app.post("/api/runs/{run_id}/asks/{video}/{shot_id}/card")
+    async def pin_ask(run_id: str, video: str, shot_id: str, request: Request,
+                      slopgen: str | None = Cookie(default=None)) -> dict:
+        """Answer one ask with a card the base ALREADY has.
+
+        An ask means the matcher found nothing that fits, and it is wrong about that
+        often enough to matter: it reads a card's description, in prose, against a
+        stretch of narration, while the operator is looking at the picture. When the two
+        disagree about a picture the operator wins — so the dialogue that asks for a new
+        one also offers the base, and picking from it costs nothing and finishes the ask.
+
+        It is written in both places, because the two answer different questions. On the
+        JOB the ask records the card and its shots are pinned to it, which is what the
+        picture stage reads on the way back in. In the MANIFEST the shot is marked
+        delivered with no clip, which is true — the operator owes nothing for it now —
+        and is what every screen counts and what lets the run resume. On that resume the
+        stage rebuilds the manifest without this ask at all, since an ask with a card is
+        no longer pending."""
+        guard(slopgen)
+        run = run_or_404(run_id)
+        world = frame_world(run)
+        if world is None:
+            raise HTTPException(status_code=409, detail="this run has no frame base")
+        name = str((await request.json()).get("card", "")).strip()
+        card = next((c for c in world.frames if c.name == name and c.usable), None)
+        if card is None:
+            raise HTTPException(status_code=404,
+                                detail=f"no usable card named {name!r} in this world")
+        found = ask_job(run, video, shot_id)
+        if found is None:
+            raise HTTPException(status_code=404, detail=f"no frame ask {shot_id!r}")
+        cp, i, job, ask = found
+        work, mf, shot = shot_or_404(run, video, shot_id)
+        picture.pin_card(job, ask, card)
+        save_parked_job(cp, i, job)
+        shot.status, shot.clip, shot.photo = "delivered", None, card.path.suffix.lower() in IMAGE_EXTS
+        mf.save(work)
+        return {"ok": True, "id": shot_id, "card": card.name, "from_base": True}
 
     @app.get("/api/runs/{run_id}/asks/{video}/{shot_id}/file")
     async def ask_file(run_id: str, video: str, shot_id: str,
@@ -1522,14 +1786,8 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
         hundred of them."""
         guard(slopgen)
         run = run_or_404(run_id)
-        if run.run_dir is None:
-            raise HTTPException(status_code=404, detail="this run has no folder")
-        path = manual.manifest_path(run.run_dir / video)
-        if not path.is_file():
-            raise HTTPException(status_code=404, detail="no manifest for that video")
-        mf = manual.ManualManifest.model_validate_json(path.read_text(encoding="utf-8"))
-        shot = next((s for s in mf.shots if s.id == shot_id), None)
-        if shot is None or not shot.clip or not Path(shot.clip).is_file():
+        _work, _mf, shot = shot_or_404(run, video, shot_id)
+        if not shot.clip or not Path(shot.clip).is_file():
             raise HTTPException(status_code=404, detail="nothing delivered for that shot")
         return FileResponse(Path(shot.clip))
 
@@ -1539,21 +1797,32 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
         """Take a delivery back, so a wrong file can be replaced.
 
         The manifest is the authority on what has arrived, so putting a shot back to
-        `pending` there is the whole of it — the next scan picks up whatever is dropped
-        in next. The file itself is left alone: it is something somebody made, and this
-        is an undo, not a bin."""
+        `pending` there is most of it — the next scan picks up whatever is dropped in
+        next. The file itself is left alone: it is something somebody made, and this is
+        an undo, not a bin.
+
+        What does have to be undone is the card a frame ask was filed as, or the wrong
+        picture stays in the world's base forever, ready to be spent by the next video.
+        It is RETIRED rather than deleted, the way every other card is, and only when it
+        is a card this ask filed — a picture the operator had already taken into the
+        base themselves and then answered an ask with is theirs, not ours to retire."""
         guard(slopgen)
         run = run_or_404(run_id)
-        if run.run_dir is None:
-            raise HTTPException(status_code=404, detail="this run has no folder")
-        work = run.run_dir / video
-        path = manual.manifest_path(work)
-        if not path.is_file():
-            raise HTTPException(status_code=404, detail="no manifest for that video")
-        mf = manual.ManualManifest.model_validate_json(path.read_text(encoding="utf-8"))
-        shot = next((s for s in mf.shots if s.id == shot_id), None)
-        if shot is None:
-            raise HTTPException(status_code=404, detail=f"no shot {shot_id!r}")
+        work, mf, shot = shot_or_404(run, video, shot_id)
+        world = frame_world(run)
+        if world is not None and shot.clip:
+            card = picture.card_for_file(world, Path(shot.clip))
+            if card is not None and card.note == picture.ask_note(shot_id):
+                card.retired = True
+                write_frame_card(card)
+        # an ask answered from the base has nothing in the inbox to take back — what has
+        # to come undone is the pin on the job, or the run goes on believing the stretch
+        # is covered by a card the operator has just rejected
+        found = ask_job(run, video, shot_id)
+        if found is not None and found[3].card:
+            cp, i, job, ask = found
+            picture.unpin_card(job, ask)
+            save_parked_job(cp, i, job)
         shot.status, shot.clip, shot.photo = "pending", None, False
         mf.save(work)
         return {"ok": True, "id": shot_id}
@@ -1592,7 +1861,17 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
                         r.options = names
             return {"video": i, "stage": stage,
                     # what the AI edit line needs to know about this document
-                    "subject": doc.subject, "variable": doc.variable, "rows": [
+                    "subject": doc.subject,
+                    # and what the OPERATOR may do to it by hand: add, drop and
+                    # reorder the items (`variable`), move the part separators
+                    # (`cuttable`). Both were computed here and sent nowhere, which
+                    # is why the browser could only retype what was already there.
+                    "variable": doc.variable, "cuttable": doc.cuttable,
+                    # the note is a label KEY, not a sentence: the browser holds the
+                    # whole table already, and resolving it here would send the same
+                    # words twice in two languages' worth of chances to disagree
+                    "note_key": doc.note_key, "note_extra": doc.note_extra,
+                    "rows": [
                 {"label": r.label, "value": r.value, "src": r.src, "info": r.info,
                  "readonly": r.readonly, "field": r.field, "kind": r.kind,
                  "options": r.options} for r in doc.rows]}
@@ -1621,6 +1900,19 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
         if not editable:
             return {"rows": rows, "changed": 0}
         fields = [str(rows[i].get("field", "text")) for i in editable]
+        # WHERE this video is set, when it is set anywhere. Read off the job rather than
+        # the store, for the reason the job carries a canon sheet at all: a resumed run
+        # writes against the world as it stood when its script was begun, and an edit
+        # made against a newer sheet would contradict the half already written.
+        world = ""
+        if run.run_dir is not None:
+            try:
+                job = Checkpoint.load(run.run_dir).load_job(int(b.get("video", 0)))
+                if job is not None:
+                    world = review.world_context(job, run.params.mode,
+                                                 run.params.fandom_invent)
+            except Exception:
+                log.debug("review ai: no readable job at %s", run.run_dir)
         try:
             out = bp_ai.rewrite(
                 ChatLLM(store.active_llm_profile()),
@@ -1628,6 +1920,7 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
                 lang=run.params.lang, subject=str(b.get("subject", "lines")),
                 variable=bool(b.get("variable")),
                 kinds=fields if any(f != "text" for f in fields) else None,
+                world=world,
             )
         except Exception as e:
             log.exception("review ai failed")

@@ -540,6 +540,7 @@ EN: dict[str, str] = {
         "bp.field.cast": "who is in it",
         "bp.field.model": "generator",
         "bp.field.clip_s": "clip length, sec",
+        "bp.field.card": "picture",
         "bp.chip_pick": "Add to this shot:",
         "bp.chip_none": "the whole cast is already in this shot",
         "bp.cast_known": "Cast of this run",
@@ -621,6 +622,7 @@ EN: dict[str, str] = {
         "bp.sep": "── part {n} starts here ──",
         "bp.sep_hint": "Everything below this marker belongs to part {n}, until the next marker. Move it with ▲▼, drop it to merge this part into the one above.",
         "bp.cut_min": "a video needs at least one part",
+        "bp.apply_empty": "there is nothing here to make a video out of — add at least one item, or go back",
         "bp.cut_locked": "only the part markers can be moved at this breakpoint",
     }
 
@@ -1161,6 +1163,7 @@ RU: dict[str, str] = {
         "bp.field.cast": "кто в кадре",
         "bp.field.model": "нейронка",
         "bp.field.clip_s": "длина клипа, сек",
+        "bp.field.card": "картинка",
         "bp.chip_pick": "Добавить в кадр:",
         "bp.chip_none": "весь каст уже в этом кадре",
         "bp.cast_known": "Каст этого прогона",
@@ -1242,6 +1245,7 @@ RU: dict[str, str] = {
         "bp.sep": "── здесь начинается часть {n} ──",
         "bp.sep_hint": "Всё ниже этого маркера относится к части {n} — до следующего маркера. Двигай его на ▲▼, убери — и часть склеится с предыдущей.",
         "bp.cut_min": "в видео должна быть хотя бы одна часть",
+        "bp.apply_empty": "из этого видео не сделать — добавь хотя бы один блок или вернись назад",
         "bp.cut_locked": "на этом брейкпоинте двигаются только маркеры частей",
     }
 
@@ -1363,6 +1367,9 @@ WEB_RU: dict[str, str] = {
     "web.frames.targets": 'области',
     "web.frames.hint": 'нажми на предмет и отведи в сторону — точка нажатия станет центром',
     "web.frames.preview": 'показать движение по двум первым',
+    "web.frames.retired": 'убрана из базы — больше не тратится',
+    "web.frames.del": '🗑 удалить',
+    "web.frames.del.sure": '🗑 удалить вместе с картинкой?',
     "web.apply": 'применить и продолжить',
     "web.tui.only2": '→ Конфигурация. Перенос идёт по одному разделу за раз.',
     "web.a.password": 'пароль',
@@ -1481,6 +1488,9 @@ WEB_EN: dict[str, str] = {
     "web.frames.targets": 'regions',
     "web.frames.hint": 'press on a thing and drag out — where you pressed is the centre',
     "web.frames.preview": 'preview the move over the first two',
+    "web.frames.retired": 'taken out of the base — no longer spent',
+    "web.frames.del": '🗑 delete',
+    "web.frames.del.sure": '🗑 delete it, picture and all?',
     "web.apply": 'apply and go on',
     "web.tui.only2": '→ Config. It is being ported one section at a time.',
     "web.a.password": 'password',
@@ -1747,6 +1757,14 @@ RU.update({
     "js.of": 'из',
     "js.copy-the-prompt": 'скопировать промпт',
     "js.replace": 'заменить',
+    "js.mark-it-up": 'разметить карточку',
+    "js.from-the-base": 'взять из базы',
+    "js.hide-the-base": 'свернуть базу',
+    "js.picked-from-the-base": 'кадр из базы',
+    "js.the-base-is-empty": 'в базе этого мира нет ни одного готового кадра',
+    "js.pinned-from-the-base": 'взято из базы:',
+    "js.card-deleted": 'карточка удалена',
+    "js.no-such-card": 'такой карточки в мире нет',
     "js.drop-a-picture-here": 'перетащи картинку сюда',
     "js.this-run-is-not-asking-for-anything": 'этот прогон ничего не просит',
     "js.you-can-bring-it-again": 'можно приносить заново',
@@ -1779,6 +1797,14 @@ RU.update({
     "js.loop.needtopic": 'очередь пуста — впиши тему или отдай их нейронке',
     "js.loop.held": 'ждёт тебя',
     "js.loop.stop": 'остановить цикл',
+    "js.loop.stopping": 'остановлен — доделывает начатый ролик',
+    "js.loop.stop-now": 'бросить и текущий ролик',
+    "js.loop.stop-now-sure": 'бросить недоделанный ролик?',
+    "js.loop.dropped-the-video": 'ролик брошен — цикл сейчас закончится',
+    "js.loop.start": 'продолжить цикл',
+    "js.loop.started": 'цикл пошёл дальше',
+    "js.loop.forget": 'удалить цикл',
+    "js.loop.forget-sure": 'удалить план? видео останутся',
     "js.loop.who": 'тему придумывает',
     "js.loop.limit": 'всего',
     "js.loop.park": 'если ролик встал',
@@ -1946,6 +1972,14 @@ EN.update({
     "js.of": 'of',
     "js.copy-the-prompt": 'copy the prompt',
     "js.replace": 'replace',
+    "js.mark-it-up": 'mark the card up',
+    "js.from-the-base": 'take one from the base',
+    "js.hide-the-base": 'hide the base',
+    "js.picked-from-the-base": 'a card from the base',
+    "js.the-base-is-empty": 'this world has no usable card to take',
+    "js.pinned-from-the-base": 'taken from the base:',
+    "js.card-deleted": 'card deleted',
+    "js.no-such-card": 'no such card in this world',
     "js.drop-a-picture-here": 'drop a picture here',
     "js.this-run-is-not-asking-for-anything": 'this run is not asking for anything',
     "js.you-can-bring-it-again": 'you can bring it again',
@@ -1978,6 +2012,14 @@ EN.update({
     "js.loop.needtopic": 'the queue is empty — give it a topic, or switch to the model',
     "js.loop.held": 'waiting for you',
     "js.loop.stop": 'stop the loop',
+    "js.loop.stopping": 'stopping — finishing the video it began',
+    "js.loop.stop-now": 'drop that video too',
+    "js.loop.stop-now-sure": 'drop the half-made video?',
+    "js.loop.dropped-the-video": 'the video is dropped — the loop ends now',
+    "js.loop.start": 'carry on',
+    "js.loop.started": 'the loop is going again',
+    "js.loop.forget": 'delete the loop',
+    "js.loop.forget-sure": 'delete the plan? the videos stay',
     "js.loop.who": 'topics from',
     "js.loop.limit": 'in all',
     "js.loop.park": 'when a video stops',
@@ -2210,15 +2252,29 @@ EN.update({
 })
 
 # The fandom's gap question — what the writer may do where the records stop — asked
-# per run, next to the narrator (see stages/fandom_script.GAP_INVENT).
-RU["fandom_invent"] = "Разрешить додумывать то, чего нет в записях"
-EN["fandom_invent"] = "Let the writer invent what the records do not hold"
-RU["help.fandom_invent"] = "Что делать там, где лор кончается. Выключено — записи и есть весь мир: сценарист говорит, что этого никто не знает, и ничего своего не выдумывает. Включено — записи это лишь то, что записали, и сценарист дописывает фактуру между ними: имя, цену, обычай, чью-то привычку. Противоречить записям, вылезать за пределы того, из чего этот мир сделан, и разгадывать то, что записи оставили открытым, ему нельзя в любом случае. Тонкому лору без этого тесно; мир, который ты всерьёз архивируешь, безопаснее держать с выключенной галочкой."
-EN["help.fandom_invent"] = "What happens where the lore stops. Off, the records are the whole world: the piece says a thing is not known and invents no specific of its own. On, they are only what was written down, and the writer fills in the texture between them — a name, a price, a custom, someone's habit. Either way it may never contradict a record, step outside what this world is made of, or settle a question the records leave open. Thin lore is cramped without this; a world you are genuinely archiving is safer with it off."
-RU.update({'web.f.invent': 'можно придумывать своё по лору',
-           'web.invent.note': 'сценарист допишет то, чего в записях нет: имя, цену, обычай, привычку. Противоречить записям и разгадывать оставленное ими открытым он всё равно не станет — только фактура между строк.'})
-EN.update({'web.f.invent': "may invent, in the world's grain",
-           'web.invent.note': 'the writer fills in what the records do not hold — a name, a price, a custom, a habit. It still never contradicts them and never settles what they leave open: texture between the lines, not revelation.'})
+# per run, next to the narrator. Three positions and not two: the answer most worlds
+# want is the middle one, and a checkbox had nowhere to put it (see
+# stages/fandom_script.GAP_NONE / GAP_GAPS / GAP_FREE).
+RU["fandom_invent"] = "Додумывать то, чего нет в записях"
+EN["fandom_invent"] = "Inventing what the records do not hold"
+RU["help.fandom_invent"] = "Что делать там, где лор кончается. «Нельзя» — записи и есть весь мир: сценарист говорит, что этого никто не знает, и ничего своего не выдумывает. «По ситуации» — придумывает только там, где бит иначе не написать, и только самую мелкую бытовую подробность, которая его расшивает. «В любом случае» — записи это лишь то, что записали, и мир дообставляется свободно. Во всех трёх положениях нельзя противоречить записям, придумывать то, ПРО ЧТО ролик, давать имя тому, что записи оставили безымянным, и разгадывать оставленное ими открытым. Тонкому лору без правого положения тесно; мир, который ты всерьёз архивируешь, держи в левом."
+EN["help.fandom_invent"] = "What happens where the lore stops. `no` — the records are the whole world: the piece says a thing is not known and invents no specific of its own. `only where stuck` — it invents only where a beat cannot be written otherwise, and only the smallest ordinary detail that unblocks it. `freely` — the records are merely what was written down, and the world is furnished at will. In all three it may never contradict a record, invent what the piece is ABOUT, coin a name for something the records leave unnamed, or settle a question they leave open. Thin lore is cramped without the last; a world you are genuinely archiving belongs on the first."
+RU.update({'web.f.invent': 'додумывать по лору',
+           'inv.no': 'нельзя',
+           'inv.gaps': 'по ситуации',
+           'inv.free': 'в любом случае',
+           'inv.note.no': 'Записи и есть весь мир. Где они молчат, сценарист так и скажет — этого никто не знает, — и ничего своего не подставит.',
+           'inv.note.gaps': 'Придумывает только там, где бит иначе не написать, и только самую мелкую бытовую подробность: привычку, цену, порядок действий. Мимоходом, одной фразой, и дальше на неё ничего не опирается.',
+           'inv.note.free': 'Записи — лишь то, что записали; остальное сценарист дообставит сам, в той же фактуре. Для тонкого лора; для мира, который ты всерьёз архивируешь, — нет.',
+           'web.invent.note': ''})
+EN.update({'web.f.invent': 'invent beyond the records',
+           'inv.no': 'never',
+           'inv.gaps': 'only where stuck',
+           'inv.free': 'freely',
+           'inv.note.no': 'The records are the whole world. Where they are silent the piece says so — nobody knows — and puts nothing of its own in the hole.',
+           'inv.note.gaps': 'Invents only where a beat cannot be written otherwise, and only the smallest ordinary detail: a habit, a price, the order things are done in. Said in passing, in one clause, with nothing later leaning on it.',
+           'inv.note.free': 'The records are merely what was written down; the writer furnishes the rest in the same grain. Right for thin lore, wrong for a world you are genuinely archiving.',
+           'web.invent.note': ''})
 
 # The usher's addressee. Shown only under that narrator, because the other two have
 # nobody to address — and left empty by preference: the canon sheet works the role out
@@ -2328,9 +2384,11 @@ EN.update({
 RU.update({
     "js.forget-run": "удалить",
     "js.forget-run-sure": "удалить вместе с папкой?",
+    "js.forget-parked-sure": "он ждёт разбора — удалить вместе с папкой?",
 })
 EN.update({
     "js.forget-run": "delete",
     "js.forget-run-sure": "delete it and its folder?",
+    "js.forget-parked-sure": "it is waiting to be reviewed — delete it and its folder?",
 })
 

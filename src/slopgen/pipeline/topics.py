@@ -102,7 +102,21 @@ def _info(store: ConfigStore, llm, params: RunParams, n: int, avoid: list[str]) 
 
 
 def _fandom(store: ConfigStore, llm, params: RunParams, n: int, avoid: list[str]) -> list[str]:
-    """What to tell about this world next — the same brief the wizard's ✨ writes.
+    """What to tell about this world next — one LINE each, not a brief.
+
+    The one place this module does not simply reuse the mode's own "what is this video
+    about" prompt, and the reason is worth writing down. `write_brief` is the wizard's ✨,
+    and what the wizard is for is one video the operator is about to start: a brief with
+    the evidence in it, two to five sentences, is exactly right there. A queue is the
+    other thing. Asked for briefs, a loop filled its queue with paragraphs that were
+    already most of a video — and the writer reads a long brief as the PIECE itself
+    (`stages.fandom_script.BRIEF_RULE`), so those were not topics awaiting a video, they
+    were videos nobody had agreed to. The queue is a list to be read, reordered and
+    thrown out of, and a list is made of lines.
+
+    A topic is also the only form the operator can correct cheaply. «Как попасть на
+    Объект?» can be rewritten into what they meant in two seconds; a paragraph has to be
+    read first, and by then it has already decided what the video is.
 
     The world's own records go in wherever they fit, for the reason the browser's brief
     endpoint says: the compiled sheet is one line per thing, and one line is where two
@@ -120,7 +134,7 @@ def _fandom(store: ConfigStore, llm, params: RunParams, n: int, avoid: list[str]
     out: list[str] = []
     for _ in range(n):
         brief = write_brief(llm, world, "", _dont_repeat(avoid + out), params.lang,
-                            duration_s=params.duration_s)
+                            duration_s=params.duration_s, topic=True)
         if not brief:
             break
         out.append(brief)

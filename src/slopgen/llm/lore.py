@@ -216,6 +216,28 @@ SHAPE_TOLD = (
     "own brief already carries one, keep it as it stands.\n"
 )
 
+# The third shape, and the one a QUEUE wants. A loop topping up its queue was asking for
+# a brief, got a brief — two to five sentences, concrete, with the evidence in it — and
+# filled the queue with things that were already most of a video. Which is worse than it
+# looks: the writer reads a SHORT brief as a topic and a LONG one as the piece itself
+# (see stages/fandom_script.BRIEF_RULE), so a queue of paragraphs is a queue of pieces
+# nobody wrote, and the operator scanning it cannot see what any of them is ABOUT
+# without reading all of it. A topic is the thing you can read forty of.
+SHAPE_TOPIC = (
+    "You are naming a TOPIC, not writing a brief. ONE line: a question somebody there "
+    "would actually ask, or a thing named together with the angle on it. Ten words is "
+    "plenty and twenty is too many.\n"
+    "It is the LINE ON A LIST that says which video this is, so it has to be legible at "
+    "a glance and distinguishable from forty others beside it. Use the world's own "
+    "names, spelled as the records spell them — the name is most of what makes one "
+    "topic different from another.\n"
+    "Write NONE of the video: no evidence, no dates, no accounts, no answer to the "
+    "question you are asking, no second sentence explaining the first, and no narration. "
+    "Everything you leave out is what the video is for. If what you have in mind cannot "
+    "be put in one line, it is two topics or it is the wrong one.\n"
+)
+
+
 # The failure this exists for, from a real world: two factions each keep a body called
 # the same name, and they work differently — one walks markets in pairs with a box of
 # chips that graft onto whoever takes one, the other seizes men outside taverns, which
@@ -246,6 +268,20 @@ LENGTH_FREE = (
     "to sit through, and every line you leave out is a video that ends too early.\n"
 )
 
+# The length still bears on WHICH topic, and not at all on how much to write here: told
+# how many characters of narration were bought, a model asked for a topic will helpfully
+# fill them.
+LENGTH_TOPIC = (
+    "The finished video runs about {seconds:.0f} seconds. That decides what SIZE of "
+    "subject to pick — one that is properly done in that time rather than a history that "
+    "needs an hour — and nothing about the length of the line you write.\n"
+)
+LENGTH_TOPIC_FREE = (
+    "Nobody has fixed how long the video runs, so any size of subject is open. Pick one "
+    "worth a short video, and write only its name.\n"
+)
+
+
 _WRITE = (
     "There is no brief yet. Choose the most promising thing in this world and write "
     "one.\n"
@@ -259,9 +295,15 @@ _REWRITE = (
 
 
 def write_brief(llm, world: str, current: str = "", instruction: str = "",
-                lang: str = "English", duration_s: float = 0.0, chars: int = 0) -> str:
+                lang: str = "English", duration_s: float = 0.0, chars: int = 0,
+                topic: bool = False) -> str:
     """Propose (or rewrite) what a fandom video is about. Returns the brief, or "" if
     the model gave nothing usable — the caller leaves the operator's text alone.
+
+    `topic` asks for the one-line NAME of the video rather than its brief — what a loop
+    puts in its queue (see `pipeline.topics`) — and it overrides the instruction's say
+    over the shape, because the instruction a queue sends is de-duplication and not a
+    request. The instruction itself still goes to the model either way.
 
     `world` should be the RECORDS THEMSELVES wherever they fit, not the compiled sheet:
     the sheet is an inventory of one line per thing, and one line is exactly where two
@@ -272,14 +314,29 @@ def write_brief(llm, world: str, current: str = "", instruction: str = "",
     (`pipeline.drama.char_budget`); zero means the operator left the length free, which
     is worth telling the model rather than hiding, since the length will then be read
     off the brief it is about to write."""
+    # `topic` wins over an instruction, and that order is the whole fix.
+    #
+    # The `instruction` slot carries two quite different things. From the wizard it is
+    # the operator's own words, and SHAPE_TOLD is right: they said what they wanted, at
+    # whatever length they want it, and no cap applies. From a loop topping up its queue
+    # it is machine-written de-duplication — "invent a fresh subject, not any of these"
+    # — which is not a request about shape at all. Being merely non-empty, it selected
+    # SHAPE_TOLD anyway, so every queue entry was written under "the operator decides
+    # the length and there is no cap on it", and the queue filled with finished scripts.
+    # A caller asking for a topic has said so in the argument meant for it.
+    if topic:
+        shape_rule = SHAPE_TOPIC
+        length_rule = (LENGTH_TOPIC.format(seconds=duration_s) if duration_s > 0
+                       else LENGTH_TOPIC_FREE)
+    else:
+        shape_rule = SHAPE_TOLD if instruction.strip() else SHAPE_FREE
+        length_rule = (LENGTH_BOUGHT.format(seconds=duration_s, chars=chars)
+                       if duration_s > 0 and chars > 0 else LENGTH_FREE)
     system = BRIEF_SYSTEM.format(
         lang=_lang_name(lang),
-        shape_rule=SHAPE_TOLD if instruction.strip() else SHAPE_FREE,
+        shape_rule=shape_rule,
         same_name_rule=SAME_NAME_RULE,
-        length_rule=(
-            LENGTH_BOUGHT.format(seconds=duration_s, chars=chars)
-            if duration_s > 0 and chars > 0 else LENGTH_FREE
-        ),
+        length_rule=length_rule,
         edit_rule=_REWRITE if current.strip() else _WRITE,
     )
     user = (

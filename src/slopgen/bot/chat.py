@@ -583,6 +583,16 @@ class Chat:
             if old != dest:
                 old.unlink(missing_ok=True)
         self.tg.download(file_id, dest)
+        # and recorded in the manifest at once, the way the browser panel and the
+        # gather screen record it. The manifest is what every screen counts and what
+        # the resume reads; leaving it to the resume is what made a run go on saying
+        # it was short of a picture that was already lying in its inbox.
+        work = run.run_dir / video
+        mf = manual.ManualManifest.load(work)
+        shot = mf.by_id(shot_id)
+        if shot is not None and manual._valid_asset(dest):
+            manual.attach(shot, dest)
+            mf.save(work)
         log.info("bot: %s -> %s", shot_id, dest)
         self._advance(chat, run, shot_id, self._asks(run))
 

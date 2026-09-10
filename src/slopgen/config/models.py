@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 AdMode = Literal["overlay", "native", "both"]
 SubtitleStyle = Literal["word_pop", "phrases", "karaoke"]
@@ -834,6 +834,30 @@ Mode = Literal["info", "drama", "fandom"]
 #                choice. Not an address to a viewer, which stays forbidden
 FandomVoice = Literal["resident", "chronicler", "usher"]
 
+# fandom mode: what the writer may do where the world's RECORDS stop. Three answers
+# rather than two, because the middle one is the answer most worlds actually want and
+# a checkbox could not hold it (see stages/fandom_script.GAP_NONE/GAP_GAPS/GAP_FREE).
+#   no   — the records are the whole world. A gap is a thing nobody knows, said as a
+#          fact about the place, and never filled with a specific of the writer's own.
+#   gaps — only where the piece is otherwise unwritable, and only the smallest
+#          ordinary texture that unblocks it: never a subject, never a proper noun,
+#          never an answer to something the records leave open.
+#   free — the records are merely what somebody wrote down, and the writer furnishes
+#          the rest of the world at will, in its own grain.
+InventLevel = Literal["no", "gaps", "free"]
+
+# What the switch used to be, and the spellings a loop or a chat may be steered with.
+# `True` lands on `gaps` and not on `free` deliberately: an unbounded licence is what
+# the checkbox actually meant and what made the mode unusable, so the runs that stored
+# one come back under the bounded reading rather than the one that misbehaved.
+_INVENT_WORDS = {
+    "": "no", "0": "no", "false": "no", "off": "no", "n": "no", "never": "no",
+    "нет": "no", "нельзя": "no",
+    "1": "gaps", "true": "gaps", "on": "gaps", "y": "gaps", "yes": "gaps",
+    "да": "gaps", "sometimes": "gaps", "по ситуации": "gaps",
+    "always": "free", "any": "free", "в любом случае": "free",
+}
+
 
 class RunParams(BaseModel):
     """Everything the orchestrator needs, after CLI/preset/account/global merge."""
@@ -921,14 +945,10 @@ class RunParams(BaseModel):
     # and parts/clip_seconds/orchestration/cast work identically.
     fandom: str = ""  # folder name under configs/fandoms/; the world being narrated
     fandom_voice: FandomVoice = "resident"  # who is telling it (see FandomVoice)
-    # May the writer ADD to this world? Off, the records are the whole of it: where
-    # they stop, the piece says a thing is not known and never fills the hole with a
-    # specific of its own. On, they are only what was written down about the world,
-    # and the writer may invent the texture between them — a name, a price, a custom,
-    # someone's habit — as long as nothing it adds contradicts a record, steps outside
-    # what this world is made of, or settles a question the records leave open. See
-    # stages/fandom_script.GAP_INVENT, which is where the whole of it lives.
-    fandom_invent: bool = False
+    # How far the writer may ADD to this world where its records stop: not at all,
+    # only where a beat cannot otherwise be written, or freely. See `InventLevel`
+    # above and stages/fandom_script, which is where the whole of it lives.
+    fandom_invent: InventLevel = "no"
     # This run's answer to "who is being spoken to", overriding the world's own
     # `FandomConfig.viewer_role` and the sheet's inference. One world, many positions
     # in it: the same records make a video for a new clerk and a video for the person
@@ -952,6 +972,22 @@ class RunParams(BaseModel):
     # length, because length is not the thing being decided — where the speaker
     # breathes is (see framebase.cut_shots).
     cut_sensitivity: float = 0.35
+
+    @field_validator("fandom_invent", mode="before")
+    @classmethod
+    def _invent_level(cls, v: object) -> object:
+        """Read the gap answer off whatever spelling it arrived in.
+
+        It was a checkbox until it became three positions, so every checkpoint on
+        disk, every preset and every loop plan still holds a bool — and a run resumed
+        into a validation error would be a settings change eating somebody's evening.
+        A word a person typed at a loop (`invent=off`, `invent=always`) lands here
+        too, for the same reason the other aliases do."""
+        if isinstance(v, bool):
+            return "gaps" if v else "no"
+        if isinstance(v, str):
+            return _INVENT_WORDS.get(v.strip().casefold(), v)
+        return v
 
     @property
     def free_length(self) -> bool:

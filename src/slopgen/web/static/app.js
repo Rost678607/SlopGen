@@ -862,7 +862,7 @@ async function loadWorlds() {
 async function loadCards() {
   cards = await api(`/api/worlds/${encodeURIComponent(world)}/cards`);
   $("#cards").innerHTML = cards.map((c) => `
-    <div class="card ${c.retired ? "retired" : ""}" data-name="${esc(c.name)}">
+    <div class="frame-card ${c.retired ? "retired" : ""}" data-name="${esc(c.name)}">
       <div class="thumb ${c.usable ? "" : "none"}"
            ${c.usable && c.kind === "image" ? `style="background-image:url('${tokd(c.url)}')"` : ""}>
         ${c.usable ? "" : lab("js.no-picture-yet")}
@@ -871,7 +871,7 @@ async function loadCards() {
       </div>
       <div class="meta"><b>${esc(c.name)}</b><span>${esc((c.description || "").slice(0, 60))}</span></div>
     </div>`).join("") || `<p class="empty">${lab("js.this-world-has-no-cards-yet")}</p>`;
-  document.querySelectorAll("#cards .card").forEach((el) => {
+  document.querySelectorAll("#cards .frame-card").forEach((el) => {
     el.onclick = () => openCard(el.dataset.name);
   });
 }
@@ -901,6 +901,24 @@ async function upload(file) {
 }
 
 // ---------------------------------------------------------------- the editor
+//
+// The editor is an overlay over the whole page rather than a corner of the Worlds tab,
+// which is what lets a run open it: a picture handed to a parked run IS a card in the
+// world, and the regions on it are the difference between a card that can be shown
+// once and one that is worth four shots. Everything below hangs off `world` and
+// `cards`, so both are set here rather than assumed — the operator may not have opened
+// the Worlds tab at all this session, and the world that matters is the RUN's, not
+// whichever one the select is showing.
+async function openMarkup(w, name) {
+  if (!w || !name) return;
+  world = w;
+  const sel = $("#world");
+  if (sel && [...sel.options].some((o) => o.value === w)) sel.value = w;
+  await loadCards();
+  if (!cards.some((c) => c.name === name)) { say(lab("js.no-such-card"), true); return; }
+  openCard(name);
+}
+
 function openCard(name) {
   card = cards.find((c) => c.name === name);
   targets = card.targets.map((t) => ({ ...t }));
@@ -909,6 +927,9 @@ function openCard(name) {
   $("#ed-descr").value = card.description || "";
   $("#ed-prompt").value = card.prompt || "";
   $("#ed-note").value = card.note || "";
+  $("#ed-retired").checked = !!card.retired;
+  $("#ed-del").textContent = lab("web.frames.del");
+  $("#ed-del").classList.remove("danger");
   const img = $("#pic"), vid = $("#vid");
   // A card with no file has nothing to mark up: a crop target is a pair of
   // coordinates ON a picture, so drawing regions over an empty stage would be
@@ -1135,13 +1156,37 @@ $("#pic").onload = drawTargets;
 $("#save").onclick = async () => {
   const body = {
     description: $("#ed-descr").value, prompt: $("#ed-prompt").value,
-    note: $("#ed-note").value, targets,
+    note: $("#ed-note").value, retired: $("#ed-retired").checked, targets,
   };
   const updated = await api(`/api/worlds/${encodeURIComponent(world)}/cards/${encodeURIComponent(card.name)}`,
     { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
   Object.assign(card, updated);
   const s = $("#saved"); s.textContent = lab("js.saved2"); s.classList.add("show");
   setTimeout(() => s.classList.remove("show"), 1400);
+  loadCards();
+};
+
+// Deleting a card takes its picture with it, so the button asks: the first press turns
+// it into the question, a second within five seconds answers it, and walking away
+// answers no — the same guard the runs list puts on a folder, for the same reason.
+//
+// Retiring is the softer half and lives in the form as a tick, because it is a property
+// of the card rather than an act: a retired card keeps its picture and its place, and
+// simply stops being spent. It is what a wrong delivery taken back leaves behind, so
+// there has to be a way to undo it — which a delete button alone could not offer.
+$("#ed-del").onclick = async (e) => {
+  const key = `card:${world}/${card.name}`;
+  if (!armed.has(key))
+    return armForget(e.currentTarget, key, "web.frames.del", "web.frames.del.sure");
+  clearTimeout(armed.get(key));
+  armed.delete(key);
+  try {
+    await api(`/api/worlds/${encodeURIComponent(world)}/cards/${encodeURIComponent(card.name)}?purge=true`,
+              { method: "DELETE" });
+  } catch (err) { return say(err.message, true); }
+  say(`${card.name} — ${lab("js.card-deleted")}`);
+  $("#editor").hidden = true;
+  $("#vid").pause();
   loadCards();
 };
 
@@ -1236,6 +1281,21 @@ let opts = null;
 // map here, so switching the interface language reaches these too.
 const MOVE_KINDS = ["hold", "push_in", "drift", "zoom_in", "zoom_out", "pan"];
 const word = (w) => lab("w." + w, w);
+
+// The gap answer travels as a NAME and is drawn as a slider, so the two spellings have
+// to meet somewhere. Here, off the server's own ordered list — a fourth rung added
+// there reaches the slider without touching this file. The fallback matters on the
+// first paint, before /api/options has landed.
+const INVENT_LEVELS = ["no", "gaps", "free"];
+const inventLevel = (i) => {
+  const list = (opts && opts.invent_levels) || INVENT_LEVELS;
+  return list[Math.max(0, Math.min(list.length - 1, +i || 0))];
+};
+const inventIndex = (name) => {
+  const list = (opts && opts.invent_levels) || INVENT_LEVELS;
+  const i = list.indexOf(name);
+  return i < 0 ? 0 : i;
+};
 
 // An info line is assembled in the pipeline out of its own vocabulary — a move kind,
 // a fit grade, a stage name. Translating it word by word here keeps those words as
@@ -1933,6 +1993,24 @@ async function loadOptions() {
     const out = r.closest(".card").querySelector(".prof-val");
     r.oninput = () => (out.textContent = r.value);
   });
+  // What the writer may do where the world's records stop. A slider and not a
+  // checkbox because the answer that most worlds want is the MIDDLE one — invent, but
+  // only to get unstuck — and a box has nowhere to put it. Its readout is the word
+  // rather than the number, and the line under it changes with the position: the
+  // three answers differ in what they let into a finished video, which is not
+  // something a title can carry.
+  document.querySelectorAll('input[type=range][name="fandom_invent"]').forEach((r) => {
+    const card = r.closest(".card");
+    const out = card.querySelector(".invent-val");
+    const note = card.querySelector(".invent-note");
+    const paint = () => {
+      const level = inventLevel(r.value);
+      if (out) out.textContent = lab("inv." + level);
+      if (note) note.textContent = lab("inv.note." + level);
+    };
+    r.oninput = paint;
+    paint();
+  });
   document.querySelectorAll("form.cards").forEach(applyConditions);
   $("#f-sens").oninput = () => ($("#sens-val").textContent = $("#f-sens").value);
 
@@ -1959,31 +2037,33 @@ async function loadOptions() {
   compose();
 }
 
-$("#startform").onsubmit = async (e) => {
+$("#startform").onsubmit = (e) => {
   e.preventDefault();
-  const f = new FormData(e.target);
-  const body = {
-    fandom: f.get("fandom"), voice: f.get("voice"), lang: f.get("lang") || "ru",
-    // sent whatever the narrator is: the field is hidden for the other two, and a
-    // hidden field still carries whatever was last typed in it, which the server
-    // ignores for anyone but the usher
-    viewer_role: f.get("viewer_role") || "",
-    fandom_invent: f.get("fandom_invent") === "on",
-    medium: f.get("medium"), source: f.get("source"),
-    scenario: f.get("scenario"), title: f.get("title"),
-    duration_s: +f.get("duration_s"), count: +f.get("count"),
-    dry_run: f.get("dry_run") === "on",
-    frame_fit: f.get("frame_fit"), cut_sensitivity: +f.get("cut_sensitivity"),
-    breakpoints: [...chosenBps.fandom],
-    ...commonOf(e.target),
-  };
-  if (editing && editing.mode === "fandom") return applyToLoop(body);
-  let out;
-  try {
-    out = await api("/api/runs/fandom", { method: "POST",
-      headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-  } catch (err) { say(err.message, true); return; }
-  started(out);
+  return launchOnce(e.target, async () => {
+    const f = new FormData(e.target);
+    const body = {
+      fandom: f.get("fandom"), voice: f.get("voice"), lang: f.get("lang") || "ru",
+      // sent whatever the narrator is: the field is hidden for the other two, and a
+      // hidden field still carries whatever was last typed in it, which the server
+      // ignores for anyone but the usher
+      viewer_role: f.get("viewer_role") || "",
+      fandom_invent: inventLevel(f.get("fandom_invent")),
+      medium: f.get("medium"), source: f.get("source"),
+      scenario: f.get("scenario"), title: f.get("title"),
+      duration_s: +f.get("duration_s"), count: +f.get("count"),
+      dry_run: f.get("dry_run") === "on",
+      frame_fit: f.get("frame_fit"), cut_sensitivity: +f.get("cut_sensitivity"),
+      breakpoints: [...chosenBps.fandom],
+      ...commonOf(e.target),
+    };
+    if (editing && editing.mode === "fandom") return applyToLoop(body);
+    let out;
+    try {
+      out = await api("/api/runs/fandom", { method: "POST",
+        headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    } catch (err) { say(err.message, true); return; }
+    started(out);
+  });
 };
 
 $("#infoform").onsubmit = (e) => submitRun(e, "info", (f) => ({
@@ -2161,6 +2241,8 @@ function fillForm(l) {
     const v = n === "voice" ? p.fandom_voice : p[n];
     if (v === undefined || v === null) return;
     if (el.type === "checkbox") el.checked = !!v;
+    // the gap answer is a name on the wire and a position on the slider
+    else if (n === "fandom_invent") el.value = inventIndex(v);
     else el.value = v;
   });
   form.querySelectorAll("[data-fx]").forEach((r) => {
@@ -2232,16 +2314,45 @@ function commonOf(form) {
   };
 }
 
+// A launch is ONE press, however many the mouse sent.
+//
+// These handlers awaited their fetch and nothing else, which leaves them re-entrant: a
+// double click — a bouncing microswitch is enough, and that is how this was found —
+// fires submit twice, and two POSTs a few hundred milliseconds apart are two runs, or
+// two LOOPS with the same title and the same queue, each with a thread of its own,
+// each generating. Nothing downstream can undo that: a loop is a folder with a plan in
+// it, and by the time the second card appears both are already working.
+//
+// The server deliberately does not deduplicate. Two videos of the same thing is a
+// thing people ask for on purpose, a launch is not idempotent in any useful sense, and
+// a server that started guessing which presses were meant would be wrong in the
+// direction that loses work. So the press is made once HERE, where the difference
+// between one press and two is actually known.
+const launching = new WeakSet();
+async function launchOnce(form, send) {
+  if (launching.has(form)) return;
+  launching.add(form);
+  const go = [...form.querySelectorAll("button.big-go, button[type=submit]")];
+  go.forEach((b) => (b.disabled = true));
+  try { await send(); }
+  finally {
+    launching.delete(form);
+    go.forEach((b) => (b.disabled = false));
+  }
+}
+
 async function submitRun(e, mode, build) {
   e.preventDefault();
-  const body = { ...commonOf(e.target), ...build(new FormData(e.target)) };
-  if (editing && editing.mode === mode) return applyToLoop(body);
-  let out;
-  try {
-    out = await api(`/api/runs/${mode}`, { method: "POST",
-      headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-  } catch (err) { say(err.message, true); return; }
-  started(out);
+  return launchOnce(e.target, async () => {
+    const body = { ...commonOf(e.target), ...build(new FormData(e.target)) };
+    if (editing && editing.mode === mode) return applyToLoop(body);
+    let out;
+    try {
+      out = await api(`/api/runs/${mode}`, { method: "POST",
+        headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    } catch (err) { say(err.message, true); return; }
+    started(out);
+  });
 }
 
 // A loop answers with a loop rather than a run — it has iterations where a run has a
@@ -2299,47 +2410,109 @@ async function loadModels() {
 }
 
 // ---------------------------------------------------------------- what a run wants
+//
+// Which run's asks are on screen, so a delivery can redraw them. The title is the one
+// thing a redraw needs that the server does not send, and the panel used to recover it
+// by splitting the heading it had itself written — which held only as long as the
+// translated word between the two happened to carry a dash.
+let asksOf = null;
+
 async function openAsks(id, title) {
+  asksOf = { id, title };
   const d = await api(`/api/runs/${id}/asks`);
   $("#panel-title").textContent = `${title} ${lab("js.missing")} ${d.pending} ${lab("js.of")} ${d.shots.length}`;
   $("#panel-apply").hidden = true;
   // the same panel carries both screens; asks have no rows to rewrite
   $("#panel-ai").hidden = true;
+  const base = d.base || [];
   $("#panel-body").innerHTML = d.shots.length ? d.shots.map((sh) => {
     const url = `/api/runs/${id}/asks/${encodeURIComponent(sh.video)}/${encodeURIComponent(sh.id)}/file`;
     // what arrived is shown, not merely reported: a wrong file under the right name
-    // reads identically in a manifest
+    // reads identically in a manifest. A card taken out of the base is shown from the
+    // world instead — there is nothing in the inbox to show, and the picture is still
+    // the only honest answer to "which one did I pick".
+    const fromBase = sh.from_base ? base.find((c) => c.name === sh.card) : null;
     const preview = sh.delivered
       ? (sh.photo ? `<img class="got" src="${tokd(url)}" alt="">`
                   : `<video class="got" src="${tokd(url)}" controls preload="metadata"></video>`)
-      : "";
-    return `<div class="ask ${sh.status === "delivered" ? "done" : ""}" data-v="${esc(sh.video)}" data-s="${esc(sh.id)}">
+      : fromBase
+        ? `<div class="picked"><img class="got" src="${tokd(fromBase.url)}" alt="">
+             <span class="dim">${lab("js.pinned-from-the-base")} <b>${esc(sh.card)}</b></span></div>`
+        : "";
+    const owed = sh.status !== "delivered";
+    return `<div class="ask ${owed ? "" : "done"}" data-v="${esc(sh.video)}" data-s="${esc(sh.id)}">
       <div class="head"><b>${esc(sh.id)}</b>
         <span class="dim">${sh.size[0]}×${sh.size[1]} · ${esc(sh.status)}${sh.target_s ? ` · ~${sh.target_s.toFixed(1)}${lab("js.s")}` : ""}</span>
         <span class="grow"></span>
         <button class="ghost" data-copy>${lab("js.copy-the-prompt")}</button>
-        ${sh.delivered ? `<button class="ghost" data-undo>${lab("js.replace")}</button>` : ""}</div>
+        ${owed && sh.id.startsWith("frame_") ? `<button class="ghost" data-base>${lab("js.from-the-base")}</button>` : ""}
+        ${sh.card ? `<button class="ghost" data-mark="${esc(sh.card)}">${lab("js.mark-it-up")}</button>` : ""}
+        ${owed ? "" : `<button class="ghost" data-undo>${lab("js.replace")}</button>`}</div>
       <pre>${esc(sh.prompt)}</pre>
       ${preview}
-      ${sh.status === "delivered" ? "" : `<label class="take">${lab("js.drop-a-picture-here")}
-        <input type="file" hidden accept="image/*,video/*"></label>`}
+      ${owed ? `<div class="basestrip" hidden></div>
+        <label class="take">${lab("js.drop-a-picture-here")}
+        <input type="file" hidden accept="image/*,video/*"></label>` : ""}
     </div>`;
   }).join("") : `<p class="empty">${lab("js.this-run-is-not-asking-for-anything")}</p>`;
-  bindAsks(id);
+  bindAsks(id, d.world || "", base);
   $("#panel").hidden = false;
 }
 
-function bindAsks(id) {
+function bindAsks(id, forWorld, base) {
+  const again = () => openAsks(id, asksOf ? asksOf.title : "");
   $("#panel-body").querySelectorAll(".ask").forEach((el) => {
     const v = el.dataset.v, sid = el.dataset.s;
+    const ask = (path, opts) =>
+      api(`/api/runs/${id}/asks/${encodeURIComponent(v)}/${encodeURIComponent(sid)}${path}`, opts);
     el.querySelector("[data-copy]").onclick = () =>
       navigator.clipboard.writeText(el.querySelector("pre").textContent);
+    const mark = el.querySelector("[data-mark]");
+    if (mark) mark.onclick = () => openMarkup(forWorld, mark.dataset.mark);
+    // The base, offered as PICTURES. The matcher declined every one of these by reading
+    // its description, and picking between pictures by their names would be the same
+    // mistake in the other direction — so the strip is thumbnails, and clicking one
+    // answers the ask. It is drawn on the first press rather than with the row: a world
+    // with forty cards and twenty asks would otherwise be eight hundred thumbnails, all
+    // but one strip of them behind a closed panel.
+    const openBase = el.querySelector("[data-base]");
+    const strip = el.querySelector(".basestrip");
+    if (openBase && strip) openBase.onclick = () => {
+      if (!strip.hidden) {
+        strip.hidden = true;
+        openBase.textContent = lab("js.from-the-base");
+        return;
+      }
+      if (!strip.dataset.drawn) {
+        strip.innerHTML = base.length ? base.map((c) => `
+          <div class="frame-card" data-pick="${esc(c.name)}" title="${esc(c.description || c.name)}">
+            <div class="thumb" ${c.kind === "image" ? `style="background-image:url('${tokd(c.url)}')"` : ""}>
+              ${c.kind === "video" ? `<span class="pill">${lab("js.clip")}</span>` : ""}
+              ${c.targets.length ? `<span class="pill">${c.targets.length}</span>` : ""}
+            </div>
+            <div class="meta"><b>${esc(c.name)}</b></div>
+          </div>`).join("") : `<p class="empty">${lab("js.the-base-is-empty")}</p>`;
+        strip.dataset.drawn = "1";
+        strip.querySelectorAll("[data-pick]").forEach((c) => {
+          c.onclick = async () => {
+            try {
+              await ask("/card", { method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ card: c.dataset.pick }) });
+            } catch (e) { return say(e.message, true); }
+            say(`${lab("js.pinned-from-the-base")} ${c.dataset.pick}`);
+            again();
+          };
+        });
+      }
+      strip.hidden = false;
+      openBase.textContent = lab("js.hide-the-base");
+    };
     const undo = el.querySelector("[data-undo]");
     if (undo) undo.onclick = async () => {
-      await api(`/api/runs/${id}/asks/${encodeURIComponent(v)}/${encodeURIComponent(sid)}`,
-                { method: "DELETE" });
+      await ask("", { method: "DELETE" });
       say(lab("js.you-can-bring-it-again"));
-      openAsks(id, $("#panel-title").textContent.split(" — ")[0]);
+      again();
     };
     const take = el.querySelector(".take");
     if (!take) return;
@@ -2347,12 +2520,21 @@ function bindAsks(id) {
     const send = async (file) => {
       const body = new FormData(); body.append("file", file);
       take.textContent = lab("js.sending");
+      let got;
       try {
-        await api(`/api/runs/${id}/asks/${encodeURIComponent(v)}/${encodeURIComponent(sid)}`,
-                  { method: "POST", body });
-        take.textContent = lab("js.accepted");
-        el.classList.add("done");
-      } catch (e) { take.textContent = lab("js.did-not-work") + e.message; }
+        got = await ask("", { method: "POST", body });
+      } catch (e) { take.textContent = lab("js.did-not-work") + e.message; return; }
+      // redrawn off the manifest rather than dressed up here: the delivery is now
+      // recorded there, and the count in the heading, the preview and the replace
+      // button are all things only the server can be right about
+      await again();
+      // a frame is a card in the world the moment it is handed over, and a card with
+      // no regions marked can only be held and drifted across — so the offer to mark
+      // it up is made now, while the operator is still looking at the picture
+      if (got && got.card) {
+        say(lab("js.card-added-say-what-is-in-it"));
+        openMarkup(got.world, got.card);
+      }
     };
     take.onclick = () => input.click();
     input.onchange = () => input.files[0] && send(input.files[0]);
@@ -2364,38 +2546,239 @@ function bindAsks(id) {
 }
 
 // ---------------------------------------------------------------- a parked breakpoint
+//
+// One generic renderer for every breakpoint: `pipeline/review.py` already says how each
+// row is edited (`kind`), what it may become (`options`), which item it belongs to
+// (`field`) and what may be done to the document as a whole (`variable`, `cuttable`),
+// so nothing here knows what a canon sheet or a picture track is.
+//
+// It renders ITEMS and not rows, which the flat version could not. A scene is five rows
+// — what is said, what is shown, who is in it, which generator, how long — and they are
+// one thing: they move together, they are dropped together, and each of them needs
+// saying which of the five it is. Flattened, the screen showed five identical boxes all
+// captioned "#1", nothing could be added, dropped or reordered, and a part separator
+// came out as the untranslated string `bp.f.part`. The pipeline has supported every bit
+// of this since the terminal got it; only this file had not.
 let reviewState = null;
+let dragGroup = null;
+
+// The row field that opens a new item — the same set as `review.HEAD_FIELDS`, and it
+// has to stay the same: `apply` groups the rows it gets back by exactly this rule.
+const HEAD_FIELDS = new Set(["text", "name", "part"]);
+const PART_FIELD = "part";
+
+// Rows into items. A row whose field is a head field opens one; the rest attach to
+// whatever is open (see `review.group_rows`).
+function groupRows(rows) {
+  const out = [];
+  rows.forEach((r) => {
+    if (HEAD_FIELDS.has(r.field || "text") || !out.length) out.push({ head: r, extras: [] });
+    else out[out.length - 1].extras.push(r);
+  });
+  return out;
+}
+const flatten = (groups) => groups.flatMap((g) => [g.head, ...g.extras]);
+
+// What to caption one row with. A document of named fields (a topic, a canon sheet, a
+// title) sends an i18n key as its label and the caption is that; a document of numbered
+// items sends "#3" for every one of its rows, and the caption is which PART of item 3
+// this row is — the question the flat renderer left unanswered.
+const rowLabel = (r) => (String(r.label || "").startsWith("bp.")
+  ? lab(r.label) : lab("bp.field." + (r.field || "text"), r.field || ""));
+
+// A blank item, cut to the shape of an existing one: the same rows in the same order,
+// emptied. `src: null` is what tells the pipeline this is an insertion rather than a
+// rewrite (see `review._apply_script`), and each row's kind and options come along so a
+// new scene still gets its generator dropdown instead of a bare box.
+function blankGroup(model) {
+  const blank = (r) => ({ ...r, value: "", src: null, info: "", readonly: false });
+  return { head: blank(model.head), extras: model.extras.map(blank) };
+}
+
+function moveButtons(on) {
+  if (!on) return "";
+  return `<button type="button" data-mv="-1" title="${esc(lab("bp.up"))}">▲</button>` +
+         `<button type="button" data-mv="1" title="${esc(lab("bp.down"))}">▼</button>` +
+         `<button type="button" data-drop="1" title="${esc(lab("bp.remove"))}">✖</button>`;
+}
+
+function reviewControl(r, i) {
+  if (r.readonly) return `<div>${esc(r.value)}</div>`;
+  if (r.kind === "choice")
+    return `<select data-i="${i}">${["", ...r.options].map((o) =>
+      `<option${o === r.value ? " selected" : ""}>${esc(o)}</option>`).join("")}</select>`;
+  return `<textarea data-i="${i}" rows="${r.value.length > 90 ? 3 : 1}">${esc(r.value)}</textarea>`;
+}
+
+// The caption of one item, numbered by where it SITS.
+//
+// The number the server sent is the number the item had when the document was built,
+// and every structural edit invalidates it — drop the second of five and the three
+// below go on calling themselves 3, 4, 5. Separators were already numbered by position
+// (see `review.part_row`); items were not, and a screen where two cards both say #3 is
+// worse than one with no numbers at all.
+//
+// Only the number is replaced, never the rest of the label: `#3 · AD` marks the ad
+// break (`review._scene_label`) and that half is not positional.
+const itemLabel = (label, n) => (/^#\d+/.test(label) ? label.replace(/^#\d+/, `#${n}`)
+                                                     : label);
+
+function renderReview() {
+  const d = reviewState;
+  const groups = groupRows(d.rows);
+  // Separators are numbered by where they SIT and never by the number stored in them:
+  // moving one is how a video is re-cut, and the numbers follow (see review.part_row).
+  let part = 0, no = 0;
+  const html = groups.map((g, gi) => {
+    const head = g.head;
+    if ((head.field || "") === PART_FIELD) {
+      part += 1;
+      return `<div class="rgroup sep" data-g="${gi}"${d.cuttable ? " draggable=\"true\"" : ""}>
+        <div class="ghead">${d.cuttable ? '<span class="handle">≡</span>' : ""}
+          <b>${esc(lab("bp.sep").replace("{n}", part))}</b>
+          <span class="grow"></span>${moveButtons(d.cuttable)}</div>
+        <p class="dim">${esc(lab("bp.sep_hint").replace("{n}", part))}</p></div>`;
+    }
+    no += 1;
+    const title = String(head.label || "").startsWith("bp.")
+      ? "" : itemLabel(String(head.label || ""), no);
+    const rows = [head, ...g.extras].map((r) => `
+      <div class="rrow"><div class="lab">${esc(rowLabel(r))}${
+        r.info ? " · " + esc(humanise(r.info)) : ""}</div>
+        ${reviewControl(r, d.rows.indexOf(r))}</div>`).join("");
+    const head_html = title || d.variable
+      ? `<div class="ghead">${d.variable ? '<span class="handle">≡</span>' : ""}` +
+        `<b>${esc(title)}</b><span class="grow"></span>${moveButtons(d.variable)}</div>`
+      : "";
+    return `<div class="rgroup" data-g="${gi}"${d.variable ? " draggable=\"true\"" : ""}>` +
+           `${head_html}${rows}</div>`;
+  }).join("");
+  const foot = [
+    d.variable ? `<button type="button" data-add="item">${esc(lab("bp.add"))}</button>` : "",
+    d.cuttable ? `<button type="button" data-add="part">${esc(lab("bp.cut"))}</button>` : "",
+  ].filter(Boolean).join("");
+  const note = [d.note_key ? lab(d.note_key) : "", d.note_extra].filter(Boolean).join(" · ");
+  $("#panel-body").innerHTML = html
+    + (foot ? `<div class="rfoot">${foot}</div>` : "")
+    + (note ? `<p class="dim rnote">${esc(note)}</p>` : "");
+  bindReview();
+}
+
+// Every structural edit is the same shape: rearrange the GROUPS, flatten them back into
+// `rows`, redraw. Nothing is sent anywhere until "apply" — a breakpoint is a draft the
+// operator is holding, and a run that resumed itself halfway through a re-cut would be
+// the worst possible reading of a moved separator.
+function bindReview() {
+  const body = $("#panel-body");
+  body.querySelectorAll("[data-i]").forEach((el) => {
+    el.oninput = () => (reviewState.rows[+el.dataset.i].value = el.value);
+    el.onchange = () => (reviewState.rows[+el.dataset.i].value = el.value);
+  });
+  const groups = () => groupRows(reviewState.rows);
+  const commit = (gs) => { reviewState.rows = flatten(gs); renderReview(); };
+  const isPart = (g) => (g.head.field || "") === PART_FIELD;
+  body.querySelectorAll(".rgroup").forEach((el) => {
+    const gi = +el.dataset.g;
+    el.querySelectorAll("[data-mv]").forEach((b) => (b.onclick = () => {
+      const gs = groups();
+      const to = gi + +b.dataset.mv;
+      if (to < 0 || to >= gs.length) return;
+      [gs[gi], gs[to]] = [gs[to], gs[gi]];
+      commit(gs);
+    }));
+    const drop = el.querySelector("[data-drop]");
+    if (drop) drop.onclick = () => {
+      const gs = groups();
+      // Everything may go, the last item included. Refusing that was meant to keep a
+      // document with something to say, and it instead stood between the operator and
+      // the commonest reason to open this screen at all: throwing the model's attempt
+      // away and writing the piece by hand. What a document may not BE is empty when it
+      // is applied, and that is checked where it is true (see `#panel-apply`) rather
+      // than three edits earlier.
+      //
+      // The shape is what actually had to survive, and it is remembered rather than
+      // guarded: `bp.add` cuts a new item to the shape of an existing one, so on a
+      // cleared document there would have been nothing to cut it from.
+      if (!isPart(gs[gi])) reviewState.shape = blankGroup(gs[gi]);
+      gs.splice(gi, 1);
+      commit(gs);
+    };
+    if (!el.hasAttribute("draggable")) return;
+    const handle = el.querySelector(".handle");
+    if (handle) {
+      handle.ondragstart = (e) => { dragGroup = gi; e.dataTransfer.effectAllowed = "move"; };
+      handle.ondragend = () => { el.classList.remove("dragging"); dragGroup = null; };
+    }
+    el.ondragstart = (e) => {
+      dragGroup = gi;
+      e.dataTransfer.effectAllowed = "move";
+      el.classList.add("dragging");
+    };
+    el.ondragend = () => { el.classList.remove("dragging"); dragGroup = null; };
+    el.ondragover = (e) => { if (dragGroup !== null) { e.preventDefault(); el.classList.add("over"); } };
+    el.ondragleave = () => el.classList.remove("over");
+    el.ondrop = (e) => {
+      el.classList.remove("over");
+      if (dragGroup === null || dragGroup === gi) return;
+      e.preventDefault();
+      const gs = groups();
+      const [moved] = gs.splice(dragGroup, 1);
+      dragGroup = null;
+      gs.splice(gi, 0, moved);
+      commit(gs);
+    };
+  });
+  body.querySelectorAll("[data-add]").forEach((b) => (b.onclick = () => {
+    const gs = groups();
+    if (b.dataset.add === "part") {
+      gs.push({ head: { label: "bp.f.part", value: "", src: null, info: "",
+                        readonly: true, field: PART_FIELD, kind: "text", options: [] },
+                extras: [] });
+    } else {
+      // shaped like the last real item, because that is the shape this document's
+      // items have — a script's five rows, a registry's three. On a document cleared to
+      // nothing there is none left to copy, and the shape of the last one dropped is
+      // what stands in for it.
+      const model = [...gs].reverse().find((g) => !isPart(g));
+      const fresh = model ? blankGroup(model) : reviewState.shape;
+      if (!fresh) return;
+      gs.push(blankGroup(fresh));
+    }
+    commit(gs);
+    // a new item is empty, and the only reason to add one is to type in it
+    const boxes = $("#panel-body").querySelectorAll(".rgroup:last-of-type textarea");
+    if (boxes.length) boxes[0].focus();
+  }));
+}
+
 async function openReview(id, title) {
   const d = await api(`/api/runs/${id}/review`);
   if (!d.stage) { say(lab("js.this-run-is-not-sitting-at-a-breakpoint"), true); return; }
   reviewState = { id, video: d.video, stage: d.stage, rows: d.rows,
-                  subject: d.subject, variable: d.variable };
+                  subject: d.subject, variable: d.variable, cuttable: d.cuttable,
+                  note_key: d.note_key, note_extra: d.note_extra };
   $("#panel-title").textContent = `${title} — ${word(d.stage)}`;
   $("#panel-apply").hidden = false;
   // The AI edit line, on any breakpoint that has prose to edit. A chip set or a
   // generator choice is not prose, so a document made only of those gets no line.
   $("#panel-ai").hidden = !d.rows.some((r) => !r.readonly && (r.kind || "text") === "text");
   $("#panel-ai-text").value = "";
-  // one generic renderer for every breakpoint: review.py already says how each row is
-  // edited (`kind`) and what it may become (`options`), so nothing here knows what a
-  // canon sheet or a picture track is
-  $("#panel-body").innerHTML = d.rows.map((r, i) => `
-    <div class="rrow"><div class="lab">${esc(r.label)}${r.info ? " · " + esc(humanise(r.info)) : ""}</div>
-      ${r.readonly ? `<div>${esc(r.value)}</div>`
-        : r.kind === "choice"
-          ? `<select data-i="${i}">${["", ...r.options].map((o) =>
-              `<option${o === r.value ? " selected" : ""}>${esc(o)}</option>`).join("")}</select>`
-          : `<textarea data-i="${i}" rows="${r.value.length > 90 ? 3 : 1}">${esc(r.value)}</textarea>`}
-    </div>`).join("");
-  $("#panel-body").querySelectorAll("[data-i]").forEach((el) => {
-    el.oninput = () => (reviewState.rows[+el.dataset.i].value = el.value);
-    el.onchange = () => (reviewState.rows[+el.dataset.i].value = el.value);
-  });
+  renderReview();
   $("#panel").hidden = false;
 }
 
 $("#panel-apply").onclick = async () => {
   if (!reviewState) return;
+  // The one thing a document may not be. Every item can be dropped — clearing the board
+  // and writing the piece by hand is a normal way to use this screen — but applying
+  // nothing is not an edit, it is a video with no scenes. The pipeline already declines
+  // it (`review._apply_script` keeps the old scenes when the new list comes out empty),
+  // silently, which reads as the edit having been thrown away.
+  if (reviewState.variable
+      && !groupRows(reviewState.rows).some((g) => (g.head.field || "") !== PART_FIELD)) {
+    say(lab("bp.apply_empty"), true);
+    return;
+  }
   const id = reviewState.id;
   const r = (await api("/api/runs")).find((x) => x.id === id);
   await api(`/api/runs/${id}/review`, { method: "POST",
@@ -2428,18 +2811,24 @@ $("#panel-ai-go").onclick = async () => {
   try {
     const r = await api(`/api/runs/${reviewState.id}/review/ai`, { method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ instruction, rows: reviewState.rows,
+      // the video index comes too: it is how the server finds the job, and the job is
+      // what carries the world this piece is set in (see `review.world_context`)
+      body: JSON.stringify({ instruction, rows: reviewState.rows, video: reviewState.video,
                              subject: reviewState.subject, variable: reviewState.variable }) });
     reviewState.rows = r.rows;
-    $("#panel-body").querySelectorAll("[data-i]").forEach((el) => {
-      el.value = reviewState.rows[+el.dataset.i].value;
-    });
+    renderReview();
     $("#panel-ai-text").value = "";
     say(r.changed ? lab("js.ai-done") : lab("js.ai-nothing"), !r.changed);
   } catch (e) { say(e.message, true); } finally { btn.disabled = false; }
 };
 
-$("#panel-close").onclick = () => { $("#panel").hidden = true; reviewState = null; };
+// The list underneath is redrawn on the way out, because the panel is where a run's
+// answer is given: pictures are delivered and a breakpoint is applied here, and what
+// the row says about the run — how many pictures are still owed, what it is parked on —
+// was decided before any of that happened.
+$("#panel-close").onclick = () => {
+  $("#panel").hidden = true; reviewState = null; asksOf = null; loadRuns();
+};
 
 // ---------------------------------------------------------------- loops
 //
@@ -2532,10 +2921,14 @@ function ovControl(spec, value, own) {
   const n = `data-ov="${esc(spec.f)}"`;
   if (spec.kind === "check")
     return `<input type="checkbox" ${n} class="${cls.trim()}"${value ? " checked" : ""}>`;
+  // Most choices are named in the shared `w.` vocabulary; a setting whose values would
+  // collide there (the gap answer's "no" and "free" are ordinary English words, and
+  // `humanise` would then rewrite them inside every info line) names its own prefix.
+  const optWord = (o) => lab((spec.opt_l || "w.") + o, o);
   if (spec.kind === "select")
     return `<select ${n} class="${cls.trim()}">` + (spec.options || []).map((o) =>
       `<option value="${esc(o)}"${String(o) === String(value) ? " selected" : ""}>` +
-      `${esc(o ? word(o) : lab("w.none", "—"))}</option>`).join("") + "</select>";
+      `${esc(o ? optWord(o) : lab("w.none", "—"))}</option>`).join("") + "</select>";
   if (spec.kind === "chips") {
     const on = new Set(value || []);
     return `<span class="chips${cls}" ${n}>` + (spec.options || []).map((o) =>
@@ -2682,7 +3075,22 @@ function loopCard(l) {
         <b>${esc(l.title)}</b><span class="dim">${esc(of)}</span>
         <span class="grow"></span>
         <button data-loopact="edit" class="ghost">${esc(lab("js.loop.settings"))}</button>
-        ${l.live ? `<button data-loopact="stop" class="ghost">${esc(lab("js.loop.stop"))}</button>` : ""}
+        ${l.live
+          // Told to stop and not stopped yet is its own state, and it lasts as long as
+          // the video being made — `stop` deliberately never tears one in half. Shown as
+          // the button it already is, pressed: the same press again does nothing, and
+          // repeating it is exactly what an operator does when a card will not react.
+          // Beside it, the one thing that DOES end it now, named for what it costs.
+          ? (l.stopping
+              ? `<span class="dim">${esc(lab("js.loop.stopping"))}</span>
+                 ${l.at_run ? `<button data-loopact="stopnow" class="ghost">${esc(lab("js.loop.stop-now"))}</button>` : ""}`
+              : `<button data-loopact="stop" class="ghost">${esc(lab("js.loop.stop"))}</button>`)
+          // An ended loop is not a finished one: its queue, its settings and its tally
+          // are all still here, and until these existed the card was a museum piece —
+          // six topics waiting and nothing to press. Start carries on through what is
+          // left; delete throws the plan away and leaves every video it made alone.
+          : `<button data-loopact="start" class="ghost">${esc(lab("js.loop.start"))}</button>
+             <button data-loopact="drop" class="ghost">${esc(lab("js.loop.forget"))}</button>`}
       </div>
       ${l.note ? `<div class="why">${esc(lab(l.note, humanise(l.note)))}</div>` : ""}
       <div class="row">
@@ -2770,6 +3178,39 @@ function bindLoops(loops) {
       const what = b.dataset.loopact;
       if (what === "add") return add();
       if (what === "edit") return editLoop(l);
+      if (what === "start") {
+        try { await api(`/api/loops/${l.id}/start`, { method: "POST" }); say(lab("js.loop.started")); }
+        catch (e) { say(e.message, true); }
+        return loadLoops(true);
+      }
+      if (what === "drop") {
+        // the same two-press question the runs list asks, for the same reason: this
+        // deletes a plan somebody spent time queueing
+        if (!armed.has(l.id))
+          return armForget(b, l.id, "js.loop.forget", "js.loop.forget-sure");
+        clearTimeout(armed.get(l.id));
+        armed.delete(l.id);
+        try { await api(`/api/loops/${l.id}`, { method: "DELETE" }); say(lab("js.deleted")); }
+        catch (e) { say(e.message, true); }
+        return loadLoops(true);
+      }
+      // Stopping the loop's own video, which is the only thing that ends a stopping
+      // loop before that video does. Two presses, like every other button here that
+      // throws work away: what is dropped is a video already half paid for.
+      if (what === "stopnow") {
+        if (!armed.has(`now:${l.id}`))
+          return armForget(b, `now:${l.id}`, "js.loop.stop-now", "js.loop.stop-now-sure");
+        clearTimeout(armed.get(`now:${l.id}`));
+        armed.delete(`now:${l.id}`);
+        try {
+          await api(`/api/loops/${l.id}/stop`, { method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ now: true }) });
+          say(lab("js.loop.dropped-the-video"));
+        } catch (e) { say(e.message, true); }
+        loadRuns();
+        return loadLoops(true);
+      }
       if (what === "all") {
         ui.sel = ui.sel.size === items.length ? new Set() : new Set(items.map((i) => i.id));
         return renderLoops();
@@ -2974,14 +3415,16 @@ async function loadRuns() {
         <b>${esc(r.title)}</b>
         <span class="grow"></span>
         ${actions(r).map((a) =>
-          `<button data-act="${a.act}" data-id="${r.id}" class="${a.primary ? "primary" : "ghost"}">${esc(a.label)}</button>`).join("")}
+          `<button data-act="${a.act}" data-id="${r.id}"${a.sure ? ` data-sure="${esc(a.sure)}"` : ""
+           } class="${a.primary ? "primary" : "ghost"}">${esc(a.label)}</button>`).join("")}
       </div>
+      ${progressBar(r)}
       ${waitingFor(r)}
       <div class="log" id="log-${r.id}"></div>
     </div>`).join("") || `<p class="empty">${lab("js.no-runs-yet")}</p>`;
   const byId = Object.fromEntries(runs.map((r) => [r.id, r]));
   document.querySelectorAll("#runs [data-act]").forEach((b) => {
-    b.onclick = () => act(b.dataset.act, byId[b.dataset.id], b);
+    b.onclick = () => act(b.dataset.act, byId[b.dataset.id], b, b.dataset.sure);
   });
   // Only LIVE runs get a stream. Watching every run in the list was a quiet disaster
   // once the server started finding old ones on disk: forty runs meant forty
@@ -3017,9 +3460,67 @@ function actions(r) {
   else if (r.status === "failed") out.push({ act: "resume", label: lab("js.try-again") });
   else if (r.status !== "done") out.push({ act: "resume", label: lab("js.resume") });
   if (p.video) out.push({ act: "video", label: lab("js.watch-the-video") });
-  // Last, and only on a settled run: this deletes the folder, video included.
-  out.push({ act: "forget", label: lab("js.forget-run") });
+  // Last, and on every run that is not moving: this deletes the folder, video and all.
+  //
+  // It was briefly hidden on a PARKED run, after one went to `rmtree` from the row that
+  // was asking to be reviewed — but hiding it was the wrong repair. A parked run is
+  // exactly the kind somebody wants rid of (it is the one that came out wrong, which is
+  // why it is sitting there), and taking the button away left no way to do it at all.
+  // What was wrong was the ease, not the existence: an unremarkable button beside the
+  // one that answers the question. So it stays, and the SECOND press is where the
+  // parked case is spelled out — `js.forget-parked-sure` says what is about to be
+  // thrown away instead of asking a generic "sure?".
+  out.push({ act: "forget", label: lab("js.forget-run"),
+             sure: p.asks || p.review_stage ? "js.forget-parked-sure" : "js.forget-run-sure" });
   return out;
+}
+
+// What a running video is DOING, over a bar — the one thing the terminal always had
+// and the browser did not. The tally was already on the wire (`Run.progress`); what
+// was missing was anywhere to put it and any word for what was counting.
+//
+// The bar is only drawn while the run is moving. A settled run's last tally is not
+// information — it is the tally of whatever stage happened to be running when it
+// stopped, and a full green bar over a failed run is a lie told by furniture.
+//
+// A stage with no countable inside it (the script, the metadata) reports nothing, so
+// the bar has no width to take. It still gets a NAME and an indeterminate stripe: the
+// question the whole strip answers is "is anything happening", and "writing the
+// script, no idea how far" is a real answer to it where an empty row is not.
+function progressBar(r) {
+  if (!live(r) || !r.stage) return "";
+  const p = r.progress;
+  const known = p && p.total > 0;
+  const pct = known ? Math.min(100, Math.round((p.done / p.total) * 100)) : 0;
+  // "Script (raw text the LLM wrote)" is a breakpoint's caption; the bar wants the
+  // name alone, which is the half before the parenthesis — the terminal cuts it the
+  // same way (see tui ProgressScreen._set_stage).
+  const name = lab("bp.stage." + r.stage, word(r.stage)).split(" (")[0];
+  // which of the batch, but only when there IS a batch — "video 0 · script" on a
+  // single-video run is a column heading pretending to be information
+  const where = r.stage_video >= 0 && r.count > 1
+    ? `${lab("col.video", "video")} ${r.stage_video} · ` : "";
+  const tally = known ? `${p.done}/${p.total} ${lab("unit." + p.unit, p.unit)}` : "";
+  return `<div class="prog" data-prog="${r.id}">
+    <div class="ptop"><span class="pstage">${esc(where)}<b>${esc(name)}</b></span>
+      <span class="grow"></span><span class="ptally">${esc(tally)}</span></div>
+    <div class="pbar${known ? "" : " idle"}"><i style="width:${known ? pct : 100}%"></i></div>
+  </div>`;
+}
+
+// The same strip, updated in place. A redraw of the whole list would take the caret
+// out of anything being typed in a card above it and restart every log's scroll, so a
+// tick moves the two things that changed and touches nothing else.
+function paintProgress(id, ev) {
+  const box = document.querySelector(`[data-prog="${id}"]`);
+  if (!box) return;
+  const known = ev.total > 0;
+  const bar = box.querySelector(".pbar");
+  bar.classList.toggle("idle", !known);
+  bar.firstElementChild.style.width =
+    (known ? Math.min(100, Math.round((ev.done / ev.total) * 100)) : 100) + "%";
+  box.querySelector(".ptally").textContent =
+    known ? `${ev.done}/${ev.total} ${lab("unit." + ev.status, ev.status)}` : "";
 }
 
 function waitingFor(r) {
@@ -3037,23 +3538,26 @@ function waitingFor(r) {
 // the whole screen hostage over one row.
 const armed = new Map();  // run id -> timer that disarms it
 
-function armForget(btn, id) {
+// The wording is a parameter because the two things this guards are not the same
+// deletion: a run takes its folder and the video in it, a loop takes only its plan.
+function armForget(btn, id, word = "js.forget-run", sure = "js.forget-run-sure") {
   clearTimeout(armed.get(id));
   armed.set(id, setTimeout(() => {
     armed.delete(id);
-    btn.textContent = lab("js.forget-run");
+    btn.textContent = lab(word);
     btn.classList.remove("danger");
   }, 5000));
-  btn.textContent = lab("js.forget-run-sure");
+  btn.textContent = lab(sure);
   btn.classList.add("danger");
 }
 
-async function act(what, r, btn) {
+async function act(what, r, btn, sure) {
   if (!r) return;
+  sure = sure || "js.forget-run-sure";
   try {
     if (what === "stop") { await api(`/api/runs/${r.id}/stop`, { method: "POST" }); loadRuns(); }
     else if (what === "forget") {
-      if (!armed.has(r.id)) return armForget(btn, r.id);
+      if (!armed.has(r.id)) return armForget(btn, r.id, "js.forget-run", sure);
       clearTimeout(armed.get(r.id));
       armed.delete(r.id);
       await api(`/api/runs/${r.id}`, { method: "DELETE" });
@@ -3082,9 +3586,16 @@ function watch(id) {
   streams.set(id, state);
   es.onmessage = (m) => {
     const e = JSON.parse(m.data);
+    // A progress tick is the bar, not the log. It arrives on the same stream because
+    // there is only one stream, and it carries a stage name of its own so that telling
+    // the two apart is a comparison rather than a guess at the message.
+    if (e.stage === "progress") return paintProgress(id, e);
     const line = `${e.video >= 0 ? "[" + e.video + "] " : ""}${e.stage} ${e.status} ${e.message}`.trim();
     state.lines.push(line);
     appendLog(id, line);
+    // A stage starting renames the bar and empties it, so the tally of the stage that
+    // just finished never sits under the name of the one that just began.
+    if (e.status === "start" && e.video >= 0) loadRuns();
     if (["done", "failed", "stopped", "paused", "review"].includes(e.status) && e.stage === "run") loadRuns();
   };
 }

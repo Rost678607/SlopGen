@@ -569,7 +569,10 @@ I18N: dict[str, dict[str, str]] = {
         "fandom_voice_resident": "someone who lives there",
         "fandom_voice_chronicler": "a chronicler of that world",
         "fandom_voice_usher": "speaks to you, one of them",
-        "fandom_invent": "Let the writer invent what the records do not hold",
+        "fandom_invent": "Inventing what the records do not hold",
+        "fandom_invent_no": "never",
+        "fandom_invent_gaps": "only where stuck",
+        "fandom_invent_free": "freely",
         "fandom_tone": "Tone / register note (optional)",
         "fandom_docs": "Documents, in reading order (comma-separated; empty = every *.md)",
         "fandom_lore_tool": "Let the writer query the full lore (librarian tool)",
@@ -579,7 +582,7 @@ I18N: dict[str, dict[str, str]] = {
         "help.step.fandom": "The world this story happens in. Pick a fandom, edit its lore documents, and choose who is telling it. The canon sheet below is what the writer actually holds while writing — rebuild it after you change the lore.",
         "help.fandom_pick": "Which world to narrate. Fandoms are folders under configs/fandoms/ — a fandom.toml, one or more markdown lore documents, and the world's own cast.",
         "help.fandom_lore": "The world's lore, in markdown. This is the source of truth: the canon sheet is compiled from it, and the librarian tool reads it. Save to write the file and rebuild the sheet.",
-        "help.fandom_invent": "What happens where the lore stops. Off, the records are the whole world: the piece says a thing is not known and invents no specific of its own. On, they are only what was written down, and the writer fills in the texture between them — a name, a price, a custom, someone's habit. Either way it may never contradict a record, step outside what this world is made of, or settle a question the records leave open. Thin lore is cramped without this; a world you are genuinely archiving is safer with it off.",
+        "help.fandom_invent": "What happens where the lore stops. `never` — the records are the whole world: the piece says a thing is not known and invents no specific of its own. `only where stuck` — it invents only where a beat cannot be written otherwise, and only the smallest ordinary detail that unblocks it, said in passing. `freely` — the records are merely what was written down, and the world is furnished at will. In all three it may never contradict a record, invent what the piece is ABOUT, coin a name for something the records leave unnamed, or settle a question they leave open. Thin lore is cramped without the last; a world you are genuinely archiving belongs on the first.",
         "help.fandom_voice": "Who is telling it. A resident speaks in first person and treats the world as daily life; a chronicler researches its records and builds theories out of them; an usher speaks TO you, and the 'you' is a person standing in the world — a new hand being told how things are done here. Whichever it is, the world is real to them — never a story, never someone's invention.",
         "drama_cast_head": "Cast",
         "drama_add": "＋ Add character",
@@ -1181,7 +1184,10 @@ I18N: dict[str, dict[str, str]] = {
         "fandom_voice_resident": "житель этого мира",
         "fandom_voice_chronicler": "летописец этого мира",
         "fandom_voice_usher": "обращается к тебе, своему",
-        "fandom_invent": "Разрешить додумывать то, чего нет в записях",
+        "fandom_invent": "Додумывать то, чего нет в записях",
+        "fandom_invent_no": "нельзя",
+        "fandom_invent_gaps": "по ситуации",
+        "fandom_invent_free": "в любом случае",
         "fandom_tone": "Тон / манера речи (опционально)",
         "fandom_docs": "Документы в порядке чтения (через запятую; пусто = все *.md)",
         "fandom_lore_tool": "Разрешить сценаристу запрашивать полный лор (инструмент-архивариус)",
@@ -1191,7 +1197,7 @@ I18N: dict[str, dict[str, str]] = {
         "help.step.fandom": "Мир, в котором происходит история. Выбери фандом, поправь его документы лора и реши, кто рассказывает. Канон-справка ниже — это то, что реально держит перед собой сценарист; пересобери её после правок лора.",
         "help.fandom_pick": "Какой мир рассказываем. Фандом — это папка в configs/fandoms/: fandom.toml, один или несколько markdown-документов лора и собственный каст мира.",
         "help.fandom_lore": "Лор мира в markdown. Это первоисточник: из него собирается канон-справка, его же читает инструмент-архивариус. Сохранение записывает файл и пересобирает справку.",
-        "help.fandom_invent": "Что делать там, где лор кончается. Выключено — записи и есть весь мир: сценарист говорит, что этого никто не знает, и ничего своего не выдумывает. Включено — записи это лишь то, что записали, и сценарист дописывает фактуру между ними: имя, цену, обычай, чью-то привычку. Противоречить записям, вылезать за пределы того, из чего этот мир сделан, и разгадывать оставленное записями открытым нельзя в любом случае. Тонкому лору без этого тесно; мир, который ты всерьёз архивируешь, безопаснее держать с выключенной галочкой.",
+        "help.fandom_invent": "Что делать там, где лор кончается. «Нельзя» — записи и есть весь мир: сценарист говорит, что этого никто не знает, и ничего своего не выдумывает. «По ситуации» — придумывает только там, где бит иначе не написать, и только самую мелкую бытовую подробность, которая его расшивает, — мимоходом, одной фразой. «В любом случае» — записи это лишь то, что записали, и мир дообставляется свободно. Во всех трёх положениях нельзя противоречить записям, придумывать то, ПРО ЧТО ролик, давать имя тому, что записи оставили безымянным, и разгадывать оставленное ими открытым. Тонкому лору без правого положения тесно; мир, который ты всерьёз архивируешь, держи в левом.",
         "help.fandom_voice": "Кто рассказывает. Житель говорит от первого лица и воспринимает мир как быт; летописец копается в записях и строит из них теории. В обоих случаях мир для них настоящий — не история и не чья-то выдумка.",
         "drama_cast_head": "Каст",
         "drama_add": "＋ Добавить персонажа",
@@ -4329,9 +4335,14 @@ class FandomScreen(DramaScreen):
                             (t("fandom_voice_chronicler"), "chronicler"),
                             (t("fandom_voice_usher"), "usher")],
                    value="resident"),
-            # what the writer may do where the records stop — the world's other
-            # per-run question (see stages/fandom_script.GAP_INVENT)
-            Toggle("invent", "fandom_invent", value=False),
+            # how far the writer may go where the records stop — the world's other
+            # per-run question. Three answers, not a switch: the one most worlds want
+            # is the middle one (see stages/fandom_script.GAP_NONE/GAP_GAPS/GAP_FREE)
+            Choice("invent", "fandom_invent",
+                   options=[(t("fandom_invent_no"), "no"),
+                            (t("fandom_invent_gaps"), "gaps"),
+                            (t("fandom_invent_free"), "free")],
+                   value="no"),
         ])
         # Where the shots come from: ONE list, the same one a drama's chain stage picks
         # from. Splitting it into "source" + "generator" made the operator answer two
@@ -4752,7 +4763,7 @@ class FandomScreen(DramaScreen):
             v = {}
         g["fandom"] = f.get("fandom") or self._fandom
         g["fandom_voice"] = v.get("voice") or "resident"
-        g["fandom_invent"] = bool(v.get("invent", False))
+        g["fandom_invent"] = v.get("invent") or "no"
         # the drama's stage editor never mounts here, so the chain the pipeline runs on
         # is built from the single source this mode asks about instead
         self._stages = [self._source_stage().model_dump()]
@@ -4830,8 +4841,9 @@ class FandomScreen(DramaScreen):
         voice = t(f"fandom_voice_{g['fandom_voice']}")
         lines = [f"  {t('fandom_pick')}: [b]{g['fandom'] or '—'}[/b]"
                  f"      {t('fandom_voice')}: {voice}"]
-        if g["fandom_invent"]:
-            lines.append(f"  {t('fandom_invent')}")
+        if g["fandom_invent"] != "no":
+            lines.append(f"  {t('fandom_invent')}: "
+                         f"[b]{t('fandom_invent_' + g['fandom_invent'])}[/b]")
         return lines
 
     def _timing_flags(self, g: dict) -> str:
@@ -4847,7 +4859,8 @@ class FandomScreen(DramaScreen):
         quoted = f'"{name}"' if " " in name else name
         st = self._source_stage()
         return (f" {quoted} --narrator {g['fandom_voice']}"
-                + (" --invent" if g["fandom_invent"] else "")
+                + (f" --invent {g['fandom_invent']}"
+                   if g["fandom_invent"] != "no" else "")
                 + f" --medium {self._medium()} --source {st.model}")
 
 
@@ -5989,6 +6002,13 @@ class BreakpointScreen(Screen):
             lambda: self._ai_worker(lines, instruction, kinds), thread=True, exclusive=False
         )
 
+    def _world(self) -> str:
+        """Where this video is set, for the AI edit line (see `review.world_context`)."""
+        if self.job is None:
+            return ""
+        return review.world_context(self.job, self.cp.params.mode,
+                                    self.cp.params.fandom_invent)
+
     def _ai_scenes_worker(self, payload: list[dict], instruction: str) -> None:
         try:
             out = bp_ai.rewrite_scenes(
@@ -5996,6 +6016,7 @@ class BreakpointScreen(Screen):
                 lang=self.cp.params.lang,
                 roster=list(self.job.cast_prompts) if self.job else [],
                 models=review.generator_names(),
+                world=self._world(),
             )
         except Exception as e:
             self.app.call_from_thread(self._ai_scenes_done, None, str(e))
@@ -6020,7 +6041,7 @@ class BreakpointScreen(Screen):
             out = bp_ai.rewrite(
                 ChatLLM(self.app.store.active_llm_profile()), lines, instruction,
                 lang=self.cp.params.lang, subject=self.doc.subject,
-                variable=self.doc.variable, kinds=kinds,
+                variable=self.doc.variable, kinds=kinds, world=self._world(),
             )
         except Exception as e:
             self.app.call_from_thread(self._ai_done, None, str(e))

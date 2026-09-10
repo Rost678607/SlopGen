@@ -654,6 +654,26 @@ class LoopFile:
         dump = plan.model_dump(mode="json")
         return self._merge({k: v for k, v in dump.items() if k not in CONTROL})
 
+    def restart(self) -> LoopPlan:
+        """Clear the reasons this loop ended, so it may be run again on the same plan.
+
+        Every one of them lives in the file rather than in whoever was driving, which
+        is what makes a loop resumable at all — but it also means simply starting a
+        thread again would end it on the first pass, since `LoopRunner._over` reads the
+        same three things it wrote when it stopped. So a restart is exactly the act of
+        forgetting them: the stop flag the operator (or a shutdown) set, and the run of
+        failures that tripped `max_fails`. The QUEUE, the limit and the tally of what
+        has been made are deliberately untouched — a resumed loop carries on through its
+        remaining topics rather than starting the series over, and a loop that reached
+        its limit stays finished until the limit is raised."""
+        def change(data: dict) -> None:
+            data["stop"] = False
+            data["fails"] = 0
+            data["status"] = "queued"
+            data["note"] = ""
+
+        return self._update(change)
+
     def write_control(self, **fields) -> LoopPlan:
         """Store an operator's edit. Unknown and `None` values are dropped rather than
         refused: this is called from a CLI, an HTTP body and a text prompt, and a loop

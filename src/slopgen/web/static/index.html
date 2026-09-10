@@ -194,6 +194,7 @@
     <b id="ed-name"></b>
     <span class="grow"></span>
     <span id="saved" class="saved"></span>
+    <button id="ed-del" class="ghost" data-l="web.frames.del">🗑 удалить</button>
     <button id="save" class="primary" data-l="web.save">сохранить</button>
   </header>
   <div class="ed-body">
@@ -212,6 +213,8 @@
         <textarea id="ed-prompt" rows="3"></textarea></label>
       <label data-l="web.frames.note">заметка для себя
         <textarea id="ed-note" rows="2"></textarea></label>
+      <label class="inline"><input type="checkbox" id="ed-retired">
+        <span data-l="web.frames.retired">убрана из базы — больше не тратится</span></label>
       <h3 data-l="web.frames.targets">области <small data-l="web.frames.hint">нажми на предмет и отведи в сторону — точка нажатия станет центром</small></h3>
       <ul id="targets"></ul>
       <button id="playmove" class="ghost" data-l="web.frames.preview">показать движение по двум первым</button>

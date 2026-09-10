@@ -71,10 +71,23 @@ class Event:
     stage: str
     status: str
     message: str
+    # How far through its own loop a stage is, when it is one that counts (voiced
+    # lines, generated clips, assembled scenes). Zeroes everywhere else, which is what
+    # `PROGRESS_STAGE` below is for: a reader tells a tally from a message by the
+    # stage name, never by guessing at the numbers.
+    done: int = 0
+    total: int = 0
 
     def as_dict(self) -> dict:
         return {"seq": self.seq, "at": self.at, "video": self.video,
-                "stage": self.stage, "status": self.status, "message": self.message}
+                "stage": self.stage, "status": self.status, "message": self.message,
+                "done": self.done, "total": self.total}
+
+
+# The stage name a progress tick carries instead of a real stage. It is not a stage and
+# never appears in a checkpoint: it exists so one stream can carry both the log and the
+# bar, and so a reader can drop it out of the log without pattern-matching on words.
+PROGRESS_STAGE = "progress"
 
 
 @dataclass
@@ -94,6 +107,11 @@ class Run:
     loop_id: str = ""
     events: deque[Event] = field(default_factory=lambda: deque(maxlen=BACKLOG))
     progress: tuple[str, int, int] | None = None
+    # The stage this run is inside right now, and which video it is on. The terminal
+    # has always shown both, over a bar; the browser had the tally on the wire and
+    # nothing to hang it on, because nothing recorded WHAT was counting.
+    stage: str = ""
+    stage_video: int = -1
     _seq: int = 0
     _stop: bool = False
     _subs: set[asyncio.Queue] = field(default_factory=set)
@@ -106,6 +124,7 @@ class Run:
             "run_dir": str(self.run_dir) if self.run_dir else "",
             "mode": self.params.mode, "fandom": self.params.fandom,
             "count": self.params.count, "loop_id": self.loop_id,
+            "stage": self.stage, "stage_video": self.stage_video,
             "progress": {"unit": self.progress[0], "done": self.progress[1],
                          "total": self.progress[2]} if self.progress else None,
             "events": len(self.events),
@@ -141,6 +160,17 @@ class Loop:
         return {
             "id": self.id, "title": self.title, "dir": str(self.file.dir),
             "status": plan.status, "note": plan.note, "live": plan.live,
+            # Told to stop, and not stopped YET. The two are a real state and not a
+            # transient: `loop stop` deliberately never tears the video being made in
+            # half (see the README), so a loop can sit here for the length of a whole
+            # video. The flag was written to the file and shown to nobody, so the card
+            # went on saying `running` with a stop button that had already been pressed
+            # — which reads as a button that does not work.
+            "stopping": bool(plan.stop and plan.live),
+            # and WHICH video is holding it, so the one thing that ends it now is one
+            # press away instead of a hunt through the runs tab for a title that does
+            # not say it belongs to a loop
+            "at_run": self.run_ids[-1] if self.run_ids and plan.live else "",
             "mode": plan.params.mode, "fandom": plan.params.fandom,
             "source": plan.source, "limit": plan.limit, "ahead": plan.ahead,
             # the queue as ENTRIES, not sentences: each one carries its own settings and
@@ -166,6 +196,15 @@ class Loop:
         }
 
 
+def _mtime(path: Path) -> float:
+    """When this file last changed, or 0.0 when it is not there — a missing manifest is
+    a perfectly ordinary state and a stamp made of it must not throw."""
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
 def parked(run: Run) -> dict:
     """What this run is actually waiting for, read off its own folder.
 
@@ -175,17 +214,26 @@ def parked(run: Run) -> dict:
     action to every settled run was the first version, and it meant most buttons did
     nothing when pressed — which reads as a broken page rather than as an answer.
 
-    The checkpoint is small and this is cached against its mtime, so a list of forty
-    runs costs forty stat calls and nothing else. It lives here rather than in the
-    browser's routes because the chat asks the same question: a bot that says "parked"
-    and nothing else is exactly the broken page again, in fewer pixels."""
+    These files are small and this is cached against their mtimes, so a list of forty
+    runs costs a few stat calls per run and nothing else. The MANIFESTS are part of the
+    stamp and not only the checkpoint, because they are the half that moves on its own:
+    a picture handed over from the page or attached in the gather screen changes what is
+    owed without the checkpoint being written at all, and a count cached against the
+    checkpoint alone went on telling the operator five pictures were missing seconds
+    after they had delivered the fifth.
+
+    It lives here rather than in the browser's routes because the chat asks the same
+    question: a bot that says "parked" and nothing else is exactly the broken page
+    again, in fewer pixels."""
     if run.run_dir is None:
         return {"review_stage": "", "asks": 0, "video": False}
     cp_file = run.run_dir / "checkpoint.json"
     try:
-        stamp = cp_file.stat().st_mtime
+        works = sorted(p for p in run.run_dir.iterdir() if p.is_dir())
     except OSError:
         return {"review_stage": "", "asks": 0, "video": False}
+    stamp = tuple(_mtime(f) for f in
+                  [cp_file, *(manual.manifest_path(w) for w in works)])
     cached = getattr(run, "_parked", None)
     if cached and cached[0] == stamp:
         return cached[1]
@@ -196,7 +244,7 @@ def parked(run: Run) -> dict:
             info["review_stage"] = info["review_stage"] or cp.review_stage(i)
     except Exception:
         pass
-    for work in (p for p in run.run_dir.iterdir() if p.is_dir()):
+    for work in works:
         mp = manual.manifest_path(work)
         if mp.is_file():
             try:
@@ -303,6 +351,53 @@ class Supervisor:
                       key=lambda p: p.stat().st_mtime, reverse=True)[:limit]
         return sum(1 for p in dirs if self.adopt(p.parent) is not None)
 
+    def adopt_loop(self, loop_dir: Path) -> "Loop | None":
+        """Take an existing loop's plan on disk into this server, without running it.
+
+        The exact counterpart of :meth:`adopt` — and it was missing, which cost a
+        queue. A loop is a plan on disk and a thread in memory; only the thread dies
+        with the process, but nothing put the plan back on the list, so restarting the
+        server emptied the Loops tab while every `loop.json` sat there untouched. The
+        queue, its per-video settings and the whole steering panel simply had no card
+        to live on any more, and the answer to "where is my cycle" was that it was on
+        disk and unreachable.
+
+        It is adopted STOPPED, and never resumed on its own. A server is most often
+        restarted to make something stop, and a restart that quietly picked six queued
+        videos back up in the background is the opposite of what was asked. A plan whose
+        file still says `running` is stamped stopped here too: the thread that wrote
+        that word died with the process before it, and a card claiming to be working is
+        a card the operator waits on forever. Press start and it goes on from its queue.
+        """
+        try:
+            file = LoopFile.open(loop_dir)
+            plan = file.read()
+        except Exception:
+            return None
+        with self._lock:
+            for existing in self.loops.values():
+                if existing.file.dir == loop_dir:
+                    return existing
+        if plan.live:
+            # said in the file, so the terminal and the next restart agree with the page
+            plan = file.write_log(
+                plan.model_copy(update={"status": "stopped",
+                                        "note": "the server it was running in restarted"}))
+        loop = Loop(id=uuid.uuid4().hex[:12], title=_title(plan.params),
+                    file=file, params=plan.params,
+                    started_at=loop_dir.stat().st_mtime,
+                    finished_at=loop_dir.stat().st_mtime, _stop=True)
+        with self._lock:
+            self.loops[loop.id] = loop
+        return loop
+
+    def adopt_loops(self, output: Path, limit: int = 40) -> int:
+        """Every loop plan under the output folder, newest first."""
+        from ..pipeline.loop import all_loops
+
+        return sum(1 for d in all_loops(Path(output), limit)
+                   if self.adopt_loop(d) is not None)
+
     def _register(self, run: Run) -> None:
         with self._lock:
             self.runs[run.id] = run
@@ -337,6 +432,18 @@ class Supervisor:
         writes checkpoints and part files under that folder, and pulling it out from
         under ffmpeg mid-stage produces a half-written video and a stack trace instead
         of an answer. Stop it first, which the page already offers.
+
+        A PARKED run is deleted like any other, and the brief period when it was not is
+        worth writing down. One went to `rmtree` from the row that was asking to be
+        reviewed — the delete button sat beside the review button, unremarkable, two
+        presses from throwing away the script the row existed to ask about — and the
+        first repair was to refuse a parked run outright. That was the wrong end of it.
+        A parked run is precisely the one an operator wants rid of, because it is the
+        one that came out wrong; refusing it left no way to delete it at all, and the
+        run that provoked all this had to be removed by hand. The ease was the fault,
+        not the existence, so the guard is back to what it was and the page does the
+        work instead: the second press on a parked run says what is about to be thrown
+        away rather than asking a generic "sure?".
 
         The folder must sit INSIDE the output folder, and not BE it. This is the only
         place in slopgen that removes a tree the operator did not name, so it checks
@@ -430,15 +537,89 @@ class Supervisor:
             loop.file.add_topics([QueueItem(topic=t, by="ai") for t in fresh])
         return loop
 
-    def stop_loop(self, loop_id: str) -> bool:
-        """End the loop after the video it is making now — that video is left to finish,
-        because stopping it is a different act with its own button."""
+    def stop_loop(self, loop_id: str, now: bool = False) -> bool:
+        """End the loop. By default after the video it is making — that one is left to
+        finish, because a video torn in half has spent its quota and produced nothing,
+        and that is the promise `slopgen loop stop` makes in the README.
+
+        Which means a stopped loop can sit there for the length of a whole video, and
+        that is what `now` is for: the operator who wants it to stop NOW says so a second
+        time, and the video in flight is stopped as well. It is a separate act — it
+        throws away work — so it is a separate argument with its own button, rather than
+        this one quietly changing its mind about what stop means.
+
+        The flag goes on the loop AND in its file. In memory it is what this server's own
+        thread reads between iterations; on disk it is what a terminal steering the same
+        loop reads, and what survives this process dying — a loop asked to stop and then
+        adopted back off disk must not come back running."""
         loop = self.loops.get(loop_id)
         if loop is None:
             return False
         loop._stop = True
         loop.file.write_control(stop=True)
+        if now:
+            for run_id in reversed(loop.run_ids):
+                run = self.runs.get(run_id)
+                if run is not None and run.status in ("queued", "running"):
+                    self.stop(run_id)
+                    break
         return True
+
+    def resume_loop(self, loop_id: str) -> Loop | None:
+        """Run an ended loop again on the plan it already has.
+
+        There was no way to do this, and it was invisible until loops started coming
+        back off disk (see :meth:`adopt_loop`): every loop on the page had been created
+        moments earlier by the wizard, so "stopped" and "gone" looked the same and the
+        card only ever needed a stop button. An adopted loop makes the gap plain — six
+        topics queued, every setting editable, and nothing to press.
+
+        `LoopFile.restart` is what makes this more than a thread: the reasons the loop
+        ended are in the file, so a thread started without clearing them would read them
+        and end again immediately. The queue is not touched — resuming means carrying on
+        through the topics that are left, never making the finished ones over."""
+        loop = self.loops.get(loop_id)
+        if loop is None:
+            return None
+        if loop.file.read().live:
+            raise RuntimeError("this loop is already running")
+        loop.file.restart()
+        loop._stop = False
+        loop.started_at = time.time()
+        loop.finished_at = 0.0
+        threading.Thread(target=self._loop_work, args=(loop,),
+                         name=f"slopgen-loop-{loop.id}", daemon=True).start()
+        return loop
+
+    def forget_loop(self, loop_id: str, output: Path) -> str:
+        """Take an ended loop off the list and delete its plan folder.
+
+        The videos it made are NOT touched. They are ordinary runs in folders of their
+        own, they outlived the loop by design, and half of the reason to throw a loop
+        away is that its queue was wrong while its output was fine — deleting six
+        finished videos to tidy up a plan would be the worst possible reading of this
+        button. What goes is `loop_*/loop.json` and the folder holding it.
+
+        Refused while the loop is alive, for the same reason a run is: the thread writes
+        that file every iteration. Stop it first."""
+        loop = self.loops.get(loop_id)
+        if loop is None:
+            raise KeyError(loop_id)
+        if loop.file.read().live:
+            raise RuntimeError("stop it first — this loop is still going")
+        removed = ""
+        root = Path(output).resolve()
+        d = Path(loop.file.dir).resolve()
+        # the same check `forget` makes, and for the same reason: this removes a tree
+        # nobody named, so it verifies rather than trusts
+        if d != root and root in d.parents and d.is_dir():
+            shutil.rmtree(d)
+            removed = str(d)
+        elif d.exists():
+            raise RuntimeError(f"{d} is not inside {root} — refusing to delete it")
+        with self._lock:
+            self.loops.pop(loop_id, None)
+        return removed
 
     def _loop_work(self, loop: Loop) -> None:
         def launch(params: RunParams, n: int) -> LaunchResult:
@@ -505,7 +686,40 @@ class Supervisor:
                 lock.release()
 
     def _progress(self, run: Run, unit: str, done: int, total: int) -> None:
+        """A stage reporting from inside its own loop — the only signal that a long one
+        is moving at all.
+
+        Kept on the run AND pushed to whoever is watching, because those answer
+        different questions: the field is what a page opened halfway through reads out
+        of `/api/runs`, and the push is what moves the bar without polling for it. The
+        tick deliberately does NOT go into `run.events`. A drama generating eighty-four
+        clips would otherwise spend the whole backlog on its own progress and push the
+        log that explains the run out of the ring — and the same ticks would then be
+        replayed into the log of every page that reconnects.
+
+        Repeats are dropped rather than sent: several stages report after each item
+        whether or not the count moved, and a bar redrawn at the same width is a wasted
+        wake-up on every open tab."""
+        if run.progress == (unit, done, total):
+            return
         run.progress = (unit, done, total)
+        # seq 0 on purpose: sequence numbers address the backlog, and a tick is never
+        # in it. Borrowing the last real event's number would make two different things
+        # answer to one id the moment anything starts reconnecting with `?after=`.
+        self._push(run, Event(seq=0, at=time.time(), video=run.stage_video,
+                              stage=PROGRESS_STAGE, status=unit,
+                              message="", done=done, total=total))
+
+    def _push(self, run: Run, ev: Event) -> None:
+        """Hand one event to every watcher. No buffer, no state — see `_emit` for the
+        things that also have to be remembered."""
+        if self._loop is None:
+            return
+        for q in list(run._subs):
+            try:
+                self._loop.call_soon_threadsafe(q.put_nowait, ev)
+            except RuntimeError:  # the loop went away under us
+                pass
 
     def _emit(self, run: Run, video: int, stage: str, status: str, message: str) -> None:
         run._seq += 1
@@ -514,13 +728,16 @@ class Supervisor:
         run.events.append(ev)
         if status in ("paused", "review"):
             run.status, run.message = status, ev.message
-        if self._loop is None:
-            return
-        for q in list(run._subs):
-            try:
-                self._loop.call_soon_threadsafe(q.put_nowait, ev)
-            except RuntimeError:  # the loop went away under us; the buffer still has it
-                pass
+        # A stage announcing itself is what the bar is labelled with, and what resets
+        # it: the tally of the stage just finished must not sit under the name of the
+        # one now starting. Run-level events (video -1, stage "run") are the run's own
+        # lifecycle and name no stage.
+        if status == "start" and video >= 0:
+            run.stage, run.stage_video = stage, video
+            run.progress = None
+        elif status in ("done", "failed", "stopped") and stage == "run":
+            run.stage, run.stage_video, run.progress = "", -1, None
+        self._push(run, ev)
 
     # -- watching ----------------------------------------------------------
 
