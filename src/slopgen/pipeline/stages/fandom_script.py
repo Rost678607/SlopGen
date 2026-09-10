@@ -68,6 +68,15 @@ All three answers are right for different worlds, which is why this is a questio
 not a rule — thin lore is unwritable under the first, and a world someone is genuinely
 archiving is ruined by the third.
 
+None of that decides what the VIDEO is, and for a long time nothing did. A piece of
+this kind is not a small documentary about a world: it is one thing, opened in the
+middle of itself, taken apart in an order where every sentence is caused by the last,
+turned once near the end when the arrangement turns out to have a price, and stopped
+on a line that explains nothing. That shape is written down twice here — as rules
+every pass is held to (`PIECE_RULES`), and as this particular video's own plan, made
+before a beat is written (`Spine`, `plan_spine`). The section above `PIECE_RULES` has
+the measured failure that made both necessary.
+
 The world's cast is not a fourth layer, and the mode is careful to say so (see
 `CAST_RULE`). It is a WARDROBE: a list of what things look like, where one entry may be
 one character, a body of identical faceless ones, or a whole kind of them. Everything a
@@ -78,6 +87,9 @@ sheets is how a video ends up about four people standing in a place.
 """
 
 from __future__ import annotations
+
+import logging
+from dataclasses import dataclass, field
 
 from ...llm.tools import LORE_LOOKUP_TOOL, make_lore_lookup
 from ..context import AppContext
@@ -90,6 +102,8 @@ from .beats import (
     Window,
     write_beats,
 )
+
+log = logging.getLogger(__name__)
 
 # A drama's beats are all the same length because the operator bought that length from
 # a generator whose free daily tier they are rationing — so the writer is told the
@@ -426,6 +440,252 @@ def brief_rule(invent: str) -> str:
     )
 
 
+# --------------------------------------------------------------------------
+# The shape of a piece
+# --------------------------------------------------------------------------
+#
+# Everything above this line makes the SENTENCES right and none of it makes the VIDEO
+# one thing, which is the whole of what was wrong with this mode. Measured, on a
+# thirty-second run against a world of institutional corridors, brief «Первый день на
+# Объекте»: three beats came back, every one of them faithful, in the world's own
+# words, unimprovable line by line — a checkpoint and a form, then a briefing document,
+# then a piece of advice about a tally mark. Three true things about the same subject,
+# with nothing following from anything. The operator's word for it was that it jumps
+# from subject to subject, and it does; but no rule in this file was broken, because
+# no rule in this file was about the piece.
+#
+# Why the gap was invisible: the outline pass is this mode's only planning, and
+# `beats.outline` returns immediately below two windows — fourteen beats. Every short
+# video therefore had NO plan at all, and got `beats.ARC_WHOLE` instead, which offers
+# a drama's arc (hook → rise → turn → payoff) to a piece that has no plot. Meanwhile
+# `FIDELITY_RULE` reads a four-word brief as case 3, a sketch, and hands the writer a
+# free licence over all three beats. Free licence, no plan, no shape: three stabs at
+# the topic is the only thing that could have come out.
+#
+# What replaces it is measured off the pieces this mode is actually trying to be —
+# the short in-world videos that work, watched and taken apart. They are not built
+# like small documentaries. Every one of them is ONE thing, opened in the middle of
+# itself, taken apart in an order where each sentence is caused by the last, turned
+# once near the end when the arrangement turns out to have a price, and stopped on a
+# line that explains nothing. Sixty words, one subject, no survey. That is a shape,
+# and it can be said in rules (`PIECE_RULES`) and decided per video (`Spine`).
+#
+# The spine is also where the mode gets back something the short pieces never had:
+# a pass that reads the WHOLE records against the brief before a beat is written.
+# That was layer 2 of the three (see the module docstring), and below fourteen beats
+# it simply did not run.
+
+# The five rules, and they are the piece rather than the world. Each is a test rather
+# than a taste: a writer cannot tell whether its piece "flows", and it can tell
+# whether two beats can be swapped without breaking anything.
+PIECE_RULES = (
+    "\nHOW A PIECE OF THIS KIND IS BUILT — five rules, and together they are what "
+    "makes one video instead of several true things said in a row.\n"
+    "  • ONE THING. The whole piece is about ONE thing, and the first beat names it. "
+    "Everything after that is still that thing. The test: lift any beat out and drop "
+    "it into a different video about this world — if nothing notices, it did not "
+    "belong in this one. Breadth is the enemy here: a subject you could say four "
+    "unrelated true things about is four videos, and you are writing one of them.\n"
+    "  • A CHAIN, NOT A LIST. Every beat after the first follows FROM the one before "
+    "it — because of it, in spite of it, as its price, as what somebody does about "
+    "it. The test: swap any two beats. If nothing breaks, you wrote a list, and a "
+    "list is exactly what jumping from subject to subject is.\n"
+    "  • ONE TURN, AND IT COMES LATE. In the last third the thing turns: the "
+    "arrangement has a price, the courtesy is a count, the rule is protecting "
+    "somebody else. ONE turn — a piece that turns in every beat has no turn at all — "
+    "and it is not a twist you invent, it is the part of the thing everybody there "
+    "has stopped noticing.\n"
+    "  • THE LAST BEAT DOES NOT EXPLAIN. It is the shortest, and its job is to STOP: "
+    "a warning, an instruction, a question nobody there answers, one flat sentence "
+    "that lands. Never a summary of what was just said, never a moral, never a line "
+    "telling the listener what they have heard.\n"
+    "  • THIS WORLD'S WORDS, IN EVERY BEAT. At least one thing named the way the "
+    "records name it, every time, and never glossed — no 'so-called', no 'that is to "
+    "say', no explaining a word to somebody who lives here. Those names are most of "
+    "what makes a piece sound like it came from somewhere.\n"
+    "Where the operator has already WRITTEN the piece, its shape is the piece's shape "
+    "and it outranks all five.\n"
+)
+
+# The four shapes, and they are a closed list on purpose. Asked to pick a form freely
+# a model picks "an atmospheric exploration of", which is the survey again under a
+# better name. Each of these four has a spine that cannot be written as a list.
+SPINE_SHAPES = (
+    "\nFOUR KINDS OF PIECE. One of them fits what the brief asks for better than the "
+    "others; pick it and say which:\n"
+    "  • MECHANISM — one arrangement of this world taken apart: what it is, how it is "
+    "actually done, and what it costs the people it is done to.\n"
+    "  • DUTIES — somebody has been put somewhere, and this is what that means for "
+    "them: what they will do, in what order, and what it earns them.\n"
+    "  • RULE — a thing that must be done a certain way here: the conditions under "
+    "which it holds, and what reaches you when it does not.\n"
+    "  • VIGNETTE — one named someone wants one concrete thing, and the piece is the "
+    "getting of it: what is in the way, what they try, where it stands when the time "
+    "runs out. It ends unfinished.\n"
+)
+
+# The planner. It writes no narration at all, and saying so twice is not redundant:
+# handed a world and a topic, a model's first instinct is to start the video.
+SPINE_SYSTEM = (
+    "You are planning ONE narrated vertical video set in the world whose records are "
+    "given below. You write not a single line of it. You decide WHAT THE VIDEO IS "
+    "ABOUT and the order in which that one thing comes apart; a writer gets your plan "
+    "and nothing else of yours.\n"
+    "{world_rule}"
+    "{world_block}"
+    "{piece_rules}"
+    "{shapes}"
+    "SIZE IT. The finished video runs about {total:.0f} seconds — {beats} beats of "
+    "narration in all, and no more. That decides how big a subject may be: one "
+    "arrangement told properly, never a history and never a tour. If what you have in "
+    "mind will not fit, it is the wrong subject, or it is two of them and you take "
+    "the better one.\n"
+    "Give the plan as:\n"
+    '  • "subject": the ONE thing the video is about, in this world\'s own words, in '
+    "one line. A thing, an arrangement, a rite, a job, a place, one person's one "
+    "habit — never a theme, never a period, never 'life at' somewhere.\n"
+    '  • "shape": which of the four kinds above it is.\n'
+    '  • "open": the concrete fact the piece starts inside — an object, a moment, a '
+    "sentence somebody there would say. Not an introduction to anything.\n"
+    '  • "steps": 3-6 short lines, IN ORDER, each following from the one before it: '
+    "how the thing actually works. Concrete throughout — what is done, by whom, with "
+    "what, how often, at what price — and every fact in them comes from the records.\n"
+    '  • "turn": what follows from those steps and is worse, stranger or costlier '
+    "than they sounded. One thing.\n"
+    '  • "close": what the last line does — the warning, the instruction, the '
+    "question nobody answers. One line, and it explains nothing.\n"
+    "Write all of it in {lang}. This is a plan, not narration: no beats, no seconds, "
+    "no shot descriptions, and nothing written out in the narrator's voice.\n"
+    'Respond with JSON only: {{"subject": "...", "shape": "...", "open": "...", '
+    '"steps": ["...", "..."], "turn": "...", "close": "..."}}.'
+)
+
+# The plan as the writer sees it. The line about steps not being beats is load-
+# bearing: given five steps and three beats a writer will write five beats, and given
+# three steps and six beats it will pad each one out into two.
+SPINE_RULE = (
+    "\nTHE SPINE OF THIS PIECE, settled before you were called. This is its subject "
+    "and its order, and it is not a suggestion.\n"
+    "  THE SUBJECT: {subject}\n"
+    "  WHAT KIND OF PIECE: {shape}\n"
+    "  IT OPENS INSIDE: {opens}\n"
+    "  THEN, IN THIS ORDER:\n{steps}\n"
+    "  THE TURN, LATE: {turn}\n"
+    "  IT STOPS ON: {close}\n"
+    "The steps are the ORDER of the piece and not its beats: one step may take two "
+    "beats, and two small steps may share one. Spend them all, in that order, and add "
+    "no step of your own — a subject the spine does not name is a subject this video "
+    "is not about. If they will not all fit, drop the least load-bearing step whole "
+    "rather than compressing every one of them.\n"
+)
+
+# A brief this short is a line off a queue (see `llm.lore.SHAPE_TOPIC`) or a phrase
+# the operator typed into the wizard. Either way it names a subject and stops, and the
+# writer has to be told that — `FIDELITY_RULE` case 3 says the writing is yours, which
+# is true and reads, without this, as permission to cover the topic.
+TOPIC_CHARS = 160
+BRIEF_TOPIC = (
+    "\nTHE BRIEF IS A TOPIC, NOT A TEXT. What the operator wrote names the SUBJECT of "
+    "this video and stops. It is not the content, and its words are not lines to "
+    "voice — so the rule above about keeping the operator's sentences has almost "
+    "nothing to keep, and what it binds you to is the subject alone.\n"
+    "Do not answer a topic with a SURVEY. Three true things about it, one per beat, "
+    "is what a topic pulls out of a writer, and it is the one failure this kind of "
+    "piece has: nothing follows from anything and the video ends without having been "
+    "about anything. Find in the records the ONE arrangement, custom, procedure, day "
+    "or moment inside that topic which fills the whole video by itself, and spend the "
+    "whole video on it. A topic is where you start looking, not what you must cover.\n"
+)
+
+# A single window is the whole video, and it has to be told so in this mode's terms
+# rather than the drama's (`beats.ARC_WHOLE` offers it a plot's arc, which is the
+# wrong shape and the wrong vocabulary for a piece with no plot in it).
+ARC_FANDOM = (
+    "You are writing the WHOLE piece — all {beats} beats of it, with no second writer "
+    "to carry anything on. Its shape is the one the rules above describe: open inside "
+    "the subject, work through it in order, turn once near the end, stop on the "
+    "closing line. The last beat is the last of the video: nothing follows it, so it "
+    "neither hands over, nor sums up, nor trails off.\n"
+)
+
+# How long a brief may be and still want a spine. Above this the operator has written
+# the piece, and a written piece is CUT UP rather than re-planned (`FIDELITY_RULE`
+# case 1, and the same reasoning as `beats.outline`'s docstring): planning a shape for
+# a text that already has one is how a writer talks itself into improving it.
+SPINE_MAX_BRIEF = 600
+
+
+@dataclass
+class Spine:
+    """One video's plan: what it is about, and the order it comes apart in."""
+
+    subject: str
+    shape: str = ""
+    opens: str = ""
+    steps: list[str] = field(default_factory=list)
+    turn: str = ""
+    close: str = ""
+
+    def block(self) -> str:
+        return SPINE_RULE.format(
+            subject=self.subject, shape=self.shape or "—", opens=self.opens or "—",
+            steps="\n".join(f"    {i + 1}. {s}" for i, s in enumerate(self.steps)),
+            turn=self.turn or "—", close=self.close or "—",
+        )
+
+
+def plan_spine(ctx: AppContext, writer: "FandomWriter", *, brief: str, beats: int,
+               lang: str) -> Spine | None:
+    """Decide what this video is about, once, before any of it is written.
+
+    Returns None when the answer is unusable, and the piece is then written under
+    `PIECE_RULES` alone — which is worse but perfectly writable, and a good deal
+    better than a run that dies because an optional pass came back malformed.
+
+    The records go in WHOLE rather than as the compiled sheet, for the reason the
+    outline gives: the sheet is one line per thing, and a spine is made of exactly the
+    detail a one-line inventory drops."""
+    from ..drama import char_budget
+    from ...llm.client import LLMError
+
+    system = SPINE_SYSTEM.format(
+        world_rule=world_rule(writer.invent), world_block=writer.spine_world(),
+        piece_rules=PIECE_RULES, shapes=SPINE_SHAPES, lang=lang,
+        total=ctx.params.duration_s, beats=beats,
+    )
+    user = (
+        "THE BRIEF — what the operator asked for. It says what the video is about; it "
+        f"does not say how the video goes, and that is what you are for.\n{brief}\n\n"
+        "THE RECORDS OF THIS WORLD — read them for the one thing inside that brief "
+        "that will hold a whole video, and for the concrete detail that makes it hold "
+        f"one.\n{writer.lore}\n\n"
+        f"The video runs {ctx.params.duration_s:.0f} seconds — about "
+        f"{char_budget(ctx.params.duration_s, ctx.params.lang, ctx.params.tts_rate)} "
+        "characters of narration in all."
+    )
+    try:
+        data = ctx.llm.complete_json(
+            f"{writer.kind}_spine", system, user, tools=writer.tools(ctx)
+        )
+    except LLMError as e:
+        log.warning("no spine for this piece (%s) — writing it without one", e)
+        return None
+    subject = str(data.get("subject") or "").strip()
+    steps = [str(s).strip() for s in (data.get("steps") or []) if str(s).strip()]
+    # a subject and an order are the two things the writer cannot make up for itself;
+    # a spine missing either is not a plan, it is a topic said twice
+    if not subject or len(steps) < 2:
+        log.warning("the spine came back without a subject or an order — writing "
+                    "this piece without one")
+        return None
+    return Spine(
+        subject=subject, shape=str(data.get("shape") or "").strip(),
+        opens=str(data.get("open") or data.get("opens") or "").strip(), steps=steps,
+        turn=str(data.get("turn") or "").strip(),
+        close=str(data.get("close") or "").strip(),
+    )
+
+
 # What the cast sheet is, and — more importantly — what it is NOT. A world's sheet is a
 # wardrobe, not a cast list: it holds looks and nothing else, because everything a
 # character IS is written in the records instead (see `config.models.CharacterConfig`).
@@ -480,6 +740,7 @@ SYSTEM_RESIDENT = (
     "{cast_rule}"
     "{brief_rule}"
     "{fidelity_rule}"
+    "{piece_rule}"
     "{premise_rule}"
     "\nBreak the piece into BEATS. For each beat give:\n"
     '  • "seconds": how long this beat is on screen (you choose — see the rule below);\n'
@@ -515,6 +776,7 @@ SYSTEM_CHRONICLER = (
     "{cast_rule}"
     "{brief_rule}"
     "{fidelity_rule}"
+    "{piece_rule}"
     "{premise_rule}"
     "\nBreak the piece into BEATS. For each beat give:\n"
     '  • "seconds": how long this beat is on screen (you choose — see the rule below);\n'
@@ -624,6 +886,7 @@ SYSTEM_USHER = (
     "{cast_rule}"
     "{brief_rule}"
     "{fidelity_rule}"
+    "{piece_rule}"
     "{premise_rule}"
     "\nBreak the piece into BEATS. For each beat give:\n"
     '  • "seconds": how long this beat is on screen (you choose — see the rule below);\n'
@@ -730,6 +993,7 @@ OUTLINE_SYSTEM = (
     "writer will dutifully put on screen.\n"
     "{premise_rule}"
     "{fidelity_rule}"
+    "{piece_rule}"
     'Respond with JSON only: {{"title": "<short title in {lang}>", "stretches": '
     '[{{"covers": "...", "details": ["...", "..."], "ends_on": "..."}}, ...]{part_json}}}.'
 )
@@ -754,6 +1018,12 @@ class FandomWriter:
         # a slideshow is written differently from a run of clips: a still cannot hold
         # an action, so the shot descriptions have to be photographs (see SHAPE_PHOTO)
         self.photo = photo
+        # what this video is about and the order it comes apart in, settled by
+        # `prepare` before a beat is written — None when the brief already is the
+        # piece, or when the pass came back unusable (see `plan_spine`)
+        self.spine: Spine | None = None
+        # whether the brief names a subject rather than carrying one (BRIEF_TOPIC)
+        self.topic = False
 
     # -- what the writer is told about the world ---------------------------
 
@@ -765,6 +1035,43 @@ class FandomWriter:
         else:
             block = LORE_RULE.format(lore=self.lore)
         return block + (LORE_TOOL_RULE if self.lore_tool else "")
+
+    def spine_world(self) -> str:
+        """What the SPINE pass is told about the world.
+
+        The sheet, never the raw lore: the records themselves go in that pass's user
+        turn whole, and paying for both would be paying twice for the same world."""
+        if self.canon:
+            return CANON_RULE.format(canon=self.canon)
+        return ""
+
+    # -- the shape of this particular piece --------------------------------
+
+    def prepare(self, ctx: AppContext, *, brief: str, beats: int, lang: str) -> None:
+        """Settle what the video is about, before `beats.write_beats` writes any of it.
+
+        Called for every fandom run, including the short ones the outline pass never
+        reaches — which is the point of it, since those were the runs with no plan of
+        any kind (see the section above)."""
+        text = brief.strip()
+        self.topic = 0 < len(text) <= TOPIC_CHARS
+        if len(text) > SPINE_MAX_BRIEF:
+            return  # the operator wrote the piece; it is its own spine
+        self.spine = plan_spine(ctx, self, brief=brief, beats=beats, lang=lang)
+        if self.spine:
+            log.info("this one is about: %s (%s)",
+                     self.spine.subject, self.spine.shape or "no shape given")
+            ctx.progress("spine", 1, 1)
+
+    def piece_rule(self) -> str:
+        """The shape block every pass gets: what kind of brief this is, how a piece of
+        this kind is built, and this particular one's spine."""
+        return ((BRIEF_TOPIC if self.topic else "") + PIECE_RULES
+                + (self.spine.block() if self.spine else ""))
+
+    def whole_arc(self, ctx: AppContext, *, beats: int) -> str:
+        """One window is the whole video (see `beats.write_beats`)."""
+        return ARC_FANDOM.format(beats=beats)
 
     def empty_brief(self, ctx: AppContext) -> str:
         return (
@@ -784,6 +1091,7 @@ class FandomWriter:
             world_rule=world_rule(self.invent), premise_rule=PREMISE_RULE,
             role_rule=outline_role_rule(ctx),
             brief_rule=brief_rule(self.invent), fidelity_rule=FIDELITY_RULE,
+            piece_rule=self.piece_rule(),
             total=total, share=total / max(wins, 1),
             chars=char_budget(total, ctx.params.lang, ctx.params.tts_rate),
         )
@@ -844,6 +1152,7 @@ class FandomWriter:
             roster_rule=ROSTER_RULE.format(roster=roster),
             brief_rule=brief_rule(self.invent),
             fidelity_rule=FIDELITY_RULE,
+            piece_rule=self.piece_rule(),
             window_rule=window_rule,
         )
 

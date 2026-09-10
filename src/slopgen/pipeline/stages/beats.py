@@ -372,6 +372,24 @@ class Writer(Protocol):
     # Whether this mode's writer sizes its own beats (see _assign_slots).
     self_timed: bool
 
+    # -- optional, and looked up with getattr rather than declared here ----
+    #
+    # Two hooks a mode MAY implement, both of them for the same reason: the outline
+    # pass is the only planning this file does, and it is planning for a LONG piece.
+    # It runs only above one window (fourteen beats), it plans by cutting a written
+    # brief into consecutive slices, and below that threshold a window is simply
+    # handed `ARC_WHOLE` — the drama's arc, in the drama's words. A mode whose short
+    # pieces need a shape of their own had nowhere to put one.
+    #
+    #   prepare(ctx, *, brief, beats, lang) -> None
+    #       Called once, after the brief and the beat count are settled and before
+    #       the outline. Whatever it works out is the writer's to keep and to fold
+    #       into its own prompts; nothing here reads the result.
+    #
+    #   whole_arc(ctx, *, beats) -> str
+    #       What a SINGLE window is told about the shape of the piece, replacing
+    #       `ARC_WHOLE`. Returning "" falls back to it.
+
 
 @dataclass
 class Stretch:
@@ -1013,6 +1031,13 @@ def write_beats(job: VideoJob, ctx: AppContext, writer: Writer) -> None:
         (i for i, (a, b) in enumerate(windows) if a <= int(beats * 0.65) < b), len(windows) - 1
     )
 
+    # Whatever this mode wants settled before a beat is written (see `Writer`). It
+    # comes before the outline deliberately: a mode that plans the SHAPE of the piece
+    # here wants the outline's slicing to happen inside that shape, not beside it.
+    prepare = getattr(writer, "prepare", None)
+    if prepare is not None:
+        prepare(ctx, brief=brief, beats=beats, lang=lang)
+
     # plan the whole story (and where the episodes are cut) before writing any of it
     stretches, breaks, title = outline(
         ctx, writer, brief=brief, roster=roster, lang=lang,
@@ -1040,7 +1065,10 @@ def write_beats(job: VideoJob, ctx: AppContext, writer: Writer) -> None:
                 tail_rule=tail_rule, end_rule=end_rule,
             ) + _plan_map(stretches, wi)
         elif len(windows) == 1:
-            arc = ARC_WHOLE.format(beats=beats, duration=p.duration_s, tol=p.duration_tol_s)
+            whole = getattr(writer, "whole_arc", None)
+            arc = (whole and whole(ctx, beats=beats)) or ARC_WHOLE.format(
+                beats=beats, duration=p.duration_s, tol=p.duration_tol_s
+            )
         else:
             arc = ARC_WINDOW.format(
                 first=first + 1, last=last, beats_total=beats, beats=win_beats,
