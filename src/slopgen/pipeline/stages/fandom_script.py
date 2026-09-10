@@ -316,6 +316,31 @@ LORE_RULE = (
     "explained to an outsider.\n"
 )
 
+# The operator's note on register (`FandomConfig.tone`), and it used to arrive as a
+# footnote: one unheaded line appended under the canon sheet, in the middle of a prompt
+# whose every other rule pushes toward compression. What survives that treatment is the
+# half of a tone note that agrees with the pressure — «ровный, канцелярский, короткими
+# фразами» lands, and «охотно вставляет присказки и приметы», sitting in the same
+# sentence, does not. The result reads exactly as flat as the note asked and carries
+# none of what the note asked FOR, which is the operator's own voice half-applied.
+#
+# So it gets a heading, it is named as binding, and it says outright that a tone note
+# has two halves. The last clause is the load-bearing one: told to fit a budget, a
+# writer economises on texture first, because texture is the part that is not
+# information. It is the part the operator is actually asking for.
+TONE_RULE = (
+    "\nHOW THIS ONE IS TOLD — the operator's note on register. Every word of it binds "
+    "you, and it binds you in BOTH directions: what it says the voice avoids, the "
+    "voice avoids; what it says the voice reaches for, the voice reaches for, in every "
+    "beat that can carry one. A note is not a list of prohibitions with some scenery "
+    "attached — the things it invites are the things the operator is asking to hear.\n"
+    "{tone}\n"
+    "The length budget never overrides this. When a beat will not fit, take a THING "
+    "out of it — a fact, a step, a clause of business — never the register: a beat "
+    "stripped to its information is not a shorter version of this voice, it is a "
+    "notice board.\n"
+)
+
 LORE_TOOL_RULE = (
     "\nTHE ARCHIVIST: you may call `lore_lookup` to ask the keeper of the records any "
     "question about this world, as many times as you need. Ask BEFORE you commit to a "
@@ -479,13 +504,19 @@ def brief_rule(invent: str) -> str:
 # than a taste: a writer cannot tell whether its piece "flows", and it can tell
 # whether two beats can be swapped without breaking anything.
 PIECE_RULES = (
-    "\nHOW A PIECE OF THIS KIND IS BUILT — five rules, and together they are what "
+    "\nHOW A PIECE OF THIS KIND IS BUILT — six rules, and together they are what "
     "makes one video instead of several true things said in a row.\n"
     "  • ONE THING. The whole piece is about ONE thing, and the first beat names it. "
     "Everything after that is still that thing. The test: lift any beat out and drop "
     "it into a different video about this world — if nothing notices, it did not "
     "belong in this one. Breadth is the enemy here: a subject you could say four "
     "unrelated true things about is four videos, and you are writing one of them.\n"
+    "    And the thing is HAPPENING, not being characterised. 'A first day here is "
+    "always the same' is a remark ABOUT first days, made from outside all of them; "
+    "this piece is one of them, going on now, to the person listening. Nothing in it "
+    "is 'always', 'usually', 'as a rule' or 'every time' where it could simply be "
+    "this time — a general truth about the subject is the driest sentence available "
+    "and it puts the listener outside the very thing you are putting them inside.\n"
     "  • A CHAIN, NOT A LIST. Every beat after the first follows FROM the one before "
     "it — because of it, in spite of it, as its price, as what somebody does about "
     "it. The test: swap any two beats. If nothing breaks, you wrote a list, and a "
@@ -503,8 +534,21 @@ PIECE_RULES = (
     "records name it, every time, and never glossed — no 'so-called', no 'that is to "
     "say', no explaining a word to somebody who lives here. Those names are most of "
     "what makes a piece sound like it came from somewhere.\n"
+    "  • A BEAT IS NOT A NOTICE. A sentence carrying nothing but who did what to what "
+    "is a line off a notice board, and a run of them is how a piece can be true in "
+    "every particular and still unlistenable. So every beat carries ONE thing besides "
+    "its fact — one, not all of them, and never a whole beat spent on it:\n"
+    "      – what the listener's hands, feet or eyes are doing while it happens;\n"
+    "      – what they are thinking, hoping, dreading or already spending;\n"
+    "      – a measure in this world's own units, where it has them;\n"
+    "      – a saying, an omen, a superstition or a piece of advice people here "
+    "repeat to each other;\n"
+    "      – one physical detail nobody needed to mention.\n"
+    "    The register note above decides WHICH of these this world likes; it does not "
+    "decide whether there is one. A flat voice is not an empty one — flatness is how "
+    "the strange things are said here, not a reason to say only the necessary ones.\n"
     "Where the operator has already WRITTEN the piece, its shape is the piece's shape "
-    "and it outranks all five.\n"
+    "and it outranks all six.\n"
 )
 
 # The four shapes, and they are a closed list on purpose. Asked to pick a form freely
@@ -661,7 +705,7 @@ def plan_spine(ctx: AppContext, writer: "FandomWriter", *, brief: str, beats: in
     from ...llm.client import LLMError
 
     system = SPINE_SYSTEM.format(
-        world_rule=world_rule(writer.invent), world_block=writer.spine_world(),
+        world_rule=world_rule(writer.invent), world_block=writer.spine_world(ctx),
         piece_rules=PIECE_RULES, shapes=SPINE_SHAPES, lang=lang,
         # The planner has to know WHO IS BEING SPOKEN TO, and leaving it out cost the
         # first measured piece its whole register. Planning «первый день» for nobody
@@ -975,6 +1019,10 @@ OPEN_RULE_FANDOM = (
     "'they have put you in Y', 'today is Z'). Somebody who hears only that first line "
     "must already know what this is about. Then, in the same beat, you are inside it: "
     "one concrete moment, object or claim, no run-up (1-2 punchy sentences in all).\n"
+    "Name it as THIS one, happening. 'Your first day' — never 'a first day here is "
+    "always the same', which is a remark about first days in general, made from "
+    "outside every one of them, and it puts the listener outside the day you are "
+    "about to walk them through.\n"
     "What is forbidden is naming, introducing or situating THE WORLD — 'let me tell "
     "you about', a sentence written for someone who has never been here, anything "
     "explaining where we are. Saying what is happening is not that: it is the flattest "
@@ -1079,14 +1127,19 @@ class FandomWriter:
             block = LORE_RULE.format(lore=self.lore)
         return block + (LORE_TOOL_RULE if self.lore_tool else "")
 
-    def spine_world(self) -> str:
+    def spine_world(self, ctx: AppContext) -> str:
         """What the SPINE pass is told about the world.
 
         The sheet, never the raw lore: the records themselves go in that pass's user
-        turn whole, and paying for both would be paying twice for the same world."""
-        if self.canon:
-            return CANON_RULE.format(canon=self.canon)
-        return ""
+        turn whole, and paying for both would be paying twice for the same world.
+
+        The tone note comes too, and it is not decoration here. A register that
+        welcomes sayings and omens is a register that wants sayings and omens PLANNED
+        — they are material, and a plan that gathered none leaves the writer nothing
+        to be that voice out of."""
+        tone = (ctx.fandom.tone if ctx.fandom else "").strip()
+        block = CANON_RULE.format(canon=self.canon) if self.canon else ""
+        return block + (TONE_RULE.format(tone=tone) if tone else "")
 
     # -- the shape of this particular piece --------------------------------
 
@@ -1190,8 +1243,7 @@ class FandomWriter:
             cast_rule=CAST_RULE,
             premise_rule=PREMISE_RULE,
             world_block=self._world_block()
-            + (f"\nHOW THIS ONE IS TOLD — the operator's note on register: {tone}\n"
-               if tone else ""),
+            + (TONE_RULE.format(tone=tone) if tone else ""),
             roster_rule=ROSTER_RULE.format(roster=roster),
             brief_rule=brief_rule(self.invent),
             fidelity_rule=FIDELITY_RULE,
