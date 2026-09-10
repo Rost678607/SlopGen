@@ -533,6 +533,7 @@ SPINE_SYSTEM = (
     "and nothing else of yours.\n"
     "{world_rule}"
     "{world_block}"
+    "{role_rule}"
     "{piece_rules}"
     "{shapes}"
     "SIZE IT. The finished video runs about {total:.0f} seconds — {beats} beats of "
@@ -545,13 +546,24 @@ SPINE_SYSTEM = (
     "one line. A thing, an arrangement, a rite, a job, a place, one person's one "
     "habit — never a theme, never a period, never 'life at' somewhere.\n"
     '  • "shape": which of the four kinds above it is.\n'
-    '  • "open": the concrete fact the piece starts inside — an object, a moment, a '
-    "sentence somebody there would say. Not an introduction to anything.\n"
+    '  • "open": what is HAPPENING, said flatly in one line, the way somebody there '
+    "would say it to the person it is happening to. Not an introduction to the world "
+    "and not a mood — the situation, named. Whoever hears the first line must know "
+    "within those few words what this is about; a piece that opens on an atmospheric "
+    "detail and leaves the subject to be worked out has wasted its opening.\n"
     '  • "steps": 3-6 short lines, IN ORDER, each following from the one before it: '
     "how the thing actually works. Concrete throughout — what is done, by whom, with "
     "what, how often, at what price — and every fact in them comes from the records.\n"
-    '  • "turn": what follows from those steps and is worse, stranger or costlier '
-    "than they sounded. One thing.\n"
+    "    Spend the ORDINARY first. Where somebody is put, what they are given, what "
+    "they do there all day, what is expected of them: that is the material, and it is "
+    "the material a listener has to have before anything can be worth turning. A plan "
+    "that spends all its steps on getting somewhere and none on being there has "
+    "described a corridor.\n"
+    '  • "turn": what follows from THE LAST STEP and is worse, stranger or costlier '
+    "than the steps sounded. One thing, and it has to GROW OUT of them — read your "
+    "last step and your turn together, and if the turn introduces something the steps "
+    "never touched, then either the steps are the wrong ones or the turn is, and you "
+    "fix that here rather than leaving the writer to bridge it.\n"
     '  • "close": what the last line does — the warning, the instruction, the '
     "question nobody answers. One line, and it explains nothing.\n"
     "Write all of it in {lang}. This is a plan, not narration: no beats, no seconds, "
@@ -651,6 +663,12 @@ def plan_spine(ctx: AppContext, writer: "FandomWriter", *, brief: str, beats: in
     system = SPINE_SYSTEM.format(
         world_rule=world_rule(writer.invent), world_block=writer.spine_world(),
         piece_rules=PIECE_RULES, shapes=SPINE_SHAPES, lang=lang,
+        # The planner has to know WHO IS BEING SPOKEN TO, and leaving it out cost the
+        # first measured piece its whole register. Planning «первый день» for nobody
+        # in particular produces a procedure — a thing that is done, by unnamed people,
+        # to whoever — and a writer handed a plan in that voice writes «ведут в Первый
+        # отдел» where the listener should have been. The same block the outline gets.
+        role_rule=outline_role_rule(ctx),
         total=ctx.params.duration_s, beats=beats,
     )
     user = (
@@ -833,13 +851,15 @@ ROLE_INFER = (
 )
 
 
-# The planner does not write a sentence, so the same block has to arrive saying what
-# an addressee changes about a PLAN: the shape of the stretches, not their wording.
+# Neither planner writes a sentence, so the same block has to arrive saying what an
+# addressee changes about a PLAN: the shape of its parts, not their wording. Both of
+# them use it — the outline that cuts a long piece into stretches, and the spine that
+# decides what a piece is at all — so it names neither.
 OUTLINE_ROLE_LEAD = (
     "\nTHE PIECE IS SPOKEN TO ONE PERSON STANDING IN THIS WORLD, so plan it as "
     "something said to them: what they will need, what will happen to them, what they "
-    "must not do, what they may choose. A stretch that merely describes the world is a "
-    "stretch written for the wrong voice.\n"
+    "must not do, what they may choose. Anything in the plan that merely describes the "
+    "world is planned for the wrong voice.\n"
 )
 
 
@@ -868,6 +888,16 @@ SYSTEM_USHER = (
     "invitations, in that register — 'you will need', 'be careful, though', 'choose "
     "wisely'. An imperative is welcome. A rhetorical question aimed at them is "
     "welcome.\n"
+    "KEEP THEM IN THE SENTENCE. The listener is not merely the reason for the piece, "
+    "they are its grammar: they are done to, given to, taken from, sent, expected of. "
+    "A subjectless plural — 'they take you through', written as 'is taken through' or "
+    "as a bare 'take through' where the language allows it, 'the form is filled in', "
+    "'a desk is issued' — is the world describing itself, and it is a different voice "
+    "from this one. Every such sentence has a person in it: put them back. Say who "
+    "does it to them, or say it happens TO THEM, or give the line as the instruction "
+    "or duty it actually is — a list of what somebody must do is spoken as duties, in "
+    "the form this world would give an order in, never as a report of what unnamed "
+    "people are doing nearby.\n"
     "The 'you' is ALWAYS a person standing in this world. It is never someone "
     "watching a video, never a reader, never a subscriber, never an audience. That "
     "single distinction is what keeps this voice inside the world, and it is not "
@@ -930,13 +960,26 @@ VIDEO_PROMPT_RULE = (
 
 # The opening is where the "explaining a world" reflex is strongest: told to hook, a
 # model writes an establishing line that introduces the setting to a newcomer.
+#
+# Which is why this rule used to overshoot, and the overshoot cost a measured piece
+# its first beat. Told never to name or situate anything, a writer opens on an
+# atmospheric detail — an old man at a turnstile looking at you as though for the
+# first time — and the listener spends the beat working out what they are being told
+# about. Naming the WORLD is the banned thing. Naming the SITUATION is the opposite of
+# it, and it is what the openings that work actually do: they say flatly what is
+# happening to you, in four or five words, and then are already inside it.
 OPEN_RULE_FANDOM = (
-    "FIRST BEAT — START INSIDE, NOT AT AN INTRODUCTION: open on a concrete moment, "
-    "object or claim, already in the middle of it (1-2 punchy sentences). Never open by "
-    "naming, introducing or situating the world, never 'let me tell you about', never a "
-    "sentence that would only be written for someone who has never been here. The hook "
-    "is the specific thing itself. Its video_prompt must be visually arresting — "
-    "dynamic framing, high contrast.\n"
+    "FIRST BEAT — SAY WHAT IS HAPPENING, THEN BE INSIDE IT. Its opening words name "
+    "the situation the piece is about, flatly, in this world's own words and as "
+    "something that is happening to the person listening ('your first day at X', "
+    "'they have put you in Y', 'today is Z'). Somebody who hears only that first line "
+    "must already know what this is about. Then, in the same beat, you are inside it: "
+    "one concrete moment, object or claim, no run-up (1-2 punchy sentences in all).\n"
+    "What is forbidden is naming, introducing or situating THE WORLD — 'let me tell "
+    "you about', a sentence written for someone who has never been here, anything "
+    "explaining where we are. Saying what is happening is not that: it is the flattest "
+    "line in the piece, and it is addressed to somebody who lives here.\n"
+    "Its video_prompt must be visually arresting — dynamic framing, high contrast.\n"
 )
 
 # The planner is where the brief was lost first, and for a reason written into its own
