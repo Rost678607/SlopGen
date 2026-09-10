@@ -633,6 +633,23 @@ SPINE_RULE = (
     "no step of your own — a subject the spine does not name is a subject this video "
     "is not about. If they will not all fit, drop the least load-bearing step whole "
     "rather than compressing every one of them.\n"
+    "THE THREE ENDS OF IT ARE NOT MATERIAL TO IMPROVE ON, and they are the three that "
+    "get quietly replaced, so each is said again here:\n"
+    "  • THE OPENING NAMES THE SUBJECT. The first sentence of the first beat carries "
+    "THE SUBJECT above in words — the plainest phrasing of it you like, but the words "
+    "themselves, not an atmospheric approach to them. This is the one place in the "
+    "piece where the subject is named outright, it is why the listener knows what "
+    "they are listening to, and dropping the naming phrase from an opening you "
+    "otherwise keep is the exact failure this clause exists for. Naming what is "
+    "happening to the listener is NOT the forbidden 'situating the world': the ban is "
+    "on explaining where we are to somebody who has never been here.\n"
+    "  • THE TURN IS THIS TURN. You do not substitute a different one, however good, "
+    "and you do not fall back on a warning you have already used elsewhere. It was "
+    "chosen because it grows out of the last step.\n"
+    "  • THE PIECE ENDS ON THE CLOSING LINE GIVEN. Word it as you need to word it; do "
+    "not replace it with a closing line of your own. Where the close is a saying, an "
+    "omen or a piece of advice people here repeat, it is quoted as the saying it is — "
+    "that is texture the plan went and found, and writing past it throws it away.\n"
 )
 
 # A brief this short is a line off a queue (see `llm.lore.SHAPE_TOPIC`) or a phrase
@@ -1155,8 +1172,12 @@ class FandomWriter:
             return  # the operator wrote the piece; it is its own spine
         self.spine = plan_spine(ctx, self, brief=brief, beats=beats, lang=lang)
         if self.spine:
-            log.info("this one is about: %s (%s)",
-                     self.spine.subject, self.spine.shape or "no shape given")
+            # The WHOLE plan, not just its subject. What a spine is worth is only
+            # visible next to the script written from it — the first time a piece came
+            # back flat, the plan turned out to have held a saying, a turn and a naming
+            # phrase that the writer had quietly dropped, and none of that was
+            # recoverable from a log line carrying the subject alone.
+            log.info("the plan for this one:\n%s", self.spine.block().strip())
             ctx.progress("spine", 1, 1)
 
     def piece_rule(self) -> str:
