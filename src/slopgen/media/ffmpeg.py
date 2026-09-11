@@ -59,12 +59,39 @@ VENC = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20"]
 AENC = ["-c:a", "aac", "-ar", "44100", "-ac", "2"]
 
 
-def _vf_fit(cfg: GlobalConfig) -> str:
-    v = cfg.video
+def fit_chain(w: int, h: int, fit: str = "crop", ax: float = 0.5, ay: float = 0.5) -> str:
+    """Make a source of any shape into a `w`×`h` canvas, one of two ways.
+
+    This is the decision that used to be made by not making it. Every picture was
+    scaled until it covered the frame and then cut down the middle — fine for a still
+    already near the video's shape, and quietly destructive for a wide one, where the
+    middle is often the least interesting third of it.
+
+    `crop` fills the frame and cuts the overspill, and `ax`/`ay` say where the frame
+    sits in the picture: 0 is hard left/top, 1 hard right/bottom, 0.5 the old centred
+    behaviour. They are fractions of the OVERSPILL rather than of the picture, which
+    is what makes them safe — `(iw-ow)*ax` is inside the picture for any ax in [0,1],
+    whatever the two aspect ratios turn out to be, so a card carrying a number from a
+    differently-shaped file cannot produce an ffmpeg error.
+
+    `pad` fits the whole picture in and puts black where it does not reach. The bars
+    are centred and not placeable: a bar is what is left over, and an off-centre one
+    is just a crop with extra steps."""
+    if fit == "pad":
+        return (
+            f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
+            f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black"
+        )
+    ax, ay = min(max(ax, 0.0), 1.0), min(max(ay, 0.0), 1.0)
     return (
-        f"scale={v.width}:{v.height}:force_original_aspect_ratio=increase,"
-        f"crop={v.width}:{v.height},setsar=1,fps={v.fps}"
+        f"scale={w}:{h}:force_original_aspect_ratio=increase,"
+        f"crop={w}:{h}:(iw-ow)*{ax:.4f}:(ih-oh)*{ay:.4f}"
     )
+
+
+def _vf_fit(cfg: GlobalConfig, fit: str = "crop", ax: float = 0.5, ay: float = 0.5) -> str:
+    v = cfg.video
+    return f"{fit_chain(v.width, v.height, fit, ax, ay)},setsar=1,fps={v.fps}"
 
 
 def stretch_audio(src: Path, dst: Path, tempo: float) -> None:
@@ -140,7 +167,8 @@ def _ken_burns(move: KenBurns, dur: float, phase: float, cfg: GlobalConfig) -> t
 
 
 def photo_filter(dur: float, cfg: GlobalConfig, motion: str = "subtle", direction: int = 0,
-                 move: KenBurns | None = None, phase: float = 0.0) -> tuple[str, int]:
+                 move: KenBurns | None = None, phase: float = 0.0,
+                 fit: str = "crop", ax: float = 0.5, ay: float = 0.5) -> tuple[str, int]:
     """The filtergraph of one Ken-Burns photo piece, and how many frames it runs for.
 
     Split out of :func:`make_photo_part` so the graph has one definition: what the
@@ -160,12 +188,14 @@ def photo_filter(dur: float, cfg: GlobalConfig, motion: str = "subtle", directio
             else f"max({1 + zf}-{zf}*on/{frames},1)"
         )
         x, y = "(iw-iw/zoom)/2", "(ih-ih/zoom)/2"
-    # upscale 2x before zoompan to avoid sub-pixel jitter. The crop that follows is
+    # upscale 2x before zoompan to avoid sub-pixel jitter. The fit that follows is
     # what makes the canvas exactly the video's aspect ratio, which is in turn what
-    # lets a crop window be three numbers instead of four (see Rect).
+    # lets a crop window be three numbers instead of four (see Rect) — and it holds
+    # under either fit, because padding produces the same canvas that cropping does.
+    # What differs is only what is IN it, which is why a card's targets are drawn
+    # against the fitted frame and go stale when its fit changes (see FrameCard).
     graph = (
-        f"[0:v]scale={v.width * 2}:{v.height * 2}:force_original_aspect_ratio=increase,"
-        f"crop={v.width * 2}:{v.height * 2},"
+        f"[0:v]{fit_chain(v.width * 2, v.height * 2, fit, ax, ay)},"
         f"zoompan=z='{z}':x='{x}':y='{y}'"
         f":d={frames}:s={v.width}x{v.height}:fps={v.fps},setsar=1[v]"
     )
@@ -173,7 +203,8 @@ def photo_filter(dur: float, cfg: GlobalConfig, motion: str = "subtle", directio
 
 
 def make_photo_part(img: Path, dur: float, out: Path, cfg: GlobalConfig, motion: str = "subtle",
-                    direction: int = 0, move: KenBurns | None = None, phase: float = 0.0) -> None:
+                    direction: int = 0, move: KenBurns | None = None, phase: float = 0.0,
+                    fit: str = "crop", ax: float = 0.5, ay: float = 0.5) -> None:
     """Ken-Burns photo piece.
 
     Two ways in. `motion`/`direction` is the visuals profile's knob: a centred zoom
@@ -184,10 +215,10 @@ def make_photo_part(img: Path, dur: float, out: Path, cfg: GlobalConfig, motion:
     if move is None and ZOOM.get(motion, 0.09) == 0:
         _run([
             "ffmpeg", "-y", "-loop", "1", "-i", str(img),
-            "-vf", _vf_fit(cfg), "-an", *VENC, "-t", f"{dur:.3f}", str(out),
+            "-vf", _vf_fit(cfg, fit, ax, ay), "-an", *VENC, "-t", f"{dur:.3f}", str(out),
         ])
         return
-    graph, frames = photo_filter(dur, cfg, motion, direction, move, phase)
+    graph, frames = photo_filter(dur, cfg, motion, direction, move, phase, fit, ax, ay)
     _run([
         "ffmpeg", "-y", "-i", str(img), "-filter_complex", graph,
         "-map", "[v]", "-an", *VENC, "-frames:v", str(frames), str(out),

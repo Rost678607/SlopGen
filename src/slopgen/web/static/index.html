@@ -201,7 +201,10 @@
     <div class="stage" id="stage">
       <img id="pic" alt="" draggable="false">
       <video id="vid" hidden muted loop playsinline draggable="false"></video>
-      <div id="safe" hidden></div>
+      <!-- the frame the video will actually show. Its grip is a child rather than the
+           whole rect, because the rect sits over the picture and pressing the picture
+           is how a region is drawn — a draggable rect would eat that gesture. -->
+      <div id="safe" hidden><span class="fitgrip">✥</span></div>
       <div id="boxes"></div>
       <div id="preview" hidden></div>
       <p id="nofile" hidden data-l="web.frames.none">картинки ещё нет — размечать нечего.<br data-l="web.frames.none2">принеси её, и области можно будет расставить</p>
@@ -215,6 +218,9 @@
         <textarea id="ed-note" rows="2"></textarea></label>
       <label class="inline"><input type="checkbox" id="ed-retired">
         <span data-l="web.frames.retired">убрана из базы — больше не тратится</span></label>
+      <label data-l="web.frames.fit">картинка не 9:16 — что с ней делать
+        <select id="ed-fit"></select></label>
+      <p class="dim" id="fit-note"></p>
       <h3 data-l="web.frames.targets">области <small data-l="web.frames.hint">нажми на предмет и отведи в сторону — точка нажатия станет центром</small></h3>
       <ul id="targets"></ul>
       <button id="playmove" class="ghost" data-l="web.frames.preview">показать движение по двум первым</button>

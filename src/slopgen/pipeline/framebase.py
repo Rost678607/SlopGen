@@ -591,6 +591,10 @@ def apply_to_scenes(job, cards: list[FrameCard]) -> None:
                 path=path, duration=b - a, is_photo=photo,
                 move=s.move if photo else None,
                 move_at=(a - s.start) if photo else 0.0,
+                # a clip brings its own framing and is never padded: the card's fit
+                # is about making a STILL into a frame (see media/ffmpeg.fit_chain)
+                fit=card.fit if photo else "crop",
+                fit_x=card.fit_x, fit_y=card.fit_y,
             ))
         if parts:
             # the last piece absorbs the float residue, so the pieces add up to the

@@ -349,6 +349,17 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
                 setattr(c, field, str(body[field]))
         if "retired" in body:
             c.retired = bool(body["retired"])
+        if "fit" in body:
+            c.fit = "pad" if str(body["fit"]) == "pad" else "crop"
+        # The placement travels separately from the mode, and is kept under `pad`
+        # rather than cleared: switching to bars and back should give the operator
+        # the crop they had placed, not the middle of the picture again.
+        for axis in ("fit_x", "fit_y"):
+            if axis in body:
+                try:
+                    setattr(c, axis, min(max(float(body[axis]), 0.0), 1.0))
+                except (TypeError, ValueError):
+                    pass
         if "targets" in body:
             c.targets = [_target(t) for t in body["targets"]]
             # the regions were just drawn on THIS picture, so this is the moment its
@@ -2194,6 +2205,9 @@ def _card_json(world: str, c: FrameCard) -> dict:
         "usable": c.usable,
         "kind": "video" if (p and p.suffix.lower() in VIDEO_EXTS) else "image",
         "url": f"/api/worlds/{world}/cards/{c.name}/file",
+        # what becomes of this picture where its shape is not the video's, and where
+        # the frame sits in it when cropping (see config.models.CardFit)
+        "fit": c.fit, "fit_x": c.fit_x, "fit_y": c.fit_y,
         "targets": [{"label": t.label, "of": t.of,
                      "cx": t.rect.cx, "cy": t.rect.cy, "scale": t.rect.scale}
                     for t in c.targets],

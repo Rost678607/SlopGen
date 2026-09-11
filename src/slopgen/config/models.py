@@ -585,6 +585,23 @@ FIT_ACCEPTS: dict[str, frozenset[str]] = {
 
 # --- crop geometry: where a still is looked at, and how the look travels ---
 
+# What becomes of a card's picture when its shape is not the video's. Until there was
+# a choice here there was still an answer — every picture was scaled up until it
+# covered the frame and then cut down the middle, silently — and the silence is the
+# part that cost something: a wide picture of two people talking came back as one
+# person and half of another, and nothing anywhere said that a decision had been made.
+#
+#   crop — fill the frame and cut away the overspill. Nothing is letterboxed and
+#          something is always lost, so WHERE the cut falls is the operator's to
+#          place (`FrameCard.fit_x` / `fit_y`).
+#   pad  — fit the whole picture in and let black stand where it does not reach. The
+#          picture survives entire; the frame is not full.
+#
+# Not called `FrameFit`: that name is taken, by how tightly a card has to match a
+# beat before it may be spent (`RunParams.frame_fit`), which is a different question
+# about the same objects.
+CardFit = Literal["crop", "pad"]
+
 
 class Rect(BaseModel):
     """A crop window on a still, in fractions of the picture.
@@ -716,6 +733,20 @@ class FrameCard(BaseModel):
     targets: list[CropTarget] = []  # named regions; the whole frame is always implied
     file_sha: str = ""  # sha1 of the file when the targets were last written
     retired: bool = False  # keep the card on disk, stop spending it
+    # What becomes of this picture where its shape is not the video's (see `CardFit`).
+    # The default is what the pipeline always did, so a base written before there was
+    # a choice keeps behaving exactly as it did.
+    fit: CardFit = "crop"
+    # WHERE the frame sits in the picture when cropping, as fractions of the overspill:
+    # 0 is hard left / top, 1 is hard right / bottom, 0.5 the middle. Only the axis
+    # that actually overspills does anything, which is why there are two of them and
+    # not one — a picture wider than the frame is placed across, a taller one down,
+    # and a card does not know which it is until somebody looks at the file.
+    #
+    # Ignored under `pad`, and kept rather than cleared when the operator switches to
+    # it: switching back should not lose the placement they chose.
+    fit_x: float = 0.5
+    fit_y: float = 0.5
     # -- runtime only, filled by the loader; never written back to the TOML --
     root: Path | None = Field(default=None, exclude=True)  # the frames/ folder
 

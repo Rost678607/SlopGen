@@ -2406,6 +2406,16 @@ RU.update({
     "web.bp.replan": "переписать по плану",
     "js.replan-working": "переписываю сценарий по плану — это пара минут",
     "js.replan-done": "сценарий переписан, битов:",
+    # What becomes of a card's picture when its shape is not the video's. Until there
+    # was a choice the answer was still being given — cover and cut the middle out —
+    # and the operator was told about it by one dim line over the picture.
+    "web.frames.fit": "картинка не 9:16 — что с ней делать",
+    "w.fit.crop": "обрезать",
+    "w.fit.pad": "чёрные полосы",
+    "js.fit-note-crop": "кадр берётся из картинки, остальное теряется. Перетащи ✥, чтобы выбрать, какая часть попадёт в кадр.",
+    "js.fit-note-pad": "картинка войдёт целиком, сверху и снизу (или по бокам) будет чёрное. Ничего не теряется, но кадр занят не весь.",
+    "js.this-one-is-already-the-right-shape": "эта уже нужной формы — выбирать нечего, оба варианта дадут одно и то же",
+    "js.the-bars-are-here": "картинка войдёт сюда целиком, остальное — чёрные полосы",
     "web.f.shapes": "каталог форм",
     "web.shapes.note": "из какого набора форм планировать этот ролик — механизм, обязанности, правило, выбор, рецепт. Пусто — набор самого мира, а если он его не назвал, то стандартный. Форму конкретного ролика выбирает план, и поменять её можно на брейкпоинте, где этот план виден.",
 })
@@ -2419,6 +2429,13 @@ EN.update({
     "web.bp.replan": "rewrite from the plan",
     "js.replan-working": "writing the script again from the plan — a couple of minutes",
     "js.replan-done": "the script is rewritten, beats:",
+    "web.frames.fit": "this picture is not 9:16 — what becomes of it",
+    "w.fit.crop": "crop it",
+    "w.fit.pad": "black bars",
+    "js.fit-note-crop": "the frame is taken out of the picture and the rest is lost. Drag ✥ to choose which part of it the frame keeps.",
+    "js.fit-note-pad": "the whole picture fits in, with black above and below (or at the sides). Nothing is lost; the frame is not full.",
+    "js.this-one-is-already-the-right-shape": "this one is already the right shape — there is nothing to choose, both answers do the same thing",
+    "js.the-bars-are-here": "the picture fits in here whole; the rest is black bars",
     "web.f.shapes": "catalogue of forms",
     "web.shapes.note": "which set of forms this video is planned out of — mechanism, duties, rule, choice, recipe. Empty is the world's own set, or the shipped default where it names none. Which form a particular video takes is the plan's choice, and it is changed at the breakpoint, where that plan is on screen.",
 })

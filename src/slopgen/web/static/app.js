@@ -863,7 +863,7 @@ async function loadCards() {
   cards = await api(`/api/worlds/${encodeURIComponent(world)}/cards`);
   $("#cards").innerHTML = cards.map((c) => `
     <div class="frame-card ${c.retired ? "retired" : ""}" data-name="${esc(c.name)}">
-      <div class="thumb ${c.usable ? "" : "none"}"
+      <div class="thumb ${c.usable ? "" : "none"} ${c.fit === "pad" ? "pad" : ""}"
            ${c.usable && c.kind === "image" ? `style="background-image:url('${tokd(c.url)}')"` : ""}>
         ${c.usable ? "" : lab("js.no-picture-yet")}
         ${c.targets.length ? `<span class="pill">${c.targets.length}</span>` : ""}
@@ -930,6 +930,7 @@ function openCard(name) {
   $("#ed-retired").checked = !!card.retired;
   $("#ed-del").textContent = lab("web.frames.del");
   $("#ed-del").classList.remove("danger");
+  fillFit();
   const img = $("#pic"), vid = $("#vid");
   // A card with no file has nothing to mark up: a crop target is a pair of
   // coordinates ON a picture, so drawing regions over an empty stage would be
@@ -955,6 +956,72 @@ function openCard(name) {
 }
 $("#close").onclick = () => { $("#editor").hidden = true; $("#vid").pause(); };
 
+// The two answers to "this picture is not the shape of the video". Filled from here
+// rather than at boot because the editor is opened long after the options are, and
+// there are exactly two of them either way.
+const FITS = ["crop", "pad"];
+
+function fillFit() {
+  const sel = $("#ed-fit");
+  sel.innerHTML = FITS.map(
+    (f) => `<option value="${f}">${esc(lab("w.fit." + f, f))}</option>`
+  ).join("");
+  sel.value = (card && card.fit === "pad") ? "pad" : "crop";
+  fitNote();
+}
+
+function fitNote() {
+  // A square-ish picture loses nothing either way, and saying so is worth more than
+  // leaving the operator to wonder why the choice did nothing.
+  const f = card && card.usable ? frame() : null;
+  $("#fit-note").textContent =
+    !f ? ""
+    : !f.loose ? lab("js.this-one-is-already-the-right-shape")
+    : lab(card.fit === "pad" ? "js.fit-note-pad" : "js.fit-note-crop");
+}
+
+$("#ed-fit").onchange = () => {
+  if (!card) return;
+  // through `refit`, so the regions already drawn stay on what they are regions OF
+  refit(() => { card.fit = $("#ed-fit").value === "pad" ? "pad" : "crop"; });
+  fitNote();
+};
+
+// Sliding the frame along the overspill. Only the axis that actually overspills
+// moves, which falls out of the arithmetic rather than needing a branch: dividing by
+// an overspill of zero would be meaningless, so a zero one simply keeps its 0.5.
+$("#safe").addEventListener("pointerdown", (e) => {
+  if (!card || !e.target.classList.contains("fitgrip")) return;
+  const f0 = frame();
+  if (f0.pad || !f0.loose) return;
+  e.preventDefault();
+  e.stopPropagation();  // the stage would otherwise start drawing a region
+  const saved = targetsInPicture(f0);
+  const from = { x: e.clientX, y: e.clientY,
+                 ax: typeof card.fit_x === "number" ? card.fit_x : 0.5,
+                 ay: typeof card.fit_y === "number" ? card.fit_y : 0.5 };
+  const grip = e.target;
+  grip.setPointerCapture(e.pointerId);
+  const move = (ev) => {
+    if (Math.abs(f0.over.x) > 1) {
+      card.fit_x = clamp(from.ax + (ev.clientX - from.x) / f0.over.x, 0, 1);
+    }
+    if (Math.abs(f0.over.y) > 1) {
+      card.fit_y = clamp(from.ay + (ev.clientY - from.y) / f0.over.y, 0, 1);
+    }
+    targetsFromPicture(frame(), saved);
+    drawTargets();
+  };
+  const up = () => {
+    grip.removeEventListener("pointermove", move);
+    grip.removeEventListener("pointerup", up);
+    grip.removeEventListener("pointercancel", up);
+  };
+  grip.addEventListener("pointermove", move);
+  grip.addEventListener("pointerup", up);
+  grip.addEventListener("pointercancel", up);
+});
+
 // The stage is letterboxed AND the picture is centre-cropped to the video's aspect
 // before the pipeline crops anything out of it. So a region's fractions are of the
 // SURVIVING part, not of the file — which is what this returns. Marking on the whole
@@ -971,21 +1038,93 @@ function frame() {
   // picture is `contain`ed inside a full-size element
   const shown = { x: box.left - st.left + (box.width - pw) / 2,
                   y: box.top - st.top + (box.height - ph) / 2, w: pw, h: ph };
-  // the centre crop: cover the video's aspect, keep the middle
+  // What the finished frame is, out of this picture — the browser's copy of
+  // `media/ffmpeg.fit_chain`, and it has to agree with it or the editor is drawing
+  // regions on a frame the pipeline will not render.
+  //
+  // CROP shrinks to the video's aspect: the frame is inside the picture and the rest
+  // is lost. PAD grows to it: the frame is BIGGER than the picture, and the parts of
+  // it the picture does not reach are the black bars. Either way the frame is exactly
+  // the video's shape, which is what keeps a region three numbers instead of four
+  // (see Rect) and what makes every fraction below mean the same thing it means to
+  // ffmpeg.
   let w = shown.w, h = shown.h;
-  if (w / h > videoAspect) w = h * videoAspect; else h = w / videoAspect;
-  return { x: shown.x + (shown.w - w) / 2, y: shown.y + (shown.h - h) / 2, w, h,
-           cropped: Math.abs(shown.w * shown.h - w * h) > 1 };
+  const pad = card && card.fit === "pad";
+  if (pad) {
+    if (w / h > videoAspect) h = w / videoAspect; else w = h * videoAspect;
+  } else if (w / h > videoAspect) {
+    w = h * videoAspect;
+  } else {
+    h = w / videoAspect;
+  }
+  // Where the frame sits in the picture. Under pad it is centred and not placeable —
+  // a bar is what is left over, and an off-centre bar is a crop with extra steps — so
+  // only the crop reads the card's placement. The fraction is of the OVERSPILL, so it
+  // is meaningful whatever the two shapes turn out to be, exactly as in ffmpeg.
+  const ax = pad ? 0.5 : (card && typeof card.fit_x === "number" ? card.fit_x : 0.5);
+  const ay = pad ? 0.5 : (card && typeof card.fit_y === "number" ? card.fit_y : 0.5);
+  const over = { x: shown.w - w, y: shown.h - h };
+  return { x: shown.x + over.x * ax, y: shown.y + over.y * ay, w, h,
+           shown, pad, over,
+           // is there anything to place? a picture already the video's shape
+           // overspills by nothing, and its frame has nowhere to go
+           loose: Math.max(Math.abs(over.x), Math.abs(over.y)) > 1,
+           cropped: !pad && Math.abs(shown.w * shown.h - w * h) > 1 };
+}
+
+// A region is stored as a fraction OF THE FRAME, and the frame moves when the fit
+// changes — so the same three numbers point somewhere else afterwards. These two
+// carry a region through such a change by the only thing that stayed still, the
+// picture: read where it sits on the picture before, put it back there after.
+//
+// Remapping rather than warning, because the operator drew "her face", not "the
+// middle third". A warning would be honest about the numbers and useless about the
+// intent; this keeps the intent and lets the numbers follow.
+function targetsInPicture(f) {
+  const s = f.shown;
+  return targets.map((t) => ({
+    ...t,
+    px: (f.x + t.cx * f.w - s.x) / s.w,
+    py: (f.y + t.cy * f.h - s.y) / s.h,
+    pw: (t.scale * f.w) / s.w,
+  }));
+}
+
+function targetsFromPicture(f, saved) {
+  const s = f.shown;
+  targets = saved.map((t) => {
+    const scale = clamp((t.pw * s.w) / f.w, 0.1, 1);
+    const cx = (s.x + t.px * s.w - f.x) / f.w;
+    const cy = (s.y + t.py * s.h - f.y) / f.h;
+    const { px, py, pw, ...rest } = t;
+    return { ...rest, scale,
+             cx: clamp(cx, scale / 2, 1 - scale / 2),
+             cy: clamp(cy, scale / 2, 1 - scale / 2) };
+  });
+}
+
+/** Change the fit, carrying the regions across so they stay on what they were of. */
+function refit(change) {
+  const saved = targetsInPicture(frame());
+  change();
+  targetsFromPicture(frame(), saved);
+  drawTargets();
 }
 
 function drawSafe() {
   const f = frame(), el = $("#safe");
-  el.hidden = !f.cropped;
-  if (f.cropped) {
-    Object.assign(el.style, { left: f.x + "px", top: f.y + "px",
-                              width: f.w + "px", height: f.h + "px" });
-    el.dataset.note = lab("js.the-dark-part-is-cropped-the-frame-is-fi");
-  }
+  // Under pad the frame is bigger than the picture and nothing is lost, so there is
+  // no dark part — what the outline shows then is where the black bars will be, which
+  // is worth seeing for a different reason: it is how much of the screen goes to them.
+  el.hidden = !(f.cropped || (f.pad && f.loose));
+  if (el.hidden) return;
+  Object.assign(el.style, { left: f.x + "px", top: f.y + "px",
+                            width: f.w + "px", height: f.h + "px" });
+  el.classList.toggle("padding", !!f.pad);
+  // draggable only when cropping and only when there is overspill to slide along
+  el.classList.toggle("movable", !f.pad && f.loose);
+  el.dataset.note = f.pad ? lab("js.the-bars-are-here")
+                          : lab("js.the-dark-part-is-cropped-the-frame-is-fi");
 }
 
 function drawTargets() {
@@ -1151,12 +1290,19 @@ $("#stage").addEventListener("pointerup", (e) => {
 });
 const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
 addEventListener("resize", () => !$("#editor").hidden && drawTargets());
-$("#pic").onload = drawTargets;
+// the note depends on the picture's real shape, which is not known until it loads
+$("#pic").onload = () => { drawTargets(); fitNote(); };
 
 $("#save").onclick = async () => {
   const body = {
     description: $("#ed-descr").value, prompt: $("#ed-prompt").value,
     note: $("#ed-note").value, retired: $("#ed-retired").checked, targets,
+    // the fit travels with the regions, and it has to: they are fractions OF the
+    // frame the fit decides, so one saved without the other is a region on a frame
+    // that is no longer there
+    fit: card.fit || "crop",
+    fit_x: typeof card.fit_x === "number" ? card.fit_x : 0.5,
+    fit_y: typeof card.fit_y === "number" ? card.fit_y : 0.5,
   };
   const updated = await api(`/api/worlds/${encodeURIComponent(world)}/cards/${encodeURIComponent(card.name)}`,
     { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });

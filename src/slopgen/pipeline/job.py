@@ -36,6 +36,13 @@ class BgAsset(BaseModel):
     # there the offset is into the SOURCE, here into the shot's own timeline.
     move: KenBurns | None = None
     move_at: float = 0.0
+    # How this picture becomes a frame of the video's shape, copied off the card it
+    # came from (`config.models.CardFit`). It travels on the piece rather than being
+    # looked up at render time because by then the card is gone: `assemble` is handed
+    # a path and a duration, and a path does not know which world it belongs to.
+    fit: str = "crop"
+    fit_x: float = 0.5
+    fit_y: float = 0.5
 
 
 class InsertCue(BaseModel):
