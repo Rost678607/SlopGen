@@ -91,6 +91,14 @@ SYSTEM = (
     "narrator furnishing the world out of our own.\n"
     '  • "register": how people here talk — vocabulary, formality, what they '
     "understate. One or two sentences.\n"
+    '  • "sayings": the FIXED FORMS OF WORDS this world repeats — its omens, sayings, '
+    "proverbs, warnings, rules of thumb, the set phrase people here use for a thing. "
+    "Copy each one EXACTLY as the records write it: whole, unshortened, untidied, "
+    "punctuation and all. This is the one field where wording is the content — a fact "
+    "survives being reworded and a saying does not, and a paraphrased omen is just an "
+    "instruction with the life taken out of it. Miss none of them: where the records "
+    "keep a list of such lines, every line on it belongs here. If the records hold "
+    "none, give an empty list rather than composing any.\n"
     '  • "viewer_role": who a person newly arrived in this world becomes — what they '
     "are called, what they are given, what they are set to doing, and what they may "
     "and may not become from there. This is the position ANY of these records could be "
@@ -103,7 +111,7 @@ SYSTEM = (
     "records' spelling.\n"
     'Respond with JSON only: {{"premise": "...", "rules": ["..."], "glossary": ["..."], '
     '"figures": ["..."], "places": ["..."], "factions": ["..."], "timeline": ["..."], '
-    '"taboos": ["..."], "register": "...", "viewer_role": "..."}}.'
+    '"taboos": ["..."], "register": "...", "sayings": ["..."], "viewer_role": "..."}}.'
 )
 
 # Rendered order = reading order for the writer: what the world IS, then what binds
@@ -111,6 +119,12 @@ SYSTEM = (
 _SECTIONS = [
     ("premise", "WHAT THIS WORLD IS"),
     ("register", "HOW PEOPLE HERE TALK"),
+    # Next to the register description, because it is the same fact said usefully:
+    # a sentence ABOUT how people talk is something a writer can obey and still sound
+    # like nobody in particular, and these are the actual words. They are also the one
+    # part of the sheet that is meant to be QUOTED rather than used as reference (see
+    # stages/fandom_script.CANON_RULE, which says so where the writer reads it).
+    ("sayings", "WHAT PEOPLE HERE SAY, WORD FOR WORD — quote these, never reword them"),
     # Who any of this could be explained TO. The `usher` voice speaks to this person
     # (see stages/fandom_script.ROLE_INFER); the other two simply gain a sense of whose
     # eye level the world is described from, which costs one line.

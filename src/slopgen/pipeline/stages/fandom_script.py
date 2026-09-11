@@ -303,10 +303,24 @@ CANON_RULE = (
     "\nWHAT YOU KNOW ABOUT THE WORLD — its records, compiled. This is authoritative: "
     "every name, number, date and rule in it is fact, and nothing you write may "
     "contradict it.\n{canon}\n"
-    "This is a reference, not a script. Do not recite it, do not define its terms for "
-    "anyone, do not deliver it as exposition. You know these things the way you know "
-    "your own street: you use them in passing and only explain one when the moment "
-    "genuinely turns on it.\n"
+    "The FACTS in it are a reference, not a script. Do not recite them, do not define "
+    "its terms for anyone, do not deliver them as exposition. You know these things "
+    "the way you know your own street: you use them in passing and only explain one "
+    "when the moment genuinely turns on it.\n"
+    "ITS SAYINGS ARE THE OPPOSITE — SAY THEM. Whatever the sheet gives under the "
+    "world's own words, its omens, its sayings and its set phrases is there to be "
+    "SPOKEN, word for word, punctuation and all. Where a beat touches the occasion a "
+    "saying exists for, the saying goes in that beat INSTEAD OF your own sentence "
+    "about the same thing — not beside it. Saying the thing plainly and then quoting "
+    "the line that says it is the same beat twice, and the plain half is the half to "
+    "cut: the saying already carries it, which is why it exists. It goes in whole, "
+    "unshortened and unexplained, with nothing added to say what it means. A saying "
+    "is the one thing here that does not "
+    "survive being reworded: reworded it is an instruction with the life taken out of "
+    "it, and it is the life that made anybody write it down.\n"
+    "This is the part of the sheet that sounds like somewhere. The facts tell you what "
+    "is true here; these tell you how it is said, and a piece that spends a minute in "
+    "this world without one of them in it has described the place from outside.\n"
 )
 
 # When the lore is short enough that compiling it would cost more than it saves, the
@@ -316,6 +330,10 @@ LORE_RULE = (
     "them is fact, and nothing you write may contradict them.\n{lore}\n"
     "Use them the way someone who lives there would: in passing, never recited, never "
     "explained to an outsider.\n"
+    "Their SAYINGS are the exception, and they are what makes a piece sound like it "
+    "came from here: an omen, a proverb, a warning, the set phrase people use for a "
+    "thing. Where a beat touches the occasion one of them exists for, say it — word "
+    "for word, whole, and without a line afterwards explaining it.\n"
 )
 
 # The operator's note on register (`FandomConfig.tone`), and it used to arrive as a

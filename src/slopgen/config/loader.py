@@ -122,7 +122,16 @@ def read_lore(cfg: FandomConfig) -> str:
 # no way of knowing which. Folding the version in retires every sheet at once; the
 # rebuild is one call per world, and the TUI already flags a stale sheet.
 #   2 — keep two same-named institutions of different factions apart (see llm/lore)
-CANON_COMPILER_VERSION = 2
+#   3 — a `sayings` section: the omens, proverbs and set phrases a world repeats,
+#       copied word for word. Not a rescue of material the sheet was losing — measured
+#       on a world holding 21 omens and 12 sayings, every one of them was already in
+#       the sheet verbatim, scattered through `rules` and `glossary`. What they lacked
+#       was a HEADING, because the writer is told the sheet is reference and not to be
+#       recited (stages/fandom_script.CANON_RULE), and that instruction is right for
+#       facts and exactly wrong for these. A section of their own is what lets the
+#       rule address them separately, and separating it is what stopped the finished
+#       videos coming out flatter than the records they were written from
+CANON_COMPILER_VERSION = 3
 
 
 def lore_sha(lore: str) -> str:
