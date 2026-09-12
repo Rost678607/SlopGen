@@ -678,6 +678,18 @@ SPINE_SYSTEM = (
     "arrangement told properly, never a history and never a tour. If what you have in "
     "mind will not fit, it is the wrong subject, or it is two of them and you take "
     "the better one.\n"
+    "AND THE PLAN ITSELF HAS TO FIT, which is the part that goes wrong. What you "
+    "write below is very nearly what gets SAID: the opening is spoken as you write "
+    "it, and each step becomes a beat in much the words you gave it. So everything "
+    "you write — the opening, every step, the turn, the close — has to come to about "
+    "{chars} CHARACTERS in total, and there are only {beats} beats to put it in. "
+    "Count it.\n"
+    "Over that, nothing good happens. The writer will not drop what you wrote; it "
+    "will squeeze all of it, and squeezing is done by deleting exactly the words that "
+    "are not facts — the connectives, the asides, the second half of a sentence that "
+    "made the first one worth hearing. A plan 25% over budget comes back as a list of "
+    "nouns joined by dashes. FOUR STEPS SAID WHOLE ARE WORTH MORE THAN SIX SAID "
+    "TELEGRAPHICALLY: if it does not fit, take a step OUT, do not shorten them all.\n"
     "Give the plan as:\n"
     '  • "subject": the ONE thing the video is about, in this world\'s own words, in '
     "one line. A thing, an arrangement, a rite, a job, a place, one person's one "
@@ -691,6 +703,13 @@ SPINE_SYSTEM = (
     "that only names is a heading; one that only promises is a mood; one that does "
     "neither — an atmospheric detail, an arrival, somebody filling in a form — is how "
     "a video gets scrolled past in two seconds, and no later beat can win that back.\n"
+    "    AND IT HAS A THING IN IT. Name and promise are jobs, not material, and a "
+    "line that does only those two is a thesis about the video rather than the start "
+    "of one: 'your first day here is arranged so that most of it is done to you' says "
+    "what the piece will be about and shows nothing. Put something in the listener's "
+    "eye in the first breath — an object, a place, a person, a sentence somebody says "
+    "— and let the naming and the promise ride on that. If nothing in your opening "
+    "can be pointed at, it is not an opening yet.\n"
     "    It is written as the finished line, because the writer is not allowed to "
     "improve on it. Whatever you put here is what the video opens with.\n"
     '  • "steps": 3-6 short lines: how the thing actually works. Concrete throughout '
@@ -741,8 +760,16 @@ SPINE_RULE = (
     "The steps are the ORDER of the piece and not its beats: one step may take two "
     "beats, and two small steps may share one. Spend them all, in that order, and add "
     "no step of your own — a subject the spine does not name is a subject this video "
-    "is not about. If they will not all fit, drop the least load-bearing step whole "
-    "rather than compressing every one of them.\n"
+    "is not about.\n"
+    "IF IT DOES NOT ALL FIT, TAKE ONE OUT. That outranks spending them all, and it is "
+    "the rule most often broken: handed more plan than budget, a writer keeps every "
+    "step and shortens each, which does not shorten the piece so much as strip it — "
+    "out go the connectives, the asides, the half of a sentence that made the other "
+    "half worth hearing, and what comes back is facts joined by dashes. You can hear "
+    "it: read your beats aloud, and if they have stopped being sentences with verbs "
+    "in them, you compressed when you should have dropped. Drop the least "
+    "load-bearing step WHOLE, say the rest at full length, and never buy room by "
+    "telegraphing.\n"
     "THE THREE ENDS OF IT ARE NOT MATERIAL TO IMPROVE ON, and they are the three that "
     "get quietly replaced, so each is said again here:\n"
     "  • THE OPENING IS ALREADY WRITTEN. The line above names the subject and promises "
@@ -848,6 +875,9 @@ def plan_spine(ctx: AppContext, writer: "FandomWriter", *, brief: str, beats: in
         # отдел» where the listener should have been. The same block the outline gets.
         role_rule=outline_role_rule(ctx),
         total=ctx.params.duration_s, beats=beats,
+        # the same number the writer is held to, given to the pass that decides how
+        # much material there will be — the plan overran it and the writer paid
+        chars=char_budget(ctx.params.duration_s, ctx.params.lang, ctx.params.tts_rate),
     )
     user = (
         "THE BRIEF — what the operator asked for. It says what the video is about; it "
