@@ -51,6 +51,10 @@ _KINDS = (
     "kind demands and never turn one kind into another. In particular a `prompt` line is an "
     "ENGLISH visual description for an image/video generator (no character names, no cuts or "
     "'THEN' sequences — one continuous shot), while a `text` line is the spoken narration.\n"
+    "THE KINDS ARE CONTEXT, NOT THE SHAPE OF YOUR ANSWER. You are given objects so that "
+    "you know what each line is; you return the lines themselves — a flat array of "
+    "STRINGS, one per line, in the same order, exactly as the output contract above "
+    "says. Never echo the objects back, and never put a `kind` in your answer.\n"
 )
 
 
@@ -100,7 +104,35 @@ def rewrite(
         return None
     if not variable and len(out) != len(lines):
         return None
-    return [str(x).strip() for x in out]
+    # A line the model gave nothing usable for keeps the words it had. Only where the
+    # count is pinned can "nothing usable" be matched to a line at all — and that is
+    # the case that matters, because an emptied value is not a blank in this pipeline:
+    # at the script breakpoint it is the instruction to DELETE that scene.
+    if len(out) == len(lines):
+        return [_line(x) or was for x, was in zip(out, lines)]
+    return [_line(x) for x in out]
+
+
+def _line(item) -> str:
+    """One returned line, whatever shape it came back in.
+
+    Asking for strings is not enough to get strings. When `kinds` is set the model is
+    HANDED objects — that is how it is told what each line is — and a model fed
+    `{"kind": …, "text": …}` will hand the same objects back often enough that the
+    only safe reading is both. Without this the value written into the operator's
+    field was `str(dict)`: the whole Python repr, single quotes and all, in every box
+    at once, because the caller puts every returned value back into the row it came
+    from.
+
+    `text` first because that is the key this module sends; the other two are what a
+    model invents when it decides to name the field itself."""
+    if isinstance(item, dict):
+        for key in ("text", "line", "value"):
+            got = item.get(key)
+            if isinstance(got, str):
+                return got.strip()
+        return ""  # an object with nothing sayable in it is not a line
+    return str(item).strip()
 
 
 _SCENES_SYSTEM = (
