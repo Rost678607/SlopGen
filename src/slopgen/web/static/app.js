@@ -2598,6 +2598,7 @@ async function openAsks(id, title) {
         ${owed && sh.id.startsWith("frame_") ? `<button class="ghost" data-base>${lab("js.from-the-base")}</button>` : ""}
         ${sh.card ? `<button class="ghost" data-mark="${esc(sh.card)}">${lab("js.mark-it-up")}</button>` : ""}
         ${owed ? "" : `<button class="ghost" data-undo>${lab("js.replace")}</button>`}</div>
+      ${sh.said ? `<p class="said"><span class="dim">${lab("js.said-here")}</span> ${esc(sh.said)}</p>` : ""}
       <pre>${esc(sh.prompt)}</pre>
       ${preview}
       ${owed ? `<div class="basestrip" hidden></div>

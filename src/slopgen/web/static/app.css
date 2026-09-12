@@ -245,6 +245,11 @@ body:has(#panel:not([hidden])),body:has(#editor:not([hidden])){overflow:hidden}
 .ask .head{display:flex;gap:10px;align-items:center;font-size:13px}
 .ask pre{margin:0;white-space:pre-wrap;font:12px/1.5 var(--mono);color:var(--dim);
   background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:8px;max-height:150px;overflow:auto}
+/* What is being said while this picture is up. Above the prompt and in the reading
+   font, not the mono one: the prompt is a machine's brief and this is the sentence a
+   person needs to know what the shot is for. */
+.ask .said{margin:0;font-size:13px;line-height:1.5;color:var(--ink)}
+.ask.done .said{opacity:.55}
 .ask .take{border:1.5px dashed var(--line);border-radius:6px;padding:14px;text-align:center;
   color:var(--dim);cursor:pointer}
 .ask .take.over{border-color:var(--accent);color:var(--ink)}

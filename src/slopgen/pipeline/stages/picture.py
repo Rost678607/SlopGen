@@ -445,6 +445,28 @@ def collect(job: VideoJob, ctx: AppContext) -> None:
     job.pending_parts = []
 
 
+def said_of(job: VideoJob, ask: FrameAsk) -> str:
+    """The narration playing over the stretches this ask covers, once each.
+
+    The honest source for what a missing picture is FOR. In a frame-base run it is
+    also the only one left: the writer is no longer asked for shot descriptions (see
+    `stages.fandom_script.FRAMES_RULE`), so `FrameShot.prompt` is empty, and a
+    fallback that pointed at it produced an ask carrying nothing but the boilerplate
+    suffix — which is what the operator saw. It is what the matcher reads to choose a
+    card in the first place, so it is the right thing to hand back when the matcher
+    picked none.
+
+    Neighbouring stretches often carry the same line — one beat is cut into several
+    pictures — so it is de-duplicated rather than repeated, in the order it plays."""
+    out: list[str] = []
+    for i in ask.shots:
+        if 0 <= i < len(job.frame_shots):
+            said = (job.frame_shots[i].said or "").strip()
+            if said and said not in out:
+                out.append(said)
+    return " ".join(out)
+
+
 def shot_prompt_for(job: VideoJob, ctx: AppContext, ask: FrameAsk) -> str:
     """The ask, with every character in it swapped for their compiled look.
 
@@ -453,7 +475,7 @@ def shot_prompt_for(job: VideoJob, ctx: AppContext, ask: FrameAsk) -> str:
     which is why the cast is still compiled in a mode that registers no entities."""
     from .drama_footage import shot_prompt
 
-    text = ask.prompt or " ".join(job.frame_shots[i].prompt for i in ask.shots[:1])
+    text = ask.prompt or said_of(job, ask)
     stub = Scene(text="", video_prompt=text,
                  characters=sorted({r for i in ask.shots for r in job.frame_shots[i].referents}))
     return shot_prompt(stub, job.cast_prompts, ctx.params.visual_notes, {})

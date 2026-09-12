@@ -2416,6 +2416,7 @@ RU.update({
     "js.fit-note-pad": "картинка войдёт целиком, сверху и снизу (или по бокам) будет чёрное. Ничего не теряется, но кадр занят не весь.",
     "js.this-one-is-already-the-right-shape": "эта уже нужной формы — выбирать нечего, оба варианта дадут одно и то же",
     "js.the-bars-are-here": "картинка войдёт сюда целиком, остальное — чёрные полосы",
+    "js.said-here": "здесь говорят:",
     "web.f.shapes": "каталог форм",
     "web.shapes.note": "из какого набора форм планировать этот ролик — механизм, обязанности, правило, выбор, рецепт. Пусто — набор самого мира, а если он его не назвал, то стандартный. Форму конкретного ролика выбирает план, и поменять её можно на брейкпоинте, где этот план виден.",
 })
@@ -2436,6 +2437,7 @@ EN.update({
     "js.fit-note-pad": "the whole picture fits in, with black above and below (or at the sides). Nothing is lost; the frame is not full.",
     "js.this-one-is-already-the-right-shape": "this one is already the right shape — there is nothing to choose, both answers do the same thing",
     "js.the-bars-are-here": "the picture fits in here whole; the rest is black bars",
+    "js.said-here": "said here:",
     "web.f.shapes": "catalogue of forms",
     "web.shapes.note": "which set of forms this video is planned out of — mechanism, duties, rule, choice, recipe. Empty is the world's own set, or the shipped default where it names none. Which form a particular video takes is the plan's choice, and it is changed at the breakpoint, where that plan is on screen.",
 })

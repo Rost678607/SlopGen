@@ -1583,6 +1583,12 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
         # inbox to find it by, so without this the panel would show a row that is
         # settled as a row still owing a picture.
         pinned: dict[str, dict[str, str]] = {}
+        # And WHAT IS BEING SAID while the missing picture is up. The prompt alone is
+        # a poor brief for a person — it is written for a generator, and when the
+        # matcher leaves it empty it is nothing at all — while the narration says
+        # plainly what the shot is for. It is also what the matcher itself read to
+        # decide no card fitted, so it is the closest thing to a reason.
+        spoken: dict[str, dict[str, str]] = {}
         if world is not None:
             try:
                 cp = Checkpoint.load(run.run_dir)
@@ -1590,8 +1596,9 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
                     job = cp.load_job(i)
                     if job is None:
                         continue
-                    pinned[Path(job.workdir).name] = {
-                        a.id: a.card for a in job.frame_asks if a.card}
+                    name = Path(job.workdir).name
+                    pinned[name] = {a.id: a.card for a in job.frame_asks if a.card}
+                    spoken[name] = {a.id: picture.said_of(job, a) for a in job.frame_asks}
             except Exception:
                 log.debug("asks: no readable checkpoint at %s", run.run_dir)
         out = []
@@ -1611,6 +1618,7 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
                     got = picture.card_for_file(world, Path(sh.clip))
                     name = got.name if got else ""
                 out.append({"video": work.name, "id": sh.id, "prompt": manual.task_text(sh),
+                            "said": spoken.get(work.name, {}).get(sh.id, ""),
                             "status": sh.status, "want": sh.want, "kind": sh.kind,
                             "size": [sh.width, sh.height], "target_s": sh.target_s,
                             "photo": sh.photo, "card": name,
