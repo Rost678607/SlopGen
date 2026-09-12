@@ -94,6 +94,7 @@ import logging
 
 from ...config.models import ShapeSpec, ShapesConfig
 from ...llm.tools import LORE_LOOKUP_TOOL, make_lore_lookup
+from .. import framebase
 from ..context import AppContext
 from ..job import ScriptPlan, VideoJob
 from .beats import (
@@ -160,14 +161,19 @@ SHAPE_PHOTO = (
 
 
 def shot_rule(clip_s: float, *, total: float, beats: int, chars: int, wps: float,
-              photo: bool) -> str:
+              photo: bool, frames: bool = False) -> str:
     """`total`/`beats`/`chars` are THIS WINDOW's share of the video, never the whole
     one. A window handed the whole number writes to it, and a piece cut into three
     windows comes out three times too long — which is most of how the first measured
-    run reached 181 seconds against a budget of 120."""
+    run reached 181 seconds against a budget of 120.
+
+    The shape clause goes only where there is a shot to describe. Both halves of it
+    are instructions for writing a `video_prompt`, and a frame-base run is not asked
+    for one (see `FRAMES_RULE`) — telling it how to write a field it will not be
+    given is how a model talks itself into giving it anyway."""
     return SHOT_RULE.format(
         lo=MIN_BEAT_S, hi=MAX_BEAT_S, total=total, beats=beats, chars=chars, wps=wps,
-        shape=SHAPE_PHOTO if photo else SHAPE_VIDEO,
+        shape="" if frames else (SHAPE_PHOTO if photo else SHAPE_VIDEO),
     )
 
 
@@ -952,7 +958,7 @@ SYSTEM_RESIDENT = (
     "{window_rule}"
     "\nTHE OUTPUT CONTRACT, which nothing above overrides:\n"
     'Respond with JSON only: {{"title": "<short title in {lang}>", "scenes": '
-    '[{{"seconds": <number>, "narration": "...", "video_prompt": "...", '
+    '[{{"seconds": <number>, "narration": "...", {prompt_json}'
     '"characters": ["..."], "is_ad": false}}, ...]}}.'
 )
 
@@ -988,7 +994,7 @@ SYSTEM_CHRONICLER = (
     "{window_rule}"
     "\nTHE OUTPUT CONTRACT, which nothing above overrides:\n"
     'Respond with JSON only: {{"title": "<short title in {lang}>", "scenes": '
-    '[{{"seconds": <number>, "narration": "...", "video_prompt": "...", '
+    '[{{"seconds": <number>, "narration": "...", {prompt_json}'
     '"characters": ["..."], "is_ad": false}}, ...]}}.'
 )
 
@@ -1110,7 +1116,7 @@ SYSTEM_USHER = (
     "{window_rule}"
     "\nTHE OUTPUT CONTRACT, which nothing above overrides:\n"
     'Respond with JSON only: {{"title": "<short title in {lang}>", "scenes": '
-    '[{{"seconds": <number>, "narration": "...", "video_prompt": "...", '
+    '[{{"seconds": <number>, "narration": "...", {prompt_json}'
     '"characters": ["..."], "is_ad": false}}, ...]}}.'
 )
 
@@ -1138,6 +1144,30 @@ VIDEO_PROMPT_RULE = (
     "  ONE CONTINUOUS SHOT, described in one or two sentences: a single camera, a "
     "single unbroken action. Never a list of moments — a generator handed several "
     "beats renders them all at once, as a split-screen grid, before playing anything.\n"
+)
+
+# What the writer is told INSTEAD of the shot contract, when the picture comes out of
+# the world's own frame base. Nothing here is written to be rendered: the pictures
+# already exist, and which one goes up is decided later by reading the narration
+# (`framebase.said_at` — "the first is what the matcher reads"). A shot prompt written
+# now is read by nobody, superseded by the matcher's own when a picture really is
+# missing, and written blind besides, since which stretches the base covers is not
+# known until it is consulted. `entities` already skips this mode for exactly that
+# reason; this is the same reasoning one stage earlier.
+#
+# What replaces it is not silence but a demand, because in this mode the narration IS
+# the query: the more plainly a beat names the thing in front of the listener, the
+# better the picture it gets.
+FRAMES_RULE = (
+    "  • no shot description: THE PICTURE IS NOT YOURS TO DESCRIBE. What goes on "
+    "screen is chosen from pictures this world already has, by reading the narration "
+    "you write — so write none, and do not smuggle camera directions into the "
+    "narration either.\n"
+    "  What that asks of the narration instead: where a beat happens somewhere or "
+    "around something, NAME it, in this world's own words — the room, the object, the "
+    "person, the thing being handed over. That name is what finds the picture. A beat "
+    "that names nothing can still be true and well said, and there will be nothing to "
+    "put behind it.\n"
 )
 
 # The opening is where the "explaining a world" reflex is strongest: told to hook, a
@@ -1171,8 +1201,18 @@ OPEN_RULE_FANDOM = (
     "you about', a sentence written for someone who has never been here, anything "
     "explaining where we are. Saying what is happening is not that: it is the flattest "
     "line in the piece, and it is addressed to somebody who lives here.\n"
+    "{visual}"
+)
+
+# The first beat's picture, said only where the writer is describing pictures at all.
+_OPEN_VISUAL = (
     "Its video_prompt must be visually arresting — dynamic framing, high contrast.\n"
 )
+
+
+def open_rule(frames: bool) -> str:
+    """The first-beat rule, without the shot half where there are no shots to write."""
+    return OPEN_RULE_FANDOM.format(visual="" if frames else _OPEN_VISUAL)
 
 # The planner is where the brief was lost first, and for a reason written into its own
 # instructions: it used to be told that it alone reads the full records and that "the
@@ -1242,7 +1282,8 @@ class FandomWriter:
     self_timed = True  # the writer sizes every shot (see SHOT_RULE below)
 
     def __init__(self, canon: str, lore: str, lore_tool: bool, photo: bool = False,
-                 invent: str = "no", spine: ScriptPlan | None = None):
+                 invent: str = "no", spine: ScriptPlan | None = None,
+                 frames: bool = False):
         self.canon = canon
         self.lore = lore
         # how far the writer may add to this world where its records stop: "no",
@@ -1253,6 +1294,10 @@ class FandomWriter:
         # a slideshow is written differently from a run of clips: a still cannot hold
         # an action, so the shot descriptions have to be photographs (see SHAPE_PHOTO)
         self.photo = photo
+        # …and when the stills come out of the world's own base, there are no shot
+        # descriptions at all (see FRAMES_RULE). Decided from the orchestration rather
+        # than from the scenes, because the scenes do not exist yet.
+        self.frames = frames
         # What this video is about and the order it comes apart in. Normally settled
         # by `prepare` before a beat is written, and None when the brief already is
         # the piece or the pass came back unusable (see `plan_spine`). Passed in when
@@ -1390,11 +1435,14 @@ class FandomWriter:
         # piece it sits, whether it opens the video, which of its beats close an episode
         window_rule = "\n" + shot_rule(
             w.clip_s, total=w.target_s, beats=w.beats, chars=w.chars,
-            wps=w.words / max(w.clip_s, 0.1), photo=self.photo,
-        ) + "\n" + w.arc + (OPEN_RULE_FANDOM if w.index == 0 else "") + w.part_rule
+            wps=w.words / max(w.clip_s, 0.1), photo=self.photo, frames=self.frames,
+        ) + "\n" + w.arc + (open_rule(self.frames) if w.index == 0 else "") + w.part_rule
         return template.format(
             lang=lang,
-            video_prompt_rule=VIDEO_PROMPT_RULE,
+            video_prompt_rule=FRAMES_RULE if self.frames else VIDEO_PROMPT_RULE,
+            # and the field itself leaves the output contract with the rule: asked
+            # for a key it was told not to fill, a model fills it anyway
+            prompt_json="" if self.frames else '"video_prompt": "...", ',
             world_rule=world_rule(self.invent),
             role_rule=role_rule(ctx),
             cast_rule=CAST_RULE,
@@ -1443,6 +1491,7 @@ def _writer(job: VideoJob, ctx: AppContext,
         photo=ctx.params.medium == "photo",
         invent=ctx.params.fandom_invent,
         spine=spine,
+        frames=framebase.planned(ctx),
     )
 
 

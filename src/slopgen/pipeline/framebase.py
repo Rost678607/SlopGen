@@ -106,6 +106,26 @@ def active(job, ctx) -> bool:
     return bool(beats) and all(is_frame_model(s.gen_model or "") for s in beats)
 
 
+def planned(ctx) -> bool:
+    """The same question as :func:`active`, asked BEFORE a single beat exists.
+
+    `active` reads the answer off the scenes, because by the time it is called the
+    slots have been stamped onto them — which is too late for the one caller that
+    needs it earliest. The script stage has to know whether it is writing shot
+    descriptions at all (see `stages.fandom_script.FRAMES_RULE`), and it decides that
+    while the scene list is still empty. The orchestration knows already: the slots
+    are expanded from it, so a chain whose every stage is the frame base is a run
+    whose every picture comes from the frame base.
+
+    Empty means no chain was named, and the planner's default is a generator — so a
+    run that says nothing is not a frame-base run."""
+    from ..media.generate import is_frame_model
+
+    orch = getattr(ctx, "orchestration", None)
+    stages = list(orch.stages) if orch and orch.stages else []
+    return bool(stages) and all(is_frame_model(st.model or "") for st in stages)
+
+
 def pause_threshold(sensitivity: float) -> float:
     """How long a silence has to be, at this sensitivity, to be worth cutting on."""
     s = min(max(sensitivity, 0.0), 1.0)

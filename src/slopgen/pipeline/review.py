@@ -356,6 +356,14 @@ def _script_doc(job: VideoJob, mode: str, shapes: list[str] | None = None) -> Do
     A fandom script opens with the PLAN it was written from (see :func:`_plan_rows`);
     `shapes` is the run's shape catalogue, for that block's choice of form, and the
     caller supplies it because this module has no run to read it off."""
+    # A frame-base run has no shot prompts to show, because it was never asked for
+    # any: the picture is chosen out of the world's own base by reading the narration
+    # (see `stages.fandom_script.FRAMES_RULE`). Drawing the field anyway would offer
+    # the operator an empty box whose contents nothing downstream reads. Read off the
+    # scenes rather than the run, which this module does not have — the same rule
+    # `framebase.active` uses, and the slots are stamped long before a breakpoint.
+    beats_ = [s for s in job.scenes if not s.is_ad]
+    frames = bool(beats_) and all(s.gen_model == "frames" for s in beats_)
     rows: list[Row] = []
     for i, s in enumerate(job.scenes):
         label = _scene_label(i, s)
@@ -364,7 +372,8 @@ def _script_doc(job: VideoJob, mode: str, shapes: list[str] | None = None) -> Do
             info=", ".join(s.characters) if _beats(mode) else "",
         ))
         if _beats(mode):
-            rows.append(Row(label=label, value=s.video_prompt, src=i, field="prompt"))
+            if not frames:
+                rows.append(Row(label=label, value=s.video_prompt, src=i, field="prompt"))
             rows.append(Row(
                 label=label, value=", ".join(s.characters), src=i, field="cast",
                 kind="chips", options=list(job.cast_prompts),
