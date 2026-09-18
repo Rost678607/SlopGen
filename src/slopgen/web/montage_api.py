@@ -39,6 +39,7 @@ from ..pipeline import montage, orchestrator
 from ..pipeline.checkpoint import Checkpoint
 from ..pipeline.context import AppContext
 from ..pipeline.manual import ManualInputPending
+from ..pipeline.stages import metadata as metadata_stage
 from ..pipeline.stages import picture
 
 log = logging.getLogger(__name__)
@@ -590,6 +591,13 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404, card_json) -> None
         if fn is None:
             raise HTTPException(status_code=404,
                                 detail=f"there is no stage called {stage!r} in this mode")
+        # `metadata` is the one stage that asks whether the run wanted it at all
+        # (`RunParams.write_metadata`), and a press here IS that answer — the operator
+        # is standing in front of the button. Its own entry point would read the switch
+        # instead and leave the press doing nothing, two screens away from anything
+        # that explains why.
+        if stage == "metadata":
+            fn = metadata_stage.write_all
         lock = _locks.setdefault(run_id, threading.Lock())
         if not lock.acquire(blocking=False):
             raise HTTPException(status_code=409,

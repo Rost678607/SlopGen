@@ -2498,6 +2498,7 @@ function commonOf(form) {
     visual_notes: f.get("visual_notes") || "",
     visual_style: f.get("visual_style") || "",
     clean_subtitles: f.get("clean_subtitles") === "on",
+    write_metadata: f.get("write_metadata") === "on",
     keep_temp: f.get("keep_temp") === "on",
     loop: loopOf(form),
     filters,

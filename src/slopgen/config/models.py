@@ -1003,6 +1003,14 @@ class RunParams(BaseModel):
     out: Path | None = None  # output dir override
     dry_run: bool = False  # skip the publish stage
     keep_temp: bool = False
+    # Write a title, a description and tags for the finished video. OFF by default,
+    # and the only stage in the chain that is: everything else produces something the
+    # next stage reads, while this produces text for a person to paste into an upload
+    # form — so a run that is only being looked at on this machine pays a model for
+    # nothing. A run that is actually uploading gets metadata anyway, switch or no
+    # switch, because a video cannot go to a platform without a title (see
+    # `pipeline/stages/metadata.wanted`).
+    write_metadata: bool = False
     # stage names (see pipeline.review) after which the run parks for operator
     # review instead of walking on. Each fires once per video.
     breakpoints: list[str] = []

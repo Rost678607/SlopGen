@@ -126,6 +126,7 @@ ALIASES = {
     "clip": "clip_seconds", "clip_s": "clip_seconds",
     "voice": "voice_override", "engine": "tts_engine", "rate": "tts_rate",
     "subs": "subtitle_style", "clean_subs": "clean_subtitles",
+    "metadata": "write_metadata", "meta": "write_metadata",
     "style": "visual_style", "notes": "visual_notes", "fx": "filters",
     "cast": "manual_cast", "narrator": "fandom_voice", "world": "fandom",
     "role": "viewer_role",

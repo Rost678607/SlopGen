@@ -407,6 +407,16 @@ const FORMS = {
       },
       "rows": [
         {
+          "f": "write_metadata",
+          "kind": "checkbox",
+          "inline": true,
+          "l": "web.f.meta"
+        },
+        {
+          "note": "web.f.meta.note",
+          "cls": "dim"
+        },
+        {
           "f": "keep_temp",
           "kind": "checkbox",
           "inline": true,
@@ -711,6 +721,16 @@ const FORMS = {
       "go": "web.go",
       "gocls": "primary big-go",
       "rows": [
+        {
+          "f": "write_metadata",
+          "kind": "checkbox",
+          "inline": true,
+          "l": "web.f.meta"
+        },
+        {
+          "note": "web.f.meta.note",
+          "cls": "dim"
+        },
         {
           "f": "keep_temp",
           "kind": "checkbox",
@@ -1055,6 +1075,16 @@ const FORMS = {
       "go": "web.go",
       "gocls": "primary big-go",
       "rows": [
+        {
+          "f": "write_metadata",
+          "kind": "checkbox",
+          "inline": true,
+          "l": "web.f.meta"
+        },
+        {
+          "note": "web.f.meta.note",
+          "cls": "dim"
+        },
         {
           "f": "keep_temp",
           "kind": "checkbox",
