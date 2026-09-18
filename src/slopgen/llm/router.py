@@ -49,14 +49,32 @@ class LLMRouter:
             getattr(store.global_cfg.llm, "stage_profiles", {}) or {}
         )
         self._clients: dict[str, ChatLLM] = {}
-        # built eagerly: a missing API key is the operator's first mistake and belongs
-        # at the start of a run, not four stages into it
-        self._default = self._build(self.default_profile)
+        self._built: ChatLLM | None = None
 
     # -- the clients -------------------------------------------------------
 
     def _build(self, profile: LLMProfile) -> ChatLLM:
         return ChatLLM(profile, ledger=self.usage)
+
+    @property
+    def _default(self) -> ChatLLM:
+        """The active profile's client, built the first time anything asks for one.
+
+        It used to be built in the constructor, so that a missing API key was the
+        operator's first mistake rather than their fourth stage's. That is still the
+        guarantee — it just belongs to whoever is about to make LLM calls rather than to
+        this class, so the orchestrator asks for it outright (:meth:`check`) before a
+        chain starts. What changes is everything that builds a context and then does
+        NOT write anything: voicing a line, cutting a track, rendering a frame from the
+        montage room. Those never reach a text model, and being stopped by its key is
+        being stopped by a setting that has nothing to do with the work."""
+        if self._built is None:
+            self._built = self._build(self.default_profile)
+        return self._built
+
+    def check(self) -> None:
+        """Fail now if the active profile cannot be built at all."""
+        _ = self._default
 
     def client_for(self, kind: str) -> ChatLLM:
         """The client that answers calls of this kind — the routed profile if it is

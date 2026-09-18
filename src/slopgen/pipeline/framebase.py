@@ -440,7 +440,7 @@ def aim(card: FrameCard, referents: list[str], chosen: str = "",
 
 def move_for(card: FrameCard, referents: list[str], duration: float, last_kind: str,
              rng: random.Random, min_scale: float = 0.1, stale: bool = False,
-             target: str = "") -> KenBurns:
+             target: str = "", want: str = "") -> KenBurns:
     """Give one shot its crop move.
 
     What is on offer depends on what the card can currently be aimed at (see
@@ -455,7 +455,14 @@ def move_for(card: FrameCard, referents: list[str], duration: float, last_kind: 
     which is its own metronome.
 
     WHICH region is not a random pick among the eligible ones any more. It is the
-    first of the ranked ones, so the move lands on whatever the shot is most about."""
+    first of the ranked ones, so the move lands on whatever the shot is most about.
+
+    `want` is the operator naming the kind outright from the montage screen. It wins
+    over both the die and the anti-repetition rule — a person looking at the picture
+    is allowed to put two pans in a row — but it cannot conjure a move the card
+    cannot make: a pan needs two regions marked, and asking for one on a card with
+    none leaves the choice where it was rather than producing a pan between nothing
+    and nothing."""
     aimed = aim(card, referents, target, stale)
 
     kinds: list[MoveKind] = ["push_in", "drift"]
@@ -466,7 +473,7 @@ def move_for(card: FrameCard, referents: list[str], duration: float, last_kind: 
     if len(aimed) >= 2:
         kinds.append("pan")
     choices = [k for k in kinds if k != last_kind] or kinds
-    kind: MoveKind = rng.choice(choices)
+    kind: MoveKind = want if want in kinds else rng.choice(choices)
 
     full = Rect().clamped(min_scale)
     if kind == "hold":
@@ -581,11 +588,17 @@ def apply_to_scenes(job, cards: list[FrameCard]) -> None:
     seam and `stages.assemble` needs to know nothing about any of this. It is the
     arrangement continuous video mode already uses, one clock further out.
 
-    A CLIP card is laid down without a move and at speed 1.0, which is what makes it
-    LOOP to fill its shot instead of being retimed to it: a card is a thing the world
-    has, not something cut to measure for one beat, and stretching it would be the
-    wrong operation. It also already has motion of its own, and two motions over one
-    picture fight.
+    A CLIP card is laid down at speed 1.0, which is what makes it LOOP to fill its
+    shot instead of being retimed to it: a card is a thing the world has, not
+    something cut to measure for one beat, and stretching it would be the wrong
+    operation.
+
+    It DOES get the crop move. It used not to, on the grounds that a clip already has
+    motion of its own and two motions over one picture fight — a good default and a
+    bad rule: half the clips a world collects are locked-off shots of a room, which
+    are stills with dust in them, and an operator who marked a region on one and asked
+    for a push-in meant it. Nothing is forced on anybody either way — `hold` is one of
+    the six moves and costs nothing.
     """
     from ..media.stock import IMAGE_EXTS
     from .job import BgAsset
@@ -609,8 +622,8 @@ def apply_to_scenes(job, cards: list[FrameCard]) -> None:
             photo = path.suffix.lower() in IMAGE_EXTS
             parts.append(BgAsset(
                 path=path, duration=b - a, is_photo=photo,
-                move=s.move if photo else None,
-                move_at=(a - s.start) if photo else 0.0,
+                move=s.move,
+                move_at=a - s.start,
                 # a clip brings its own framing and is never padded: the card's fit
                 # is about making a STILL into a frame (see media/ffmpeg.fit_chain)
                 fit=card.fit if photo else "crop",

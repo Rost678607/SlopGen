@@ -74,6 +74,14 @@ def fandom_params(store: ConfigStore, b: dict) -> RunParams:
     if source not in allowed:
         raise HTTPException(status_code=422,
                             detail=f"{source!r} does not make {medium}")
+    # Cutting and casting the track by hand means stopping at the screen that does it,
+    # so the breakpoint comes with the switch rather than being a second thing to
+    # remember: a by-hand run that walked past `picture` would go straight on to ask
+    # for pictures for a track nobody had filled in.
+    breakpoints = [x for x in b.get("breakpoints", []) if isinstance(x, str)]
+    by_hand = bool(b.get("frame_by_hand")) and source == "frames"
+    if by_hand and "picture" not in breakpoints:
+        breakpoints.append("picture")
     params = RunParams(
         lang=str(b.get("lang", "ru")), content_type="", mode="fandom",
         fandom=world, fandom_voice=b.get("voice", "resident"), medium=medium,
@@ -83,9 +91,10 @@ def fandom_params(store: ConfigStore, b: dict) -> RunParams:
         duration_s=float(b.get("duration_s", 45.0)),
         count=int(b.get("count", 1)),
         dry_run=bool(b.get("dry_run", True)),
-        breakpoints=[x for x in b.get("breakpoints", []) if isinstance(x, str)],
+        breakpoints=breakpoints,
         frame_fit=b.get("frame_fit", "close"),
         cut_sensitivity=float(b.get("cut_sensitivity", 0.35)),
+        frame_by_hand=by_hand,
         **common(b),
         manual_orchestration=OrchestrationConfig(
             name=source,
@@ -230,6 +239,7 @@ _FIELDS: list[dict] = [
      "modes": ["fandom"]},
     {"f": "cut_sensitivity", "kind": "range", "l": "web.f.cutrate", "min": 0, "max": 1,
      "step": 0.05, "modes": ["fandom"]},
+    {"f": "frame_by_hand", "kind": "check", "l": "web.f.byhand", "modes": ["fandom"]},
     {"f": "keep_temp", "kind": "check", "l": "web.f.keeptmp"},
 ]
 

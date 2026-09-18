@@ -17,6 +17,7 @@ own machine is the correct amount of session management.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import secrets
@@ -42,6 +43,7 @@ from ..llm import rewrite as bp_ai
 from ..llm import topic as topic_ai
 from ..llm.client import ChatLLM, MODEL_PRESETS, PROVIDERS
 from .. import labels
+from ..media import ffmpeg as ffmpeg_media
 from ..media.generate import (PHOTO_MODELS, VIDEO_MODELS, env_keys,
                               model_clip_seconds)
 from ..tts import ENGINES as TTS_ENGINES
@@ -60,6 +62,7 @@ from ..pipeline.stages import picture
 from ..pipeline.checkpoint import Checkpoint
 from ..models import CATALOG as MODEL_CATALOG
 from ..models import ModelStore, human_size
+from . import montage_api
 from .params import (FILTER_HELP, drama_params, fandom_params, info_params,
                      loop_of, override_fields)
 from .runs import Supervisor, parked
@@ -336,6 +339,37 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
         if p is None or not p.is_file():
             raise HTTPException(status_code=404, detail="this card has no picture yet")
         return FileResponse(p)
+
+    @app.get("/api/worlds/{name}/cards/{card}/poster")
+    async def card_poster(name: str, card: str,
+                          slopgen: str | None = Cookie(default=None)):
+        """A still standing in for a card that is a CLIP.
+
+        Every strip in the interface draws a card as a `background-image`, and no
+        browser renders an mp4 into one — so a base with clips in it shows blank tiles
+        with a badge, and the operator picks between them by name. Which is the one
+        way this mode says not to choose a picture.
+
+        Cached against the file it came from (path, size, mtime), so a clip is
+        decoded once ever and a clip replaced under the same name gets a new face."""
+        guard(slopgen)
+        world = store.fandoms.get(name)
+        c = next((x for x in (world.frames if world else []) if x.name == card), None)
+        if c is None or c.path is None or not c.path.is_file():
+            raise HTTPException(status_code=404, detail="no such card")
+        if c.path.suffix.lower() in IMAGE_EXTS:
+            return FileResponse(c.path)  # it is already a picture
+        st = c.path.stat()
+        key = hashlib.sha1(
+            f"{c.path}|{st.st_mtime_ns}|{st.st_size}".encode()).hexdigest()[:16]
+        out = Path(store.global_cfg.paths.state) / "cache" / "posters" / f"{key}.jpg"
+        if not out.is_file():
+            try:
+                await run_in_threadpool(ffmpeg_media.poster_frame, c.path, out)
+            except Exception as e:
+                log.warning("no poster for %s: %s", card, e)
+                raise HTTPException(status_code=404, detail="could not read that clip")
+        return FileResponse(out, media_type="image/jpeg")
 
     @app.put("/api/worlds/{name}/cards/{card}")
     async def save_card(name: str, card: str, request: Request,
@@ -1279,6 +1313,24 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
         return sup.start_loop(params, title, **loop).as_dict() if loop \
             else sup.start(params, title=title).as_dict()
 
+    @app.post("/api/runs/fandom/by-hand")
+    async def make_fandom_by_hand(request: Request,
+                                  slopgen: str | None = Cookie(default=None)) -> dict:
+        """Make a fandom video by hand: the folder and the settings, and nothing run.
+
+        The same form, the same `RunParams`, and then the pipeline is NOT started. What
+        comes back is a parked run the montage room opens on, where the operator writes
+        what they want to write and presses the stages they want run, in the order the
+        work actually takes — which is rarely the chain's order and never all of it.
+
+        Starting the chain first and stopping it at a breakpoint cannot serve this: by
+        the time a screen appears, the run has already decided the things the operator
+        opened it to decide."""
+        guard(slopgen)
+        b = await request.json()
+        params = fandom_params(store, b)
+        return sup.create(params, str(b.get("title", ""))).as_dict()
+
     @app.post("/api/runs/info")
     async def start_info(request: Request,
                          slopgen: str | None = Cookie(default=None)) -> dict:
@@ -2075,6 +2127,13 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
             raise HTTPException(status_code=404, detail="this run produced no video")
         return FileResponse(cuts[-1], media_type="video/mp4")
 
+    # The montage screen: one video's timeline, cut and cast by hand. Its own module
+    # (see `web/montage_api`), mounted here so it shares this app's session guard and
+    # its one way of finding a run — a second definition of either would be a second
+    # place for them to disagree.
+    montage_api.mount(app, store=store, sup=sup, guard=guard, run_or_404=run_or_404,
+                      card_json=_card_json)
+
     @app.get("/api/runs/{run_id}/events")
     async def run_events(run_id: str, after: int = 0,
                          slopgen: str | None = Cookie(default=None)) -> StreamingResponse:
@@ -2213,6 +2272,9 @@ def _card_json(world: str, c: FrameCard) -> dict:
         "usable": c.usable,
         "kind": "video" if (p and p.suffix.lower() in VIDEO_EXTS) else "image",
         "url": f"/api/worlds/{world}/cards/{c.name}/file",
+        # what to DRAW this card as, whichever it is: a picture is itself, a clip is
+        # a frame out of it. Every strip uses this and stops caring which it got.
+        "poster": f"/api/worlds/{world}/cards/{c.name}/poster",
         # what becomes of this picture where its shape is not the video's, and where
         # the frame sits in it when cropping (see config.models.CardFit)
         "fit": c.fit, "fit_x": c.fit_x, "fit_y": c.fit_y,

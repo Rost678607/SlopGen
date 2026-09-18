@@ -864,7 +864,7 @@ async function loadCards() {
   $("#cards").innerHTML = cards.map((c) => `
     <div class="frame-card ${c.retired ? "retired" : ""}" data-name="${esc(c.name)}">
       <div class="thumb ${c.usable ? "" : "none"} ${c.fit === "pad" ? "pad" : ""}"
-           ${c.usable && c.kind === "image" ? `style="background-image:url('${tokd(c.url)}')"` : ""}>
+           ${c.usable ? `style="background-image:url('${tokd(c.poster || c.url)}')"` : ""}>
         ${c.usable ? "" : lab("js.no-picture-yet")}
         ${c.targets.length ? `<span class="pill">${c.targets.length}</span>` : ""}
         ${c.kind === "video" ? `<span class="pill">${lab("js.clip")}</span>` : ""}
@@ -1630,8 +1630,15 @@ function cardHTML(c) {
   const head = launch
     ? `<b data-l="${esc(c.title)}"></b><span class="dim" data-l="${esc(c.sub || "")}"></span>`
     : `<h4 data-l="${esc(c.title)}"></h4>`;
-  const foot = c.go
+  // Two buttons, when a card has a second way to act on what is filled in. The
+  // secondary one is `type="button"` on purpose: it is not a submit, it goes somewhere
+  // else with the same settings (see the fandom card's «собрать вручную»).
+  const second = c.go2
+    ? `<button type="button" id="${esc(c.go2.id)}" class="${esc(c.go2.cls || "ghost")}"` +
+      ` data-l="${esc(c.go2.l)}"></button>` : "";
+  const first = c.go
     ? `<button class="${esc(c.gocls || "primary")}" data-l="${esc(c.go)}"></button>` : "";
+  const foot = second ? `<div class="row golf">${first}${second}</div>` : first;
   return `<div class="${["card", ...(c.cls || [])].join(" ")}">` +
          `${head}${(c.rows || []).map(fieldHTML).join("")}${foot}</div>`;
 }
@@ -2023,6 +2030,7 @@ async function loadOptions() {
   wireSubMenu();
   watchCards();
   wireWizardAi();
+  wireByHand();
   const langs = $("#ui-lang");
   langs.innerHTML = [["ru", "Русский"], ["en", "English"]]
     .map(([v, n]) => `<option value="${v}"${v === opts.ui_lang ? " selected" : ""}>${n}</option>`).join("");
@@ -2186,11 +2194,12 @@ async function loadOptions() {
   compose();
 }
 
-$("#startform").onsubmit = (e) => {
-  e.preventDefault();
-  return launchOnce(e.target, async () => {
-    const f = new FormData(e.target);
-    const body = {
+// What the fandom form MEANS, read once. Two buttons send it now — start the chain,
+// or make the run and open the montage room on it — and a second copy of thirteen
+// fields is a second place for them to drift.
+function fandomBody(form) {
+  const f = new FormData(form);
+  return {
       fandom: f.get("fandom"), voice: f.get("voice"), lang: f.get("lang") || "ru",
       // sent whatever the narrator is: the field is hidden for the other two, and a
       // hidden field still carries whatever was last typed in it, which the server
@@ -2202,9 +2211,16 @@ $("#startform").onsubmit = (e) => {
       duration_s: +f.get("duration_s"), count: +f.get("count"),
       dry_run: f.get("dry_run") === "on",
       frame_fit: f.get("frame_fit"), cut_sensitivity: +f.get("cut_sensitivity"),
-      breakpoints: [...chosenBps.fandom],
-      ...commonOf(e.target),
-    };
+      frame_by_hand: f.get("frame_by_hand") === "on",
+    breakpoints: [...chosenBps.fandom],
+    ...commonOf(form),
+  };
+}
+
+$("#startform").onsubmit = (e) => {
+  e.preventDefault();
+  return launchOnce(e.target, async () => {
+    const body = fandomBody(e.target);
     if (editing && editing.mode === "fandom") return applyToLoop(body);
     let out;
     try {
@@ -2214,6 +2230,31 @@ $("#startform").onsubmit = (e) => {
     started(out);
   });
 };
+
+// The other door out of the same form: make the run, run NOTHING, and open the montage
+// room on it. Starting the chain and stopping it at a breakpoint cannot serve this —
+// by the time a screen appeared, the run would have decided the things you opened it
+// to decide.
+//
+// Wired after the cards are BUILT rather than at load: this button is drawn from
+// `forms.js` like every other field, so at the time this file is evaluated it does not
+// exist yet — and reaching for it there throws, which takes the rest of the file's
+// top-level with it (`loadRuns` and `loadLoops` then die on their own uninitialised
+// state, which is how this showed up).
+function wireByHand() {
+  const go = $("#f-by-hand-go");
+  if (!go) return;
+  go.onclick = async () => {
+    if (editing) return say(lab("js.byhand-not-in-a-loop"), true);
+    let out;
+    try {
+      out = await api("/api/runs/fandom/by-hand", { method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(fandomBody($("#startform"))) });
+    } catch (err) { return say(err.message, true); }
+    openMontage(out.id, out.title);
+  };
+}
 
 $("#infoform").onsubmit = (e) => submitRun(e, "info", (f) => ({
   lang: f.get("lang"), content_type: f.get("content_type"), visuals: f.get("visuals"),
@@ -2637,7 +2678,7 @@ function bindAsks(id, forWorld, base) {
       if (!strip.dataset.drawn) {
         strip.innerHTML = base.length ? base.map((c) => `
           <div class="frame-card" data-pick="${esc(c.name)}" title="${esc(c.description || c.name)}">
-            <div class="thumb" ${c.kind === "image" ? `style="background-image:url('${tokd(c.url)}')"` : ""}>
+            <div class="thumb" style="background-image:url('${tokd(c.poster || c.url)}')">
               ${c.kind === "video" ? `<span class="pill">${lab("js.clip")}</span>` : ""}
               ${c.targets.length ? `<span class="pill">${c.targets.length}</span>` : ""}
             </div>
@@ -3639,6 +3680,13 @@ function actions(r) {
   const out = [];
   if (p.asks) out.push({ act: "asks", label: `${lab("js.give-it-pictures")} ${p.asks}`, primary: true });
   if (p.review_stage) out.push({ act: "review", label: `${lab("js.review")} ${p.review_stage}`, primary: true });
+  // The montage room, on any parked fandom video whose lines have been voiced (see
+  // `runs.parked`). It is not tied to the picture breakpoint even though that is where
+  // a by-hand run stops: a run parked for pictures has the same timeline and the same
+  // reasons to look at it, and being able to see what you are about to be asked FOR is
+  // most of what makes the asking answerable.
+  if (p.montage) out.push({ act: "montage", label: lab("js.montage"),
+                            primary: !p.asks && !p.review_stage });
   if (p.asks || p.review_stage) out.push({ act: "resume", label: lab("js.go-on") });
   else if (r.status === "failed") out.push({ act: "resume", label: lab("js.try-again") });
   else if (r.status !== "done") out.push({ act: "resume", label: lab("js.resume") });
@@ -3748,6 +3796,7 @@ async function act(what, r, btn, sure) {
       loadRuns();
     }
     else if (what === "asks") await openAsks(r.id, r.title);
+    else if (what === "montage") await openMontage(r.id, r.title);
     else if (what === "review") await openReview(r.id, r.title);
     else if (what === "video") window.open(tokd(`/api/runs/${r.id}/video`), "_blank");
     else if (what === "resume") {

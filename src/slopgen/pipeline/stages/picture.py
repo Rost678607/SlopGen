@@ -21,6 +21,13 @@ that «торг» and «рынок» are the same place, or that a hat mentioned
 the hat marked on the picture. What the model may NOT decide is rhythm: how often a
 card may come back, and whether this move looks like the last one, are handled by
 `framebase.Picker`, which knows nothing about meaning and is better for it.
+
+Or the model is not asked at all. With `RunParams.frame_by_hand` the stage does the
+first half and stops: the cuts are laid out of the speech, every shot is left empty,
+nothing is asked for, and the run parks on this stage's breakpoint with a track for the
+operator to fill in by hand (see :mod:`..montage`). It is the same two judgements in the
+same order — where to cut, then what to show — with the second one made by somebody
+looking at the pictures instead of by somebody reading about them.
 """
 
 from __future__ import annotations
@@ -158,8 +165,12 @@ def _match(ctx: AppContext, job: VideoJob, cards: list[FrameCard]) -> tuple[
     return ranked, targets, fits, asks
 
 
-def _fix_durations(job: VideoJob) -> None:
+def fix_durations(job: VideoJob) -> None:
     """A still has no length of its own, so the scene simply spans its narration.
+
+    Public because the montage room applies it after any stage it runs by hand: `tts`
+    pressed on its own leaves the lengths unset, since in a beat mode this is the stage
+    that settles them (see `..montage.settle`).
 
     This is the photo half of `drama_footage._sync`, done for the whole job up front
     because the picture track cannot be laid out one scene at a time."""
@@ -172,11 +183,48 @@ def _fix_durations(job: VideoJob) -> None:
             scene.duration = scene.audio_src_duration
 
 
-def _min_scales(cards: list[FrameCard], ctx: AppContext) -> dict[str, float]:
-    """How far each card may be cropped into before it is being enlarged rather than
-    framed. A 0.4 crop of a picture only as wide as the video is a window blown up
-    two and a half times, and it shows — which is why an ask is written for twice the
-    video's size."""
+# The tightest crop a card is ever given, however small it is.
+#
+# The floor below is a QUALITY rule and it is right about quality: a window showing
+# fewer source pixels than the output has is being enlarged, and a deep crop of a
+# small picture shows it. What it had no answer for was the case where the rule
+# forbids everything — a card no wider than the video gets a floor of 1.0, every move
+# `move_for` can build comes out with a == b, and a push-in, a zoom and a pan all
+# render as a frozen frame with nothing anywhere saying why. Found on a base of
+# screenshots somebody had marked regions on and chosen zooms for, none of which did
+# anything.
+#
+# A slightly soft move is a worse picture; a frozen one is a broken feature. So the
+# rule keeps governing wherever the card is big enough to be governed, and stops short
+# of forbidding movement outright: at 0.8 the crop adds a quarter again of
+# enlargement, which on a phone is nothing next to what the fit to a portrait frame
+# has already done to a landscape screenshot.
+SOFT_FLOOR = 0.8
+
+
+def soft(card: FrameCard, cfg) -> bool:
+    """Whether cropping into this card at all means enlarging it — the montage room
+    says so, rather than leaving the operator to wonder why a zoom looks mushy."""
+    try:
+        w, _h = video_dims(card.path) if card.path else (0, 0)
+    except Exception:
+        return False
+    return bool(w) and cfg.video.width / w > SOFT_FLOOR
+
+
+def min_scales(cards: list[FrameCard], cfg) -> dict[str, float]:
+    """How far each card may be cropped into: to the pixel where the window stops
+    having as many source pixels as the output, and never tighter than
+    :data:`SOFT_FLOOR` even when that rule would forbid cropping altogether.
+
+    A big card keeps the whole benefit — a picture bought at twice the video's size
+    (`ASK_SCALE`) is still croppable to half, which is what buys the deep move onto a
+    marked region. A small one gets the floor and a warning rather than a freeze (see
+    :func:`soft`).
+
+    It takes the GLOBAL config rather than the run's context because the only thing it
+    needs is the video's width, and the montage screen asks it while casting a card by
+    hand — a question about geometry that must not require an LLM client to answer."""
     out: dict[str, float] = {}
     for c in cards:
         path = c.path
@@ -187,7 +235,7 @@ def _min_scales(cards: list[FrameCard], ctx: AppContext) -> dict[str, float]:
         except Exception:  # a card that cannot be probed simply gets the plain floor
             continue
         if w > 0:
-            out[c.name] = min(1.0, max(0.1, ctx.g.video.width / w))
+            out[c.name] = max(0.1, min(SOFT_FLOOR, cfg.video.width / w))
     return out
 
 
@@ -197,7 +245,7 @@ def run(job: VideoJob, ctx: AppContext) -> None:
         return
     world = ctx.store.fandoms.get(ctx.params.fandom)
     cards = [c for c in (world.frames if world else []) if c.usable]
-    _fix_durations(job)
+    fix_durations(job)
 
     if job.frame_shots:
         # a re-run: the cuts were already agreed, and re-voicing a line only moves the
@@ -208,6 +256,17 @@ def run(job: VideoJob, ctx: AppContext) -> None:
                 s.card, s.move, s.target, s.fit = "", None, "", ""
     else:
         job.frame_shots = framebase.plan_cuts(job.scenes, ctx.params.cut_sensitivity)
+
+    if ctx.params.frame_by_hand:
+        # Nobody is matching, so there is nothing to match against and nothing to ask
+        # for: the track is the cuts and the operator fills it in at the breakpoint
+        # (see pipeline/montage). Pins are the exception and always were — a shot the
+        # operator has already cast on an earlier pass is their decision, and a re-run
+        # of this stage is not a reason to take it back.
+        job.frame_asks = []
+        log.info("picture: %d shots, cut by the speech and left for the operator",
+                 len(job.frame_shots))
+        return
 
     ranked, targets, fits, asks = ({}, {}, {}, [])
     if job.frame_shots:
@@ -229,12 +288,12 @@ def run(job: VideoJob, ctx: AppContext) -> None:
 
     stale = frozenset(c.name for c in cards if card_is_stale(c))
     framebase.assign(job.frame_shots, cards, ranked, targets=targets,
-                     min_scales=_min_scales(cards, ctx), stale=stale,
+                     min_scales=min_scales(cards, ctx.g), stale=stale,
                      seed=f"{job.index}|{job.topic}")
     for i, s in enumerate(job.frame_shots):
         s.fit = fits.get(i, "")
         s.target = targets.get(i, "")
-    job.frame_shots = _fuse(job.frame_shots, cards, _min_scales(cards, ctx), stale, job)
+    job.frame_shots = _fuse(job.frame_shots, cards, min_scales(cards, ctx.g), stale, job)
 
     job.frame_asks = _asks_for(job, asks)
     covered = sum(1 for s in job.frame_shots if s.card)

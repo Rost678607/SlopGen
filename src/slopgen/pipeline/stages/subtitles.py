@@ -143,8 +143,15 @@ def _lay_out(scenes: list, per_scene: list[list[Word]]) -> list[Word]:
     return out
 
 
-def _retime(words: list[Word], text: str) -> list[Word]:
+def respread(words: list[Word], text: str) -> list[Word]:
     """Lay a rewritten line back over the span its original words occupied.
+
+    Public because it has two callers with the same need and opposite reasons. Here the
+    profanity rewrite changes the words without changing the take; in the montage room
+    (:mod:`..montage`) the operator changes them by hand, for a caption that should not
+    read exactly as the line was spoken. Both are the same operation — new words, same
+    span, same voice — and having it once is what keeps the captions honest about where
+    the speech actually is.
 
     A contextual rewrite does not preserve the word count — "Съебал нахуй с моей пары
     пидорас блять" becomes seven words where there were six — so the line's total span
@@ -183,7 +190,7 @@ def _cleaned_words(job: VideoJob, ctx: AppContext, wanted: set[int]) -> list[lis
     lines = [" ".join(w.text for w in per_scene[i]) for i in idx]
     for i, old, new in zip(idx, lines, censor.clean_lines(ctx.llm, lines, ctx.params.lang)):
         if new != old:
-            per_scene[i] = _retime(per_scene[i], new)
+            per_scene[i] = respread(per_scene[i], new)
     return per_scene
 
 

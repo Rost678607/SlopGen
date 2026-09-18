@@ -63,9 +63,21 @@ def available(mode: str) -> list[str]:
     return list(_MODE_STAGES.get(mode, _INFO_STAGES))
 
 
-def wanted(breakpoints: list[str], mode: str) -> set[str]:
-    """The requested breakpoints, filtered to the ones this mode actually runs."""
-    return {b for b in breakpoints if b in available(mode)}
+def wanted(params) -> set[str]:
+    """The breakpoints this run will actually stop at.
+
+    The asked-for ones, filtered to the stages this mode runs — plus the one a run
+    cannot do without. A run that cuts and casts its picture track BY HAND has to stop
+    at `picture`: that is the screen where the cutting and the casting happen (see
+    `pipeline/montage`), and walking past it would carry an empty track into the
+    footage stage, which would then ask for nothing and show nothing. So the switch
+    brings its breakpoint with it wherever it was set — the wizard, a loop's per-video
+    override, a line typed at the bot — instead of every door having to remember."""
+    mode = params.mode
+    out = {b for b in params.breakpoints if b in available(mode)}
+    if getattr(params, "frame_by_hand", False) and "picture" in available(mode):
+        out.add("picture")
+    return out
 
 
 @dataclass
@@ -652,10 +664,15 @@ def _clear_audio(scene: Scene) -> None:
     scene.audio_tempo = 1.0
 
 
-def _inherit(prev: Scene | None) -> Scene:
+def blank_scene(prev: Scene | None) -> Scene:
     """A blank scene for an operator-added line. It copies the neighbour's slot
     assignment (generator, key, target length, part) so a line added to a drama
-    script still has a shot to be rendered into."""
+    script still has a shot to be rendered into.
+
+    Public because the montage room adds lines too (:func:`..montage.add_line`), and
+    the `gen_model` this copies is what decides whether the run still counts as a
+    frame-base one at all (`framebase.active` asks it of every beat): a line added
+    with an empty slot would quietly take the whole picture track out of that mode."""
     if prev is None:
         return Scene(text="")
     return Scene(
@@ -686,7 +703,7 @@ def _apply_scene_texts(job: VideoJob, rows: list[Row], *, resync: bool) -> bool:
             continue
         src = old[row.src] if row.src is not None and row.src < len(old) else None
         if src is None:
-            scene = _inherit(out[-1] if out else (old[0] if old else None))
+            scene = blank_scene(out[-1] if out else (old[0] if old else None))
             dirty = True
         else:
             scene = src.model_copy(deep=True)
@@ -779,7 +796,7 @@ def _apply_script(job: VideoJob, rows: list[Row], mode: str) -> bool:
         if not text:  # emptied narration drops the whole scene, visuals included
             continue
         src = old[head.src] if head.src is not None and head.src < len(old) else None
-        scene = src.model_copy(deep=True) if src else _inherit(out[-1] if out else (old[0] if old else None))
+        scene = src.model_copy(deep=True) if src else blank_scene(out[-1] if out else (old[0] if old else None))
         scene.text = text
         if "prompt" in extras:
             scene.video_prompt = extras["prompt"].value.strip()

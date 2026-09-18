@@ -155,6 +155,17 @@ const FORMS = {
                 "v": "0.35",
                 "id": "sens-val"
               }
+            },
+            {
+              "f": "frame_by_hand",
+              "kind": "checkbox",
+              "inline": true,
+              "id": "f-byhand",
+              "l": "web.f.byhand"
+            },
+            {
+              "note": "web.byhand.note",
+              "cls": "dim"
             }
           ]
         }
@@ -389,6 +400,11 @@ const FORMS = {
       "sub": "web.mode.fandom.sub",
       "go": "web.go",
       "gocls": "primary big-go",
+      "go2": {
+        "id": "f-by-hand-go",
+        "l": "web.f.byhandgo",
+        "cls": "ghost big-go"
+      },
       "rows": [
         {
           "f": "keep_temp",

@@ -44,7 +44,8 @@ def _segment(i: int, scene, tmp, ctx: AppContext):
                                    direction=k, move=a.move, phase=a.move_at,
                                    fit=a.fit, ax=a.fit_x, ay=a.fit_y)
         else:
-            ffmpeg.make_video_part(a.path, a.duration, part, ctx.g, start=a.start, speed=a.speed)
+            ffmpeg.make_video_part(a.path, a.duration, part, ctx.g, start=a.start,
+                                   speed=a.speed, move=a.move, phase=a.move_at)
         bg_parts.append(part)
     # in drama mode the clip length is the master, so the voice is time-stretched to it
     voice = scene.audio

@@ -195,6 +195,7 @@ Parameter priority (info mode): **CLI flags > preset > account defaults > global
 | `entities`  | *(drama)* the visual registry: everything that recurs across shots and is not cast — a machine, a location, a prop, a nameless regular, an unusual crowd. Per entry: the name the shot prompts use for it, a note, and the English descriptor the generator gets. Editing one descriptor restyles every shot showing it |
 | `tts`       | every voiced fragment with the length that came out; edit a line and **🔊 re-voice** it right there (▶ to listen), as many takes as you like — only that line is re-synthesized. A **speed slider** sits above the buttons: one for the whole screen, applying to whichever fragment you re-voice with it. That line then keeps the speed (and the card says so) while the rest of the video stays at the run's |
 | `cut`       | *(drama)* where each episode ends. The scenes are read-only here, each showing the seconds it really runs to; what you move are the **part markers** — the last free moment to re-cut, since the next stage generates (or asks you to hand-make) the clips against these boundaries |
+| `picture`   | *(fandom, frame base)* the picture track — and it does not open as a list, it opens as an **editing room**: see [the montage room](#the-montage-room) |
 | `footage`   | the shot prompt (drama) or search queries (info) per scene; changed scenes get their footage remade      |
 | `subtitles` | the generated `.ass` files as text, written straight back to disk                                       |
 | `assemble`  | the rendered file(s) — inspect-only, watch them before publishing                                       |
@@ -508,9 +509,184 @@ The `--scenario` brief here answers a different question than the drama's: not *
 - **The plan, and the button that rewrites the script from it.** A fandom video is decided in six fields before a beat is written — what it is about, which form it takes, what it opens inside, the steps in order, the turn, what it stops on — and the `script` breakpoint now opens with them, above the beats they produced. Edit any of them and press **rewrite from the plan**: the run stays parked, the beats are written again from what you just wrote, and the document comes back with the new script under the same plan. That is the cheap loop. Editing six narrations into agreement with a plan you would rather have had is the expensive one, and it leaves a piece patched into looking right rather than one that came out of a plan you agree with. The form field is a dropdown of your shape catalogue, so "this should have been a choice, not a mechanism" is one field and one button. A plan emptied entirely is a plan removed; a plan written by hand into a run that never had one works exactly the same way.
 - **Two narrators**, chosen per run (`--narrator`, or the World step in the wizard) — both of them inside the world, differing in where they stand in it. **`resident`** lives there: first person, the world as daily life, what they have seen and what everyone here knows and what nobody here can explain, other people's lines dropped in raw and inline. It is the drama's voice pointed at a world instead of a plot. **`chronicler`** studies it: an archivist, a researcher, a crank who has read too many ledgers, speaking about their own world's records the way a historian speaks about ours — dry, specific, with sources and dates and the parts that do not add up. It may say "I" about its own reasoning but it is not the hero of anything. Both are forbidden to open with a definition or address an audience unfamiliar with the world: everyone listening lives here too, and what they lack is not the basics, it is what you found in the records. Same for the first beat — it opens on a concrete moment, object or claim, already in the middle of it, never on a sentence that would only be written for someone who has never been here.
 - **Where the shots come from** — one question, not a chain. The drama's fourth wizard step is an *orchestration*: an ordered list of generators, each taking a share of the video, each with its own key-rotation policy. That machinery exists for a reason — a feature-length drama burns through the free daily limits somewhere in its middle and has to hop services mid-run — and a fandom video is one piece of a few minutes, which needs neither the machinery nor the framing it puts around the work. So this mode asks the only question that actually matters, **Where the shots come from**: **🤖 AI generation** (with a generator picker next to it), **🙋 I generate them myself**, or **🔍 I find them myself**. The one-stage chain the pipeline runs on is then built behind you, because everything downstream speaks chains and this is the only place the simpler question has to be translated. The two operator answers park the run at the footage stage and hand you the shot list (`slopgen gather`): prompts to paste if you are generating, briefs plus ready-made queries if you are searching — see [user-assisted material](#user-assisted-material-you-generate-it-or-you-find-it).
-- **Everything else is the drama's**, unchanged: the cast with its compiled visual prompts and its shared appearance budget, the visual registry (`entities`) pinning whatever recurs and is not a person, the beat machinery — outline pass, windows, the voice/picture fitting, `--clip-s` deciding how much story a beat can hold — AI clip generation and both user-assisted paths (make the clips by hand, or go and find them), ads, `--visual-notes`, `--visual-style`, `-F/--filter`, `--clean-subs`, and every breakpoint, plus one of its own. What it does **not** take is episodes: a serial is cut where it hurts most, and an account of a world has no cliffhanger to hang a break on, so there is no `--parts`, no parts field and no `cut` stage. Nor the drama's orchestration editor, for the reason just above. Nor does it take the drama's way of casting — see above. The generator, mind, has never heard of your world: a shot prompt may never carry one of its terms untranslated, so the writer describes what the thing *looks* like in plain English (not "the winter carry", but "figures in heavy coats carrying mail sacks single file along a snowbound mountain path") while the narration goes on calling it by its own name. The stage chain is `canon → script → entities → tts → footage → subtitles → assemble → metadata`, and `canon` is a breakpoint like the rest: the last free moment to fix the world before a single line is written against it.
+- **Everything else is the drama's**, unchanged: the cast with its compiled visual prompts and its shared appearance budget, the visual registry (`entities`) pinning whatever recurs and is not a person, the beat machinery — outline pass, windows, the voice/picture fitting, `--clip-s` deciding how much story a beat can hold — AI clip generation and both user-assisted paths (make the clips by hand, or go and find them), ads, `--visual-notes`, `--visual-style`, `-F/--filter`, `--clean-subs`, and every breakpoint, plus one of its own. What it does **not** take is episodes: a serial is cut where it hurts most, and an account of a world has no cliffhanger to hang a break on, so there is no `--parts`, no parts field and no `cut` stage. Nor the drama's orchestration editor, for the reason just above. Nor does it take the drama's way of casting — see above. The generator, mind, has never heard of your world: a shot prompt may never carry one of its terms untranslated, so the writer describes what the thing *looks* like in plain English (not "the winter carry", but "figures in heavy coats carrying mail sacks single file along a snowbound mountain path") while the narration goes on calling it by its own name. The stage chain is `canon → script → entities → tts → picture → footage → subtitles → assemble → metadata` (`picture` plans the frame-base track and is skipped by a run whose shots come from a generator), and `canon` is a breakpoint like the rest: the last free moment to fix the world before a single line is written against it.
 
 Run it from the TUI (Generate → Fandom) or headless: `slopgen fandom ru example --scenario "…" --narrator chronicler --duration-min 3 --tol 20 --parts 2 --orchestration my_chain`.
+
+## The montage room
+
+The one screen in the browser that is not a form — a workbench for one **fandom** video
+whose pictures come out of the world's frame base.
+
+**Getting in.** Fill in the fandom form and press **🎬 build it by hand** instead of
+START: the run is made — a folder, a checkpoint, the settings — and *nothing is run*.
+The room opens on an empty video. Starting the chain and stopping it at a breakpoint
+cannot serve this, which is why it is a second button and not a tick: by the time a
+screen appeared, the run would already have decided the things you opened it to decide.
+The other two doors are for a run that is already going — the `picture` breakpoint, and
+the same **🎬 montage** button on its row. **← back** leaves; the run is an ordinary
+parked run in the list, with that button on it, and pressing it puts you back exactly
+where you were. Nothing is held in the tab: every edit is already on the checkpoint by
+the time the screen redraws, so closing the browser mid-montage costs nothing.
+
+**The pipeline, à la carte.** Across the top is every stage of the chain as a button:
+canon, script, entities, voice, picture track, footage, subtitles, assemble, metadata.
+Press one and it runs — the same callable the orchestrator would have called, on the
+same job, recorded in the same completed list, so a run driven by hand here can be
+resumed by the chain afterwards and walks past what is already done. A stage whose input
+is not on the job yet is disabled rather than hidden, because what is missing is the
+useful thing to see. It reports where a stage always reports, the run's own log and bar,
+because voicing forty lines is a minute in which this screen has nothing to say. The
+order is yours: the work really goes write, hear it, look at it, re-write that line,
+voice it again, cut, cast, cut again — and none of that is the order the list is in.
+Nothing forces you to press **script** at all; type the lines yourself and press
+**voice**.
+
+Every press **asks first**, and the question is the point of it: a row of nine identical
+chips says nothing about which one calls a model, which one is free, and which one
+replaces the lines you spent an hour typing. So the sheet names the stage, says in one
+line what it does, and lists what pressing it would spend and what it would write over —
+*throws away and rewrites every line, the ones you typed included: 6* — with the button
+painted red when that is what it means. The counts come off the job, so they are this
+video's and not a general warning.
+
+Work done by hand **counts as the stage that would have done it**. Type the script here
+and `script` is marked complete, because its output is on the job however it got there;
+the same for voicing, cutting and casting. That is not bookkeeping — it is what stops
+the **resume** button on the run's row from walking into the writer and throwing every
+typed line away, which is exactly what it did before the completed list was read off the
+job instead of merely carried. Which also means resume is useful here: hand-make the
+half you care about, and let the chain finish the rest.
+
+And what it shows underneath is the video's own two clocks, laid over each other.
+
+A picture track in this mode is deliberately **not** aligned to the narration: it is
+cut where the speaker breathes, and that asynchrony is most of what makes a folder of
+stills read as edited footage rather than as a slideshow. Reviewing that as forty rows
+of `4.1–8.3s · push_in · рынок` is reviewing a film by reading its edit decision list,
+and the two things you actually want to do to it cannot be typed into a row at all. So:
+
+- **A cut is a word.** Click the word a shot should start on, and it starts there — the
+  shot that was up ends at the same moment, because that is what a cut is. On a video
+  with no track at all, the first such click lays one down and cuts it: an empty track
+  is not an absence but one uncut shot per stretch, waiting to be cut, and the one
+  gesture the screen is built around must not require some other button first. The
+  other way in is **cut it on the speech**, which cuts the whole thing at once where the
+  speaker breathes and costs nothing; both are offered in the empty lane, which is where
+  somebody stands when they cannot work out how to make a shot. The **✕** on
+  a shot's left edge takes that cut back and the shot joins the one in front of it. What
+  is stored is the word and not the second (`FrameShot.anchor_word` has been there since
+  the track was written), so a cut placed by hand survives everything that moves the
+  clock afterwards: re-voice a line at half speed and every cut after it slides with the
+  words it was placed on, rather than landing half a second off the word you meant.
+- **The voice and the text are one track and two edits.** A line's **text** is what is
+  read — the burned-in captions are built from its word timings — and saving it re-lays
+  the new words over the span the old ones occupied, touching neither the audio nor the
+  clock. A line's **voice** is what is heard and is what the clock is made of, so
+  re-voicing it (at the run's speed, or at its own, on the slider beside the button)
+  changes its length and moves everything after it. You can also read the line yourself
+  and hand over the recording: the timings come back from the recognizer, the same road
+  `--tts-source manual` takes for a whole video. Lines are **added and dropped** here
+  too, which is not true of the drama and is worth saying why: there a beat *is* a clip,
+  so adding one means a shot to generate and a sync to redo for everything after it —
+  while here the picture track does not know the beats exist. It is cut on words and
+  runs past the narration on purpose, so a line put in costs exactly one thing: the shot
+  straddling the seam grows by its length, and you cut it if you would rather it did
+  not. Every other shot keeps its card, every cut keeps its word, and nothing already
+  voiced is voiced again. A new line arrives silent and takes up no time until you voice
+  it — and until then it is listed in the **no voice yet** strip under the track, because
+  a clock has nowhere to draw a line with no length: a dozen of them share one second and
+  collapse into a sliver nobody can hit. The text box keeps a draft that survives a
+  redraw, a caret, and selecting another line and coming back; **leaving the box saves
+  it**, and so does anything that moves the lines underneath it — pressing ＋, voicing,
+  running a stage — because a draft is held by line number, and losing what somebody
+  typed to an index shift is not a trade worth making. What is *not* offered here is
+  **reordering** — moving a beat is not the same edit
+  at all, because every card after it was chosen against what is said over it, and a
+  reordered script is a track to be cast from scratch rather than one to be nudged.
+- **Casting is looking at pictures.** Selecting a shot puts the world's whole base in
+  front of you as thumbnails, with the number of marked regions on each. Click one and
+  it goes on the shot and is **pinned** — a later pass of the matcher may plan around
+  your choice but never over it. Click the same one again to re-roll its crop move. Drag
+  a picture onto the shot and it becomes a new card in the world's base and is cast on
+  the spot, with the markup editor offered while you are still looking at it.
+- **What the camera does** is its own block, and it offers two ways to answer, picked
+  with one control and **simple by default**. *Simple* is four questions: the KIND —
+  hold, push in, drift, zoom in, zoom out, pan — the REGION it converges on out of the
+  ones marked on that card, and the two the planner used to roll off a die and keep to
+  itself, when the travel starts and how long it runs, read back as *still 1.4 · moving
+  1.8 · still 1.4s*. Six named presets cover most shots, which is why they stay the
+  default. *Keyframes* is for the rest: a list of moments, each of them WHEN, WHERE to
+  look and HOW CLOSE, and the camera runs straight from one to the next and holds
+  before the first and after the last. Naming a region on a key puts the window
+  **exactly where it was marked** — centre and frame both — and the closeness slider
+  then works around that; it used to take the centre and leave the frame at the whole
+  picture, and a window that big can only be centred, so the clamp pulled it straight
+  back to the middle. Aim at the desk, get the room. The same now holds for a preset
+  cast by hand: the quality floor that keeps the automatic matcher off deep crops of
+  small cards no longer applies to a shot somebody aimed themselves, because raising
+  its window to that floor does not merely soften the move, it re-centres it. Two of those is an ordinary travel — which is
+  exactly what a preset is, and why switching to keyframes seeds the list from the
+  preset you were looking at rather than starting blank. Three or more is the thing no
+  preset can say: hold on the room, come in on the desk, lead away to the door. Each
+  moment is also a **small flag on the track**, hanging under the ruler and pointing
+  down at the shot it belongs to — drag one along to move it, and pressing either the
+  flag or its row in the list lights both and puts the playhead on that instant, since
+  the two are one moment shown twice. The
+  preset survives underneath a key list untouched, so the choice is reversible in both
+  directions and neither costs what you had. Changing the timing does not re-roll the
+  rectangles, so the controls can be used together. A move the card cannot make — a pan
+  needs two regions marked — leaves the choice where it was rather than inventing one,
+  and says so; on a shot with no picture the block is dimmed and says why, since a move
+  is built out of a card's geometry. A card that is a CLIP gets the same controls and
+  the same move — it used to be refused one on the grounds that a clip has motion of
+  its own and two motions over one picture fight, a good default and a bad rule: half
+  the clips a world collects are locked-off shots of a room, and `hold` is right there
+  for the ones that are not. Clips also get a **poster**, a frame pulled out of them
+  and cached, so a card that is a video has a face in the strip instead of a blank tile
+  with a badge — picking a picture by its name is the one thing this mode says not to
+  do. **▶ play this shot** plays that one shot and stops at its far edge, which is the
+  only honest way to judge a move — a still frame cannot show one.
+- **Why a move used to go nowhere.** A crop window may not show fewer source pixels
+  than the output has, or the picture is being enlarged rather than framed — a fair
+  rule with no floor under it, so a card no wider than the video was forbidden to be
+  cropped *at all*, and then every push-in, zoom and pan `move_for` could build came
+  out with both ends equal and rendered as a frozen frame. Nothing said so anywhere.
+  The rule still governs wherever the card is big enough to be governed — a picture
+  bought at twice the video is still croppable to half, which is what buys the deep
+  move onto a marked region — and it now stops short of forbidding movement outright,
+  because a slightly soft move is a worse picture while a frozen one is a broken
+  feature. A card small enough for that to bite says **this card is small — cropping it
+  softens it a little** in the block, and a track whose moves were decided under the old
+  rule gets a **thaw the moves** button, shown only while there is something to thaw: it
+  rebuilds every move from the card, kind, region and timing already chosen, so a
+  healthy track is rebuilt identically and forty dead shots do not have to be re-cast
+  by hand.
+- **Preview, and the truth beside it.** The canvas plays the track off one audio file
+  built from every line end to end, so the clock does not drift between them: the card,
+  its fit, its crop move at that instant, the caption in sync, and a sketch of the
+  montage filters. The **filter sliders are right there** and the sketch follows them as
+  you drag. It is a sketch on purpose — grain, a tube's misregistered colour and a torn
+  scanline are ffmpeg's arithmetic and a canvas can only impersonate them — so **точный
+  кадр / the true frame** renders the frame under the playhead through the actual chain,
+  at full size, to lay over the sketch and flick between.
+- **Nothing here asks a model anything.** Every judgement on this screen is yours, made
+  by pointing at a word or a picture, and pressing **build it and go on** marks the
+  breakpoint done *without* re-running the stage — re-running it is precisely how an
+  hour of hand montage would be handed back to the matcher that was being overruled. It
+  refuses while anything would fail to render (a line with no voice, a shot with no
+  picture) and says how many of each, rather than letting ffmpeg say it twenty minutes
+  later without naming either.
+
+**I cut it myself** (`frame_by_hand`) is a switch, and it lives in the room, beside the
+stages — because it decides what one of them does. With it on, **picture track** never
+asks a model which card fits which stretch: it cuts the track out of the speech, leaves
+every shot empty, asks for nothing, and hands the casting to you. With it off the same
+button asks the matcher first and you argue with what it decided, which is the ordinary
+way to use the room. It is on the wizard's form too, where it also adds the `picture`
+breakpoint to an ordinary run — one that walked past it would carry an empty track into
+the footage stage — but a setting that changes what a button in here means belongs where
+the button is.
 
 ## Visuals profiles (`configs/visuals/`)
 
@@ -779,6 +955,7 @@ slopgen bot --detach                                  # Telegram: чат + ми�
 | `entities`  | *(дорама)* реестр визуала: всё, что повторяется в кадрах и не входит в каст — техника, локация, реквизит, безымянный завсегдатай, необычная массовка. По записи: имя, которым её называют промпты, заметка и английское описание, уходящее генератору. Правка одного описания меняет вид вещи сразу во всех кадрах |
 | `tts`       | каждый озвученный фрагмент с получившейся длительностью; правь строку и **🔊 переозвучивай** прямо тут (▶ послушать), хоть до посинения — переозвучивается только она. Над кнопками **ползунок скорости**: он один на весь экран и применяется к тому фрагменту, который ты им переозвучил. Эта строка дальше живёт со своей скоростью (карточка её показывает), остальное видео остаётся на скорости запуска |
 | `cut`       | *(дорама)* где кончается каждая серия. Сцены тут только для чтения, у каждой видно, сколько она реально идёт; двигаешь **маркеры частей** — это последний бесплатный момент для перекройки, дальше клипы генерируются (или просятся руками) уже под эти границы |
+| `picture`   | *(фандом, база кадров)* дорожку картинки — и открывается она не списком, а **монтажной**: см. [монтажная](#монтажная) |
 | `footage`   | промпт кадра (дорама) или поисковые запросы (инфа) по сценам; изменённым сценам видеоряд соберут заново |
 | `subtitles` | сгенерированные `.ass` как текст, правки пишутся прямо на диск                                         |
 | `assemble`  | готовые файлы — только просмотр, посмотри перед публикацией                                            |
@@ -1090,9 +1267,181 @@ cp deploy.env.example deploy.env        # SSH_HOST и SSH_USER, больше н�
 - **План и кнопка, которая переписывает по нему сценарий.** Фандомный ролик решается в шести полях до того, как написан первый бит, — про что он, какой формы, с чего открывается, шаги по порядку, поворот, чем останавливается, — и брейкпоинт `script` теперь открывается ими, над битами, которые из них вышли. Правишь любое поле и жмёшь **переписать по плану**: прогон остаётся припаркованным, биты пишутся заново по тому, что ты только что написал, а документ возвращается с новым сценарием под тем же планом. Это дешёвый круг. Дорогой — править шесть закадровых строк, приводя их к плану, который ты хотел бы иметь; в конце получается кусок, подогнанный под нужный вид, а не вышедший из плана, с которым ты согласен. Поле формы — выпадающий список твоего каталога форм, так что «здесь должен был быть выбор, а не механизм» — это одно поле и одна кнопка. Полностью очищенный план считается снятым; план, вписанный руками в прогон, у которого его не было, работает ровно так же.
 - **Два рассказчика**, выбираются на прогон (`--narrator` или шаг «Мир» в визарде), и оба — изнутри мира; разница в том, где именно они в нём стоят. **`resident`** там живёт: первое лицо, мир как быт, что он видел, что здесь знают все и чего здесь никто не может объяснить, чужие реплики — сырыми и без «сказал такой-то». Это голос драмы, наведённый на мир вместо сюжета. **`chronicler`** его изучает: архивариус, исследователь, помешанный, перечитавший слишком много книг учёта, — он говорит о записях своего мира так, как историк говорит о наших: сухо, конкретно, со ссылками, датами и теми местами, что не сходятся. «Я» он себе позволяет — но про собственные рассуждения, героем он не является. Обоим запрещено открываться определением и обращаться к аудитории, для которой мир в новинку: слушают такие же местные, и не хватает им не азов, а того, что ты нашёл в записях. То же и с первым битом: он начинается с конкретного момента, предмета или утверждения, уже посередине, и никогда с фразы, которую пишут только для того, кто здесь ни разу не был.
 - **Откуда берутся кадры** — один вопрос вместо цепочки. Четвёртый шаг визарда у драмы — это *оркестрация*: упорядоченный список генераторов, каждый со своей долей видео и своей политикой ротации ключей. Эта механика есть не просто так — полнометражная дорама выжирает бесплатные дневные лимиты где-то на середине и вынуждена прыгать по сервисам прямо на ходу, — а видео по фандому это одна вещь на несколько минут, которой не нужны ни сама механика, ни рамка, которую она накидывает на работу. Поэтому этот режим спрашивает единственное, что здесь действительно важно, — **откуда берутся кадры**: **🤖 ИИ-генерация** (рядом выбор генератора), **🙋 генерирую сам** или **🔍 ищу сам**. Одноэтапную цепочку, по которой пойдёт конвейер, режим собирает сам: дальше по конвейеру всё говорит цепочками, и это единственное место, где более простой вопрос надо перевести. Два «операторских» ответа останавливают прогон на этапе видеоряда и выдают список кадров (`slopgen gather`): промпты для вставки, если генерируешь, брифы плюс готовые запросы, если ищешь, — см. [материал от оператора](#материал-от-оператора-либо-генерируешь-сам-либо-ищешь-сам).
-- **Всё остальное — драмовское**, без изменений: каст со скомпилированными визуальными промптами и общим бюджетом внешности, реестр визуала (`entities`), фиксирующий всё повторяющееся, что не человек, вся битовая механика — проход-план, окна, подгонка голоса и картинки, `--clip-s`, решающий, сколько сюжета влезает в бит, — ИИ-генерация клипов и оба user-assisted пути (делать клипы руками или идти их искать), реклама, `--visual-notes`, `--visual-style`, `-F/--filter`, `--clean-subs` и все брейкпоинты, плюс один свой. Чего он **не** берёт — так это серий: сериал режут там, где больнее всего, а у рассказа о мире нет клиффхэнгера, на который можно повесить обрыв, поэтому здесь нет ни `--parts`, ни поля частей, ни этапа `cut`. И редактора оркестрации он не берёт — по причине прямо выше. И каст он берёт не по-драмовски — см. выше. Учти только, что генератор о твоём мире не слышал: в промпте кадра ни одно его слово не может остаться непереведённым, поэтому сценарист описывает, как вещь *выглядит*, обычным английским («не the winter carry, а figures in heavy coats carrying mail sacks single file along a snowbound mountain path»), а озвучка продолжает называть её местным словом. Цепочка этапов: `canon → script → entities → tts → footage → subtitles → assemble → metadata`, и `canon` — такой же брейкпоинт, как остальные: последний бесплатный момент починить мир, пока против него не написано ни строчки.
+- **Всё остальное — драмовское**, без изменений: каст со скомпилированными визуальными промптами и общим бюджетом внешности, реестр визуала (`entities`), фиксирующий всё повторяющееся, что не человек, вся битовая механика — проход-план, окна, подгонка голоса и картинки, `--clip-s`, решающий, сколько сюжета влезает в бит, — ИИ-генерация клипов и оба user-assisted пути (делать клипы руками или идти их искать), реклама, `--visual-notes`, `--visual-style`, `-F/--filter`, `--clean-subs` и все брейкпоинты, плюс один свой. Чего он **не** берёт — так это серий: сериал режут там, где больнее всего, а у рассказа о мире нет клиффхэнгера, на который можно повесить обрыв, поэтому здесь нет ни `--parts`, ни поля частей, ни этапа `cut`. И редактора оркестрации он не берёт — по причине прямо выше. И каст он берёт не по-драмовски — см. выше. Учти только, что генератор о твоём мире не слышал: в промпте кадра ни одно его слово не может остаться непереведённым, поэтому сценарист описывает, как вещь *выглядит*, обычным английским («не the winter carry, а figures in heavy coats carrying mail sacks single file along a snowbound mountain path»), а озвучка продолжает называть её местным словом. Цепочка этапов: `canon → script → entities → tts → picture → footage → subtitles → assemble → metadata` (`picture` планирует дорожку из базы кадров и пропускается прогоном, у которого кадры делает генератор), и `canon` — такой же брейкпоинт, как остальные: последний бесплатный момент починить мир, пока против него не написано ни строчки.
 
 Запуск из TUI (Генерация → Фандом) или headless: `slopgen fandom ru example --scenario "…" --narrator chronicler --duration-min 3 --tol 20 --parts 2 --orchestration my_chain`.
+
+## Монтажная
+
+Единственный экран в браузере, который не форма, — верстак для одного **фандомного**
+видео, чьи картинки берутся из базы кадров мира.
+
+**Как войти.** Заполни фандомную форму и нажми **🎬 собрать вручную** вместо ЗАПУСТИТЬ:
+прогон заводится — папка, чекпойнт, настройки, — и *ничего не запускается*. Монтажная
+открывается на пустом видео. Запустить цепочку и остановить её на брейкпоинте так не
+получится, поэтому это вторая кнопка, а не галочка: к моменту, когда появился бы экран,
+прогон уже решил бы ровно то, ради чего его открывают. Две другие двери — для прогона,
+который уже идёт: брейкпоинт `picture` и кнопка **🎬 монтажная** в строке любого
+запаркованного прогона с озвученными строками. **← назад** выходит; прогон лежит в
+списке обычным запаркованным прогоном, с той же кнопкой, и она возвращает ровно туда,
+где ты был. В вкладке ничего не держится: каждая правка лежит в чекпойнте ещё до того,
+как экран перерисовался, — закрыть браузер посреди монтажа не стоит ничего.
+
+**Конвейер вразбивку.** Сверху — каждая стадия цепочки кнопкой: канон мира, сценарий,
+реестр вещей, озвучка, дорожка картинки, видеоряд, субтитры, сборка, описание. Нажал —
+прогналась: тот же самый вызов, который сделал бы оркестратор, над той же работой и с
+той же записью в списке пройденного, — поэтому прогон, который вели руками, потом
+подхватывается цепочкой и проходит мимо уже сделанного. Стадия, которой нечего дать,
+не прячется, а гаснет: видеть, чего не хватает, полезнее. Отчитывается она туда же,
+куда отчитывается всякая стадия, — в лог и полосу самого прогона, потому что озвучить
+сорок строк это минута, в которую этому экрану сказать нечего. Порядок — твой: работа
+на самом деле идёт «написал — послушал — посмотрел — переписал вот эту строку —
+переозвучил её — нарезал — назначил — нарезал ещё», и ничто из этого не порядок списка.
+Жать **сценарий** никто не заставляет: набери строки сам и жми **озвучку**.
+
+Каждое нажатие **сначала спрашивает**, и вопрос тут и есть смысл: ряд из девяти
+одинаковых фишек ничего не говорит о том, какая из них зовёт нейронку, какая бесплатна,
+а какая заменит строки, которые ты набирал час. Поэтому в окне — имя стадии, одна строка
+о том, что она делает, и список того, что она потратит и что перепишет: *«ВЫБРОСИТ и
+напишет заново все строки, включая набранные руками: 6»*, — а кнопка красная там, где
+это именно так. Числа считаются по работе, так что они про это видео, а не
+предупреждение вообще.
+
+Сделанное руками **засчитывается за ту стадию, которая это делала бы**. Набрал сценарий
+здесь — `сценарий` помечается пройденным, потому что его результат лежит в работе, как
+бы он туда ни попал; то же с озвучкой, нарезкой и назначением. Это не бухгалтерия: ровно
+это не даёт кнопке **дальше** в строке прогона уйти в писателя и выбросить все набранные
+строки — что она и делала, пока список пройденного просто переносился, а не вычитывался
+из работы. И наоборот, `дальше` становится полезной: сделай руками ту половину, которая
+тебе важна, а остальное пусть дособерёт цепочка.
+
+А под всем этим — две собственные дорожки видео, наложенные друг на друга.
+
+Дорожка картинки в этом режиме **нарочно** не совпадает с речью: она режется там, где
+рассказчик переводит дух, и именно эта рассинхронность и делает из папки со
+стоп-кадрами смонтированный ролик, а не слайд-шоу. Разбирать её сорока строчками вида
+`4.1–8.3с · наезд · рынок` — это разбирать фильм по монтажному листу, а две вещи,
+которые с ней на самом деле хочется делать, в строчку вообще не вписываются. Поэтому:
+
+- **Стык — это слово.** Кликни слово, с которого должен начинаться кадр, — и он с него
+  начнётся, а тот, что шёл до, в этот же момент кончится: стык это и есть. На видео, где
+  дорожки ещё нет вовсе, первый такой клик её заодно и закладывает: пустая дорожка — это
+  не отсутствие, а один неразрезанный кадр на каждый кусок, ждущий, когда его разрежут,
+  и единственный жест, вокруг которого построен экран, не должен требовать сначала нажать
+  что-то ещё. Второй путь — **нарезать по речи**, разом и там, где рассказчик переводит
+  дух; обе кнопки лежат в пустой полосе кадров — там, где стоит человек, не понимающий,
+  как сделать кадр. **✕** на
+  левом краю кадра убирает стык, и кадр сливается с предыдущим. Хранится при этом
+  слово, а не секунда (`FrameShot.anchor_word` лежит там с тех пор, как дорожку
+  написали), поэтому поставленный руками стык переживает всё, что двигает часы:
+  переозвучь строку вдвое медленнее — и каждый стык после неё уедет вместе со словом, на
+  котором стоял, а не окажется за полсекунды от него.
+- **Звук и текст — одна дорожка и две правки.** **Текст** строки — это то, что читают:
+  вшитые субтитры собираются из её таймингов слов, и сохранение текста раскладывает
+  новые слова по тому же промежутку, не трогая ни звук, ни часы. **Голос** строки — это
+  то, что слышно, и именно из него сделаны часы, поэтому переозвучка (на скорости
+  прогона или на своей — ползунок рядом с кнопкой) меняет её длину и сдвигает всё, что
+  после. Можно и прочитать строку самому и принести запись: тайминги снимет
+  распознаватель — та же дорога, которой идёт `--tts-source manual` для целого видео.
+  Строки здесь ещё и **добавляют и выбрасывают** — в отличие от дорамы, и стоит сказать
+  почему. Там бит *и есть* клип: добавил — значит, появился кадр, который надо
+  сгенерировать, и пересинхронизировать всё, что после. Здесь дорожка картинки про биты
+  не знает вовсе: она режется по словам и нарочно едет мимо речи, — поэтому вставленная
+  строка стоит ровно одного: кадр, попавший на шов, вырастет на её длину, и его режут,
+  если так не надо. Все остальные кадры сохраняют карточку, все стыки — своё слово, и
+  ничто уже озвученное заново не озвучивается. Новая строка появляется немой и не
+  занимает времени, пока её не озвучишь, — и до тех пор лежит в полосе **без голоса**
+  под дорожкой, потому что часам такую строку рисовать негде: десяток их делит одну
+  секунду и схлопывается в огрызок, по которому не попасть. Текстовое поле держит
+  черновик, который переживает перерисовку, каретку и уход на другую строку и обратно;
+  **уход из поля его сохраняет**, и всё, что двигает строки под ним, — ＋, озвучка,
+  запуск стадии — тоже: черновик хранится по номеру строки, а терять из-за сдвига
+  номеров то, что человек набрал, — так себе размен. Чего здесь **нет** — это
+  **перестановки**:
+  двинуть бит — правка совсем другого рода, потому что каждая карточка после него
+  выбиралась под то, что над ней говорится, и переставленный сценарий — это дорожка,
+  которую набирают заново, а не подправляют.
+- **Выбор кадра — это разглядывание картинок.** Выбери кадр, и вся база мира ляжет
+  перед тобой миниатюрами, с числом размеченных областей на каждой. Клик — и карточка
+  встаёт на кадр и **прибивается**: следующий проход подборщика волен планировать вокруг
+  твоего выбора, но не поверх него. Клик по той же карточке перекатывает движение камеры
+  заново. Перетащи картинку на кадр — она станет новой карточкой мира и тут же встанет
+  на место, а разметку предложат нарисовать, пока ты на неё смотришь.
+- **Движение камеры** — отдельный блок, и отвечать на него можно двумя способами,
+  переключателем, **по умолчанию простым**. *Простое* — это четыре вопроса: РОД (держим,
+  лёгкий наезд, медленный проезд, наезд, отъезд, панорама), ОБЛАСТЬ, на которую
+  сходиться, из размеченных на карточке, и два, которые планировщик до сих пор кидал
+  жребием и никому не показывал: когда проезд трогается и сколько едет, в секундах от
+  начала кадра, с читалкой *«стоит 1.4 · едет 1.8 · стоит 1.4с»*. Шесть названных
+  пресетов закрывают большинство кадров — поэтому они и остаются умолчанием.
+  *По ключам* — для остального: список моментов, каждый из которых КОГДА, КУДА смотреть
+  и НАСКОЛЬКО близко; камера идёт от ключа к ключу по прямой, до первого и после
+  последнего стоит. Два ключа — это обычный проезд, то есть ровно то, чем пресет и
+  является: поэтому переход на ключи засевает список из того пресета, на который ты
+  смотрел, а не с чистого листа. Выбор области в ключе ставит окно **ровно туда, где
+  оно размечено**, — и центр, и рамку, — а ползунок близости работает уже вокруг
+  этого; раньше брался только центр, рамка оставалась во всю картинку, а окно такого
+  размера может стоять лишь по центру, и зажим утаскивал его обратно в середину.
+  Целишься в стол — получаешь комнату. То же теперь и для пресета, выставленного
+  руками: порог качества, который держит автоподборщик подальше от глубоких кропов
+  мелких карточек, к прицеленному руками кадру не применяется — поднять его окно до
+  порога значит не смягчить движение, а сбить прицел. Три и больше — то, чего пресетом не скажешь: подержать
+  на комнате, наехать на стол, увести к двери. Каждый момент ещё и **флажок на
+  дорожке**: висит под линейкой, остриём вниз, в свой кадр, — тащишь его вбок, чтобы
+  подвинуть, а нажатие на флажок или на строку списка подсвечивает оба и ставит
+  плейхед на это мгновение: это один момент, показанный дважды. Пресет при этом лежит под ключами
+  нетронутым, так что выбор обратим в обе стороны и ни одна ничего не стоит. Правка
+  тайминга не перекатывает рамки — обеими ручками можно пользоваться вместе. Движение,
+  которого карточка не умеет (панорама требует двух размеченных областей), оставит всё
+  как было, а не выдумает, и скажет об этом; на кадре без картинки блок пригашен и
+  объясняет почему — движение строится по геометрии карточки. Карточке-**клипу**
+  достаются те же ручки и то же движение: раньше ей отказывали на том основании, что у
+  неё своё движение и два движения поверх одной картинки дерутся, — хорошее умолчание и
+  плохое правило, потому что половина клипов, которые набирает мир, это статичные планы
+  комнаты, а для остальных есть «держим». У клипов теперь есть и **постер** — вынутый
+  из них кадр, с кешем, — чтобы карточка-видео показывалась в полосе лицом, а не пустой
+  плиткой со значком: выбирать картинку по имени этот режим как раз и не велит.
+  **▶ проиграть кадр** играет один этот кадр и останавливается на его дальнем краю: по
+  стоп-кадру движение не увидишь.
+- **Почему движение могло никуда не ехать.** Окно кропа не может показывать меньше
+  исходных пикселей, чем есть на выходе, иначе картинку не кадрируют, а растягивают, —
+  правило справедливое, но без дна: карточке не шире видео кроп запрещался **целиком**,
+  и тогда любой наезд, отъезд и панорама, какие `move_for` умеет построить, выходили с
+  одинаковыми концами и рисовались стоп-кадром. Нигде об этом не говорилось. Правило
+  по-прежнему работает там, где карточка достаточно крупная, — купленная вдвое больше
+  видео всё так же режется вдвое, и именно это покупает глубокий заход на размеченную
+  область, — но перестало запрещать движение вовсе: слегка мягкое движение это худшая
+  картинка, а замороженное — сломанная функция. Мелкая карточка пишет в блоке
+  **«карточка мелкая — кроп её слегка мылит»**, а у дорожки, чьи движения посчитаны по
+  старому правилу, появляется кнопка **«оживить движения»** — только пока есть что
+  оживлять: она пересобирает каждое движение из уже выбранных карточки, рода, области и
+  тайминга, так что здоровая дорожка пересобирается один в один, а сорок мёртвых кадров
+  не надо перещёлкивать руками.
+- **Предпросмотр и правда рядом с ним.** Канва играет дорожку от одного звукового файла,
+  собранного из всех строк подряд, — чтобы часы между ними не разъезжались: карточка, её
+  вписывание в кадр, движение кропа на этой секунде, субтитр в синхроне и набросок
+  монтажных фильтров. **Ползунки фильтров тут же**, и набросок едет за ними, пока тянешь.
+  Набросок — нарочно: зерно, разъехавшийся цвет трубки и порванную строку считает ffmpeg,
+  а канва умеет их только изображать. Поэтому **точный кадр** рендерит кадр под
+  плейхедом настоящей цепочкой, в полный размер, — положить поверх наброска и щёлкать
+  туда-сюда.
+- **Ничего здесь ни у какой нейронки не спрашивают.** Все решения на этом экране твои и
+  делаются тыканьем в слово или в картинку, а **собрать и продолжить** закрывает
+  брейкпоинт *без* перезапуска стадии — перезапуск ровно и означал бы отдать час ручного
+  монтажа обратно подборщику, которого этот час переспоривал. Кнопка отказывается, пока
+  что-то не соберётся (строка без голоса, кадр без картинки), и говорит, сколько того и
+  другого, — вместо того чтобы ffmpeg сказал это через двадцать минут, не назвав ни
+  того ни другого.
+
+**Монтирую сам** (`frame_by_hand`) — переключатель, и живёт он в самой монтажной, рядом
+со стадиями: он решает, что делает одна из них. Включён — **дорожка картинки** не
+спрашивает нейронку, какая карточка к какому куску подходит: режет дорожку по речи,
+оставляет кадры пустыми, ничего ни у кого не просит и отдаёт назначение тебе. Выключен —
+та же кнопка сперва спрашивает подборщика, и ты споришь с тем, что он решил; это обычный
+способ пользоваться монтажной. Галочка есть и на форме, где она вдобавок добавляет
+обычному прогону брейкпоинт `picture` (проскочивший его унёс бы пустую дорожку в стадию
+видеоряда), — но настройка, меняющая смысл здешней кнопки, должна лежать там же, где
+кнопка.
 
 ## Профили видеоряда (`configs/visuals/`)
 

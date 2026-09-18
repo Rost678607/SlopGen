@@ -247,6 +247,103 @@
   <div id="panel-body"></div>
 </div>
 
+<!-- The montage room: one video's timeline, cut and cast by hand.
+
+     Above `#panel` and below `#editor`, which is the order they are opened in — the
+     montage is reached from a run row, and the card markup editor is reached FROM the
+     montage, over it, the same way it is reached from the asks panel. -->
+<div id="mont" hidden>
+  <header>
+    <button id="mont-close" data-l="web.back">← назад</button>
+    <b id="mont-title"></b>
+    <span class="dim" id="mont-state"></span>
+    <span class="grow"></span>
+    <button id="mont-recut" class="ghost" data-l="web.mont.recut">нарезать заново</button>
+    <button id="mont-apply" class="primary" data-l="web.mont.apply">собрать и продолжить</button>
+  </header>
+
+  <!-- The pipeline, as a row of buttons. It reads left to right like the log under a
+       run does, but it is NOT an order to be walked: the work goes write, hear it,
+       look at it, re-write that line, voice it again, cut, cast, cut again — and every
+       one of those is a stage the chain already has, reached when the work asks for it.
+       A stage whose input is not there yet is disabled rather than hidden, because
+       what is missing is the useful thing to see. -->
+  <div class="mont-stages" id="mont-stages"></div>
+
+  <!-- Asking before doing. Not `confirm()`: a native dialog blocks the whole renderer
+       until somebody clicks it, which is wrong for a tool you leave running in a tab
+       and fatal for anything driving the page — the same reason `say()` is inline. -->
+  <div id="mont-ask" hidden>
+    <div class="sheet">
+      <h3 id="ask-title"></h3>
+      <div id="ask-body"></div>
+      <div class="row"><span class="grow"></span>
+        <button id="ask-no" class="ghost" data-l="web.mont.no">не надо</button>
+        <button id="ask-yes" class="primary"></button></div>
+    </div>
+  </div>
+
+  <div class="mont-body">
+    <!-- what it looks like: a canvas drawn from the cards and the crop moves, run off
+         one audio element holding the whole voice track. Approximate by construction —
+         the real look is ffmpeg's — which is what the frame button beside it is for. -->
+    <aside class="mont-view">
+      <div class="mont-screen">
+        <canvas id="mont-canvas" width="540" height="960"></canvas>
+        <img id="mont-true" hidden alt="">
+        <p id="mont-blank" class="dim" data-l="web.mont.blank">здесь пока нечего показать</p>
+      </div>
+      <div class="mont-transport">
+        <button id="mont-play" class="ghost">▶</button>
+        <span class="mono" id="mont-clock">0:00 / 0:00</span>
+        <span class="grow"></span>
+        <button id="mont-frame" class="ghost" data-l="web.mont.frame">точный кадр</button>
+      </div>
+      <audio id="mont-audio" preload="auto"></audio>
+
+      <div class="mont-fx">
+        <div class="row"><b data-l="web.card.fx">плёнка и помехи</b>
+          <span class="grow"></span>
+          <span class="dim" id="mont-fx-state"></span></div>
+        <p class="dim" data-l="web.mont.fx.note"></p>
+        <div class="fx-rows" id="mont-fx-rows"></div>
+      </div>
+    </aside>
+
+    <div class="mont-right">
+      <div class="mont-bar">
+        <label class="inline" data-l="web.mont.zoom">масштаб
+          <input type="range" id="mont-zoom" min="40" max="500" step="10" value="140"></label>
+        <span class="grow"></span>
+        <span class="dim" id="mont-hint" data-l="web.mont.hint"></span>
+      </div>
+      <div class="mont-time" id="mont-time">
+        <div class="mont-lanes" id="mont-lanes">
+          <div class="lane ruler" id="lane-ruler"></div>
+          <!-- The keyframes of every shot that has them, hanging under the ruler on
+               the same clock as everything else, each pointing down at the shot it
+               belongs to. Their own lane rather than markers inside a shot block:
+               the block is a thumbnail with a caption over it and a ✕ on its left
+               edge, and a handle you are meant to drag has no business fighting
+               three other things for the same pixels. -->
+          <div class="lane keys" id="lane-keys"></div>
+          <div class="lane shots" id="lane-shots"></div>
+          <div class="lane cues" id="lane-cues"></div>
+          <div class="lane lines" id="lane-lines"></div>
+          <div class="head" id="mont-head" hidden></div>
+        </div>
+      </div>
+      <!-- Lines with no voice yet, which is to say lines with no LENGTH yet. A clock
+           has nowhere to put those — a dozen of them all start at the same second and
+           stack into one sliver — so they get a place that is not the clock, and stay
+           reachable until they have a length of their own. It is also the answer to
+           "I pressed ＋ and nothing happened": the new line shows up here at once. -->
+      <div class="mont-silent" id="mont-silent"></div>
+      <div class="mont-insp" id="mont-insp"></div>
+    </div>
+  </div>
+</div>
+
 <!-- Telegram's own shim, and the only script here that comes from off this server.
      Outside Telegram it defines an object with an empty initData and the page
      carries on as an ordinary web page; inside, it is what hands us the signature
@@ -254,4 +351,5 @@
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <script src="/static/forms.js"></script>
 <script src="/static/app.js"></script>
+<script src="/static/montage.js"></script>
 </body>

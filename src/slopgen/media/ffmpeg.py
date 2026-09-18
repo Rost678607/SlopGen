@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -48,15 +49,52 @@ def duration_of(path: Path) -> float:
     return float(probe(path)["format"]["duration"])
 
 
+# How big a picture is, remembered against the FILE rather than the name.
+#
+# The question is asked per card and answered by a subprocess, which is fine once and
+# ruinous in a loop: the montage room asks it of every card in the world on every
+# reply it sends, and a base of thirty-three cards turned every button press into
+# three and a half seconds of `ffprobe`. Measured. The key is the same one
+# `manual.probe_asset` uses — path, size and nanosecond mtime — so a file rewritten
+# under the same name is probed again and nothing goes stale.
+_DIMS: dict[tuple, tuple[int, int]] = {}
+
+
 def video_dims(path: Path) -> tuple[int, int]:
+    path = Path(path)
+    key: tuple | None = None
+    try:
+        st = path.stat()
+        key = (str(path), st.st_mtime_ns, st.st_size)
+    except OSError:
+        key = None
+    if key is not None and key in _DIMS:
+        return _DIMS[key]
     for s in probe(path)["streams"]:
         if s.get("codec_type") == "video":
-            return int(s["width"]), int(s["height"])
+            dims = int(s["width"]), int(s["height"])
+            if key is not None:
+                _DIMS[key] = dims
+            return dims
     raise FFmpegError(f"no video stream in {path}")
 
 
 VENC = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20"]
 AENC = ["-c:a", "aac", "-ar", "44100", "-ac", "2"]
+
+# What an INTERMEDIATE piece is encoded with: the same, in one fixed pixel format.
+#
+# Not about quality — these files are decoded and re-encoded by the delivery pass
+# anyway — but about being JOINABLE without a reconfiguration. A still goes through
+# `zoompan` from a PNG, so nothing along the way names a pixel format and x264 is
+# handed the nearest match to the source: yuv444p, profile High 4:4:4 Predictive. A
+# clip comes off a real video and stays yuv420p. Two such files meeting in one concat
+# filter make it renegotiate its link mid-stream, which it does not do.
+#
+# It is necessary and it was not sufficient: the same seam also changed the CODED
+# size (1080 padded to 1088), which the format cannot fix and which is why the
+# background join no longer stream-copies at all (see :func:`concat`).
+PART_VENC = VENC + ["-pix_fmt", "yuv420p"]
 
 
 def fit_chain(w: int, h: int, fit: str = "crop", ax: float = 0.5, ay: float = 0.5) -> str:
@@ -101,21 +139,41 @@ def stretch_audio(src: Path, dst: Path, tempo: float) -> None:
 
 
 def make_video_part(clip: Path, dur: float, out: Path, cfg: GlobalConfig, start: float = 0.0,
-                    speed: float = 1.0) -> None:
+                    speed: float = 1.0, move: KenBurns | None = None,
+                    phase: float = 0.0) -> None:
     """Silent background piece: fit the clip to `dur`, crop to vertical.
 
     `start` seeks into the clip — continuous mode passes each scene's running offset
     so the action carries over instead of restarting. `speed` retimes the clip
     (>1 faster, <1 slower); the drama sync uses it to make a clip and its voiceover
     the same length instead of looping the clip back to its start half way through.
-    The stream still loops as a last resort, for whatever the retime could not cover."""
+    The stream still loops as a last resort, for whatever the retime could not cover.
+
+    `move` travels the crop window over the clip, exactly as it does over a still.
+    That used to be refused on the grounds that a clip already has motion of its own
+    and two motions over one picture fight — true as a default and wrong as a rule,
+    because a locked-off shot of a room is a still that happens to have dust in it,
+    and the operator who marked a region on it and asked for a push-in meant it. The
+    graph is `photo_filter`'s with one number changed: `d=1` passes each input frame
+    through once instead of holding one frame for the whole piece."""
     seek = ["-ss", f"{start:.3f}"] if start > 0 else []
-    vf = _vf_fit(cfg)
-    if abs(speed - 1.0) > 0.01:
-        vf = f"setpts={1 / speed:.4f}*PTS," + vf
+    retime = f"setpts={1 / speed:.4f}*PTS," if abs(speed - 1.0) > 0.01 else ""
+    if move is None:
+        _run([
+            "ffmpeg", "-y", "-stream_loop", "-1", "-i", str(clip), *seek,
+            "-vf", retime + _vf_fit(cfg), "-an", *PART_VENC, "-t", f"{dur:.3f}", str(out),
+        ])
+        return
+    v = cfg.video
+    z, x, y, frames = _ken_burns(move, dur, phase, cfg)
+    graph = (
+        f"[0:v]{retime}{fit_chain(v.width * 2, v.height * 2)},"
+        f"zoompan=z='{z}':x='{x}':y='{y}':d=1:s={v.width}x{v.height}:fps={v.fps},setsar=1[v]"
+    )
     _run([
         "ffmpeg", "-y", "-stream_loop", "-1", "-i", str(clip), *seek,
-        "-vf", vf, "-an", *VENC, "-t", f"{dur:.3f}", str(out),
+        "-filter_complex", graph, "-map", "[v]", "-an", *PART_VENC,
+        "-frames:v", str(frames), str(out),
     ])
 
 
@@ -150,19 +208,31 @@ def _ken_burns(move: KenBurns, dur: float, phase: float, cfg: GlobalConfig) -> t
     pinned at 0 before the travel and at 1 after it."""
     v = cfg.video
     frames = max(int(dur * v.fps), 1)
-    a, b = move.rect_a.clamped(), move.rect_b.clamped()
-    m0 = (move.move_start - phase) * v.fps
-    # A pure hold (move_end == move_start) would divide by zero; one frame is the
-    # shortest a travel can honestly be, and for a hold the two rects are equal
-    # anyway so what the ramp does in that frame changes nothing.
-    span = max((move.move_end - phase) * v.fps - m0, 1.0)
+    pts = [(at, r.clamped()) for at, r in move.points()]
+
+    # A piecewise-linear ramp is a SUM of clamped ones: start at the first value and
+    # add each leg's change, each gated by its own `clip(...,0,1)`. That is the same
+    # expression the two-key form always used, written once per leg — no nesting, no
+    # `enable=`, no second filter, and it degenerates exactly to the old string when
+    # there are two points. Before the first moment every clip is 0 and the window
+    # holds there; after the last they are all 1 and it holds at the end.
+    def ramp(get) -> str:
+        out = f"{get(pts[0][1]):.6f}"
+        for (t0, r0), (t1, r1) in zip(pts, pts[1:]):
+            m0 = (t0 - phase) * v.fps
+            # A leg of no length would divide by zero; one frame is the shortest a
+            # travel can honestly be, and across a leg whose ends are equal — a hold —
+            # what the ramp does in that frame changes nothing.
+            span = max((t1 - phase) * v.fps - m0, 1.0)
+            out += (f"{get(r1) - get(r0):+.6f}*clip((on{-m0:+.4f})/{span:.4f},0,1)")
+        return f"({out})"
+
     # The feasible set of `clamped` windows is convex, so a straight line between two
     # clamped rects never leaves the picture and no intermediate clamping is needed.
-    p = f"clip((on{-m0:+.4f})/{span:.4f},0,1)"
-    s = f"({a.scale:.6f}{b.scale - a.scale:+.6f}*{p})"
+    s = ramp(lambda r: r.scale)
     z = f"1/{s}"
-    x = f"({a.cx:.6f}{b.cx - a.cx:+.6f}*{p}-{s}/2)*iw+0.5"
-    y = f"({a.cy:.6f}{b.cy - a.cy:+.6f}*{p}-{s}/2)*ih+0.5"
+    x = f"({ramp(lambda r: r.cx)}-{s}/2)*iw+0.5"
+    y = f"({ramp(lambda r: r.cy)}-{s}/2)*ih+0.5"
     return z, x, y, frames
 
 
@@ -215,13 +285,117 @@ def make_photo_part(img: Path, dur: float, out: Path, cfg: GlobalConfig, motion:
     if move is None and ZOOM.get(motion, 0.09) == 0:
         _run([
             "ffmpeg", "-y", "-loop", "1", "-i", str(img),
-            "-vf", _vf_fit(cfg, fit, ax, ay), "-an", *VENC, "-t", f"{dur:.3f}", str(out),
+            "-vf", _vf_fit(cfg, fit, ax, ay), "-an", *PART_VENC, "-t", f"{dur:.3f}", str(out),
         ])
         return
     graph, frames = photo_filter(dur, cfg, motion, direction, move, phase, fit, ax, ay)
     _run([
         "ffmpeg", "-y", "-i", str(img), "-filter_complex", graph,
-        "-map", "[v]", "-an", *VENC, "-frames:v", str(frames), str(out),
+        "-map", "[v]", "-an", *PART_VENC, "-frames:v", str(frames), str(out),
+    ])
+
+
+def still_frame(src: Path, out: Path, cfg: GlobalConfig, *, seconds: float = 0.0,
+                shot_s: float = 0.0, move: KenBurns | None = None, phase: float = 0.0,
+                fit: str = "crop", ax: float = 0.5, ay: float = 0.5,
+                fx: dict[str, int] | None = None, photo: bool = True) -> None:
+    """One frame of the finished video, as the finished video would show it.
+
+    The montage screen previews the timeline in the browser, which is the right place
+    for it — a preview you have to wait for is not one — but a browser can only
+    approximate the look: `noise`, `curves`, a sliding band of light and torn scanlines
+    are ffmpeg's, and nothing in canvas is the same arithmetic. So the approximation
+    draws the montage and this draws the TRUTH, on demand, for the one frame the
+    playhead is on: the card, fitted and cropped exactly as `make_photo_part` would
+    crop it at that instant, through exactly the filter chain the delivery pass would
+    run over it.
+
+    `seconds` is measured into the SHOT, not into the card, which is what makes the
+    crop match: the move is laid against the shot's clock (see :class:`KenBurns`) and
+    `phase` offsets it the same way a piece straddling a scene boundary is offset.
+
+    What it cannot be honest about is WHEN. Half the effects here are written against
+    the frame counter — the projector flicker, the band sliding down the tube, the
+    moment the signal tears — and in the delivery pass that counter runs from the
+    first frame of the whole video, while here it runs from the first frame of this
+    shot. The look is exact; which instant of a moving effect you catch is not."""
+    v = cfg.video
+    if photo:
+        graph, frames = photo_filter(max(shot_s, 1.0 / v.fps), cfg, move=move,
+                                     phase=phase, fit=fit, ax=ax, ay=ay)
+        nodes = [graph]
+        n = min(max(int(seconds * v.fps), 0), frames - 1)
+        args = ["-i", str(src)]
+    else:
+        # a clip card brings its own motion and gets no crop move, so the frame is
+        # simply the one playing at that moment of it
+        nodes = [f"[0:v]{_vf_fit(cfg, fit, ax, ay)}[v]"]
+        n = 0
+        args = ["-ss", f"{max(seconds, 0.0):.3f}", "-i", str(src)]
+    nodes.extend(filter_graph(fx or {}, cfg, "[v]", "[vfx]"))
+    nodes.append(f"[vfx]select='eq(n\\,{n})'[out]")
+    _run([
+        "ffmpeg", "-y", *args, "-filter_complex", ";".join(nodes),
+        "-map", "[out]", "-fps_mode", "passthrough", "-frames:v", "1",
+        "-q:v", "3", str(out),
+    ])
+
+
+def voice_track(pieces: list[tuple[Path | None, float]], out: Path,
+                cfg: GlobalConfig) -> None:
+    """Every line's voice, end to end, as ONE file — the montage screen's clock.
+
+    The preview needs a clock more than it needs audio, and a clock made of forty
+    `<audio>` elements handed over one after another is not one: each swap costs a
+    gap nobody asked for, and the picture track then drifts against the seconds the
+    shots were cut on. One file has one `currentTime`, and every shot boundary in the
+    screen is an offset into it.
+
+    A line with no voice yet is silence of its own length rather than a line skipped,
+    so an unvoiced beat leaves a hole exactly where it will be — which is what the
+    operator is looking at when they decide whether to voice it."""
+    if not pieces:
+        raise FFmpegError("nothing to preview: this video has no lines")
+    args: list[str] = []
+    graph: list[str] = []
+    rate = 44100  # what AENC encodes at, so nothing is resampled twice
+    for i, (path, seconds) in enumerate(pieces):
+        seconds = max(seconds, 0.01)
+        if path is None:
+            args += ["-f", "lavfi", "-t", f"{seconds:.3f}",
+                     "-i", f"anullsrc=r={rate}:cl=stereo"]
+        else:
+            args += ["-i", str(path)]
+        # trimmed AND padded to the length the timeline believes: the shots were cut
+        # against these numbers, so a piece a hair longer than its scene would slide
+        # every cut after it out of place
+        graph.append(f"[{i}:a]aresample={rate},aformat=channel_layouts=stereo,"
+                     f"apad,atrim=0:{seconds:.3f},asetpts=N/SR/TB[a{i}]")
+    graph.append("".join(f"[a{i}]" for i in range(len(pieces)))
+                 + f"concat=n={len(pieces)}:v=0:a=1[out]")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    # `+faststart` is not a nicety here, it is the difference between a preview and a
+    # spinner: an MP4 written the ordinary way puts its index at the END of the file,
+    # and a browser's <audio> cannot report a duration — or seek, which is the whole
+    # point of a montage clock — until it has that index. The delivery pass sets it for
+    # the same reason (see `_delivery_cmd`).
+    _run(["ffmpeg", "-y", *args, "-filter_complex", ";".join(graph),
+          "-map", "[out]", *AENC, "-movflags", "+faststart", str(out)])
+
+
+def poster_frame(src: Path, out: Path, seconds: float = 0.0, width: int = 320) -> None:
+    """One frame of a clip, small, to stand for it wherever cards are shown as
+    pictures.
+
+    A card that is a video has no thumbnail at all otherwise: every strip in the
+    interface draws a card as a `background-image`, and a browser will not render an
+    mp4 into one — so a base with clips in it shows blank tiles with a `клип` badge
+    and the operator picks between them by name. Which is the one way this mode says
+    not to choose a picture."""
+    out.parent.mkdir(parents=True, exist_ok=True)
+    _run([
+        "ffmpeg", "-y", "-ss", f"{max(seconds, 0.0):.2f}", "-i", str(src),
+        "-frames:v", "1", "-vf", f"scale={width}:-2", "-q:v", "4", str(out),
     ])
 
 
@@ -273,21 +447,64 @@ def make_scene_segment(
         vtag = f"[v{i}]"
     cmd += [
         "-filter_complex", ";".join(filters),
-        "-map", vtag, "-map", "[aout]", *VENC, *AENC,
+        "-map", vtag, "-map", "[aout]", *PART_VENC, *AENC,
         "-t", f"{dur:.3f}", str(out),
     ]
     _run(cmd)
 
 
 def concat(segments: list[Path], out: Path) -> None:
-    """Stream-copy join of pre-built parts (concat demuxer). Used only for the
-    SILENT background pieces of one scene, where copy is exact and cheap. The
-    audio-bearing join of whole scenes is done in :func:`finalize` with the concat
-    filter instead — copy-concat of separate AAC pieces drifts (see there)."""
-    listfile = out.with_suffix(".txt")
-    listfile.write_text("".join(f"file '{p.resolve()}'\n" for p in segments))
-    _run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(listfile), "-c", "copy", str(out)])
-    listfile.unlink()
+    """Join the SILENT background pieces of one scene onto one continuous stream.
+
+    It used to stream-copy them, with the concat demuxer, on the grounds that copy is
+    exact and cheap. Copy is exact about the PICTURE and says nothing about the file
+    it writes: two pieces encoded from different sources meet in one stream whose
+    parameters change at the seam, and a still followed by a clip changed both the
+    pixel format and the coded size — 1080 padded up to 1088, which nothing about the
+    picture hints at and which ffprobe reports as the same 1080x1920 for both.
+
+    The file that comes out is fine by every measure anyone takes of it: right packet
+    count, right duration, decodes end to end. What cannot read it is a FILTER GRAPH,
+    which negotiates its links once. Two passes later the delivery concat hit the
+    reinitialisation, called the seam the end of its segment and dropped every frame
+    after it — `Segment finished at pts=0`, then a hundred and eight `dropping frame`
+    lines nobody was reading. The video came out six seconds short and nothing failed.
+
+    So the join decodes. Each piece is an input of its own, its parameters constant
+    for its whole length, and the concat filter is doing the thing it exists for
+    rather than being handed a file that changes under it. One piece is copied
+    outright — there is no seam to resolve — and the result is measured either way,
+    because the way this goes wrong is silence."""
+    want = sum(duration_of(p) for p in segments)
+    if len(segments) == 1:
+        shutil.copyfile(segments[0], out)
+        return
+    cmd: list[str] = ["ffmpeg", "-y"]
+    for piece in segments:
+        cmd += ["-i", str(piece)]
+    joined = "".join(f"[{i}:v]" for i in range(len(segments)))
+    _run(cmd + [
+        "-filter_complex", f"{joined}concat=n={len(segments)}:v=1:a=0,setsar=1[v]",
+        "-map", "[v]", "-an", *PART_VENC, str(out),
+    ])
+    check_length(out, want, f"joining {len(segments)} background pieces")
+
+
+# How much shorter than its inputs a join may honestly come out: a frame is lost to
+# rounding at each seam and nowhere else, so the allowance is counted in seams rather
+# than guessed at as a percentage.
+def check_length(out: Path, want: float, what: str, seams: int = 1, fps: float = 30.0) -> None:
+    """Refuse to hand back a file that lost time. Nothing here recovers — the point is
+    that it STOPS, with the numbers, instead of passing a short video down the line
+    where it will be published as if it were whole."""
+    got = duration_of(out)
+    slack = max(seams, 1) / max(fps, 1.0) + 0.05
+    if want - got > slack:
+        raise FFmpegError(
+            f"{what}: came out {got:.2f}s where {want:.2f}s went in — "
+            f"{want - got:.2f}s lost. This is a timestamp fault at a join, not a "
+            f"rounding one; the file would be silently short."
+        )
 
 
 @dataclass
@@ -609,8 +826,15 @@ def finalize(
     attempt = 0
     while True:
         ready, batch = _fold_segments(segments, tmp, f"{out.stem}_p{attempt}", batch, target, on_progress)
+        want = sum(duration_of(p) for p in ready)
         try:
             _run(_delivery_cmd(ready, out, cfg, ass, music, overlay, fonts_dir, fx))
+            # The delivery pass is the last place anything can go quietly missing, and
+            # the one place nobody looks: what comes out of it is the file that gets
+            # published. It answers for its own inputs — a scene that was already short
+            # when it arrived is the segment builder's fault and is caught there.
+            check_length(out, want, "the delivery pass",
+                         seams=len(ready), fps=cfg.video.fps)
             return
         except FFmpegError as e:
             if not e.signal or len(ready) <= CONCAT_MIN_INPUTS:

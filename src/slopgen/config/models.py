@@ -642,7 +642,25 @@ class Rect(BaseModel):
 # `drift` is the odd one out and earns its place on a base nobody has marked up yet:
 # a slow slide across the whole picture needs no crop targets, and without it a fresh
 # base can only alternate hold and push_in, which is a metronome of its own.
-MoveKind = Literal["hold", "push_in", "drift", "zoom_in", "zoom_out", "pan"]
+MoveKind = Literal["hold", "push_in", "drift", "zoom_in", "zoom_out", "pan", "keys"]
+
+
+class MoveKey(BaseModel):
+    """One moment of a crop move: where the window is, and when.
+
+    The presets above are each two of these — a window held, travelled from, held
+    again — and that is all a `KenBurns` ever was. Saying so outright is what lets a
+    shot carry three of them, or six: hold on the room, come in on the desk, pan to
+    the door, and the same arithmetic renders it, because a run of keys is a run of
+    the same ramp the two-key form already uses (see `media/ffmpeg._ken_burns`).
+
+    `of` is the card region this window was taken from, kept for the editor's eye the
+    way `CropTarget.label` is: nothing renders from it, and a key whose region was
+    later renamed still knows where it points, because the rect is the truth."""
+
+    at: float = 0.0  # seconds into the SHOT
+    rect: Rect = Rect()
+    of: str = ""  # the card region it was placed on, or "" for the whole picture
 
 
 class KenBurns(BaseModel):
@@ -667,6 +685,23 @@ class KenBurns(BaseModel):
     move_start: float = 0.0  # seconds into the SHOT where the travel begins
     move_end: float = 0.0  # …and ends; equal to move_start means a pure hold
     kind: MoveKind = "hold"  # anti-repetition key, and the label review shows
+    # More than two moments, when the operator has placed them by hand in the montage
+    # room. Empty is the ordinary case and means the pair above; two or more of these
+    # supersede it entirely (see :meth:`points`). It is additive on purpose — every
+    # move ever planned, and every one already sitting in a checkpoint, is the pair,
+    # and nothing has to be migrated for a shot that never grew a third moment.
+    keys: list[MoveKey] = []
+
+    def points(self) -> list[tuple[float, Rect]]:
+        """The move as the moments it actually passes through, in order.
+
+        One reading for both forms, so everything that renders or draws a crop move —
+        ffmpeg, the montage preview — walks a list and never asks which kind of move
+        it was given. Before the first moment the window holds at it, after the last
+        it holds at that; in between it travels straight from each to the next."""
+        if len(self.keys) >= 2:
+            return [(k.at, k.rect) for k in sorted(self.keys, key=lambda k: k.at)]
+        return [(self.move_start, self.rect_a), (self.move_end, self.rect_b)]
 
 
 # --- configs/fandoms/<name>/ ----------------------------------------------
@@ -1061,6 +1096,17 @@ class RunParams(BaseModel):
     # length, because length is not the thing being decided — where the speaker
     # breathes is (see framebase.cut_shots).
     cut_sensitivity: float = 0.35
+    # The operator cuts and casts the picture track themselves, in the montage screen.
+    # The matcher is never asked and nothing is asked FOR: the `picture` stage lays
+    # the cuts out of the speech, leaves every shot empty, and the run parks on its
+    # breakpoint with a track waiting to be filled in by hand (see pipeline/montage).
+    #
+    # It is a switch and not another `frame_fit` band, because it is not an answer to
+    # "how close is close enough" — that question stops being asked at all when nobody
+    # is matching. A run with this on still has the whole screen available to it; a run
+    # with it off can open the same screen at the same breakpoint and argue with what
+    # the matcher decided, which is the ordinary way to use it.
+    frame_by_hand: bool = False
 
     @field_validator("fandom_invent", mode="before")
     @classmethod

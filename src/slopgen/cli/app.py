@@ -622,7 +622,7 @@ def fandom(
     count: int = typer.Option(1, "--count", "-n", help="videos to generate"),
     out: Optional[Path] = typer.Option(None, "--out", help="output dir override"),
     subs: Optional[str] = typer.Option(None, "--subs", help="subtitle style: word_pop | phrases | karaoke"),
-    breaks: Optional[list[str]] = typer.Option(None, "--break", "-b", help="stop for review after this stage (repeatable): canon | script | entities | tts | footage | subtitles | assemble | metadata"),
+    breaks: Optional[list[str]] = typer.Option(None, "--break", "-b", help="stop for review after this stage (repeatable): canon | script | entities | tts | picture | footage | subtitles | assemble | metadata"),
     clean_subs: bool = typer.Option(False, "--clean-subs", help="swap profanity out of the burned-in subtitles; the voiceover keeps every word"),
     visual_notes: Optional[str] = typer.Option(None, "--visual-notes", help="constraints on what the shots may SHOW, never on the story: \"no logos\", \"no blood\""),
     visual_style: Optional[str] = typer.Option(None, "--visual-style", help="how the picture should LOOK, in your own words (\"anime\", \"grainy 16mm, sodium street light\"); compiled into tags glued onto every generated prompt"),

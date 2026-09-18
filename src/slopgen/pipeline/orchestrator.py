@@ -119,6 +119,31 @@ def stages_for(params) -> list[tuple[str, Callable]]:
 EventCallback = Callable[[int, str, str, str], None]
 
 
+def new_run_dir(params, output: Path) -> Path:
+    """A fresh folder for one run, and the checkpoint name that is about to go in it.
+
+    A function rather than a method because a run no longer has to be STARTED to exist.
+    The montage room makes one that nobody has run a stage of yet — a folder, a
+    checkpoint and an empty job — and drives the pipeline into it by hand afterwards
+    (see `web/runs.Supervisor.create`), and it must land in the same place, named the
+    same way, as one the orchestrator would have made."""
+    base = params.out or output
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    name = f"{stamp}_{params.content_type or params.mode}_{params.lang}"
+    run_dir = Path(base) / name
+    # A folder already holding a checkpoint belongs to another run, and the stamp is
+    # only a second wide: two runs started inside the same one would share a folder and
+    # the second would write its checkpoint over the first's. Rare by hand, ordinary in
+    # a loop, where an iteration that fails early is over in less than a second (see
+    # pipeline/loop.py).
+    n = 2
+    while (run_dir / CHECKPOINT_NAME).exists():
+        run_dir = Path(base) / f"{name}_{n}"
+        n += 1
+    run_dir.mkdir(parents=True, exist_ok=True)
+    return run_dir
+
+
 class Orchestrator:
     def __init__(self, ctx: AppContext, on_event: EventCallback | None = None,
                  should_stop: Callable[[], bool] | None = None):
@@ -134,22 +159,7 @@ class Orchestrator:
         self.run_dir: Path | None = None  # set once run() picks/receives it
 
     def _run_dir(self) -> Path:
-        p = self.ctx.params
-        base = p.out or self.ctx.g.paths.output
-        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        name = f"{stamp}_{p.content_type or p.mode}_{p.lang}"
-        run_dir = Path(base) / name
-        # A folder already holding a checkpoint belongs to another run, and the stamp
-        # is only a second wide: two runs started inside the same one would share a
-        # folder and the second would write its checkpoint over the first's. Rare by
-        # hand, ordinary in a loop, where an iteration that fails early is over in less
-        # than a second (see pipeline/loop.py).
-        n = 2
-        while (run_dir / CHECKPOINT_NAME).exists():
-            run_dir = Path(base) / f"{name}_{n}"
-            n += 1
-        run_dir.mkdir(parents=True, exist_ok=True)
-        return run_dir
+        return new_run_dir(self.ctx.params, self.ctx.g.paths.output)
 
     def _publish(self, i: int, job: VideoJob, cp: Checkpoint, done: list[str]) -> None:
         """Send out every episode that is cut and has not gone yet.
@@ -179,6 +189,11 @@ class Orchestrator:
 
     def run(self, resume_dir: Path | None = None) -> list[VideoJob]:
         p = self.ctx.params
+        # A missing API key is the operator's first mistake and belongs at the start of
+        # a run, not four stages into it. The router no longer asserts that for itself
+        # (see `llm.router.LLMRouter._default`) because half of what builds a context
+        # now never writes anything — so the chain, which certainly does, asks.
+        self.ctx.llm.check()
         stages = stages_for(p)
         if resume_dir is not None:
             run_dir = Path(resume_dir)
@@ -205,7 +220,7 @@ class Orchestrator:
             self.ctx.usage.reset()  # the bill is per video, not per batch
             jobs.append(job)
             done = cp.completed(i)  # ordered list of finished stages
-            breakpoints = review.wanted(p.breakpoints, p.mode) - set(cp.reviewed(i))
+            breakpoints = review.wanted(p) - set(cp.reviewed(i))
             current = ""
             parked = False
             try:

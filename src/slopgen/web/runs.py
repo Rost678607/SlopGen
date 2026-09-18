@@ -46,12 +46,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..config import ConfigStore, RunParams
-from ..pipeline import manual
+from ..pipeline import manual, montage
 from ..pipeline.checkpoint import Checkpoint, outcome
 from ..pipeline.context import AppContext
 from ..pipeline.loop import (LaunchResult, LoopFile, LoopRunner, QueueItem,
                              loop_dir_name)
-from ..pipeline.orchestrator import Orchestrator
+from ..pipeline.job import VideoJob
+from ..pipeline.orchestrator import Orchestrator, new_run_dir, stages_for
 
 log = logging.getLogger(__name__)
 
@@ -237,11 +238,19 @@ def parked(run: Run) -> dict:
     cached = getattr(run, "_parked", None)
     if cached and cached[0] == stamp:
         return cached[1]
-    info = {"review_stage": "", "asks": 0, "video": False}
+    info = {"review_stage": "", "asks": 0, "video": False, "montage": False}
     try:
         cp = Checkpoint.load(run.run_dir)
         for i in range(run.params.count):
             info["review_stage"] = info["review_stage"] or cp.review_stage(i)
+            # and whether there is a MONTAGE ROOM to go back into, which is not the
+            # same question as which breakpoint it is parked on: a fandom video whose
+            # picture comes out of the frame base belongs in that room from the moment
+            # it exists — a run made by hand is empty by definition, and asking whether
+            # anything was on its track yet is what left it with no way back in. A run
+            # still walking has none: the job it would show is being written underneath.
+            if not info["montage"] and cp.status(i) in ("review", "paused"):
+                info["montage"] = montage.available(run.params, cp.load_job(i))
     except Exception:
         pass
     for work in works:
@@ -284,6 +293,52 @@ class Supervisor:
         self._register(run)
         self._pool.submit(self._work, run, None)
         return run
+
+    def create(self, params: RunParams, title: str = "") -> Run:
+        """A run that exists and is not going anywhere.
+
+        Everything a started run has — a folder, a checkpoint, a job — and nothing
+        running over it. It is what the montage room is opened ON: there the operator
+        drives the pipeline a stage at a time, in whatever order the work actually
+        takes, and writes by hand the parts they would rather write themselves. A run
+        that had to be STARTED to exist could not be that: the chain would be several
+        stages deep and several minutes gone before the first screen appeared, and what
+        it had already decided is precisely what the operator came to decide.
+
+        It is parked, not idle, and the distinction is the checkpoint's: `paused` is the
+        state every other door already understands as "waiting for you", so this run is
+        resumable, reviewable, deletable and countable exactly like one that stopped
+        half way. The pipeline needs no new state to describe a run nobody has run."""
+        run_dir = new_run_dir(params, Path(self.store.global_cfg.paths.output))
+        stages = [n for n, _ in stages_for(params)] + ["publish"]
+        cp = Checkpoint.start(run_dir, params, stages)
+        job = VideoJob(index=0, workdir=run_dir / "00")
+        job.workdir.mkdir(parents=True, exist_ok=True)
+        cp.paused(job, [], "", "js.made-by-hand")
+        run = Run(id=uuid.uuid4().hex[:12], title=title or _title(params), params=params,
+                  status="paused", message="js.made-by-hand",
+                  run_dir=run_dir, resume_dir=run_dir,
+                  started_at=time.time(), finished_at=time.time())
+        with self._lock:
+            self.runs[run.id] = run
+        self._emit(run, -1, "run", "paused", "js.made-by-hand")
+        return run
+
+    # -- hand-driven work, reported on the run's own stream ------------------
+    #
+    # A stage the operator presses in the montage room is the same stage the chain
+    # would have run, so it says the same things in the same place: the run's log and
+    # the run's bar. Two thin doors rather than reaching into `_emit`/`_progress` from
+    # outside, because what they do to the Run object (naming the stage, clearing the
+    # tally) is the part a caller must not have to know about.
+
+    def announce(self, run: Run, video: int, stage: str, status: str,
+                 message: str = "") -> None:
+        self._emit(run, video, stage, status, message)
+
+    def progress_sink(self, run: Run):
+        """An `AppContext.on_progress` that feeds this run's bar."""
+        return lambda unit, done, total: self._progress(run, unit, done, total)
 
     def resume(self, run_dir: Path, title: str = "") -> Run:
         """Pick a parked run back up.

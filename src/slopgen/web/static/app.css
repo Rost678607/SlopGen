@@ -224,7 +224,7 @@ aside h3 small{color:var(--dim);font-weight:400}
    their own body, while the page they were opened FROM goes on scrolling behind them.
    The one on the right belonged to a list nobody could see, and reaching for the wrong
    one is the whole of what it cost. */
-body:has(#panel:not([hidden])),body:has(#editor:not([hidden])){overflow:hidden}
+body:has(#panel:not([hidden])),body:has(#editor:not([hidden])),body:has(#mont:not([hidden])){overflow:hidden}
 #panel header{display:flex;gap:10px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--line)}
 #panel-body{flex:1;overflow:auto;padding:14px;display:grid;gap:10px;align-content:start}
 /* The AI lines — one over a breakpoint's rows, one under the plot in each wizard.
@@ -688,3 +688,240 @@ input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;
    it looked like a second ago. */
 button.danger{border-color:var(--bad);color:var(--bad)}
 
+
+
+/* ------------------------------------------------------------------ the montage room
+ *
+ * One screen, two halves, and the split is not decoration: the left is what the video
+ * looks like, the right is what it is made of, and the whole point of the room is
+ * having both in front of you at once. Under `#editor` in the stack (the card markup
+ * editor is opened FROM here, over it) and beside `#panel`, which is never open with
+ * it.
+ *
+ * The timeline is one absolute-positioned coordinate system at a chosen number of
+ * pixels per second, shared by every lane, which is what makes a word and the shot cut
+ * on it line up: both are `left: seconds * pps`, computed in one place (montage.js `X`).
+ */
+#mont{position:fixed;inset:0;background:var(--bg);display:flex;flex-direction:column;z-index:11}
+#mont>header{position:relative}
+#mont header{display:flex;gap:10px;align-items:center;padding:10px 14px;
+  border-bottom:1px solid var(--line)}
+/* The pipeline across the top. Chips rather than a list, and the ones already run are
+   filled in: what a workbench has to answer at a glance is "what is done and what can
+   I press", and both are properties of the button itself. */
+.card .golf{display:flex;gap:8px;align-items:stretch}
+.card .golf button{flex:1}
+.mont-stages{display:flex;gap:6px;align-items:center;flex-wrap:wrap;
+  padding:8px 14px;border-bottom:1px solid var(--line);background:var(--panel)}
+.mont-stages .railhead{font-size:12px;color:var(--dim);font-weight:600;
+  letter-spacing:.02em;margin-right:2px}
+.mont-stages button{padding:4px 10px;font-size:12.5px}
+.mont-stages button.done{border-color:var(--ok);color:var(--ok)}
+.mont-stages button.done::before{content:"✔ ";opacity:.8}
+.mont-stages button:disabled{opacity:.35;cursor:default}
+.mont-stages.busy{opacity:.6}
+.mont-stages .warn-btn{border-color:var(--warn);color:var(--warn)}
+.mont-stages .byhand{display:flex;gap:6px;align-items:center;margin-left:6px;
+  font-size:12.5px;color:var(--dim);white-space:nowrap}
+/* the question, over the room it is about */
+#mont-ask{position:absolute;inset:0;z-index:6;display:grid;place-items:center;
+  background:#0008;backdrop-filter:blur(2px)}
+#mont-ask .sheet{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+  padding:16px;width:min(440px,92vw);display:grid;gap:10px;
+  box-shadow:0 12px 40px #000a}
+#mont-ask h3{margin:0;font-size:15px}
+#mont-ask .what{margin:0;font-size:13px;color:var(--dim)}
+#mont-ask ul{margin:0;padding-left:18px;font-size:13px;display:grid;gap:3px}
+#mont-ask li.warn{color:var(--warn)}
+#mont-ask li.cost{color:var(--accent)}
+/* `.primary` paints a background, so the border-only `button.danger` above is
+   invisible on it — the one button that throws work away has to read as the one
+   button that throws work away. */
+#mont-ask #ask-yes.danger{background:var(--bad);border-color:var(--bad);color:#fff}
+.mont-body{flex:1;display:flex;gap:12px;padding:12px;min-height:0}
+
+/* the left half: the picture, the transport, the look */
+.mont-view{width:min(320px,34vw);display:flex;flex-direction:column;gap:10px;
+  min-height:0;overflow:auto}
+.mont-screen{position:relative;aspect-ratio:9/16;background:#0d0b10;
+  border:1px solid var(--line);border-radius:8px;overflow:hidden;flex:0 0 auto}
+.mont-screen canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+/* the frame ffmpeg would actually make, laid over the sketch so the two can be told
+   apart by flicking between them; a click takes it away again */
+#mont-true{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;
+  cursor:zoom-out;background:#0d0b10}
+#mont-blank{position:absolute;inset:0;display:grid;place-items:center;margin:0;
+  text-align:center;padding:12px;font-size:13px}
+.mont-transport{display:flex;gap:8px;align-items:center}
+.mont-transport .mono{font:12.5px/1 var(--mono);color:var(--dim)}
+.mont-fx{background:var(--panel);border:1px solid var(--line);border-radius:8px;
+  padding:10px;display:grid;gap:6px}
+.mont-fx p{margin:0;font-size:12px}
+
+/* the right half: the clock and whatever is selected on it */
+.mont-right{flex:1;min-width:0;display:flex;flex-direction:column;gap:8px}
+.mont-bar{display:flex;gap:10px;align-items:center;font-size:12.5px;color:var(--dim)}
+.mont-bar input[type=range]{width:160px}
+.mont-time{overflow-x:auto;overflow-y:hidden;background:var(--panel);
+  border:1px solid var(--line);border-radius:8px;padding-bottom:4px}
+.mont-lanes{position:relative;min-width:100%}
+.mont-lanes .lane{position:relative;height:var(--h,28px)}
+
+/* the ruler */
+.lane.ruler{--h:20px;border-bottom:1px solid var(--line)}
+.lane.ruler i{position:absolute;top:0;bottom:0;width:1px;background:var(--line)}
+.lane.ruler i b{position:absolute;left:3px;top:2px;font:10px/1 var(--mono);
+  color:var(--dim);font-weight:400}
+
+/* the shots. A block is the picture it shows, dimmed under a caption, because that is
+   how a track is read at a glance — by the pictures, not by the names of them. */
+.lane.shots{--h:74px;margin:6px 0 2px}
+/* the shots lane with no shots in it: the one place somebody looks when they cannot
+   work out how to make one */
+.notrack{position:absolute;inset:0;display:flex;gap:10px;align-items:center;
+  justify-content:center;border:1px dashed var(--line);border-radius:6px;
+  font-size:12.5px;color:var(--dim);padding:0 12px;text-align:center}
+.notrack button{white-space:nowrap}
+.shot{position:absolute;top:0;height:70px;border:1px solid var(--line);border-radius:6px;
+  overflow:hidden;cursor:pointer;background:#0d0b10}
+.shot .pic{position:absolute;inset:0;background:center/cover no-repeat;opacity:.55}
+.shot .tag{position:absolute;left:0;right:0;bottom:0;padding:2px 5px;font-size:11px;
+  background:#0009;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.shot .kind{position:absolute;left:4px;top:3px;font:10px/1.4 var(--mono);color:#fffc;
+  background:#0007;padding:1px 4px;border-radius:3px}
+.shot .pin{position:absolute;right:4px;top:3px;font-size:10px;color:var(--ok)}
+/* the cut in FRONT of this shot, taken back. It sits on the left edge because that is
+   where the cut is — pressing the thing you want gone. */
+.shot .uncut{position:absolute;left:0;top:0;bottom:0;width:16px;padding:0;font-size:10px;
+  border:0;border-radius:0;background:#0008;color:var(--dim);opacity:0;cursor:pointer}
+.shot:hover .uncut{opacity:1}
+.shot .uncut:hover{background:var(--bad);color:#fff}
+.shot.sel{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.shot.empty{border-style:dashed}
+.shot.empty .tag{color:var(--warn)}
+
+/* The keyframes, on the same clock as everything else — a small flag hanging from
+   the top of the track, pointing down at the shot it belongs to. A flag and not a
+   block because a key is a MOMENT and not a span: anything with width reads as a
+   stretch of time, which is the one thing a key is not. The point is what marks the
+   second, so the shape is centred on its tip and not on its body. */
+.lane.keys{--h:18px}
+.kf{position:absolute;top:1px;width:11px;height:15px;margin-left:-5.5px;
+  background:var(--dim);cursor:ew-resize;touch-action:none;z-index:2;
+  clip-path:polygon(0 0, 100% 0, 100% 62%, 50% 100%, 0 62%)}
+/* the keys of the shot being edited come forward; the rest stay legible and quiet */
+.kf.mine{background:var(--accent)}
+/* `clip-path` cuts a box shadow off with everything else outside the shape, so the
+   lit state is said with the fill and a hairline of its own drawn inside it. */
+.kf.on{background:var(--warn)}
+.kf.on::after{content:"";position:absolute;inset:2px 2px 5px;background:var(--bg);
+  opacity:.35}
+.kf.dragging{cursor:grabbing;background:var(--warn);filter:brightness(1.25)}
+/* the hit area is bigger than the diamond: 12px of rotated square is a target a
+   fingertip misses, and the shape is what it looks like, not what it catches */
+.kf::before{content:"";position:absolute;inset:-8px}
+
+/* every word start, exact, under the shots — this is the ruler the cuts really run on */
+.lane.cues{--h:10px;cursor:pointer}
+.cue{position:absolute;top:0;height:7px;width:1px;background:var(--dim);opacity:.5}
+
+/* the lines: one block per beat, the words laid in it at the second they are said */
+.lane.lines{--h:56px}
+.line{position:absolute;top:0;height:52px;border:1px solid var(--line);border-radius:6px;
+  background:var(--bg);overflow:hidden;cursor:pointer}
+.line .lhead{font:10px/1.6 var(--mono);color:var(--dim);padding:0 5px;
+  border-bottom:1px solid var(--line);white-space:nowrap}
+.line .words{position:relative;height:30px}
+.line.sel{border-color:var(--accent)}
+.line.silent{border-style:dashed;border-color:var(--warn);z-index:2;
+  background:color-mix(in srgb, var(--warn) 8%, var(--bg))}
+.line.ad{opacity:.6}
+.wd{position:absolute;top:5px;font-size:12px;white-space:nowrap;padding:1px 3px;
+  border-radius:3px;cursor:pointer;background:var(--panel)}
+.wd:hover{background:var(--accent);color:#20101c}
+
+/* where we are, over everything */
+.mont-lanes .head{position:absolute;top:0;bottom:0;width:2px;background:var(--accent);
+  pointer-events:none;z-index:3}
+
+/* lines that have no length yet, listed where a clock cannot list them */
+.mont-silent{display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:12px;
+  color:var(--dim)}
+.mont-silent b{font-weight:600}
+.mont-silent button{padding:3px 8px;font-size:12px;border-style:dashed;
+  border-color:var(--warn);color:var(--warn);max-width:220px;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.mont-silent button.on{background:var(--warn);color:#20101c;border-style:solid}
+.mont-silent #mont-addline{border-style:solid;border-color:var(--line);color:var(--ink)}
+
+/* a text box with something in it nobody has written back yet */
+#i-settext.unsaved{border-color:var(--warn);color:var(--warn)}
+
+/* the inspector: the one thing selected, and everything that can be done to it */
+.mont-insp{flex:1;min-height:140px;overflow:auto;background:var(--panel);
+  border:1px solid var(--line);border-radius:8px;padding:10px;display:grid;gap:8px;
+  align-content:start}
+.mont-insp .insp-head{display:flex;gap:8px;align-items:center}
+.mont-insp label{display:grid;gap:4px;font-size:12.5px;color:var(--dim)}
+.mont-insp label.inline{display:flex;gap:8px;align-items:center;width:auto}
+.mont-insp label.inline select,.mont-insp label.inline input{width:auto}
+.mont-insp .said{margin:0;font-size:13px}
+/* the shot's own blocks: the camera, and the picture. Named, because an unlabelled row
+   of six buttons is six buttons and not a control panel. */
+.mont-insp .insp-h{margin:2px 0 0;font-size:13px;display:flex;gap:8px;align-items:center}
+.mont-insp .insp-h button{padding:5px 12px;font-size:12px;min-height:30px}
+.mont-insp .block{border:1px solid var(--line);border-radius:8px;padding:8px 10px;
+  display:grid;gap:8px;background:color-mix(in srgb, var(--bg) 55%, var(--panel))}
+.mont-insp .block.dim-block{opacity:.75}
+.mont-insp .block p.dim{margin:0;font-size:12px}
+.mont-insp .timing{display:grid;grid-template-columns:1fr 1fr;gap:6px 14px;align-items:end}
+.mont-insp .timing label{display:grid;gap:3px;font-size:12px}
+.mont-insp .timing .dose{color:var(--ink);font:12px/1 var(--mono)}
+.mont-insp .timing p{grid-column:1/-1;margin:0;font:11.5px/1.4 var(--mono)}
+/* hand-placed moments: when · where · how close, one row each */
+.mont-insp .keys{display:grid;gap:5px}
+.mont-insp .key{display:grid;grid-template-columns:76px minmax(90px,1fr) 1fr 46px 30px;
+  gap:6px;align-items:center;border-radius:6px;padding:2px 4px;margin:0 -4px}
+/* the row of the moment being pointed at, lit to match its marker on the track */
+.mont-insp .key.on{background:color-mix(in srgb, var(--warn) 14%, transparent);
+  box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--warn) 45%, transparent)}
+.mont-insp .key input,.mont-insp .key select{width:100%}
+.mont-insp .key .dose{font:11.5px/1 var(--mono);color:var(--dim);text-align:right}
+.mont-insp .key .k-drop{padding:4px 8px;font-size:12px;min-height:28px}
+.mont-insp .keys p{margin:2px 0 0;font-size:11.5px}
+.mont-insp .keysbar{align-items:center}
+.mont-insp #i-moves button{min-height:30px;padding:5px 12px}
+/* The two ways to animate a shot, as one pick.
+   Sized like something meant to be hit: the first version was 2px of padding inside a
+   flex heading, which comes to an 18px-tall target that a pointer slides off and a
+   finger misses outright. A segmented control is still a pair of buttons and has to
+   be pressable like one. */
+.mont-insp .modes{display:inline-flex;gap:0;border:1px solid var(--line);border-radius:6px;
+  overflow:hidden;flex:0 0 auto}
+.mont-insp .modes button{border:0;border-radius:0;margin:0;padding:6px 14px;
+  font-size:12.5px;line-height:1.2;min-height:30px;background:none;white-space:nowrap}
+.mont-insp .modes button:hover{background:color-mix(in srgb, var(--accent) 16%, transparent)}
+.mont-insp .modes button.on{background:var(--accent);color:#20101c;font-weight:600}
+/* the heading holds a control now, so it has to leave room for one */
+.mont-insp .insp-h{min-height:32px;flex-wrap:wrap}
+.mont-insp p.warn-note{margin:0}
+.mont-insp .warn-note{font-size:11.5px;color:var(--warn)}
+.mont-insp .strip{display:grid;gap:8px;
+  grid-template-columns:repeat(auto-fill,minmax(88px,1fr));max-height:280px;overflow:auto}
+.mont-insp .frame-card.on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.mont-insp .take{display:block;border:1px dashed var(--line);border-radius:8px;
+  padding:10px;text-align:center;color:var(--dim);cursor:pointer;font-size:12.5px}
+.mont-insp .take.over{border-color:var(--accent);color:var(--ink)}
+
+/* Narrow: the picture stops being a column and becomes a strip above the clock. The
+   timeline is the one thing that must keep its width, so it is the one that gets it. */
+@media (max-width:900px){
+  .mont-body{flex-direction:column;padding:8px;gap:8px}
+  .mont-view{width:auto;flex:0 0 auto;flex-direction:row;align-items:flex-start;
+    overflow:visible}
+  .mont-screen{width:min(150px,34vw);flex:0 0 auto}
+  .mont-fx{flex:1;min-width:0}
+  .mont-transport{flex-direction:column;align-items:stretch}
+  #mont header{padding:8px 10px;flex-wrap:wrap}
+  #mont header b{flex:1 1 100%;order:3;font-size:13px}
+}
