@@ -2663,3 +2663,29 @@ EN.update({
     "web.f.byhand": "I cut it myself",
     "web.byhand.note": "the model is never asked about pictures at all: the run cuts the track out of the speech and stops in the montage room, where you place the cuts and the cards. Without it the montage room still opens — over what the matcher decided.",
 })
+
+# The settings sheet in the montage room. The controls themselves are labelled with
+# the keys the start form already uses — they are the same settings, and a room that
+# called the speech rate something else would be a second name for one thing — so what
+# is new here is only the sheet: what it is, who it belongs to, and the one group the
+# form has no card for.
+RU.update({
+    "web.mont.settings": "настройки",
+    "web.mont.settings.head": "настройки прогона",
+    "web.mont.settings.note": "это настройки всего прогона, а не одного этого видео, и действуют они вперёд: стадия возьмёт их, когда ты её нажмёшь, а уже сделанное останется как сделано. Переозвучить строку в новом голосе — значит переозвучить её.",
+    "web.mont.settings.done": "готово",
+    "web.mont.settings.out": "что на выходе",
+    "web.f.ttsmanual": "начитаю сам",
+    "web.ttsmanual.note": "«озвучка» тогда ничего не синтезирует: выписывает текст и ждёт wav-файлы — как ручной видеоряд ждёт клипы. Тайминги слов снимет распознаватель: микрофон их не сообщает. Отдельную строку можно начитать и не включая это — в блоке строки.",
+    "js.mont.set-saved": "сохранено",
+})
+EN.update({
+    "web.mont.settings": "settings",
+    "web.mont.settings.head": "the run's settings",
+    "web.mont.settings.note": "these belong to the whole run rather than to this one video, and they work forward: a stage takes them when you press it, and what is already made stays as it was made. Saying a line again in a new voice means saying it again.",
+    "web.mont.settings.done": "done",
+    "web.mont.settings.out": "what comes out",
+    "web.f.ttsmanual": "I read the lines myself",
+    "web.ttsmanual.note": "`voice` then synthesizes nothing: it writes the script out and waits for wav files, the way hand-made footage waits for clips. The word timings come from the recognizer, since a microphone reports none. One line can be read aloud without this — the line's own block has the button.",
+    "js.mont.set-saved": "saved",
+})

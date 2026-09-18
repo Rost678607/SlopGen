@@ -70,6 +70,10 @@ async function openMontage(id, title, video = 0) {
   buildFxRows();
   fitZoom();
   renderMont();
+  // it is reopened on the way back from the card editor, and the sheet may have been
+  // standing open when we left: its controls are the document's, so they are redrawn
+  // with it rather than left holding the run as it was ten minutes ago
+  if (!mq("#mont-set").hidden) renderSettings();
   mq("#mont").hidden = false;
   drawFrame();
 }
@@ -1434,16 +1438,144 @@ async function saveFilters() {
   } catch (e) { state.textContent = ""; say(e.message, true); }
 }
 
+// ------------------------------------------------------- the run's settings
+//
+// Every stage of the chain is a button on the rail at the top of this room, and a
+// stage reads the RUN's settings. So the voice `озвучка` will use, the style
+// `субтитры` will write and the switch `описание` asks about all have to be reachable
+// from in here: a run built by hand otherwise keeps half its settings on a form it
+// left long ago, and changing one of them means building the run again.
+//
+// A sheet rather than another block in the left column, because these are read once
+// and set once while that column is for the things you keep touching — the look, and
+// the frame it draws. Each control commits on its own, the way everything in this room
+// does; «готово» only closes the sheet.
+//
+// What is NOT here is as deliberate: the writer's settings (the brief, the world, how
+// far it may invent, how much swearing) are not shown, because `сценарий` throws away
+// every line when pressed and a room whose whole point is hand-made lines is the wrong
+// place to make that inviting.
+const SETTINGS = [
+  {
+    title: "web.card.voice",
+    rows: [
+      { f: "tts_engine", kind: "select", opts: "tts_engines", l: "web.f.engine" },
+      { f: "voice_override", kind: "select", opts: "cloned_voices", l: "web.f.clone" },
+      { f: "tts_rate", kind: "range", min: -50, max: 50, step: 5, l: "web.f.rate" },
+      { f: "tts_source", kind: "flag", on: "manual", off: "engine",
+        l: "web.f.ttsmanual", note: "web.ttsmanual.note" },
+    ],
+  },
+  {
+    title: "web.card.subs",
+    rows: [
+      { f: "subtitle_style", kind: "select", opts: "subtitle_styles", l: "web.f.style" },
+      { f: "clean_subtitles", kind: "check", l: "web.f.clean" },
+    ],
+  },
+  {
+    title: "web.mont.settings.out",
+    rows: [
+      { f: "write_metadata", kind: "check", l: "web.f.meta", note: "web.f.meta.note" },
+      { f: "push", kind: "select", opts: "accounts", l: "web.f.publish" },
+      { f: "dry_run", kind: "check", l: "web.f.dry" },
+      { f: "keep_temp", kind: "check", l: "web.f.keeptmp" },
+    ],
+  },
+];
+
+function settingRow(row, cur) {
+  const v = cur[row.f];
+  const l = esc(lab(row.l));
+  const note = row.note ? `<p class="dim">${esc(lab(row.note))}</p>` : "";
+  if (row.kind === "select") {
+    const list = ((opts && opts[row.opts]) || [])
+      .map((x) => (x && x.v !== undefined ? x.v : x));
+    // A value the list does not offer is still the run's answer — a catalogue voice
+    // named on the command line, an account since renamed — and a select that quietly
+    // dropped it would rewrite that setting the moment anything else here was saved.
+    const all = v && !list.includes(v) ? list.concat([v]) : list;
+    const options = [""].concat(all).map((x) =>
+      `<option value="${esc(x)}"${x === (v || "") ? " selected" : ""}>${
+        esc(x ? word(x) : lab("w.none", "— нет —"))}</option>`).join("");
+    return `<label class="setrow"><span>${l}</span>
+      <select data-set="${esc(row.f)}">${options}</select></label>${note}`;
+  }
+  if (row.kind === "range") {
+    const n = v || 0;
+    return `<div class="slider">
+      <div class="top"><span>${l}</span><span class="grow"></span>
+        <span class="dose">${esc(String(n))}</span></div>
+      <input type="range" data-set="${esc(row.f)}" min="${row.min}" max="${row.max}"
+             step="${row.step}" value="${esc(String(n))}"></div>${note}`;
+  }
+  // a checkbox, either over a bool or over a pair of words (`tts_source`)
+  const on = row.on ? v === row.on : !!v;
+  const pair = row.on ? ` data-on="${esc(row.on)}" data-off="${esc(row.off)}"` : "";
+  return `<label class="inline"><input type="checkbox" data-set="${esc(row.f)}"${pair}${
+    on ? " checked" : ""}><span>${l}</span></label>${note}`;
+}
+
+function renderSettings() {
+  const cur = MONT.doc.settings || {};
+  const box = mq("#set-rows");
+  box.innerHTML = SETTINGS.map((g) =>
+    `<section><b>${esc(lab(g.title))}</b>${
+      g.rows.map((r) => settingRow(r, cur)).join("")}</section>`).join("");
+  box.querySelectorAll("[data-set]").forEach((el) => {
+    const f = el.dataset.set;
+    if (el.type === "range") {
+      // the number follows the finger; the run is told once it is let go, because
+      // every step of a drag would be a whole checkpoint written
+      const dose = el.previousElementSibling.querySelector(".dose");
+      el.oninput = () => { dose.textContent = el.value; };
+      el.onchange = () => setOne(f, +el.value);
+    } else if (el.type === "checkbox") {
+      el.onchange = () => setOne(f, el.dataset.on
+        ? (el.checked ? el.dataset.on : el.dataset.off) : el.checked);
+    } else {
+      el.onchange = () => setOne(f, el.value);
+    }
+  });
+}
+
+// One control, one request — and the whole document back, because a setting is the
+// run's and the room draws the run. A refused value (an engine that is not installed,
+// an account that is gone) leaves the document alone, and the redraw below puts the
+// control back to what the run actually says rather than leaving a lie on the screen.
+async function setOne(field, value) {
+  const state = mq("#set-state");
+  state.textContent = lab("js.saving");
+  const d = await send("/settings", { method: "PUT", body: J({ [field]: value }) });
+  state.textContent = d ? lab("js.mont.set-saved") : "";
+  renderSettings();
+}
+
+function openSettings() {
+  mq("#set-state").textContent = "";
+  renderSettings();
+  mq("#mont-set").hidden = false;
+}
+
 // ---------------------------------------------------------------- leaving
 
 function bindMontage() {
   bindTransport();
-  // a question standing open takes Escape first; it is put up over this screen
+  // whatever is standing open over the room takes Escape first, and only an empty
+  // room hands it to the door
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && !mq("#mont").hidden && mq("#mont-ask").hidden)
-      mq("#mont-close").click();
+    if (e.key !== "Escape" || mq("#mont").hidden) return;
+    if (!mq("#mont-set").hidden) mq("#set-close").click();
+    else if (mq("#mont-ask").hidden) mq("#mont-close").click();
   });
+  mq("#mont-settings").onclick = openSettings;
+  mq("#set-close").onclick = () => { mq("#mont-set").hidden = true; };
+  // the backdrop, but not the sheet standing on it
+  mq("#mont-set").onclick = (e) => {
+    if (e.target === mq("#mont-set")) mq("#mont-set").hidden = true;
+  };
   mq("#mont-close").onclick = () => {
+    mq("#mont-set").hidden = true;
     mq("#mont-audio").pause();
     cancelAnimationFrame(montRaf);
     mq("#mont").hidden = true;

@@ -258,6 +258,7 @@
     <b id="mont-title"></b>
     <span class="dim" id="mont-state"></span>
     <span class="grow"></span>
+    <button id="mont-settings" class="ghost" data-l="web.mont.settings">настройки</button>
     <button id="mont-recut" class="ghost" data-l="web.mont.recut">нарезать заново</button>
     <button id="mont-apply" class="primary" data-l="web.mont.apply">собрать и продолжить</button>
   </header>
@@ -280,6 +281,27 @@
       <div class="row"><span class="grow"></span>
         <button id="ask-no" class="ghost" data-l="web.mont.no">не надо</button>
         <button id="ask-yes" class="primary"></button></div>
+    </div>
+  </div>
+
+  <!-- The run's own settings, as far as this room may change them. Every stage of
+       the chain is a button on the rail above and every stage reads these, so a room
+       that can press `tts` without being able to choose the voice — or press
+       `metadata` while the switch that decides whether it is written at all sits on a
+       form this run has long since left — can only do half of what it offers.
+
+       A sheet and not another block in the left column: these are read once and set
+       once, while the column beside the preview is for the things you keep touching.
+       The rows are built in JS because the lists in them (the engines installed, the
+       voices cloned, the accounts configured) are the operator's own folders and
+       arrive with /api/options. -->
+  <div id="mont-set" hidden>
+    <div class="sheet">
+      <h3 data-l="web.mont.settings.head">настройки прогона</h3>
+      <p class="what dim" data-l="web.mont.settings.note"></p>
+      <div class="setrows" id="set-rows"></div>
+      <div class="row"><span class="dim" id="set-state"></span><span class="grow"></span>
+        <button id="set-close" class="primary" data-l="web.mont.settings.done">готово</button></div>
     </div>
   </div>
 

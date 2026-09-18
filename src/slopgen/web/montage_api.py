@@ -26,12 +26,14 @@ import logging
 import shutil
 import threading
 from pathlib import Path
+from typing import get_args
 
 from fastapi import Cookie, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 from starlette.concurrency import run_in_threadpool
 
 from ..config import ConfigStore
+from ..config.models import SubtitleStyle
 from ..media import ffmpeg
 from ..media import filters as fxmod
 from ..media.stock import IMAGE_EXTS, VIDEO_EXTS
@@ -41,6 +43,7 @@ from ..pipeline.context import AppContext
 from ..pipeline.manual import ManualInputPending
 from ..pipeline.stages import metadata as metadata_stage
 from ..pipeline.stages import picture
+from ..tts import ENGINES as TTS_ENGINES
 
 log = logging.getLogger(__name__)
 
@@ -48,6 +51,102 @@ PICTURE_SUFFIXES = IMAGE_EXTS | VIDEO_EXTS
 # what a hand-recorded line may arrive as. Wider than a synthesizer's output on
 # purpose: this is a phone's memo or whatever a voice service downloaded as.
 VOICE_SUFFIXES = {".wav", ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".flac", ".webm"}
+
+# --------------------------------------------------------------------------
+# what this room may change about the RUN
+# --------------------------------------------------------------------------
+#
+# The look, the sensitivity and the by-hand switch were the first three, and they were
+# three `if` blocks. The list is longer now for one reason: every stage of the chain is
+# a button on the rail in this room, and a stage READS the run's settings. A room that
+# can press `tts` but cannot choose the voice, or press `metadata` while the switch
+# that decides whether metadata is written at all sits on a form the operator can no
+# longer see, can only do half of what it offers — and the half it cannot do is the
+# half that sends you back to the start form to build the run again.
+#
+# So it is a table: the names this screen may write, each with the one function that
+# reads its answer off the browser's JSON. A value out of range is clamped, a value out
+# of a fixed set is refused HERE — where the operator is standing in front of the
+# control that produced it — rather than three stages later where the message would
+# name neither the setting nor the screen it came from.
+#
+# Every reader takes (value, store) whether it needs the store or not, because a table
+# whose entries have two shapes is a table with a branch in front of it.
+
+SUBTITLE_STYLES = set(get_args(SubtitleStyle))
+
+
+def _flag(v, store) -> bool:
+    return bool(v)
+
+
+def _text(v, store) -> str:
+    return str(v or "")
+
+
+def _look(v, store) -> dict:
+    return fxmod.normalise(v or {})
+
+
+def _number(v, kind, lo, hi):
+    """A number in a band, clamped — and refused rather than crashed when what arrived
+    was not a number at all, which is the difference between a 422 naming the setting
+    and a 500 naming nothing."""
+    try:
+        return min(max(kind(v), lo), hi)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=422,
+                            detail=f"{v!r} is not a number between {lo} and {hi}") from None
+
+
+def _rate(v, store) -> int:
+    return _number(v, int, -50, 50)
+
+
+def _sensitivity(v, store) -> float:
+    return _number(v, float, 0.0, 1.0)
+
+
+def _pick(choices, *, blank: str | None = ""):
+    """One of a fixed set, or `blank` for "whatever the config says".
+
+    `choices` is a callable and not a set because two of them are the operator's own
+    folders: the engines that are actually installed and the accounts that actually
+    exist. A set frozen at import would be the list as it was when the server started.
+    """
+    def read(v, store):
+        name = "" if v is None else str(v)
+        if not name:
+            return blank
+        allowed = choices(store)
+        if name not in allowed:
+            raise HTTPException(
+                status_code=422,
+                detail=f"{name!r} is not one of: {', '.join(sorted(allowed)) or '—'}")
+        return name
+    return read
+
+
+SETTINGS = {
+    # the look, and the two picture-track questions this screen has always owned
+    "filters": _look,
+    "frame_by_hand": _flag,
+    "cut_sensitivity": _sensitivity,
+    # the voice, which is what pressing `tts` here will use
+    "tts_engine": _pick(lambda store: set(TTS_ENGINES)),
+    "tts_source": _pick(lambda store: {"engine", "manual"}, blank="engine"),
+    "voice_override": _text,
+    "tts_rate": _rate,
+    # the burned-in text, which is what pressing `subtitles` here will write
+    "subtitle_style": _pick(lambda store: SUBTITLE_STYLES, blank=None),
+    "clean_subtitles": _flag,
+    # what happens to the finished cut: whether it is described, where it goes, and
+    # what is left behind on disk
+    "write_metadata": _flag,
+    "push": _pick(lambda store: set(store.accounts)),
+    "dry_run": _flag,
+    "keep_temp": _flag,
+}
 
 # One hand-pressed stage per run at a time. Per RUN and not per process, because two
 # runs being worked on in two tabs is an ordinary thing and neither touches the other's
@@ -168,6 +267,12 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404, card_json) -> None
             if name not in asked:
                 asked[name] = picture.soft(card, store.global_cfg)
             row["soft"] = asked[name]
+        # Everything the settings sheet shows, straight off the run's parameters. The
+        # four the timeline itself reads (`filters`, `sensitivity`, `rate`, `by_hand`)
+        # stay where `montage.read` puts them: the canvas asks for the look on every
+        # frame it draws and a line's own speed slider starts at the run's, so those
+        # are the document's and not the sheet's.
+        out["settings"] = {name: getattr(cp.params, name) for name in SETTINGS}
         return out
 
     # -- the document -------------------------------------------------------
@@ -468,35 +573,34 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404, card_json) -> None
     @app.put("/api/runs/{run_id}/montage/settings")
     async def set_settings(run_id: str, request: Request,
                            slopgen: str | None = Cookie(default=None)) -> dict:
-        """The run's own settings, as far as this screen may change them.
+        """The run's own settings, as far as this screen may change them (:data:`SETTINGS`).
 
         Onto the run's PARAMS rather than onto the job, because that is where they live
         and where the stages read them from. Both copies are moved: the checkpoint on
         disk, which is what a resume and the next hand-pressed stage read, and the
         object this server is holding, which is what the run list shows.
 
-        Three of them, and they are here because each is a question the montage room is
-        the right place to ask. The LOOK, because the sketch beside the sliders is the
-        only honest way to choose it. The SENSITIVITY, because it is what `нарезать
-        заново` re-cuts at. And BY HAND, because "do I want the matcher's opinion at
-        all" is a montage question, and leaving it on a form the operator can no longer
-        see makes one button on this screen quietly mean two different things."""
+        Whatever the body names is written and nothing else is touched, so one control
+        is one request and a sheet full of them never writes back the values somebody
+        else's tab is holding. They are the RUN's, not this video's — one checkpoint
+        carries one set of parameters for every video in the batch — which is what the
+        sheet says over them.
+
+        A setting cannot be changed retroactively, only forward: the voice picked here
+        is the voice of the lines voiced AFTER it, and the ones already on the job keep
+        the voice they were made with until they are voiced again. That is the same
+        bargain the cache has always made (see `stages.tts`), and it is the useful one
+        — half a video in a new voice is not what anybody meant by changing it."""
         guard(slopgen)
         run = run_or_404(run_id)
         b = await body_of(request)
         cp, i, job = open_job(run, int(b.get("video", 0)))
-        if "filters" in b:
-            spec = fxmod.normalise(b.get("filters") or {})
-            cp.data["params"]["filters"] = spec
-            run.params.filters = dict(spec)
-        if "frame_by_hand" in b:
-            on = bool(b.get("frame_by_hand"))
-            cp.data["params"]["frame_by_hand"] = on
-            run.params.frame_by_hand = on
-        if "cut_sensitivity" in b:
-            sens = min(max(float(b.get("cut_sensitivity", 0.35)), 0.0), 1.0)
-            cp.data["params"]["cut_sensitivity"] = sens
-            run.params.cut_sensitivity = sens
+        for name, read in SETTINGS.items():
+            if name not in b:
+                continue
+            value = read(b[name], store)
+            setattr(run.params, name, dict(value) if isinstance(value, dict) else value)
+            cp.data["params"][name] = value
         cp.save()
         return doc(run, cp, i, job)
 

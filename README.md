@@ -680,6 +680,36 @@ and the two things you actually want to do to it cannot be typed into a row at a
   picture) and says how many of each, rather than letting ffmpeg say it twenty minutes
   later without naming either.
 
+**Settings** opens the run's own settings over the room, because every stage of the
+chain is a button on the rail up there and every stage reads them. The room could press
+**voice** without being able to choose the voice, and press **metadata** while the
+switch deciding whether metadata is written at all sat on a form the run had left an
+hour ago. Three groups, and they are the stages that can still be pressed:
+
+- **voice** — the engine, the cloned voice, the speech rate, and **I read the lines
+  myself** (`tts_source`), which turns the voiceover into the errand hand-made footage
+  already is: the stage writes the script out and waits for wav files, and the
+  recognizer reads the word timings back off them. One line can be read aloud without
+  it — the line's own block has always had that button — and this is for when every
+  line will be.
+- **subtitles** — the style the `.ass` is written in, and whether swearing is cleaned
+  out of the burned-in text while the voice keeps every word.
+- **what comes out** — `write_metadata`, the account to publish to, the dry run, and
+  whether the temporary files are kept.
+
+They belong to the RUN and not to the video open in front of you — one checkpoint
+carries one set of parameters for the whole batch — and they work *forward*: a stage
+takes them when you press it, and what is already made stays as it was made, because
+saying a line again in a new voice is what re-voicing it means. Each control commits on
+its own, like everything else here, and lands on the checkpoint before the sheet
+redraws, so a resume afterwards reads what you set. A value that is not on offer — an
+engine that is not installed, an account that is gone — is refused with the list of
+what is, and the control goes back to what the run actually says rather than leaving a
+lie on the screen. What is deliberately NOT in the sheet is the writer's half (the
+brief, the world, how far it may invent): **script** throws away every line when
+pressed, and a room whose whole point is hand-made lines is the wrong place to make
+that inviting.
+
 **I cut it myself** (`frame_by_hand`) is a switch, and it lives in the room, beside the
 stages — because it decides what one of them does. With it on, **picture track** never
 asks a model which card fits which stretch: it cuts the track out of the speech, leaves
@@ -1435,6 +1465,34 @@ cp deploy.env.example deploy.env        # SSH_HOST и SSH_USER, больше н�
   что-то не соберётся (строка без голоса, кадр без картинки), и говорит, сколько того и
   другого, — вместо того чтобы ffmpeg сказал это через двадцать минут, не назвав ни
   того ни другого.
+
+**Настройки** открывают поверх монтажной настройки самого прогона — потому что каждая
+стадия цепочки тут кнопка наверху, и каждая стадия их читает. Иначе получается комната,
+которая жмёт **озвучку**, но не может выбрать голос, и жмёт **описание**, пока тумблер
+«сочинять ли его вообще» лежит на форме, с которой прогон ушёл час назад. Три группы —
+ровно те стадии, которые ещё можно нажать:
+
+- **голос** — движок, клонированный голос, скорость речи и **начитаю сам**
+  (`tts_source`): озвучка становится такой же ручной работой, как самодельный видеоряд
+  — стадия выписывает текст и ждёт wav-файлы, а тайминги слов снимает с них
+  распознаватель. Отдельную строку можно начитать и без этого, кнопка в блоке строки
+  была всегда; это — когда начитывать будешь все.
+- **субтитры** — стиль, которым пишется `.ass`, и вычищать ли мат из вожжённого текста,
+  пока голос произносит всё как есть.
+- **что на выходе** — `write_metadata`, аккаунт для публикации, «не публиковать» и
+  оставлять ли временные файлы.
+
+Это настройки ПРОГОНА, а не открытого видео — один чекпойнт несёт один набор параметров
+на всю пачку, — и действуют они *вперёд*: стадия возьмёт их, когда ты её нажмёшь, а уже
+сделанное останется как сделано, потому что переозвучить строку в новом голосе и значит
+переозвучить её. Каждая ручка сохраняется сама, как и всё здесь, и ложится в чекпойнт
+раньше, чем перерисуется лист, — так что возобновление потом прочитает то, что ты
+поставил. Значение, которого в списке нет (движок, который не установлен; аккаунт,
+который удалили), отвергается со списком того, что есть, а ручка возвращается к тому,
+что в прогоне на самом деле, вместо того чтобы оставить на экране враньё. Чего в листе
+нарочно нет — сценарной половины (бриф, мир, насколько можно придумывать): **сценарий**
+при нажатии выбрасывает все строки, и комната, весь смысл которой в строках, набранных
+руками, — неподходящее место, чтобы это выглядело заманчиво.
 
 **Монтирую сам** (`frame_by_hand`) — переключатель, и живёт он в самой монтажной, рядом
 со стадиями: он решает, что делает одна из них. Включён — **дорожка картинки** не

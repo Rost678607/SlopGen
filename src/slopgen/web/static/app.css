@@ -738,6 +738,32 @@ button.danger{border-color:var(--bad);color:var(--bad)}
    invisible on it — the one button that throws work away has to read as the one
    button that throws work away. */
 #mont-ask #ask-yes.danger{background:var(--bad);border-color:var(--bad);color:#fff}
+
+/* The run's settings, over the room they belong to. The same sheet as the question
+   above — it is the same kind of thing, something put in front of the work until it is
+   answered — only wider and scrollable, because three groups of labelled controls is
+   not a paragraph and a phone in landscape is 300px tall. */
+#mont-set{position:absolute;inset:0;z-index:7;display:grid;place-items:center;
+  background:#0008;backdrop-filter:blur(2px);overflow:auto;padding:16px}
+#mont-set .sheet{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+  padding:16px;width:min(560px,94vw);display:grid;gap:12px;box-shadow:0 12px 40px #000a}
+#mont-set h3{margin:0;font-size:15px}
+#mont-set .what{margin:0;font-size:13px}
+.setrows{display:grid;gap:15px}
+.setrows section{display:grid;gap:7px}
+.setrows section>b{font-size:12px;color:var(--dim);letter-spacing:.02em}
+/* a note belongs to the control above it, so it is pulled up against it and away from
+   the next one — otherwise three notes and four controls read as seven rows */
+.setrows p{margin:-4px 0 2px;font-size:12px}
+.setrow{display:flex;gap:10px;align-items:center;font-size:12.5px;color:var(--dim)}
+.setrow>span{flex:0 0 38%}
+.setrow select{flex:1;min-width:0}
+#mont-set label.inline{display:flex;gap:8px;align-items:center;font-size:12.5px;
+  color:var(--ink)}
+@media (max-width:560px){
+  .setrow{display:grid;gap:3px}
+  .setrow>span{flex:none}
+}
 .mont-body{flex:1;display:flex;gap:12px;padding:12px;min-height:0}
 
 /* the left half: the picture, the transport, the look */
