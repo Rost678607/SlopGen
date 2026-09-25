@@ -58,6 +58,7 @@ from ..config.models import (AccountConfig, AdConfig, CharacterConfig, CropTarge
                              VoiceConfig, VoiceSample)
 from ..media.stock import IMAGE_EXTS, VIDEO_EXTS
 from ..pipeline import manual, review
+from ..pipeline.stages.ads import OVERLAY_EXTS
 from ..pipeline.stages.assemble import (
     MUSIC_NONE,
     folders_in,
@@ -509,6 +510,10 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
                      "providers": {p: dict(v) for p, v in PROVIDERS.items()},
                      "presets": MODEL_PRESETS,
                      "keys": {p: bool(env_keys(v["key_env"])) for p, v in PROVIDERS.items()}}
+        if kind == "ads":
+            # a contract is text plus two folders, and the folders are the half that
+            # fails LATE — see _ad_assets
+            extra = {"assets": {n: _ad_assets(c) for n, c in store.ads.items()}}
         return {"kind": kind, "items": items, "schema": _fields(model), **extra}
 
     @app.put("/api/configs/{kind}/{name}")
@@ -2365,6 +2370,41 @@ def _fields(model) -> list[dict]:
             kind = "map"
         out.append({"name": name, "kind": kind, "options": options,
                     "help": (f.description or "")})
+    return out
+
+
+def _ad_assets(ad: AdConfig) -> dict:
+    """What is actually on disk for each half of an ad contract.
+
+    A contract is some text and two folders, and the folders are the half that fails
+    LATE: an overlay with nothing in it raises in stage 6, a native ad with no clip in
+    stage 4 — a run's worth of quota after the typo was made, and the message is a
+    path rather than anything the page can act on. Counting them while the form is
+    open moves that discovery to the one moment it can still be fixed cheaply.
+
+    The two halves count different things because the pipeline takes different things:
+    an overlay is a picture, a clip or an animation (`stages.ads.OVERLAY_EXTS`), a
+    native insert is a clip and only a clip (`stages.footage`, `stages.drama_footage`).
+    A folder with four photos in it is empty as far as a native ad is concerned, and
+    saying "4 files" there would be a lie told helpfully.
+    """
+    out = {}
+    for half, exts in (("overlay", OVERLAY_EXTS), ("native", VIDEO_EXTS)):
+        block = getattr(ad, half)
+        if block is None:
+            out[half] = None
+            continue
+        d = Path(block.assets_dir)
+        try:
+            there = d.is_dir()
+            files = [p for p in d.iterdir() if p.suffix.lower() in exts] if there else []
+        except OSError:
+            # an unreadable folder is not a reason to fail the whole config page; it
+            # is the same news as a missing one, which the page already knows how to
+            # say
+            there, files = False, []
+        out[half] = {"dir": str(d), "there": there, "count": len(files),
+                     "names": sorted(p.name for p in files)[:12]}
     return out
 
 

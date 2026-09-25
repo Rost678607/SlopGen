@@ -15,12 +15,25 @@ showing to a person, and a caller that is not HTTP is free to catch it and print
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import HTTPException
 
 from ..config import ConfigStore, RunParams
-from ..config.models import OrchestrationConfig, OrchestrationStage
+from ..config.models import (AdConfig, AdDescriptionConfig, AdNativeConfig,
+                             AdOverlayConfig, OrchestrationConfig, OrchestrationStage,
+                             VisualsBackground, VisualsConfig, VisualsForeground)
 from ..media.filters import CATALOGUE as FILTER_CATALOGUE
 from ..media.generate import PHOTO_MODELS, VIDEO_MODELS, model_clip_seconds
+
+# What the ad field says when the contract is typed into the form instead of picked
+# out of `configs/ads/`. A reserved name rather than a second field, the way the music
+# select spells silence: the question has one answer and one control asks it.
+AD_MANUAL = "manual"
+# Where an ad-hoc contract's own material goes. It has to be SOMEWHERE — an overlay
+# reads its animations off a folder — and a contract that exists for one run has no
+# folder of its own, so it borrows this one (the terminal's wizard has always used it).
+MANUAL_AD_DIR = Path("assets/ads/manual")
 
 # The montage effects, as {key: what it does}. Read off the filter catalogue rather
 # than listed here, so an effect added there is accepted on its own.
@@ -36,7 +49,9 @@ def common(b: dict) -> dict:
     and from every source, because it is asked of ffmpeg rather than of a model."""
     out: dict = {
         "profanity": int(b.get("profanity", 0)),
-        "ad": str(b.get("ad", "")),
+        # …and then the reserved word is NOT left in `ad`: a run carries either a
+        # contract's name or a contract, and `ads["manual"]` is not a file on disk.
+        "ad": "" if str(b.get("ad", "")) == AD_MANUAL else str(b.get("ad", "")),
         "ad_mode": b.get("ad_mode", "both"),
         "push": str(b.get("push", "")),
         "visual_notes": str(b.get("visual_notes", "")),
@@ -49,6 +64,10 @@ def common(b: dict) -> dict:
         "keep_temp": bool(b.get("keep_temp", False)),
         # which track plays under the voice; "" = the one the run rolls for itself
         "music": str(b.get("music", "")),
+        # an ad contract typed into the form rather than picked by name. It is built
+        # here, with the settings every mode shares, because an ad is the one thing
+        # about a video that has nothing to do with which mode made it.
+        "manual_ad": manual_ad(b),
         "filters": {k: max(0, min(100, int(v)))
                     for k, v in (b.get("filters") or {}).items()
                     if k in FILTER_HELP and int(v) > 0},
@@ -56,6 +75,123 @@ def common(b: dict) -> dict:
     if b.get("subtitle_style"):
         out["subtitle_style"] = b["subtitle_style"]
     return out
+
+
+def manual_ad(b: dict) -> AdConfig | None:
+    """The ad contract typed into the form, or None when one was picked by name.
+
+    The same contract the terminal's wizard builds (`GenerateScreen._manual_ad_config`)
+    and deliberately the same shape: `modes` holds both halves and `ad_mode` decides
+    which of them a given run actually spends, so switching overlay↔native does not
+    mean retyping the contract.
+
+    The two folders are created here rather than when the overlay is drawn, because
+    this is the moment the operator can still be told where to put the files — by the
+    time `stages/ads` wants them the run is already going."""
+    if str(b.get("ad", "")) != AD_MANUAL:
+        return None
+    overlay_dir, native_dir = MANUAL_AD_DIR / "overlay", MANUAL_AD_DIR / "native"
+    for d in (overlay_dir, native_dir):
+        d.mkdir(parents=True, exist_ok=True)
+    return AdConfig(
+        name=AD_MANUAL,
+        url=str(b.get("ad_url", "")),
+        modes=["overlay", "native"],
+        overlay=AdOverlayConfig(
+            assets_dir=overlay_dir,
+            text=str(b.get("ov_text", "")),
+            position=str(b.get("ov_pos") or "top_right"),
+            start_s=float(b.get("ov_start", 6.0)),
+            duration_s=float(b.get("ov_dur", 8.0)),
+        ),
+        native=AdNativeConfig(assets_dir=native_dir,
+                              talking_points=str(b.get("ad_points", ""))),
+        description=AdDescriptionConfig(snippet="\U0001F517 {url}"),
+    )
+
+
+def _built_visuals(b: dict, base: VisualsConfig | None) -> VisualsConfig:
+    """The Picture card's fields laid over `base` (the profile they were filled from).
+
+    Laid OVER rather than assembled from scratch, and that is the whole difference
+    between this and the terminal's `_build_visuals`. The card does not ask about
+    every field a profile has — the inserts' own asset folder, and whatever is added
+    to the model next — and a field nobody was asked about must keep the profile's
+    answer rather than silently fall back to the model default. Building from scratch
+    makes every such field a fake edit, which then shows up as a run carrying a
+    "custom" copy of a profile it did not actually change."""
+    base = base or VisualsConfig(name="custom")
+    bg_source = str(b.get("bg_source") or base.background.source)
+    fg_source = str(b.get("fg_source") or base.foreground.source)
+
+    def ai_model(source: str, prefix: str, fallback: str) -> str:
+        """The relevant generator pick, blank for a source that calls none.
+
+        Two dropdowns feed one field — the video list and the photo list have nothing
+        in common — so which of them counts is decided by the source, exactly as the
+        terminal decides it (`GenerateScreen._ai_model`).
+
+        Blank when the material is the operator's own, too, which the terminal does
+        NOT do and should: `manual` means there is no generator to name (the model
+        says so, and ignores the field), and a name left in it there is a difference
+        against the profile that nobody made. It is what made picking `ai_manual` and
+        touching nothing hand the run a "custom" copy of `ai_manual`."""
+        if b.get(f"{prefix}_manual"):
+            return ""
+        if source == "ai_video":
+            return str(b.get(f"{prefix}_ai_vmodel", fallback))
+        if source == "ai_photo":
+            return str(b.get(f"{prefix}_ai_pmodel", fallback))
+        return ""
+
+    bg = base.background.model_copy(update={
+        "source": bg_source,
+        "linkage": str(b.get("bg_link") or base.background.linkage),
+        "assets_dir": Path(str(b.get("bg_dir") or base.background.assets_dir)),
+        "manual": bool(b.get("bg_manual", False)),
+        "ai_model": ai_model(bg_source, "bg", base.background.ai_model),
+        "interval_s": float(b.get("bg_interval", base.background.interval_s)),
+        "motion": str(b.get("bg_motion") or base.background.motion),
+        "continuous": bool(b.get("bg_cont", False)),
+    })
+    fg = base.foreground.model_copy(update={
+        "enabled": bool(b.get("fg_on", False)),
+        "source": fg_source,
+        "manual": bool(b.get("fg_manual", False)),
+        "ai_model": ai_model(fg_source, "fg", base.foreground.ai_model),
+        "width_pct": int(b.get("fg_width", base.foreground.width_pct)),
+        "position": str(b.get("fg_pos") or base.foreground.position),
+    })
+    # revalidated rather than trusted: `model_copy` does not check, and these values
+    # came off a form
+    return VisualsConfig(name="custom",
+                         background=VisualsBackground.model_validate(bg.model_dump()),
+                         foreground=VisualsForeground.model_validate(fg.model_dump()))
+
+
+def manual_visuals(store: ConfigStore, b: dict, profile: str) -> VisualsConfig | None:
+    """The Picture card as an override, or None when it still says what `profile` says.
+
+    This is the reason the card can be taken apart without changing what an untouched
+    form does. The browser fills the fields FROM the picked profile, so a form nobody
+    edited rebuilds that profile exactly — and a run that rebuilds the profile it
+    named should carry the NAME, not a copy: the name is what the runs list shows,
+    what a preset stores, and what stays correct when the profile is edited later.
+    Only a field the operator actually moved makes the run carry its own copy (the
+    terminal draws the same line in `_visuals_selection`).
+
+    A body with no Picture fields at all — the chat, an older page — overrides nothing
+    rather than overriding with defaults."""
+    if "bg_source" not in b:
+        return None
+    base = store.visuals.get(profile)
+    built = _built_visuals(b, base)
+    if base is None:
+        return built
+    skip = {"name", "description"}
+    if built.model_dump(exclude=skip) == base.model_dump(exclude=skip):
+        return None
+    return built
 
 
 def fandom_params(store: ConfigStore, b: dict) -> RunParams:

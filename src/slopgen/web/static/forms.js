@@ -317,6 +317,59 @@ const FORMS = {
           "when1": "ad=*"
         },
         {
+          "when": "ad=manual",
+          "rows": [
+            {
+              "note": "web.admanual.note",
+              "cls": "dim"
+            },
+            {
+              "f": "ad_url",
+              "kind": "text",
+              "ph": "web.f.adurl.ph",
+              "l": "web.f.adurl"
+            },
+            {
+              "f": "ov_text",
+              "kind": "text",
+              "l": "web.f.ovtext"
+            },
+            {
+              "f": "ov_pos",
+              "kind": "select",
+              "cls": "f-ovpos",
+              "l": "web.f.ovpos"
+            },
+            [
+              "row2",
+              {
+                "f": "ov_start",
+                "kind": "number",
+                "min": "0",
+                "max": "600",
+                "step": "0.5",
+                "value": "6",
+                "l": "web.f.ovstart"
+              },
+              {
+                "f": "ov_dur",
+                "kind": "number",
+                "min": "1",
+                "max": "600",
+                "step": "0.5",
+                "value": "8",
+                "l": "web.f.ovdur"
+              }
+            ],
+            {
+              "f": "ad_points",
+              "kind": "text",
+              "rows": 2,
+              "l": "web.f.adpoints"
+            }
+          ]
+        },
+        {
           "f": "push",
           "kind": "select",
           "cls": "f-push",
@@ -644,6 +697,59 @@ const FORMS = {
           "cls": "f-admode",
           "l": "web.f.mode",
           "when1": "ad=*"
+        },
+        {
+          "when": "ad=manual",
+          "rows": [
+            {
+              "note": "web.admanual.note",
+              "cls": "dim"
+            },
+            {
+              "f": "ad_url",
+              "kind": "text",
+              "ph": "web.f.adurl.ph",
+              "l": "web.f.adurl"
+            },
+            {
+              "f": "ov_text",
+              "kind": "text",
+              "l": "web.f.ovtext"
+            },
+            {
+              "f": "ov_pos",
+              "kind": "select",
+              "cls": "f-ovpos",
+              "l": "web.f.ovpos"
+            },
+            [
+              "row2",
+              {
+                "f": "ov_start",
+                "kind": "number",
+                "min": "0",
+                "max": "600",
+                "step": "0.5",
+                "value": "6",
+                "l": "web.f.ovstart"
+              },
+              {
+                "f": "ov_dur",
+                "kind": "number",
+                "min": "1",
+                "max": "600",
+                "step": "0.5",
+                "value": "8",
+                "l": "web.f.ovdur"
+              }
+            ],
+            {
+              "f": "ad_points",
+              "kind": "text",
+              "rows": 2,
+              "l": "web.f.adpoints"
+            }
+          ]
         },
         {
           "f": "push",
@@ -1007,6 +1113,59 @@ const FORMS = {
           "cls": "f-admode",
           "l": "web.f.mode",
           "when1": "ad=*"
+        },
+        {
+          "when": "ad=manual",
+          "rows": [
+            {
+              "note": "web.admanual.note",
+              "cls": "dim"
+            },
+            {
+              "f": "ad_url",
+              "kind": "text",
+              "ph": "web.f.adurl.ph",
+              "l": "web.f.adurl"
+            },
+            {
+              "f": "ov_text",
+              "kind": "text",
+              "l": "web.f.ovtext"
+            },
+            {
+              "f": "ov_pos",
+              "kind": "select",
+              "cls": "f-ovpos",
+              "l": "web.f.ovpos"
+            },
+            [
+              "row2",
+              {
+                "f": "ov_start",
+                "kind": "number",
+                "min": "0",
+                "max": "600",
+                "step": "0.5",
+                "value": "6",
+                "l": "web.f.ovstart"
+              },
+              {
+                "f": "ov_dur",
+                "kind": "number",
+                "min": "1",
+                "max": "600",
+                "step": "0.5",
+                "value": "8",
+                "l": "web.f.ovdur"
+              }
+            ],
+            {
+              "f": "ad_points",
+              "kind": "text",
+              "rows": 2,
+              "l": "web.f.adpoints"
+            }
+          ]
         },
         {
           "f": "push",

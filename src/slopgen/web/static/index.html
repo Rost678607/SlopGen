@@ -181,6 +181,23 @@
       <div id="or-items"></div>
     </div>
 
+    <!-- Ad contracts. A contract is one sponsor said three ways at once — a banner in
+         the corner, a mention inside the script, a line under the video — so the
+         screen is three blocks and each one is switched on by its own tick. The tick
+         is the only control over whether that way of advertising exists at all: it
+         writes the `modes` entry and the config block together, which the pipeline
+         needs to agree (see `pipeline/context.overlay_ad_on`). -->
+    <div id="cfg-ads" hidden>
+      <div class="panel">
+        <div class="row"><b data-l="web.cfg.ads">рекламные контракты</b>
+          <span class="dim" data-l="web.cfg.ads.note">по контракту на рекламодателя: чем рекламируем и какими словами</span>
+          <span class="grow"></span>
+          <input id="ad-new" placeholder="имя нового" data-lp="web.a.newname" style="max-width:220px">
+          <button id="ad-add" class="ghost" data-l="web.add">завести</button></div>
+      </div>
+      <div id="ad-items"></div>
+    </div>
+
     <div id="cfg-todo" class="panel" hidden>
       <h3 id="cfg-todo-title"></h3>
       <p class="dim" data-l="web.tui.only">Этот раздел пока живёт только в терминале: <code>slopgen</code> <span data-l="web.tui.only2">→ Конфигурация. Перенос идёт по одному разделу за раз.</span></p>

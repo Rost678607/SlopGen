@@ -2691,6 +2691,16 @@ EN.update({
 })
 
 RU.update({
+    # …and the ad contract typed in instead of picked
+    "w.manual": "— вписать вручную —",
+    "web.admanual.note": "контракт на один прогон, никуда не сохраняется. Материал кладётся в assets/ads/manual/overlay и .../native — папки уже созданы. Что из этого пойдёт в ролик, решает «режим» выше.",
+    "web.f.adurl": "ссылка",
+    "web.f.adurl.ph": "https://",
+    "web.f.ovtext": "надпись в углу",
+    "web.f.ovpos": "в каком углу",
+    "web.f.ovstart": "появится на, с",
+    "web.f.ovdur": "провисит, с",
+    "web.f.adpoints": "тезисы для нативной вставки",
     # the music under the voice
     "web.card.music": "музыка",
     "web.f.music": "трек",
@@ -2698,11 +2708,105 @@ RU.update({
     "web.music.note": "то, что играет под голосом, из assets/music/. «Как выпадет» — жребий, посеянный на самом прогоне: выпадает одно и то же и в монтажной, и в готовом ролике, так что предпросмотр не врёт. Строка со слешем на конце — папка: тот же жребий, но только по ней. «— нет —» — тишина. Громкость одна на всё — audio.music_volume в общих настройках.",
 })
 EN.update({
+    # …and the ad contract typed in instead of picked
+    "w.manual": "— type one in —",
+    "web.admanual.note": "a contract for this run only, saved nowhere. Its material goes in assets/ads/manual/overlay and .../native — both folders exist already. Which half of it the video actually carries is the \"mode\" above.",
+    "web.f.adurl": "link",
+    "web.f.adurl.ph": "https://",
+    "web.f.ovtext": "corner text",
+    "web.f.ovpos": "which corner",
+    "web.f.ovstart": "appears at, s",
+    "web.f.ovdur": "stays up for, s",
+    "web.f.adpoints": "talking points for the spoken mention",
     # the music under the voice
     "web.card.music": "the music",
     "web.f.music": "track",
     "w.music.roll": "— as it rolls —",
     "web.music.note": "what plays under the voice, out of assets/music/. \"As it rolls\" is a draw seeded on the run itself: the montage room and the finished video land on the same track, so the preview is not lying to you. An entry ending in a slash is a folder: the same draw, over that shelf only. \"— none —\" is silence. The level is one setting for all of it — audio.music_volume in the general settings.",
+})
+
+# The ad-contract screen in the browser. A contract is one sponsor said three ways —
+# a banner in the corner, a mention inside the narration, a line under the video — and
+# every word here is about which of the three is being talked about. "Оверлей" is gone
+# from this screen on purpose: it is our word for a corner banner and nobody selling
+# an ad has any reason to know it.
+RU.update({
+    'web.cfg.ads': 'рекламные контракты',
+    'web.cfg.ads.note': 'по контракту на рекламодателя: чем рекламируем и какими словами',
+    'js.ad.link': 'ссылка или контакт',
+    'js.ad.link.ph': 'https://… или @канал',
+    'js.ad.link.note': 'подставится вместо {url} в описании под видео',
+    'js.ad.overlay': 'баннер в углу',
+    'js.ad.overlay.note': 'картинка поверх кадра, несколько секунд',
+    'js.ad.native': 'упоминание в самом ролике',
+    'js.ad.native.note': 'нейронка вплетёт тезисы в сценарий, а на эти секунды поставит твой клип',
+    'js.ad.descr': 'строка в описании',
+    'js.ad.descr.note': 'приписывается к описанию готового видео',
+    'js.ad.banner': 'баннер',
+    'js.ad.nocap': 'без подписи',
+    'js.ad.caption': 'подпись под баннером',
+    'js.ad.caption.ph': 'скидка 50% по промокоду',
+    'js.ad.width': 'ширина баннера',
+    'js.ad.from': 'появляется на, с',
+    'js.ad.holds': 'висит, с',
+    'js.ad.window': 'видно с',
+    'js.ad.short': 'ролик короче — окно само подвинется',
+    'js.ad.points': 'что сказать про рекламодателя',
+    'js.ad.points.ph': 'обходит все блокировки, первый месяц бесплатно, по промокоду сразу три',
+    'js.ad.points.note': 'тезисы для нейронки, а не готовый текст: она напишет их словами рассказчика',
+    'js.ad.folder': 'папка с файлами',
+    'js.ad.folder.overlay': 'картинки, гифки, webm или короткие клипы — на каждый ролик берётся один',
+    'js.ad.folder.native': 'клипы рекламодателя — на каждый ролик берётся один',
+    'js.ad.files.overlay': 'файлов',
+    'js.ad.files.native': 'клипов',
+    'js.ad.empty.overlay': 'папка пуста — прогон упадёт на стадии рекламы',
+    'js.ad.empty.native': 'ни одного клипа — прогон упадёт на стадии видеоряда',
+    'js.ad.nofolder': 'папки нет',
+    'js.ad.stale': 'сохрани, чтобы проверить папку',
+    'js.ad.snippet.ph': '🔒 по ссылке скидка: {url}',
+    'js.ad.puturl': 'вставить {url}',
+    'js.ad.nolink': '(ссылка не заполнена)',
+    'js.ad.silent': 'ничего не рекламирует',
+    'js.ad.perrun': 'это контракт целиком; в форме генерации можно оставить от него только баннер или только упоминание',
+})
+EN.update({
+    'web.cfg.ads': 'ad contracts',
+    'web.cfg.ads.note': 'one contract per sponsor: what is advertised, and in what words',
+    'js.ad.link': 'link or handle',
+    'js.ad.link.ph': 'https://… or @channel',
+    'js.ad.link.note': 'goes in wherever the description says {url}',
+    'js.ad.overlay': 'banner in the corner',
+    'js.ad.overlay.note': 'a picture over the frame, for a few seconds',
+    'js.ad.native': 'a mention inside the video',
+    'js.ad.native.note': 'the model weaves the points into the script, and your clip plays over them',
+    'js.ad.descr': 'a line in the description',
+    'js.ad.descr.note': 'appended to the finished video description',
+    'js.ad.banner': 'banner',
+    'js.ad.nocap': 'no caption',
+    'js.ad.caption': 'caption under the banner',
+    'js.ad.caption.ph': '50% off with the code',
+    'js.ad.width': 'banner width',
+    'js.ad.from': 'comes up at, s',
+    'js.ad.holds': 'stays for, s',
+    'js.ad.window': 'on screen',
+    'js.ad.short': 'a shorter video moves the window itself',
+    'js.ad.points': 'what to say about the sponsor',
+    'js.ad.points.ph': 'gets through every block, first month free, three with the code',
+    'js.ad.points.note': 'points for the model, not finished copy: it writes them in the narrator’s own words',
+    'js.ad.folder': 'assets folder',
+    'js.ad.folder.overlay': 'pictures, gifs, webm or short clips — one is taken per video',
+    'js.ad.folder.native': 'the sponsor’s clips — one is taken per video',
+    'js.ad.files.overlay': 'files',
+    'js.ad.files.native': 'clips',
+    'js.ad.empty.overlay': 'the folder is empty — the run will fail at the ad stage',
+    'js.ad.empty.native': 'not one clip — the run will fail at the footage stage',
+    'js.ad.nofolder': 'no such folder',
+    'js.ad.stale': 'save to check the folder',
+    'js.ad.snippet.ph': '🔒 discount through the link: {url}',
+    'js.ad.puturl': 'put in {url}',
+    'js.ad.nolink': '(no link filled in)',
+    'js.ad.silent': 'advertises nothing',
+    'js.ad.perrun': 'this is the whole contract; the generate form can take just the banner or just the mention from it',
 })
 
 

@@ -960,3 +960,72 @@ button.danger{border-color:var(--bad);color:var(--bad)}
   #mont header{padding:8px 10px;flex-wrap:wrap}
   #mont header b{flex:1 1 100%;order:3;font-size:13px}
 }
+
+/* ------------------------------------------------------- ad contracts
+   Three blocks under one name, each one switched on by its own tick — a banner, a
+   mention, a line in the description. The block is drawn as a block on purpose: it is
+   the tick that decides whether that half of the contract exists at all, and a tick
+   with nothing around it reads as a preference rather than as a switch. Off, the body
+   is gone rather than greyed, because a form for something switched off is a form
+   that gets filled in and then ignored. */
+.ad-half{border:1px solid var(--line);border-radius:9px;padding:10px 12px;
+  display:grid;gap:10px;background:#0000001f}
+.ad-half.on{border-color:color-mix(in srgb, var(--accent) 45%, var(--line))}
+.ad-half > label.inline{gap:10px;flex-wrap:wrap}
+.ad-half > label.inline .dim{font-size:12.5px}
+.ad-body{display:grid;gap:10px}
+/* A field inside a half is not a direct child of the panel, so the panel's own rule
+   for a label does not reach it — and without this the hint under a textarea came out
+   in the reading size and the reading colour, which is the size a hint is not. */
+.ad-body label{display:grid;gap:4px;font-size:12.5px;color:var(--dim);min-width:0}
+.ad-body p,.ad-fields p{margin:0;font-size:12px}
+/* the one line that is about the whole card rather than about a field in it */
+.ad-card > p.dim{margin:0;font-size:12px;color:var(--dim)}
+/* the picture beside the numbers that describe it, and under each other once there is
+   no room to put them side by side */
+.ad-split{display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap}
+.ad-fields{flex:1 1 280px;min-width:0;display:grid;gap:10px;align-content:start}
+.ad-fields .row{gap:8px}
+.ad-fields .row input[type=range]{flex:1;min-width:120px}
+.ad-wide{font:12px var(--mono);color:var(--ink);white-space:nowrap}
+
+/* The frame, at the size a thumbnail can be. What it is for: `width = 340` is pixels
+   of a video most people have never counted, and the corner names are four strings
+   that all sound alike. Both become one glance here — and the placement is the
+   renderer's own (`media/ffmpeg._overlay_xy`), not a guess, so the banner sits where
+   it will sit. */
+.ad-screen{position:relative;flex:0 0 auto;width:min(190px,40vw);
+  background:var(--bg);border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.ad-corner{position:absolute;width:50%;height:50%;margin:0;padding:0;border:0;
+  border-radius:0;background:none;cursor:pointer}
+.ad-corner:hover{background:color-mix(in srgb, var(--accent) 12%, transparent)}
+.ad-corner.on{background:color-mix(in srgb, var(--accent) 7%, transparent)}
+.ad-corner.top_left{left:0;top:0} .ad-corner.top_right{right:0;top:0}
+.ad-corner.bottom_left{left:0;bottom:0} .ad-corner.bottom_right{right:0;bottom:0}
+/* the banner itself: a stand-in box at the real width, with the real caption under it
+   on the side the renderer aligns it to */
+.ad-banner{position:absolute;display:flex;flex-direction:column;gap:2px;
+  pointer-events:none;font-size:9px;line-height:1.25}
+.ad-banner i{aspect-ratio:4/3;border:1px dashed var(--accent);
+  border-radius:3px;background:color-mix(in srgb, var(--accent) 14%, transparent);
+  color:var(--accent);font-style:normal;display:grid;place-items:center;
+  overflow:hidden;text-align:center}
+.ad-banner .cap{color:var(--ink);word-break:break-word}
+.ad-banner .cap.none{color:var(--dim);font-style:italic}
+
+/* What is in the folder, counted by the server against the path as SAVED. Editing the
+   path makes the count somebody else's, so it says so instead of going on claiming. */
+.ad-files{margin:0;font-size:12px}
+.ad-files .ok{color:var(--ok)}
+.ad-files .bad{color:var(--bad)}
+.ad-files.stale{opacity:.45}
+.ad-files.stale > *{display:none}
+.ad-files.stale::after{content:attr(data-stale);color:var(--dim)}
+/* a contract that advertises in no way at all — legal, and worth saying out loud */
+.pill-off{font-family:var(--mono);font-size:11px;color:var(--warn);
+  border:1px solid var(--warn);border-radius:20px;padding:1px 8px}
+.ad-out{font-size:12.5px;color:var(--ink);flex:1 1 200px;min-width:0;word-break:break-word}
+
+@media (max-width:820px){
+  .ad-screen{width:min(150px,34vw)}
+}

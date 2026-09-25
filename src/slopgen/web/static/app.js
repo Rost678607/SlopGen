@@ -63,6 +63,9 @@ let world = null, cards = [], card = null, targets = [], sel = -1;
 // same place: a picture is fitted to the video's aspect before anything is cropped out
 // of it, so a region is a scaled copy of the frame and not a free rectangle.
 let videoAspect = 1080 / 1920;
+// and its width in pixels, because an ad overlay is sized in them: 340 means nothing
+// until it is read against the frame it sits on.
+let videoWidth = 1080;
 
 // Sign in as whoever Telegram says is holding the phone.
 //
@@ -102,7 +105,7 @@ async function telegramSignIn() {
   const wasOn = readPlace().tab;
   showTab(TABS.includes(wasOn) ? wasOn : "gen");
   const cfg = await api("/api/config").catch(() => null);
-  if (cfg) videoAspect = cfg.video.width / cfg.video.height;
+  if (cfg) { videoAspect = cfg.video.width / cfg.video.height; videoWidth = cfg.video.width; }
   await loadWorlds();
   await loadOptions();
   restorePlace();
@@ -196,7 +199,7 @@ const CFG = [
   ["keys", "js.api-keys", "keys"],
   ["characters", "js.characters", "list"],
   ["visuals", "js.footage-profiles", "list"],
-  ["ads", "js.ad-contracts", "list"],
+  ["ads", "js.ad-contracts", "ads"],
   ["accounts", "js.accounts", "list"],
   ["orchestration", "js.generator-chains", "orch"],
   ["presets", "js.presets", "list"],
@@ -225,6 +228,7 @@ function openCfg(key) {
   $("#cfg-tts").hidden = how !== "tts";
   $("#cfg-voices").hidden = how !== "voices";
   $("#cfg-orch").hidden = how !== "orch";
+  $("#cfg-ads").hidden = how !== "ads";
   $("#cfg-access").hidden = how !== "access";
   $("#cfg-todo").hidden = !!how;
   if (how === "world") openSub(sub);
@@ -232,6 +236,7 @@ function openCfg(key) {
   else if (how === "tts") loadTts();
   else if (how === "voices") loadVoices();
   else if (how === "orch") loadOrch();
+  else if (how === "ads") loadAds();
   else if (how === "access") loadAccess();
   else if (how === "list") loadConfigs(key, lab(entry[1]));
   else $("#cfg-todo-title").textContent = lab(entry[1]);
@@ -775,6 +780,308 @@ function bindOrch() {
       };
     });
   });
+}
+
+// ------------------------------------------------------------- ad contracts
+//
+// A contract is ONE sponsor said three ways at once — a banner in the corner, a
+// mention inside the narration, a line under the video — and the generic config form
+// said none of them. `overlay` and `native` are nested blocks, and a nested block in
+// that form is a one-line text box reading `[object Object]`: unreadable, and worse
+// than unreadable when saved, because the string went back over the block and the
+// model refused the whole contract. `modes` was a JSON array to be typed by hand,
+// which is the same fact as the blocks said a second time and a second place to get
+// it wrong: the pipeline wants BOTH the block and the mode before it will run that
+// half of the ad (see `pipeline/context.overlay_ad_on`).
+//
+// So: one card per contract, one block per way of advertising, and a tick on the two
+// that are config blocks of their own. The tick is the only thing that decides — it
+// writes the block and the mode together, and they cannot disagree because there is
+// no longer anywhere to disagree. Everything under a tick belongs to that half and is
+// gone from the screen when it is off.
+//
+// The card is otherwise about showing what a number MEANS. `width = 340` is pixels of
+// a frame the page knows the width of, so it is drawn in place; `{url}` is a
+// substitution, so the finished line is written out underneath; the assets folder is
+// a path that fails four stages into a run, so the files in it are counted here.
+
+let adsData = null;
+// What a half held before it was ticked off, so ticking it back on does not hand back
+// an empty form. Per name, in memory only: an undo for a gesture, not a draft store.
+const adKept = {};
+
+const AD_CORNERS = ["top_left", "top_right", "bottom_left", "bottom_right"];
+// Where the renderer actually puts the thing (`media/ffmpeg._overlay_xy`), in the
+// video's own pixels — a narrow margin at the sides and a wide band top and bottom.
+// Copied rather than guessed at, so the banner sits in the preview where it will sit
+// in the video; a preview that is only roughly right about the corner is a preview
+// that has to be checked against a render anyway, which is the thing it is for.
+const AD_MARGIN = 40, AD_TOP = 140, AD_BOTTOM = 420;
+
+const adDefaults = (name, half) => half === "overlay"
+  ? { assets_dir: `assets/ads/${name}/overlay`, text: "", position: "top_right",
+      start_s: 6, duration_s: 8, width: 340 }
+  : { assets_dir: `assets/ads/${name}/native`, talking_points: "" };
+
+async function loadAds() {
+  adsData = await api("/api/configs/ads");
+  drawAds();
+  $("#ad-add").onclick = async () => {
+    const name = $("#ad-new").value.trim();
+    if (!name) { say(lab("js.needs-a-name"), true); return; }
+    // A new contract starts with both halves on and both folders named after it. The
+    // empty-body default is a contract that advertises in no way at all, which is a
+    // worse thing to hand somebody than two blocks they can empty.
+    await api(`/api/configs/ads/${encodeURIComponent(name)}`, { method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ modes: ["overlay", "native"],
+                             overlay: adDefaults(name, "overlay"),
+                             native: adDefaults(name, "native") }) });
+    $("#ad-new").value = "";
+    loadAds();
+  };
+}
+
+function drawAds() {
+  const names = Object.keys(adsData.items);
+  $("#ad-items").innerHTML = names.map((n) => adCard(n, adsData.items[n])).join("")
+    || `<p class="empty">${lab("js.nothing-here-yet")}</p>`;
+  bindAds();
+}
+
+// The frame, in its own pixels — an overlay is placed and sized in them.
+const adFrame = () => ({ w: videoWidth, h: Math.round(videoWidth / videoAspect) });
+
+function adCard(name, c) {
+  const on = (half) => !!c[half];
+  const nothing = !on("overlay") && !on("native") && !(c.description || {}).snippet;
+  return `<div class="panel cfg-item ad-card" data-ad="${esc(name)}">
+    <div class="row"><b>${esc(name)}</b>
+      ${nothing ? `<span class="pill-off">${esc(lab("js.ad.silent"))}</span>` : ""}
+      <span class="grow"></span>
+      <button data-save class="primary">${lab("js.save")}</button>
+      <button data-del class="ghost">${lab("js.delete")}</button></div>
+
+    <label class="wide">${esc(lab("js.ad.link"))}
+      <input data-a="url" value="${esc(c.url || "")}" placeholder="${esc(lab("js.ad.link.ph"))}">
+      <span class="dim">${esc(lab("js.ad.link.note"))}</span></label>
+
+    ${adHalf(name, "overlay", c)}
+    ${adHalf(name, "native", c)}
+    ${adDescr(c)}
+    <p class="dim">${esc(lab("js.ad.perrun"))}</p>
+  </div>`;
+}
+
+// One half of a contract: the tick that decides whether it exists, and its own fields
+// under it. Folded away when off, because a form for something switched off is a form
+// that invites being filled in and then ignored.
+function adHalf(name, half, c) {
+  const block = c[half];
+  return `<div class="ad-half${block ? " on" : ""}" data-half="${half}">
+    <label class="inline"><input type="checkbox" data-on="${half}"${block ? " checked" : ""}>
+      <b>${esc(lab("js.ad." + half))}</b>
+      <span class="dim">${esc(lab("js.ad." + half + ".note"))}</span></label>
+    ${block ? `<div class="ad-body">${
+      half === "overlay" ? adOverlay(name, block) : adNative(name, block)}</div>` : ""}
+  </div>`;
+}
+
+function adOverlay(name, ov) {
+  const f = adFrame();
+  const pct = Math.round((ov.width / f.w) * 100);
+  return `<div class="ad-split">
+    <div class="ad-screen" style="aspect-ratio:${f.w}/${f.h}">
+      ${AD_CORNERS.map((p) => `<button class="ad-corner ${p}${p === ov.position ? " on" : ""}"
+        data-pos="${p}" title="${esc(lab("fx.place." + p, p))}"></button>`).join("")}
+      <div class="ad-banner" style="${adBannerStyle(ov, f)}">
+        <i>${esc(lab("js.ad.banner"))}</i>
+        <span class="cap${ov.text ? "" : " none"}">${esc(ov.text || lab("js.ad.nocap"))}</span>
+      </div>
+    </div>
+    <div class="ad-fields">
+      <label class="wide">${esc(lab("js.ad.caption"))}
+        <input data-a="overlay.text" value="${esc(ov.text || "")}"
+               placeholder="${esc(lab("js.ad.caption.ph"))}"></label>
+      <label class="wide">${esc(lab("js.ad.width"))}
+        <span class="row"><input type="range" min="40" max="${f.w}" step="10"
+               data-a="overlay.width" value="${esc(ov.width)}">
+        <b class="ad-wide">${esc(ov.width)} px · ${pct}%</b></span></label>
+      <div class="grid">
+        <label>${esc(lab("js.ad.from"))}
+          <input type="number" step="0.5" min="0" data-a="overlay.start_s" value="${esc(ov.start_s)}"></label>
+        <label>${esc(lab("js.ad.holds"))}
+          <input type="number" step="0.5" min="0.5" data-a="overlay.duration_s" value="${esc(ov.duration_s)}"></label>
+      </div>
+      <p class="dim ad-when">${esc(adWhen(ov))}</p>
+      ${adFolder(name, "overlay", ov)}
+    </div>
+  </div>`;
+}
+
+const adWhen = (ov) => `${lab("js.ad.window")} ${(+ov.start_s).toFixed(1)}–${
+  (+ov.start_s + +ov.duration_s).toFixed(1)} ${lab("js.s")}. ${lab("js.ad.short")}`;
+
+function adBannerStyle(ov, f) {
+  const w = Math.min(Math.max(ov.width / f.w, 0.05), 0.95) * 100;
+  const side = ov.position.endsWith("left")
+    ? `left:${(AD_MARGIN / f.w) * 100}%` : `right:${(AD_MARGIN / f.w) * 100}%`;
+  const vert = ov.position.startsWith("top")
+    ? `top:${(AD_TOP / f.h) * 100}%` : `bottom:${(AD_BOTTOM / f.h) * 100}%`;
+  // The caption hangs UNDER the picture in both bands — the renderer pins it fourteen
+  // pixels below the banner's bottom edge whichever corner it is in
+  // (`media/ffmpeg._delivery_cmd`), so the preview does not flip it for the lower one.
+  return `width:${w}%;${side};${vert}`;
+}
+
+function adNative(name, na) {
+  return `<label class="wide">${esc(lab("js.ad.points"))}
+      <textarea data-a="native.talking_points" rows="3"
+        placeholder="${esc(lab("js.ad.points.ph"))}">${esc(na.talking_points || "")}</textarea>
+      <span class="dim">${esc(lab("js.ad.points.note"))}</span></label>
+    ${adFolder(name, "native", na)}`;
+}
+
+// The folder, and what is in it. The count is the server's (`web/app._ad_assets`) and
+// therefore belongs to the path as SAVED — so editing the path greys it out and says
+// so, rather than going on reporting somebody else's folder.
+function adFolder(name, half, block) {
+  const a = (adsData.assets[name] || {})[half];
+  const dir = block.assets_dir || "";
+  // No count at all means this half was ticked on a moment ago and the folder it names
+  // has not been looked at yet — the same "ask me again once you save" as a path that
+  // has just been retyped, and said in the same words.
+  let state = "", stale = !a;
+  if (a) {
+    if (!a.there) state = `<span class="bad">${esc(lab("js.ad.nofolder"))}</span>`;
+    else if (!a.count) state = `<span class="bad">${esc(lab("js.ad.empty." + half))}</span>`;
+    // count after the word, not before it: "1 файлов" is the price of putting a
+    // number in front of a Russian noun, and a colon costs nothing
+    else state = `<span class="ok">${esc(lab("js.ad.files." + half))}: ${a.count}</span>` +
+      `<span class="dim"> — ${esc(a.names.join(", "))}</span>`;
+  }
+  return `<label class="wide">${esc(lab("js.ad.folder"))}
+    <input data-a="${half}.assets_dir" data-dir="${esc(a ? a.dir : "")}" value="${esc(dir)}">
+    <span class="dim">${esc(lab("js.ad.folder." + half))}</span></label>
+  <p class="ad-files${stale ? " stale" : ""}" data-stale="${esc(lab("js.ad.stale"))}">${state}</p>`;
+}
+
+// The line under the video. `{url}` is the whole reason this field is not just text,
+// so the finished line is written out under it — with the link the field above holds.
+function adDescr(c) {
+  const snip = (c.description || {}).snippet || "";
+  // Always here, never ticked: there is no block to create, only a line to write. The
+  // lit edge follows whether anything is written, which is the same question the two
+  // ticks above answer for their own halves.
+  return `<div class="ad-half${snip ? " on" : ""}" data-half="description">
+    <label class="inline"><b>${esc(lab("js.ad.descr"))}</b>
+      <span class="dim">${esc(lab("js.ad.descr.note"))}</span></label>
+    <div class="ad-body">
+      <label class="wide"><textarea data-a="description.snippet" rows="2"
+        placeholder="${esc(lab("js.ad.snippet.ph"))}">${esc(snip)}</textarea></label>
+      <div class="row">
+        <button class="ghost" data-url>${esc(lab("js.ad.puturl"))}</button>
+        <span class="dim ad-out">${esc(adOut(c))}</span></div>
+    </div>
+  </div>`;
+}
+
+const adOut = (c) => {
+  const snip = (c.description || {}).snippet || "";
+  return snip ? `→ ${snip.replaceAll("{url}", c.url || lab("js.ad.nolink"))}` : "";
+};
+
+function bindAds() {
+  $("#ad-items").querySelectorAll("[data-ad]").forEach((el) => {
+    const name = el.dataset.ad;
+    const c = adsData.items[name];
+
+    // Every field writes straight into the contract, so the card is never a second
+    // copy of it: the preview under a slider, the finished description line and the
+    // body that is saved all read the one object.
+    el.querySelectorAll("[data-a]").forEach((inp) => {
+      inp.oninput = () => {
+        const [a, b] = inp.dataset.a.split(".");
+        const v = inp.type === "number" || inp.type === "range"
+          ? (inp.value === "" ? 0 : +inp.value) : inp.value;
+        if (b) { (c[a] = c[a] || {})[b] = v; } else c[a] = v;
+        adLive(el, c, inp);
+      };
+    });
+
+    el.querySelectorAll("[data-on]").forEach((box) => {
+      box.onchange = () => {
+        const half = box.dataset.on;
+        if (box.checked) c[half] = (adKept[name] || {})[half] || adDefaults(name, half);
+        else {
+          (adKept[name] = adKept[name] || {})[half] = c[half];
+          c[half] = null;
+        }
+        // modes and the block are one answer: written here, together, and nowhere else
+        c.modes = ["overlay", "native"].filter((h) => !!c[h]);
+        drawAds();
+      };
+    });
+
+    const put = el.querySelector("[data-url]");
+    if (put) put.onclick = () => {
+      const box = el.querySelector('[data-a="description.snippet"]');
+      const at = box.selectionStart ?? box.value.length;
+      box.value = box.value.slice(0, at) + "{url}" + box.value.slice(box.selectionEnd ?? at);
+      box.focus();
+      box.selectionStart = box.selectionEnd = at + 5;
+      box.dispatchEvent(new Event("input"));
+    };
+
+    el.querySelector("[data-save]").onclick = async () => {
+      try {
+        await api(`/api/configs/ads/${encodeURIComponent(name)}`, { method: "PUT",
+          headers: { "content-type": "application/json" }, body: JSON.stringify(c) });
+        say(`${name} ${lab("js.saved")}`);
+        loadAds();   // the folders are counted again, against the paths just written
+      } catch (e) { say(e.message, true); }
+    };
+    el.querySelector("[data-del]").onclick = async () => {
+      await api(`/api/configs/ads/${encodeURIComponent(name)}`, { method: "DELETE" });
+      say(`${name} ${lab("js.deleted")}`);
+      loadAds();
+    };
+
+    el.querySelectorAll(".ad-corner").forEach((b) => {
+      b.onclick = () => {
+        c.overlay.position = b.dataset.pos;
+        el.querySelectorAll(".ad-corner").forEach((o) => o.classList.toggle("on", o === b));
+        adLive(el, c);
+      };
+    });
+  });
+}
+
+// Redraw only what a keystroke can change, in place. Rebuilding the card would be
+// simpler and would take the focus and the caret with it on every character typed.
+function adLive(el, c, inp) {
+  const out = el.querySelector(".ad-out");
+  if (out) out.textContent = adOut(c);
+  const descr = el.querySelector('[data-half="description"]');
+  if (descr) descr.classList.toggle("on", !!(c.description || {}).snippet);
+  if (inp && inp.dataset.a.endsWith("assets_dir")) {
+    const p = inp.closest("label").nextElementSibling;
+    p.classList.toggle("stale", inp.value.trim() !== inp.dataset.dir);
+  }
+  const ov = c.overlay;
+  if (!ov) return;
+  const f = adFrame();
+  const banner = el.querySelector(".ad-banner");
+  if (banner) {
+    banner.setAttribute("style", adBannerStyle(ov, f));
+    const cap = banner.querySelector(".cap");
+    cap.textContent = ov.text || lab("js.ad.nocap");
+    cap.classList.toggle("none", !ov.text);
+  }
+  const wide = el.querySelector(".ad-wide");
+  if (wide) wide.textContent = `${ov.width} px · ${Math.round((ov.width / f.w) * 100)}%`;
+  const when = el.querySelector(".ad-when");
+  if (when) when.textContent = adWhen(ov);
 }
 
 // ------------------------------------------------------- the list-shaped kinds
@@ -2580,6 +2887,15 @@ function commonOf(form) {
     write_metadata: f.get("write_metadata") === "on",
     keep_temp: f.get("keep_temp") === "on",
     music: f.get("music") || "",
+    // the hand-typed ad contract. Sent whatever the ad field says: the server builds
+    // it only for the reserved word (see params.manual_ad), and a form that has been
+    // switched back to a named contract must not be able to smuggle one in.
+    ad_url: f.get("ad_url") || "",
+    ov_text: f.get("ov_text") || "",
+    ov_pos: f.get("ov_pos") || "top_right",
+    ov_start: +(f.get("ov_start") || 6),
+    ov_dur: +(f.get("ov_dur") || 8),
+    ad_points: f.get("ad_points") || "",
     loop: loopOf(form),
     filters,
   };
