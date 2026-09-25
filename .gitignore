@@ -44,6 +44,15 @@ configs/llm/*.toml
 # whole folder stays out of the repository, samples included.
 configs/voices/*
 !configs/voices/.gitkeep
+# Personal content types. The four shipped niches are the documentation of what a
+# niche brief looks like; anything else in here is the operator's own editorial line,
+# and a brief is where that line is spelled out in full — including the parts of it
+# that have no business on a public remote.
+configs/content/*.toml
+!configs/content/cyber.toml
+!configs/content/facts.toml
+!configs/content/psych.toml
+!configs/content/story.toml
 # Personal AI-drama cast, publishing accounts, and ad contracts.
 configs/characters/*.toml
 !configs/characters/example.toml
