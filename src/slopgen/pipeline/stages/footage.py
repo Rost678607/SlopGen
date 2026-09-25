@@ -35,7 +35,7 @@ from ...media.stock import (
     find_image,
 )
 from .. import manual
-from ..context import AppContext
+from ..context import AppContext, Stopped
 from ..job import BgAsset, FgInsert, Scene, VideoJob, Word
 from .idea import LANG_NAMES
 
@@ -343,6 +343,12 @@ def run(job: VideoJob, ctx: AppContext) -> None:
 
     scene_start = 0.0  # running absolute offset, to anchor phrase-timed inserts
     for i, scene in enumerate(job.scenes):
+        # Asked once per scene, because this is the stage that takes the longest and
+        # the one the operator is most likely to be watching when they give up on it:
+        # a generated background is a round trip to somebody else's queue, and seven
+        # of them outlast anybody's patience. Between stages is too late to ask.
+        if ctx.stopping():
+            raise Stopped
         if scene.is_ad:
             ad_dir = ctx.ad.native.assets_dir
             clips = (

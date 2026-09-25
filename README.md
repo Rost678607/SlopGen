@@ -384,6 +384,23 @@ that `stop` can go on meaning what it has always meant. And the launch button is
 one press however many the mouse sends: a double click used to start two runs, or two
 loops with the same queue, each with a thread of its own.
 
+**…and what "after the current stage" used to be able to mean.** A run is asked to stop
+by a flag, and the flag was read BETWEEN stages. For a pipeline of short steps that is
+the right place; for the long ones it was not a place at all. A footage stage fetching
+seven generated backgrounds is seven round trips into somebody else's queue, and
+`gradio_client` has no timeout, nor do the sockets under it — so a Space that took the
+job and never answered held the stage, and the stage held the run, and the page went on
+saying *will stop after the current stage* about a stage with no intention of ending.
+Measured on the run that produced this: three hours at one shot of seven, the peer's end
+of the connection already closed, and no way to end it but restarting the server. Two
+things changed. The long stage now asks `ctx.stopping()` once per scene and raises
+`Stopped`, which parks the run exactly as the between-stages answer does — raising and
+not returning, because a stage that returns is recorded as finished and a footage stage
+that filled two scenes of seven would send the run on to be assembled out of nothing.
+And one call into a Space is now bounded (`SLOPGEN_SPACE_TIMEOUT_S`, 600s by default, `0`
+for the old unbounded wait): generous, because a queued Space legitimately takes minutes
+and a timeout that fires on a working one costs a clip for nothing.
+
 **Length on the model's word (`0`).** Put `0` where a length goes — `--duration`, `--duration-min`, or the Length field in the TUI — and nobody buys one: the model chooses it from the material. What it is worth is decided by the brief, so a brief that is already a finished text runs as long as saying it takes, a premise with three turns in it gets the time those turns need, and a bare topic gets what the format wants. Every mode takes it, and they arrive at it differently for a reason. An info clip needs no extra request at all: its script is one call and the video is exactly as long as the narration came out, so the writer is simply told to choose. A drama or a fandom video has to know first — the length is what the shot list is cut from, and the number of shots decides how many passes the script is written in — so the run makes one small call that reads the brief and answers with seconds, prints what it chose and why, and then proceeds exactly as if you had typed that number, budget checks and all. Being held to a length is not weaker for the model having picked it.
 
 ## TUI
@@ -1171,6 +1188,23 @@ slopgen loop show                                        # на чём он ст
 что значил всегда. А кнопка запуска теперь срабатывает один раз, сколько бы нажатий ни
 прислала мышь: двойной клик заводил два прогона — или два цикла с одной и той же
 очередью, каждый со своим потоком.
+
+**…и что раньше могло значить «после текущей стадии».** Прогон просят остановиться
+флагом, и флаг читался МЕЖДУ стадиями. Для конвейера из коротких шагов это верное место;
+для длинных — не место вовсе. Стадия футажа с семью сгенерированными фонами — это семь
+заходов в чужую очередь, а у `gradio_client` нет таймаута, и у сокетов под ним тоже, —
+поэтому Space, который принял задание и не ответил, держал стадию, стадия держала
+прогон, а страница продолжала писать «остановится после текущей стадии» про стадию,
+которая кончаться не собиралась. Замерено на том прогоне, из-за которого это и
+написано: три часа на одном кадре из семи, соединение с той стороны уже закрыто, и
+прекратить это нельзя ничем, кроме перезапуска сервера. Поменялось двое. Длинная стадия
+теперь спрашивает `ctx.stopping()` на каждой сцене и бросает `Stopped`, а он паркует
+прогон ровно так же, как ответ между стадиями, — именно бросает, а не возвращает:
+вернувшаяся стадия считается законченной, и футаж, заполнивший две сцены из семи, отправил
+бы прогон собираться из пустоты. И один вызов в Space стал ограниченным по времени
+(`SLOPGEN_SPACE_TIMEOUT_S`, по умолчанию 600 с, `0` — прежнее ожидание без границы):
+с запасом, потому что Space в очереди честно думает минутами, а таймаут, сработавший на
+живом, стоит клипа впустую.
 
 **Длина на усмотрение нейронки (`0`).** Поставь `0` там, где задаётся длина, — `--duration`, `--duration-min` или поле «Длина» в TUI, — и её никто не покупает: модель выбирает её по материалу. Решает бриф: бриф, который уже готовый текст, идёт ровно столько, сколько его произносить; премиса с тремя поворотами получает время, которое этим поворотам нужно; голая тема получает то, что положено формату. Берут это все режимы, и приходят к этому по-разному, и не случайно. Инфо-ролику дополнительный запрос не нужен вовсе: его сценарий — один вызов, а видео идёт ровно столько, сколько вышло озвучки, так что сценаристу просто говорят выбрать самому. Дораме и фандому надо знать заранее: из длины нарезается список кадров, а число кадров решает, за сколько проходов пишется сценарий, — поэтому прогон делает один маленький запрос, который читает бриф и отвечает секундами, печатает, что выбрал и почему, и дальше идёт ровно так, как если бы это число вписал ты, вместе со всеми проверками бюджета. Держать за длину не менее строго оттого, что её выбрала сама модель.
 

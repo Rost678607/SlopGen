@@ -236,6 +236,45 @@ _VIDEO_ENDPOINTS: tuple[tuple[str | None, dict], ...] = (
 )
 
 
+# How long ONE call into a Space may take before the shot is given up on. There is no
+# timeout in `gradio_client` and none in the sockets underneath it, so without this a
+# Space that accepts the job and never answers holds the stage forever — and a stage
+# cannot be interrupted from outside, so the whole run becomes unstoppable and the
+# button that says "stop" goes on meaning "after the current stage" indefinitely.
+# Measured against the failure that produced it: a run sat in `footage` at 1 shot of 7
+# for three hours with the peer's side of the connection already in CLOSE-WAIT.
+#
+# Generous rather than tight, because a queued Space legitimately takes many minutes
+# and a timeout that fires on a working one costs a clip for nothing. `SLOPGEN_SPACE_TIMEOUT_S`
+# overrides it; 0 switches the ceiling off and restores the old unbounded wait.
+SPACE_TIMEOUT_S = float(os.environ.get("SLOPGEN_SPACE_TIMEOUT_S") or 600)
+
+
+def _predict(client, *args, **kwargs):
+    """`client.predict`, with the ceiling above over it.
+
+    `predict` is `submit(...).result()` inside the library, so this is that same pair
+    with the timeout `predict` gives no way to pass. A call that runs out is cancelled
+    — best effort: cancelling releases our end and tells the Space to drop the job,
+    and the worker thread the library left behind is the price of a library that
+    cannot be interrupted."""
+    from concurrent.futures import TimeoutError as FutureTimeout
+
+    job = client.submit(*args, **kwargs)
+    if SPACE_TIMEOUT_S <= 0:
+        return job.result()
+    try:
+        return job.result(timeout=SPACE_TIMEOUT_S)
+    except FutureTimeout:
+        try:
+            job.cancel()
+        except Exception:  # noqa: BLE001 — a Space that will not answer will not cancel either
+            pass
+        raise TimeoutError(
+            f"the Space gave no answer in {SPACE_TIMEOUT_S:.0f}s — moving on"
+        ) from None
+
+
 def _run_space(space: str, prompt: str, token: str | None) -> str | None:
     """Best-effort call into a text-to-video Space. Space APIs vary wildly, so try
     the known endpoint shapes (see _VIDEO_ENDPOINTS) and take whatever video path
@@ -247,9 +286,9 @@ def _run_space(space: str, prompt: str, token: str | None) -> str | None:
     for api, extra in _VIDEO_ENDPOINTS:
         try:
             if api is None:
-                result = client.predict(prompt)  # positional: odd/renamed text input
+                result = _predict(client, prompt)  # positional: odd/renamed text input
             else:
-                result = client.predict(api_name=api, prompt=prompt, **extra)
+                result = _predict(client, api_name=api, prompt=prompt, **extra)
         except Exception as e:  # wrong api_name / arg name / arg count — try the next shape
             last = e
             continue

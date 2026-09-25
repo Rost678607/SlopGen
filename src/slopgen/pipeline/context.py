@@ -28,6 +28,22 @@ from ..llm.style import compile_style
 _AUTO_CONTENT = ContentTypeConfig(name="", idea_brief={}, script_brief={}, voices={})
 
 
+class Stopped(Exception):
+    """The operator asked for the run to stop, and a stage noticed in time to obey.
+
+    It exists because `Orchestrator.should_stop` is polled BETWEEN stages, which is
+    the right place for a pipeline of short steps and not enough for the long ones: a
+    stage that spends forty minutes fetching footage holds the whole run past every
+    press of the button, and the page goes on saying "will stop after the current
+    stage" while the stage has no intention of ending. A long stage therefore asks
+    `ctx.stopping()` at the top of its own loop and raises this, which the orchestrator
+    parks exactly as it parks the between-stages answer.
+
+    Raised rather than returned on purpose: a stage that returns normally is recorded
+    as FINISHED, and a footage stage that filled two scenes out of seven would send
+    the run on to be assembled out of nothing."""
+
+
 @dataclass
 class AppContext:
     store: ConfigStore
@@ -38,6 +54,9 @@ class AppContext:
     # the orchestrator's event stream only fires between stages, which leaves the
     # long ones (voicing 40 lines, generating 40 clips) looking frozen.
     on_progress: Callable[[str, int, int], None] | None = None
+    # "has the operator asked this run to stop?", for the stages long enough that the
+    # answer matters before they are over (see `Stopped` and `stopping`)
+    on_stop: Callable[[], bool] | None = None
     # compiled look, filled on first use (see `style_suffix`); None = not yet compiled,
     # "" = nothing to compile. Never set by the caller.
     _style: str | None = None
@@ -48,6 +67,17 @@ class AppContext:
 
     def __post_init__(self):
         self.llm = LLMRouter(self.store, self.usage)
+
+    def stopping(self) -> bool:
+        """Whether the operator has asked this run to stop. Never raises: a broken or
+        missing reporter must not take the pipeline down, and a stage that cannot find
+        out simply carries on, which is what it did before there was an answer."""
+        if self.on_stop is None:
+            return False
+        try:
+            return bool(self.on_stop())
+        except Exception:  # noqa: BLE001
+            return False
 
     def progress(self, unit: str, done: int, total: int) -> None:
         """Report `done of total` for a stage's inner loop. Never raises: a broken

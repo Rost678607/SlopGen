@@ -34,7 +34,7 @@ from typing import Callable
 from ..publish import get_publisher
 from . import parts, review
 from .checkpoint import CHECKPOINT_NAME, Checkpoint
-from .context import AppContext
+from .context import AppContext, Stopped
 from .job import VideoJob
 from .manual import ManualInputPending
 from .stages import (
@@ -156,6 +156,10 @@ class Orchestrator:
         # is indistinguishable from a crash the resume already knows how to survive:
         # `slopgen --resume` picks the run up at the stage it never started.
         self.should_stop = should_stop or (lambda: False)
+        # …and the stages get the same answer, because the check below only runs
+        # between them and the long ones have to be able to ask mid-way (see
+        # `context.Stopped`)
+        self.ctx.on_stop = self.should_stop
         self.run_dir: Path | None = None  # set once run() picks/receives it
 
     def _run_dir(self) -> Path:
@@ -278,6 +282,9 @@ class Orchestrator:
             except ManualInputPending as e:  # not a failure — awaiting operator clips
                 cp.paused(job, done, current, str(e))
                 self.on_event(i, current, "paused", str(e))
+            except Stopped:  # the operator asked, and a long stage obeyed mid-way
+                cp.paused(job, done, current, "stopped by the operator")
+                self.on_event(i, current, "paused", "stopped by the operator")
             except Exception as e:  # keep the batch alive; remember where it died
                 cp.failed(job, done, current, str(e))
                 self.on_event(i, "error", "error", f"{e}\n{traceback.format_exc(limit=3)}")
