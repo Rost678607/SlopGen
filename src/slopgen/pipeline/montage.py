@@ -625,6 +625,10 @@ def settle(job: VideoJob) -> None:
 
 def retime(job: VideoJob) -> None:
     """Re-measure the whole track against the clock as it stands now."""
+    # …against a track that OPENS, which is the one thing about it nobody placed and
+    # nothing may take away (see `open_heads`). First, so a shot put back here is
+    # measured by the same pass as the rest of them.
+    open_heads(job)
     framebase.reanchor(job.scenes, job.frame_shots)
     _retell(job)
 
@@ -666,9 +670,12 @@ def open_track(job: VideoJob) -> int:
 
     So the empty track is treated as what it actually is: not an absence, but one
     uncut shot per region, waiting to be cut. Ad stretches are left alone, exactly as
-    they are by the planner — their picture is not ours."""
+    they are by the planner — their picture is not ours.
+
+    On a track that already exists it does the smaller half of the same job
+    (:func:`open_heads`): puts back the opening shot, if it has gone missing."""
     if job.frame_shots:
-        return 0
+        return open_heads(job)
     _cues, regions, _total = framebase.timeline(job.scenes)
     job.frame_shots = [
         FrameShot(start=r.start, duration=r.duration, anchor_scene=-1, anchor_word=-1)
@@ -676,6 +683,38 @@ def open_track(job: VideoJob) -> int:
     ]
     _retell(job)
     return len(job.frame_shots)
+
+
+def open_heads(job: VideoJob) -> int:
+    """A region OPENS with a shot, always. Put back any opening shot that is missing,
+    and say how many that came to.
+
+    The first seconds of a region are not a cut — nobody placed them, the video simply
+    begins — and that is exactly why they used to be lost. A cut is a WORD, the first
+    word of a video is a few tenths in (the speaker breathes first), so a shot placed
+    on it is NOT the opening shot: the opening one sits at 0.000 with no anchor at all,
+    in front of it. Take that one away — and it could be taken away, because
+    :func:`drop_cut` only recognised an opening shot by its start and this one's start
+    was the word's — and the track begins several seconds into the video. Nothing then
+    covers the gap: `framebase.lay_assets` writes no piece for seconds no shot owns, the
+    scene's last piece silently absorbs them, and the whole picture of the opening line
+    slides. The screen could not repair it either, because the one gesture it has is to
+    cut the shot that is up, and over those seconds there was none.
+
+    So the opening shot is an invariant rather than an ordinary shot: it is laid here,
+    it comes back here if it is ever lost, and the ✕ on it empties it instead of
+    removing it (:func:`drop_cut`). Only on a track that already exists — an empty one
+    is not an incomplete track but an unplanned one, and the `picture` stage cuts it
+    out of the speech (`framebase.plan_cuts`), which a head laid here would stop it
+    doing."""
+    if not job.frame_shots:
+        return 0
+    _cues, regions, _total = framebase.timeline(job.scenes)
+    made = [FrameShot(start=r.start, duration=0.0, anchor_scene=-1, anchor_word=-1)
+            for r in regions if r.duration > 1e-6
+            and not any(abs(s.start - r.start) < SAME_CUT_S for s in job.frame_shots)]
+    job.frame_shots.extend(made)
+    return len(made)
 
 
 def place_cut(job: VideoJob, scene: int, word: int) -> int:
@@ -705,6 +744,16 @@ def place_cut(job: VideoJob, scene: int, word: int) -> int:
                  if s.start <= cue.at < s.start + s.duration), -1)
     if host < 0:
         raise ValueError("that word is outside the picture track")
+    # The FIRST word of a region is already where its opening shot begins, as far as
+    # anything on screen is concerned: what lies in front of it is the breath the
+    # speaker takes before saying it. Splitting there is honest arithmetic and a
+    # useless edit — a quarter-second shot nobody asked for, in front of the one they
+    # did — so the click is answered with the opening shot itself. It keeps its start
+    # at the region's, where it must stay (see `open_heads`), and the lead-in goes with
+    # the picture that follows it, which is the only thing a viewer could read it as.
+    opens = any(abs(r.start - ordered[host].start) < SAME_CUT_S for r in regions)
+    if opens and not any(ordered[host].start - SAME_CUT_S <= c.at < cue.at for c in cues):
+        return host
     fresh = FrameShot(start=cue.at, duration=0.0, anchor_scene=scene, anchor_word=word)
     job.frame_shots.insert(host + 1, fresh)
     retime(job)
@@ -716,16 +765,25 @@ def place_cut(job: VideoJob, scene: int, word: int) -> int:
 def drop_cut(job: VideoJob, shot: int) -> None:
     """Take one cut back: this shot's stretch joins the one before it.
 
-    The first shot of a region has no cut of its own to take back — it begins because
-    the video (or the stretch after an ad) begins — so it is refused rather than
-    quietly doing nothing."""
+    The shot that OPENS a region has no cut of its own to take back — it begins
+    because the video (or the stretch after an ad) begins — and it is not allowed to
+    go, because the seconds it holds belong to nobody else (see :func:`open_heads`).
+    So the same ✕ does to it the only thing that can be done: takes the PICTURE off
+    and leaves the shot standing, empty, over its own seconds.
+
+    Refusing was the other answer and it was the wrong one twice over. It read as a
+    button that does nothing, and it protected the opening shot only where the
+    protection was not needed: the test is the shot's START, so an opening shot that
+    had been cut on the first WORD — a few tenths in, because the speaker breathes
+    first — did not look like one, went, and took the head of the video with it."""
     ordered = _ordered(job)
     if not 0 <= shot < len(ordered):
         raise ValueError("there is no such shot")
     _cues, regions, _total = framebase.timeline(job.scenes)
     s = ordered[shot]
     if any(abs(r.start - s.start) < SAME_CUT_S for r in regions):
-        raise ValueError("this shot opens the video — there is no cut in front of it")
+        cast(job, shot, None)
+        return
     del job.frame_shots[shot]
     retime(job)
 

@@ -22,6 +22,7 @@ canvas approximation of `noise` and `curves`.
 
 from __future__ import annotations
 
+import json
 import logging
 import shutil
 import threading
@@ -185,6 +186,13 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404, card_json) -> None
         job = cp.load_job(video)
         if job is None:
             raise HTTPException(status_code=404, detail=f"no video {video} in this run")
+        # A region opens with a shot (`montage.open_heads`), and a job written before
+        # that was true can be short one — leaving the first seconds of the video owned
+        # by nothing and unreachable from a screen whose only gesture is to cut the shot
+        # that is up. It is put back here, at the door, so reading the track and editing
+        # it see the same one; the write happens with whatever edit comes next.
+        if montage.open_heads(job):
+            montage.retime(job)
         return cp, video, job
 
     def save(cp: Checkpoint, i: int, job, done: list[str] | None = None) -> None:
@@ -660,18 +668,36 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404, card_json) -> None
                           slopgen: str | None = Cookie(default=None)):
         """Every line's voice as one file — the preview's clock.
 
-        Rebuilt when a line has been re-voiced since it was last made, and not
-        otherwise: the test is the newest piece against the file, which is exactly the
-        thing that changes when somebody presses the button that changes it."""
+        Rebuilt whenever it would come out different, and the test for that is the
+        RECIPE: which take, in which order, for how long. It used to be mtimes alone —
+        the newest piece against the file — and that answers only one of the ways this
+        track goes stale, the one where a line is re-voiced. Take a line OUT and no
+        take is newer than anything: the files that remain are the same files, moved
+        (and a move keeps its mtime), so the stale track was served, still carrying the
+        voice of a line the operator had deleted. Sixteen seconds of audio over a
+        fourteen-second timeline, with everything after the deletion out of sync with
+        the picture — and no button in the room would clear it, because nothing in the
+        room knew it was wrong.
+
+        So the recipe is written down beside the file and compared. It covers the same
+        re-voicing the mtime did (a new take has a new length), and every other edit
+        that changes what the track should be: a line dropped, one inserted, one
+        re-voiced at another speed, a silent line appearing where there was sound."""
         guard(slopgen)
         run = run_or_404(run_id)
         cp, _i, job = open_job(run, video)
         pieces = montage.voice_pieces(job)
         out = Path(job.workdir) / "montage" / "voice.m4a"
+        recipe = json.dumps([[str(p) if p else "", round(s, 4)] for p, s in pieces],
+                            ensure_ascii=False)
+        stamp = out.with_name("voice.recipe.json")
         newest = max((p.stat().st_mtime for p, _s in pieces if p), default=0.0)
-        if not out.is_file() or out.stat().st_mtime < newest:
+        made = stamp.read_text(encoding="utf-8") if stamp.is_file() else ""
+        if not out.is_file() or out.stat().st_mtime < newest or made != recipe:
             try:
                 await run_in_threadpool(ffmpeg.voice_track, pieces, out, store.global_cfg)
+                stamp.parent.mkdir(parents=True, exist_ok=True)
+                stamp.write_text(recipe, encoding="utf-8")
             except Exception as e:
                 log.exception("building the preview voice track failed")
                 raise HTTPException(status_code=502, detail=f"{type(e).__name__}: {e}")

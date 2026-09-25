@@ -793,11 +793,20 @@ button.danger{border-color:var(--bad);color:var(--bad)}
   padding:10px;display:grid;gap:6px}
 .mont-fx p{margin:0;font-size:12px}
 
-/* the right half: the clock and whatever is selected on it */
-.mont-right{flex:1;min-width:0;display:flex;flex-direction:column;gap:8px}
+/* The right half: the clock and whatever is selected on it — and ONE scroller for the
+   pair of them. It used to be three: the inspector scrolled inside the column and the
+   card strip scrolled inside the inspector, so a wall of forty pictures was shown
+   three rows at a time through a letterbox while the page around it sat still. A list
+   that grows should make the thing it is in longer; what scrolls is the column. */
+.mont-right{flex:1;min-width:0;display:flex;flex-direction:column;gap:8px;
+  min-height:0;overflow-y:auto}
 .mont-bar{display:flex;gap:10px;align-items:center;font-size:12.5px;color:var(--dim)}
 .mont-bar input[type=range]{width:160px}
-.mont-time{overflow-x:auto;overflow-y:hidden;background:var(--panel);
+/* …and the timeline stays put at the top of that scroller. It is what everything below
+   is ABOUT: cast a card from a strip forty rows down and the track you cast it onto
+   would otherwise be somewhere off the top of the screen. */
+.mont-time{position:sticky;top:0;z-index:3;flex:0 0 auto;
+  overflow-x:auto;overflow-y:hidden;background:var(--panel);
   border:1px solid var(--line);border-radius:8px;padding-bottom:4px}
 .mont-lanes{position:relative;min-width:100%}
 .mont-lanes .lane{position:relative;height:var(--h,28px)}
@@ -893,7 +902,7 @@ button.danger{border-color:var(--bad);color:var(--bad)}
 #i-settext.unsaved{border-color:var(--warn);color:var(--warn)}
 
 /* the inspector: the one thing selected, and everything that can be done to it */
-.mont-insp{flex:1;min-height:140px;overflow:auto;background:var(--panel);
+.mont-insp{flex:0 0 auto;min-height:140px;background:var(--panel);
   border:1px solid var(--line);border-radius:8px;padding:10px;display:grid;gap:8px;
   align-content:start}
 .mont-insp .insp-head{display:flex;gap:8px;align-items:center}
@@ -941,8 +950,18 @@ button.danger{border-color:var(--bad);color:var(--bad)}
 .mont-insp .insp-h{min-height:32px;flex-wrap:wrap}
 .mont-insp p.warn-note{margin:0}
 .mont-insp .warn-note{font-size:11.5px;color:var(--warn)}
-.mont-insp .strip{display:grid;gap:8px;
-  grid-template-columns:repeat(auto-fill,minmax(88px,1fr));max-height:280px;overflow:auto}
+/* The strip of cards to cast from. Its tiles are the VIDEO's shape, and they have to
+   be: this is a wall of pictures you pick one out of, and a picture squashed to a
+   letterbox is not the picture that will be on screen. They came out flat because a
+   grid item stretches to its row and `.thumb` is a shrinkable flex child — so the
+   aspect ratio lost to the row's height. Both are said here: the card sits at the top
+   of its row instead of filling it, and the thumbnail may not shrink. */
+.mont-insp .strip{display:grid;gap:8px;align-items:start;
+  grid-template-columns:repeat(auto-fill,minmax(78px,1fr))}
+.mont-insp .strip .frame-card{align-self:start}
+.mont-insp .strip .thumb{flex:0 0 auto;aspect-ratio:9/16}
+/* the name under it is one line at this width; two would push the pictures apart */
+.mont-insp .strip .meta{padding:4px 6px;font-size:11px}
 .mont-insp .frame-card.on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
 .mont-insp .take{display:block;border:1px dashed var(--line);border-radius:8px;
   padding:10px;text-align:center;color:var(--dim);cursor:pointer;font-size:12.5px}

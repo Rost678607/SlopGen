@@ -599,6 +599,19 @@ and the two things you actually want to do to it cannot be typed into a row at a
   the track was written), so a cut placed by hand survives everything that moves the
   clock afterwards: re-voice a line at half speed and every cut after it slides with the
   words it was placed on, rather than landing half a second off the word you meant.
+- **The video opens with a shot, always.** The first one on the track is not a cut
+  anybody placed — it sits at 00:00.000 and it is simply where the video begins — so it
+  cannot be taken off the track: **✕** on it takes the *picture* off and leaves the shot
+  standing, empty, over its own seconds. It used to be removable, because the only thing
+  that marked it out was its start, and a shot cut on the first WORD starts a few tenths
+  in — the speaker breathes first. Remove that and the track began three seconds into
+  the video: nothing owned the opening seconds, the render silently handed them to the
+  neighbouring picture, and the screen could not repair it, because the one gesture it
+  has is to cut the shot that is up and over those seconds there was none. The opening
+  shot is now put back wherever it has gone missing, including in runs saved before this
+  was true, and the same holds for the stretch after an ad — every region opens with a
+  shot of its own. Clicking the first word of a region is answered with that shot rather
+  than a quarter-second sliver in front of it.
 - **The voice and the text are one track and two edits.** A line's **text** is what is
   read — the burned-in captions are built from its word timings — and saving it re-lays
   the new words over the span the old ones occupied, touching neither the audio nor the
@@ -1467,6 +1480,18 @@ cp deploy.env.example deploy.env        # SSH_HOST и SSH_USER, больше н�
   написали), поэтому поставленный руками стык переживает всё, что двигает часы:
   переозвучь строку вдвое медленнее — и каждый стык после неё уедет вместе со словом, на
   котором стоял, а не окажется за полсекунды от него.
+- **Ролик всегда начинается кадром.** Первый кадр дорожки — не чей-то стык: он стоит на
+  00:00.000 и означает просто «здесь начинается видео», поэтому убрать его с дорожки
+  нельзя — **✕** на нём снимает с него *картинку* и оставляет сам кадр стоять пустым над
+  своими секундами. Раньше его можно было убрать: отличали его только по началу, а кадр,
+  нарезанный по первому СЛОВУ, начинается на пару десятых позже — рассказчик сначала
+  вдыхает. Уберёшь такой — и дорожка начинается через три секунды после начала ролика:
+  первыми секундами не владеет никто, рендер молча отдаёт их соседней картинке, а экран
+  этого уже не чинит, потому что единственный его жест — разрезать кадр, который идёт, а
+  над теми секундами не идёт никакой. Теперь начальный кадр возвращается всюду, где
+  пропал, — в том числе в прогонах, сохранённых до этой правки, — и то же верно для
+  куска после рекламы: каждый кусок начинается своим кадром. Клик по первому слову куска
+  отвечает этим самым кадром, а не осколком в четверть секунды перед ним.
 - **Звук и текст — одна дорожка и две правки.** **Текст** строки — это то, что читают:
   вшитые субтитры собираются из её таймингов слов, и сохранение текста раскладывает
   новые слова по тому же промежутку, не трогая ни звук, ни часы. **Голос** строки — это

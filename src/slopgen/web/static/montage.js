@@ -116,9 +116,11 @@ const X = (t) => Math.round(t * montPPS);
 
 function renderStages() {
   const d = MONT.doc;
-  // «нарезать заново» is the wrong words for a track that does not exist yet
+  // «нарезать заново» is the wrong words for a track that has not been cut yet — and
+  // a track carrying nothing but the shots every region opens with has not been
+  // (see `montage.open_heads`): those are not cuts, they are where the video begins.
   mq("#mont-recut").textContent =
-    lab(d.shots.length ? "web.mont.recut" : "js.mont.laytrack");
+    lab(d.shots.some((s) => !opensRegion(s)) ? "web.mont.recut" : "js.mont.laytrack");
   const rail = (d.stages || []).map((st) => `
     <button data-stage="${esc(st.name)}" class="${st.done ? "done" : ""}"
       ${st.ready ? "" : "disabled"}
@@ -391,6 +393,12 @@ function renderSilent() {
 }
 
 const cardOf = (name) => (MONT.doc.cards || []).find((c) => c.name === name) || null;
+
+// Whether a shot is the one a region OPENS with: the one nobody placed, that holds the
+// seconds before the first cut and cannot be taken off the track — ✕ empties it
+// instead (see `montage.drop_cut`). The server's own test, to the same tolerance.
+const opensRegion = (s) =>
+  (MONT.doc.regions || []).some((r) => Math.abs(r.start - s.start) < 0.02);
 
 function bindLanes() {
   // A word is where a shot BEGINS. That is the whole gesture of this screen, so it is
@@ -982,7 +990,14 @@ function bindLineInspector() {
   mq("#i-after").onclick = () => add(i);
   mq("#i-drop").onclick = () =>
     send(`/line?video=${MONT.video}&scene=${i}`, { method: "DELETE" },
-         () => { montDrafts.clear(); montSel = null; reloadVoice(); });
+         (d) => {
+           montDrafts.clear();
+           // the line that took its place is selected, so deleting two in a row is two
+           // presses rather than two presses and a hunt for what to press next
+           montSel = d.scenes.length
+             ? { kind: "line", i: Math.min(i, d.scenes.length - 1) } : null;
+           reloadVoice();
+         });
   dropTarget(mq("#i-take-voice"), async (file) => {
     await commitText(i);  // the recogniser times the recording against this line's TEXT
     const body = new FormData(); body.append("file", file);
