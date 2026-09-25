@@ -757,7 +757,17 @@ The video track is a layered composition, configured per profile:
 - **Foreground**: optional framed picture/clip inserts that are *event-driven*, not on a timer — the LLM decides which spoken phrases deserve an illustration, and each insert appears exactly while that phrase is spoken (timed from edge-tts word timings) and disappears afterwards. You only pick the source, width and position.
 - **Who supplies the material** (`manual = true`, on either layer): a flag, not a source of its own — *where the material comes from* and *what kind of material it is* are two independent questions, and you can step into either family. `stock_video`/`stock_photo` + `manual` is a **search**: slopgen says what each shot needs and hands you the words to find it with, you find the file. `ai_video`/`ai_photo` + `manual` is a **generation**: slopgen writes the prompt, you make the clip in an external web tool. `local_*` ignores the flag — those files are already on disk. `ai_model` is ignored wherever `manual` is set, because there is no generator left to name; this pair of settings replaces the old `ai_model = "manual"` spelling, which could only ever express the generation half.
 
-Shipped profiles: `classic` (stock video b-roll, the default), `slideshow` (narration-synced Ken Burns photos), `gameplay` (drop your minecraft-parkour/subway-surfers clips into `assets/footage/gameplay/`, narration photo inserts pop in front), `ai_slideshow` (keyless Pollinations images synced to the narration), `ai_broll` (a generated clip per scene — free, slow), `ai_manual` (you generate every clip by hand) and `search` (you find every shot yourself). In the TUI wizard the Visuals step prefills from a profile and any edited field turns the run into a custom profile.
+Shipped profiles: `classic` (stock video b-roll, the default), `slideshow` (narration-synced Ken Burns photos), `gameplay` (drop your minecraft-parkour/subway-surfers clips into `assets/footage/gameplay/`, narration photo inserts pop in front), `ai_slideshow` (keyless Pollinations images synced to the narration), `ai_broll` (a generated clip per scene — free, slow), `ai_manual` (you generate every clip by hand) and `search` (you find every shot yourself). **Both doors take the profile apart.** The TUI wizard's Visuals step and the browser's
+Picture card hold the same controls — background source, who supplies it, the generator,
+the linkage, the folder, the photo cadence and motion, one-clip-straight-through, and the
+inserts' own source, width and position — and both fill them FROM the profile you picked.
+That is what lets a card with fourteen controls on it change nothing: a form nobody edited
+rebuilds the profile exactly, so the run carries the profile's NAME, which is what the
+runs list shows and what stays correct when the profile is edited later. Move one field and
+the run carries its own copy instead. A field the card does not ask about keeps the
+profile's answer rather than falling back to the model default, and `manual` blanks the
+generator pick, because a source the operator supplies has no generator to name — which is
+why picking `ai_manual` and touching nothing is not an edit.
 
 ### Art style: one description, every prompt
 
@@ -1610,7 +1620,17 @@ cp deploy.env.example deploy.env        # SSH_HOST и SSH_USER, больше н�
 - **Передний план**: опциональные вставки-картинки/клипы в рамке — *по событию, а не по таймеру*: нейронка сама решает, какие произносимые фразы заслуживают иллюстрации, и каждая вставка показывается ровно пока звучит её фраза (тайминг из пословной разметки edge-tts) и исчезает после. Ты задаёшь только источник, ширину и позицию.
 - **Кто поставляет материал** (`manual = true`, на любом из слоёв): это флаг, а не отдельный источник — *откуда берётся материал* и *какого он рода* суть два независимых вопроса, и вмешаться ты можешь в любое из семейств. `stock_video`/`stock_photo` + `manual` — это **поиск**: слопген говорит, что нужно на каждый кадр, и выдаёт слова, которыми это ищется, а файл находишь ты. `ai_video`/`ai_photo` + `manual` — это **генерация**: слопген пишет промпт, а клип ты делаешь во внешнем веб-сервисе. `local_*` флаг игнорирует — эти файлы и так лежат на диске. `ai_model` игнорируется везде, где выставлен `manual`: называть больше нечего. Эта пара настроек и заменила старую запись `ai_model = "manual"`, которая умела выразить только половину — генерацию.
 
-Готовые профили: `classic` (сток-видео, дефолт), `slideshow` (фото в такт тексту с Ken Burns), `gameplay` (кинь клипы майнкрафт-паркура/сабвей-сёрфа в `assets/footage/gameplay/` — поверх будут выскакивать картинки по тексту), `ai_slideshow` (картинки Pollinations без ключа, в такт тексту), `ai_broll` (сгенерированный клип на сцену — бесплатно, медленно), `ai_manual` (каждый клип генерируешь руками ты) и `search` (каждый кадр находишь ты). В TUI шаг «Видеоряд» предзаполняется профилем; любое изменённое поле превращает запуск в кастомный профиль.
+Готовые профили: `classic` (сток-видео, дефолт), `slideshow` (фото в такт тексту с Ken Burns), `gameplay` (кинь клипы майнкрафт-паркура/сабвей-сёрфа в `assets/footage/gameplay/` — поверх будут выскакивать картинки по тексту), `ai_slideshow` (картинки Pollinations без ключа, в такт тексту), `ai_broll` (сгенерированный клип на сцену — бесплатно, медленно), `ai_manual` (каждый клип генерируешь руками ты) и `search` (каждый кадр находишь ты). **Профиль разбирается на ручки в обеих мордах.** Шаг «Видеоряд» в TUI и карточка «Откуда
+картинка» в браузере держат одни и те же контролы — источник фона, кто его поставляет,
+генератор, привязку, папку, темп смены и движение фото, «один клип насквозь», а также
+источник, ширину и позицию вставок — и обе предзаполняются ИЗ выбранного профиля. Именно это
+позволяет карточке из четырнадцати ручек не менять ничего: форма, которую никто не трогал,
+воспроизводит профиль в точности, поэтому прогон несёт ИМЯ профиля — то, что видно в списке
+прогонов и что останется верным, когда профиль потом поправят. Сдвинешь одно поле — прогон
+понесёт собственную копию. Поле, о котором карточка не спрашивает, сохраняет ответ профиля,
+а не падает в дефолт модели, а `manual` обнуляет выбор генератора: у материала, который
+поставляет оператор, называть нечего — поэтому выбрать `ai_manual` и ничего не тронуть не
+считается правкой.
 
 ### Стиль графики: одно описание — во всех промптах
 

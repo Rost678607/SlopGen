@@ -73,7 +73,7 @@ from ..llm import characters as char_ai
 from ..llm import lore as lore_ai
 from ..llm import rewrite as bp_ai
 from ..media.filters import KEYS as FILTER_KEYS
-from ..media.generate import PHOTO_MODELS, VIDEO_MODELS
+from ..media.generate import NOT_GENERATORS, OPERATOR_SOURCES, PHOTO_MODELS, VIDEO_MODELS
 from ..media.generate import env_keys as gen_keys
 from ..media.generate import key_var_for_model
 from ..pipeline import Orchestrator, VideoJob, manual, parts, review
@@ -2161,15 +2161,9 @@ MODEL_LABELS = {"manual": "🙋 you generate it", "search": "🔍 you find it"}
 # Not generators: the material comes from the operator (see media/generate). In the
 # visuals profile that is the `manual` toggle, so they must not appear in the
 # ai_model picker next to it; a chain stage names them like any other source.
-OPERATOR_SOURCES = ("manual", "search")
-# `frames` is not a generator either, but it is not the operator's inbox either: the
-# picture comes out of the world's own frame base, a folder it accumulates across runs
-# (see pipeline/framebase). It sits in PHOTO_MODELS so a fandom run can name it like
-# any other source, which is why it has to be excluded HERE from the two lists that
-# mean "a generator to call": naming it beside flux would offer to generate with it,
-# and putting it in a chain would promise a video half out of the base and half out of
-# a model — which the mode cannot do, being all-or-nothing by construction.
-NOT_GENERATORS = OPERATOR_SOURCES + ("frames",)
+# Both live in media/generate now, beside the tables they filter: the browser builds
+# the same two pickers and a second copy of "what counts as a generator" is how one
+# door ends up offering a choice the other refuses.
 
 
 def _model_opt(m: str) -> tuple[str, str]:  # (label, value) for a Select

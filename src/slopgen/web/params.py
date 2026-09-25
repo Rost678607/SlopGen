@@ -248,11 +248,14 @@ def info_params(store: ConfigStore, b: dict) -> RunParams:
 
     `store` is unused and kept anyway: one signature across the three is what lets a
     caller dispatch on the mode rather than write the same branch three times."""
+    visuals = str(b.get("visuals", "classic"))
     return RunParams(
         lang=str(b.get("lang", "ru")),
         content_type=str(b.get("content_type", "")),
         mode="info", idea=str(b.get("idea", "")),
-        visuals=str(b.get("visuals", "classic")),
+        visuals=visuals,
+        # the Picture card, if it was moved off the profile it was filled from
+        manual_visuals=manual_visuals(store, b, visuals),
         duration_s=float(b.get("duration_s", 45.0)),
         count=int(b.get("count", 1)),
         dry_run=bool(b.get("dry_run", True)),

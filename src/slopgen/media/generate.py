@@ -73,6 +73,31 @@ PHOTO_MODELS: dict[str, str] = {
     "frames": "",
 }
 
+# Which entries of the two tables above are NOT generators to call.
+#
+# `manual` and `search` are the operator's own two hands (see the note above
+# VIDEO_MODELS). In a visuals profile that is the `manual` flag rather than a source,
+# so they must never appear in an `ai_model` picker beside it — naming `search` as the
+# generator to call is a contradiction. `frames` is not the operator's inbox either:
+# the picture comes out of a world's own frame base (see pipeline/framebase), and it
+# lives in PHOTO_MODELS only so a fandom run can name it like any other source.
+# Offering it next to `flux` would promise to GENERATE with it, and putting it in a
+# chain would promise a video half out of the base and half out of a model — which the
+# mode cannot do, being all-or-nothing by construction.
+#
+# It lives here, beside the tables it filters, because both doors need it: the terminal
+# builds its two AI-model pickers from it and so does the browser, and two copies of
+# "what counts as a generator" is the kind of divergence that shows up as one door
+# offering a choice the other refuses.
+OPERATOR_SOURCES = ("manual", "search")
+NOT_GENERATORS = OPERATOR_SOURCES + ("frames",)
+
+
+def ai_models(table) -> list[str]:
+    """The entries of a model table that are a generator something can be asked of."""
+    return [m for m in table if m not in NOT_GENERATORS]
+
+
 # Expected output length, in seconds, of one clip/shot from each generator. Drives
 # the AI-drama timeline: how many words of narration a scene gets (words ≈ seconds
 # × speaking rate) and the base length the voiceover is time-stretched to. Video

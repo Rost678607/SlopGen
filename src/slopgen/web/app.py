@@ -24,7 +24,7 @@ import secrets
 import shutil
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, get_args
 from urllib.parse import quote
 
 from fastapi import Cookie, FastAPI, Form, HTTPException, Request, UploadFile
@@ -45,7 +45,7 @@ from ..llm import topic as topic_ai
 from ..llm.client import ChatLLM, MODEL_PRESETS, PROVIDERS
 from .. import labels
 from ..media import ffmpeg as ffmpeg_media
-from ..media.generate import (PHOTO_MODELS, VIDEO_MODELS, env_keys,
+from ..media.generate import (PHOTO_MODELS, VIDEO_MODELS, ai_models, env_keys,
                               model_clip_seconds)
 from ..tts import ENGINES as TTS_ENGINES
 from ..tts import refs
@@ -56,6 +56,7 @@ from ..config.models import (AccountConfig, AdConfig, CharacterConfig, CropTarge
                              OrchestrationConfig, OrchestrationStage, PresetConfig,
                              Rect, VisualsConfig,
                              VoiceConfig, VoiceSample)
+from ..config.models import BgSource, FgSource, Motion
 from ..media.stock import IMAGE_EXTS, VIDEO_EXTS
 from ..pipeline import manual, review
 from ..pipeline.stages.ads import OVERLAY_EXTS
@@ -243,11 +244,43 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
             "characters": sorted(store.characters),
             "ads": _described(store.ads, "url"),
             "accounts": sorted(store.accounts),
-            "cloned_voices": sorted(store.voices),
+            "cloned_voices": store.voice_specs(),
             # what a fandom run's picture can be made of. `frames` is the world's own
             # base (see pipeline/framebase); the rest generate or are supplied per shot
             "photo_sources": list(PHOTO_MODELS) + ["manual", "search"],
             "video_sources": list(VIDEO_MODELS),
+            # …and what an INFO run's picture can be made of, which is a different
+            # question with a different shape: not one source for the whole video but
+            # a background and an optional foreground, each with its own source, and
+            # the `manual` flag sitting ORTHOGONALLY across both (see
+            # config.models.manual_kind). These are the lists behind the Picture card,
+            # which is the visuals profile taken apart into its own controls — pick a
+            # profile and the fields fill in from it; edit one and the run carries the
+            # edited copy instead of the profile's name.
+            "bg_sources": list(get_args(BgSource)),
+            "fg_sources": list(get_args(FgSource)),
+            # only the entries that are a generator to CALL: `manual`/`search` are the
+            # flag beside this picker, not a model for it (see generate.NOT_GENERATORS)
+            "ai_video_models": ai_models(VIDEO_MODELS),
+            "ai_photo_models": ai_models(PHOTO_MODELS),
+            "bg_linkages": ["narration", "neutral"],
+            "motions": list(get_args(Motion)),
+            "fg_positions": ["center", "top", "bottom"],
+            "overlay_positions": ["top_left", "top_right", "bottom_left", "bottom_right"],
+            # The profiles in full, not just their names: the browser fills the Picture
+            # card from whichever one is picked, and compares against it to decide
+            # whether the run carries a profile name or an edited copy.
+            "visuals_full": {n: v.model_dump(mode="json")
+                             for n, v in sorted(store.visuals.items())},
+            # what is in assets/music/, by file name: the track a run plays under the
+            # voice. "" is left to the pipeline (a roll seeded on the run, so the room
+            # can play the one the cut will carry) and `none` is silence.
+            # folders first, then the tracks themselves: a folder is a roll over a
+            # shelf and a track is a track, told apart by the trailing slash
+            "music": (folders_in(store.global_cfg)
+                      + [track_key(store.global_cfg, p)
+                         for p in tracks_in(store.global_cfg)]
+                      + [MUSIC_NONE]),
             "tts_engines": sorted(TTS_ENGINES),
             "subtitle_styles": ["word_pop", "phrases", "karaoke"],
             "ad_modes": ["overlay", "native", "both"],

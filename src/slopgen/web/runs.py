@@ -184,12 +184,21 @@ class Loop:
             "run_ids": list(self.run_ids),
             # The settings every next video is built from — sent whole, because the page
             # edits them in the same form that starts a run and a form cannot be filled
-            # from a summary. The two ad-hoc configs a form can express are sent beside
-            # them as what the form actually shows: a cast is its names, a picture
-            # source is the one generator its chain names.
+            # from a summary. Two of the ad-hoc configs are sent beside them as what the
+            # form actually shows: a cast is its names, a picture source is the one
+            # generator its chain names.
+            #
+            # The other two go out IN FULL, and the reason is the sentence above. The
+            # info form now takes a visuals profile apart into its own controls and lets
+            # an ad contract be typed in instead of picked, so both are things the form
+            # expresses — and a form filled without them rebuilds the named profile and
+            # reads "no ad", which on save hands the loop back its own overrides erased.
+            # That is not a theoretical loss: it is how a running loop silently went from
+            # stock footage to generating every clip. Neither is large — the one that
+            # would have doubled every row is the generator chain, still excluded.
             "params": plan.params.model_dump(mode="json",
-                                             exclude={"manual_cast", "manual_visuals",
-                                                      "manual_ad", "manual_orchestration"}),
+                                             exclude={"manual_cast",
+                                                      "manual_orchestration"}),
             "cast": [c.name for c in plan.params.manual_cast],
             "picture_source": (plan.params.manual_orchestration.stages[0].model
                                if plan.params.manual_orchestration

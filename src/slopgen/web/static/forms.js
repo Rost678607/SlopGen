@@ -556,6 +556,204 @@ const FORMS = {
         {
           "note": "",
           "cls": "dim vis-note"
+        },
+        {
+          "note": "web.bg.note",
+          "cls": "dim sub-head"
+        },
+        {
+          "f": "bg_source",
+          "kind": "select",
+          "cls": "f-bgsrc",
+          "l": "web.f.bgsrc"
+        },
+        {
+          "when": "bg_source=stock_video|stock_photo|ai_video|ai_photo",
+          "rows": [
+            {
+              "f": "bg_manual",
+              "kind": "checkbox",
+              "inline": true,
+              "l": "web.f.byme"
+            },
+            {
+              "note": "web.byme.note",
+              "cls": "dim"
+            }
+          ]
+        },
+        {
+          "when": "bg_source=ai_video",
+          "rows": [
+            {
+              "when": "bg_manual!=*",
+              "rows": [
+                {
+                  "f": "bg_ai_vmodel",
+                  "kind": "select",
+                  "cls": "f-aivid",
+                  "l": "web.f.aimodel"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "when": "bg_source=ai_photo",
+          "rows": [
+            {
+              "when": "bg_manual!=*",
+              "rows": [
+                {
+                  "f": "bg_ai_pmodel",
+                  "kind": "select",
+                  "cls": "f-aiphoto",
+                  "l": "web.f.aimodel"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "f": "bg_link",
+          "kind": "select",
+          "cls": "f-bglink",
+          "l": "web.f.bglink"
+        },
+        {
+          "when": "bg_source=local_video|local_photo",
+          "rows": [
+            {
+              "f": "bg_dir",
+              "kind": "text",
+              "l": "web.f.bgdir"
+            }
+          ]
+        },
+        {
+          "when": "bg_source=stock_photo|local_photo|ai_photo",
+          "rows": [
+            [
+              "row2",
+              {
+                "f": "bg_interval",
+                "kind": "number",
+                "min": "1",
+                "max": "30",
+                "step": "0.5",
+                "value": "3.5",
+                "l": "web.f.bgint"
+              },
+              {
+                "f": "bg_motion",
+                "kind": "select",
+                "cls": "f-motion",
+                "l": "web.f.bgmotion"
+              }
+            ]
+          ]
+        },
+        {
+          "when": "bg_source=stock_video|local_video",
+          "rows": [
+            {
+              "f": "bg_cont",
+              "kind": "checkbox",
+              "inline": true,
+              "l": "web.f.bgcont"
+            },
+            {
+              "note": "web.bgcont.note",
+              "cls": "dim"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "cls": [],
+      "title": "web.card.inserts",
+      "rows": [
+        {
+          "f": "fg_on",
+          "kind": "checkbox",
+          "inline": true,
+          "l": "web.f.fgon"
+        },
+        {
+          "note": "web.fgon.note",
+          "cls": "dim"
+        },
+        {
+          "when": "fg_on=*",
+          "rows": [
+            {
+              "f": "fg_source",
+              "kind": "select",
+              "cls": "f-fgsrc",
+              "l": "web.f.fgsrc"
+            },
+            {
+              "when": "fg_source=stock_photo|stock_video|ai_photo|ai_video",
+              "rows": [
+                {
+                  "f": "fg_manual",
+                  "kind": "checkbox",
+                  "inline": true,
+                  "l": "web.f.byme"
+                }
+              ]
+            },
+            {
+              "when": "fg_source=ai_video",
+              "rows": [
+                {
+                  "when": "fg_manual!=*",
+                  "rows": [
+                    {
+                      "f": "fg_ai_vmodel",
+                      "kind": "select",
+                      "cls": "f-aivid",
+                      "l": "web.f.aimodel"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "when": "fg_source=ai_photo",
+              "rows": [
+                {
+                  "when": "fg_manual!=*",
+                  "rows": [
+                    {
+                      "f": "fg_ai_pmodel",
+                      "kind": "select",
+                      "cls": "f-aiphoto",
+                      "l": "web.f.aimodel"
+                    }
+                  ]
+                }
+              ]
+            },
+            [
+              "row2",
+              {
+                "f": "fg_width",
+                "kind": "number",
+                "min": "10",
+                "max": "100",
+                "value": "78",
+                "l": "web.f.fgwidth"
+              },
+              {
+                "f": "fg_pos",
+                "kind": "select",
+                "cls": "f-fgpos",
+                "l": "web.f.fgpos"
+              }
+            ]
+          ]
         }
       ]
     },

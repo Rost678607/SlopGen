@@ -1829,6 +1829,53 @@ const humanise = (text) =>
   String(text).replace(/[a-z_]+/g, (w) =>
     lab(MOVE_KINDS.includes(w) ? "mv." + w : "w." + w, w));
 
+// The Picture card, filled from one visuals profile.
+//
+// Both generator dropdowns are prefilled, not just the one on screen: which of them
+// the source reveals can change with the next click, and the one that appears has to
+// be right already. A profile naming no generator — every stock and local source, and
+// every user-assisted one — leaves each list at its own default, which is exactly what
+// `_visuals_values` does in the terminal.
+function fillPicture(name) {
+  pictureFrom((opts.visuals_full || {})[name]);
+}
+
+// …and the same card filled from a visuals config of any provenance: the profile a
+// name points at, or the OVERRIDE a loop is already carrying. Both callers need it,
+// and the second one is why this is a function of a config rather than of a name —
+// `fillForm` opens a loop whose picture may be an ad-hoc copy that no name reaches,
+// and a card filled from the name instead would quietly rebuild the profile and hand
+// the loop back its own override erased (see params.manual_visuals).
+function pictureFrom(p) {
+  const form = $("#infoform");
+  if (!p || !form) return;
+  const bg = p.background || {}, fg = p.foreground || {};
+  const set = (n, v) => {
+    const el = form.querySelector(`[name="${n}"]`);
+    if (!el) return;
+    if (el.type === "checkbox") el.checked = !!v;
+    else el.value = v === undefined || v === null ? "" : v;
+  };
+  const model = (v, list, dflt) => ((list || []).includes(v) ? v : dflt);
+  set("bg_source", bg.source);
+  set("bg_manual", bg.manual);
+  set("bg_link", bg.linkage);
+  set("bg_dir", bg.assets_dir);
+  set("bg_ai_vmodel", model(bg.ai_model, opts.ai_video_models, "auto"));
+  set("bg_ai_pmodel", model(bg.ai_model, opts.ai_photo_models, "flux"));
+  set("bg_interval", bg.interval_s);
+  set("bg_motion", bg.motion);
+  set("bg_cont", bg.continuous);
+  set("fg_on", fg.enabled);
+  set("fg_source", fg.source);
+  set("fg_manual", fg.manual);
+  set("fg_ai_vmodel", model(fg.ai_model, opts.ai_video_models, "auto"));
+  set("fg_ai_pmodel", model(fg.ai_model, opts.ai_photo_models, "flux"));
+  set("fg_width", fg.width_pct);
+  set("fg_pos", fg.position);
+  applyConditions(form);
+}
+
 // Fields the terminal only shows once something else is set. Showing them always is
 // not merely noise: an ad mode with no ad contract, or a per-part toggle on a
 // one-part drama, invite an answer to a question that is not being asked.
@@ -2444,10 +2491,45 @@ async function loadOptions() {
   document.querySelectorAll(".f-lang, #f-lang").forEach((el) => fill(el, opts.languages));
   fill($("#i-type"), opts.content_types, true);
   fill($("#i-visuals"), opts.visuals);
+  // The Picture card: the visuals profile taken apart into its own controls. These
+  // are the lists the terminal's wizard offers, filled here by class because two of
+  // them (the generator pickers) appear once for the background and once for the
+  // inserts.
+  const fillAll = (cls, list) =>
+    document.querySelectorAll(cls).forEach((el) => fill(el, list || []));
+  fillAll(".f-bgsrc", opts.bg_sources);
+  fillAll(".f-fgsrc", opts.fg_sources);
+  fillAll(".f-aivid", opts.ai_video_models);
+  fillAll(".f-aiphoto", opts.ai_photo_models);
+  fillAll(".f-bglink", opts.bg_linkages);
+  fillAll(".f-motion", opts.motions);
+  fillAll(".f-fgpos", opts.fg_positions);
+  // …and this one is set rather than left where the list starts: the picture fields
+  // are overwritten from the profile a moment later, but the overlay's corner is not,
+  // and `top_left` sorts first while `top_right` is what the model actually defaults
+  // to (the ad-mode select below is set for the same reason).
+  document.querySelectorAll(".f-ovpos").forEach((el) => {
+    fill(el, opts.overlay_positions || []);
+    el.value = "top_right";
+  });
+  // …and then filled FROM the profile, which is what keeps taking the card apart from
+  // changing anything: a card nobody touched rebuilds the profile it was filled from,
+  // and the run carries that profile's NAME rather than a copy of it (the comparison
+  // is `params.manual_visuals`). Picking a different profile re-fills the card, the
+  // way `GenerateScreen._vprofile` does in the terminal.
+  const iv = $("#i-visuals");
+  if (iv) {
+    iv.addEventListener("change", () => fillPicture(iv.value));
+    fillPicture(iv.value);
+  }
   fill($("#d-orch"), opts.orchestrations, true);
   // by class, not by id: the same control exists in all three forms, and an id can
   // only ever name one of them — which is how these ended up empty after the rebuild
-  document.querySelectorAll(".f-ad").forEach((el) => fill(el, opts.ads, true));
+  // …plus the reserved word that means "the contract is typed in below rather than
+  // picked from configs/ads/" — one control for one question, the way the music
+  // select spells silence (see params.AD_MANUAL)
+  document.querySelectorAll(".f-ad")
+    .forEach((el) => fill(el, (opts.ads || []).concat(["manual"]), true));
   document.querySelectorAll(".f-push").forEach((el) => fill(el, opts.accounts, true));
   // With no account configured there is nowhere to publish, so the pair of controls
   // about publishing governs nothing: the dropdown offers only "none", and the switch
@@ -2642,9 +2724,35 @@ function wireByHand() {
   };
 }
 
+// The Picture card as the server reads it. Every field is sent, shown or hidden: what
+// a hidden row holds is still the profile's own answer, and which rows are on screen
+// is decided by the source — so `manual_visuals` compares the whole card against the
+// whole profile rather than guessing which half of it was visible.
+function pictureOf(f) {
+  return {
+    bg_source: f.get("bg_source") || "",
+    bg_manual: f.get("bg_manual") === "on",
+    bg_link: f.get("bg_link") || "",
+    bg_dir: f.get("bg_dir") || "",
+    bg_ai_vmodel: f.get("bg_ai_vmodel") || "",
+    bg_ai_pmodel: f.get("bg_ai_pmodel") || "",
+    bg_interval: +(f.get("bg_interval") || 3.5),
+    bg_motion: f.get("bg_motion") || "",
+    bg_cont: f.get("bg_cont") === "on",
+    fg_on: f.get("fg_on") === "on",
+    fg_source: f.get("fg_source") || "",
+    fg_manual: f.get("fg_manual") === "on",
+    fg_ai_vmodel: f.get("fg_ai_vmodel") || "",
+    fg_ai_pmodel: f.get("fg_ai_pmodel") || "",
+    fg_width: +(f.get("fg_width") || 78),
+    fg_pos: f.get("fg_pos") || "",
+  };
+}
+
 $("#infoform").onsubmit = (e) => submitRun(e, "info", (f) => ({
   lang: f.get("lang"), content_type: f.get("content_type"), visuals: f.get("visuals"),
   idea: f.get("idea"), title: f.get("title"),
+  ...pictureOf(f),
   duration_s: +f.get("duration_s"), count: +f.get("count"),
   profanity: +f.get("profanity"), ad: f.get("ad"), push: f.get("push"),
   dry_run: f.get("dry_run") === "on", breakpoints: [...chosenBps.info],
@@ -2826,6 +2934,31 @@ function fillForm(l) {
     r.dispatchEvent(new Event("input"));
   });
   form.querySelectorAll("input[type=range]").forEach((r) => r.dispatchEvent(new Event("input")));
+  // The Picture card, which the loop above cannot reach: its fields are not settings
+  // of their own, they are one setting taken apart (`manual_visuals`), so the loop
+  // finds no `params.bg_source` and leaves them showing whatever they showed last.
+  // Filled from the override when the loop carries one and from the named profile
+  // when it does not — the same two answers `manual_visuals` compares.
+  pictureFrom(p.manual_visuals || (opts.visuals_full || {})[p.visuals]);
+  // …and an ad contract typed in rather than picked, for exactly the same reason: it
+  // is `manual_ad`, and `params.ad` is empty whenever one is set, so the select would
+  // read "no ad" and the retune would drop the contract.
+  const mad = p.manual_ad;
+  if (mad) {
+    const ad = form.querySelector('[name="ad"]');
+    if (ad) ad.value = "manual";
+    const ov = mad.overlay || {}, nat = mad.native || {};
+    const set = (n, v) => {
+      const el = form.querySelector(`[name="${n}"]`);
+      if (el && v !== undefined && v !== null) el.value = v;
+    };
+    set("ad_url", mad.url);
+    set("ov_text", ov.text);
+    set("ov_pos", ov.position);
+    set("ov_start", ov.start_s);
+    set("ov_dur", ov.duration_s);
+    set("ad_points", nat.talking_points);
+  }
   const cast = new Set(l.cast || []);
   form.querySelectorAll("[data-who]").forEach((b) => b.classList.toggle("on", cast.has(b.dataset.who)));
   chosenBps[l.mode] = new Set(l.breakpoints || []);

@@ -2691,6 +2691,24 @@ EN.update({
 })
 
 RU.update({
+    # the visuals profile, taken apart: where the picture comes FROM
+    "web.card.inserts": "вставки поверх",
+    "web.bg.note": "фон — то, что идёт под голосом всё видео",
+    "web.f.bgsrc": "источник фона",
+    "web.f.fgsrc": "источник вставок",
+    "web.f.byme": "беру на себя",
+    "web.byme.note": "материал поставляешь ты, а slopgen делает свою половину: для стока пишет, что искать, и готовые английские запросы, для ИИ — промпт на каждый кадр. Прогон встанет на этапе футажа и подождёт файлы: `slopgen gather` или папка manual/inbox прогона.",
+    "web.f.aimodel": "чем генерировать",
+    "web.f.bglink": "как привязан к озвучке",
+    "web.f.bgdir": "папка с файлами",
+    "web.f.bgint": "смена кадра, с",
+    "web.f.bgmotion": "движение Кена Бёрнса",
+    "web.f.bgcont": "один клип насквозь",
+    "web.bgcont.note": "вместо нового клипа на каждую сцену каждая берёт следующий кусок одного и того же — так фоном идёт непрерывный геймплей. Только для видео-источников.",
+    "web.f.fgon": "вставки поверх фона",
+    "web.fgon.note": "нейронка сама решает, какие сказанные фразы заслуживают картинки; вставка висит ровно пока звучит эта фраза, и исчезает. Никакого расписания — привязка к словам из тайминга озвучки.",
+    "web.f.fgwidth": "ширина вставки, %",
+    "web.f.fgpos": "где на экране",
     # …and the ad contract typed in instead of picked
     "w.manual": "— вписать вручную —",
     "web.admanual.note": "контракт на один прогон, никуда не сохраняется. Материал кладётся в assets/ads/manual/overlay и .../native — папки уже созданы. Что из этого пойдёт в ролик, решает «режим» выше.",
@@ -2708,6 +2726,24 @@ RU.update({
     "web.music.note": "то, что играет под голосом, из assets/music/. «Как выпадет» — жребий, посеянный на самом прогоне: выпадает одно и то же и в монтажной, и в готовом ролике, так что предпросмотр не врёт. Строка со слешем на конце — папка: тот же жребий, но только по ней. «— нет —» — тишина. Громкость одна на всё — audio.music_volume в общих настройках.",
 })
 EN.update({
+    # the visuals profile, taken apart: where the picture comes FROM
+    "web.card.inserts": "the inserts",
+    "web.bg.note": "the background — what runs under the voice for the whole video",
+    "web.f.bgsrc": "background from",
+    "web.f.fgsrc": "inserts from",
+    "web.f.byme": "I'll supply it",
+    "web.byme.note": "you bring the material and slopgen does its half: for stock it writes what to look for plus ready-made English queries, for AI a prompt per shot. The run parks at the footage stage and waits for the files — `slopgen gather`, or the run's own manual/inbox folder.",
+    "web.f.aimodel": "generate it with",
+    "web.f.bglink": "tied to the narration",
+    "web.f.bgdir": "folder to read",
+    "web.f.bgint": "photo changes every, s",
+    "web.f.bgmotion": "Ken Burns motion",
+    "web.f.bgcont": "one clip straight through",
+    "web.bgcont.note": "instead of a fresh clip per scene, each scene reads the NEXT slice of the same one — which is how a gameplay loop runs continuously behind the narration. Video sources only.",
+    "web.f.fgon": "pictures over the background",
+    "web.fgon.note": "the model decides which spoken phrases deserve a picture; an insert shows exactly while that phrase is spoken and then goes. No cadence — it is anchored to the words by the voiceover's own timings.",
+    "web.f.fgwidth": "insert width, %",
+    "web.f.fgpos": "where on screen",
     # …and the ad contract typed in instead of picked
     "w.manual": "— type one in —",
     "web.admanual.note": "a contract for this run only, saved nowhere. Its material goes in assets/ads/manual/overlay and .../native — both folders exist already. Which half of it the video actually carries is the \"mode\" above.",
