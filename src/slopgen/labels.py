@@ -2689,3 +2689,18 @@ EN.update({
     "web.ttsmanual.note": "`voice` then synthesizes nothing: it writes the script out and waits for wav files, the way hand-made footage waits for clips. The word timings come from the recognizer, since a microphone reports none. One line can be read aloud without this — the line's own block has the button.",
     "js.mont.set-saved": "saved",
 })
+
+RU.update({
+    # the music under the voice
+    "web.card.music": "музыка",
+    "web.f.music": "трек",
+    "w.music.roll": "— как выпадет —",
+    "web.music.note": "то, что играет под голосом, из assets/music/. «Как выпадет» — жребий, посеянный на самом прогоне: выпадает одно и то же и в монтажной, и в готовом ролике, так что предпросмотр не врёт. Строка со слешем на конце — папка: тот же жребий, но только по ней. «— нет —» — тишина. Громкость одна на всё — audio.music_volume в общих настройках.",
+})
+EN.update({
+    # the music under the voice
+    "web.card.music": "the music",
+    "web.f.music": "track",
+    "w.music.roll": "— as it rolls —",
+    "web.music.note": "what plays under the voice, out of assets/music/. \"As it rolls\" is a draw seeded on the run itself: the montage room and the finished video land on the same track, so the preview is not lying to you. An entry ending in a slash is a folder: the same draw, over that shelf only. \"— none —\" is silence. The level is one setting for all of it — audio.music_volume in the general settings.",
+})

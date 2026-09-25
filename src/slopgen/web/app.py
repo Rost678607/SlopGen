@@ -57,6 +57,13 @@ from ..config.models import (AccountConfig, AdConfig, CharacterConfig, CropTarge
                              VoiceConfig)
 from ..media.stock import IMAGE_EXTS, VIDEO_EXTS
 from ..pipeline import manual, review
+from ..pipeline.stages.assemble import (
+    MUSIC_NONE,
+    folders_in,
+    music_for,
+    track_key,
+    tracks_in,
+)
 from ..pipeline.loop import check_params
 from ..pipeline.stages import picture
 from ..pipeline.checkpoint import Checkpoint

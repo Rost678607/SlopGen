@@ -129,9 +129,10 @@ mode opens the TUI.
 | `--out DIR`      | output dir override                                                                                                     |
 | `--dry-run`      | generate but don't publish (dev tool; picking "save locally" does the same)                                             |
 | `--metadata`     | write a title, a description and tags for the finished video. **Off by default** — it is the one stage whose output nothing downstream reads, so a video you are only going to watch here doesn't pay a model for it. A run that actually publishes gets metadata regardless (a video cannot be uploaded without a title), and so does a run with a `metadata` breakpoint |
+| `--music NAME`   | what plays under the voice: a track by its path under `assets/music/` (`эпичное/opening.m4a`), or a FOLDER with a trailing slash (`эпичное/`) to draw from that shelf only; `none` for silence. Default: drawn from everything (seeded on the run, so the montage room plays the very track the render will use) |
 | `--keep-temp`    | keep intermediate ffmpeg files                                                                                          |
 
-**`drama LANG [flags]`** — shares `--ad`, `--ad-mode`, `--profanity`, `--push`, `-n/--count`, `--subs`, `--clean-subs`, `--tts-rate`, `-b/--break`, `--out`, `--dry-run`, `--metadata`, `--keep-temp` with `info`, plus:
+**`drama LANG [flags]`** — shares `--ad`, `--ad-mode`, `--profanity`, `--push`, `-n/--count`, `--subs`, `--clean-subs`, `--tts-rate`, `-b/--break`, `--out`, `--dry-run`, `--metadata`, `--music`, `--keep-temp` with `info`, plus:
 
 | Flag                   | Meaning                                                                        |
 | ---------------------- | ------------------------------------------------------------------------------ |
@@ -701,7 +702,7 @@ and the two things you actually want to do to it cannot be typed into a row at a
 chain is a button on the rail up there and every stage reads them. The room could press
 **voice** without being able to choose the voice, and press **metadata** while the
 switch deciding whether metadata is written at all sat on a form the run had left an
-hour ago. Three groups, and they are the stages that can still be pressed:
+hour ago. The groups are the stages that can still be pressed:
 
 - **voice** — the engine, the cloned voice, the speech rate, and **I read the lines
   myself** (`tts_source`), which turns the voiceover into the errand hand-made footage
@@ -709,6 +710,17 @@ hour ago. Three groups, and they are the stages that can still be pressed:
   recognizer reads the word timings back off them. One line can be read aloud without
   it — the line's own block has always had that button — and this is for when every
   line will be.
+- **the music** — which track out of `assets/music/` plays under the voice, and the
+  one control here that is *heard* rather than merely saved: the preview plays it,
+  looped under the voice at the level `assemble` will mix it at
+  (`[audio] music_volume`). Blank — the default — is not "no music": it is the draw
+  the run makes for itself, and the draw is seeded on the run, so the room and the
+  finished video land on the same track and the preview is not lying to you. A FOLDER
+  (anything ending in `/`) is the same draw over a narrower shelf, which is how a mode
+  gets its own kind of music without giving up the draw. `none` is silence. A choice
+  that has since been renamed, moved or emptied is not an error either: the run says so
+  in the log and rolls again, because a moved file should cost the choice, not the
+  music.
 - **subtitles** — the style the `.ass` is written in, and whether swearing is cleaned
   out of the burned-in text while the voice keeps every word.
 - **what comes out** — `write_metadata`, the account to publish to, the dry run, and
@@ -887,12 +899,31 @@ Drop files in, reference from configs:
 assets/
   ads/<contract>/overlay/   # corner animations: .webm (alpha), .gif, .png
   ads/<contract>/native/    # pre-made ad video inserts
-  music/                    # background tracks (one is picked at random, mixed at low volume)
+  music/                    # background tracks (one per run, mixed in at low volume)
+  music/<shelf>/            # …in folders, if you want a run to draw from one kind only
   fonts/                    # extra subtitle fonts (passed to libass via fontsdir)
   footage/                  # local clips for the "local" footage provider
   footage/gameplay/         # background loops for the "gameplay" visuals profile
   images/                   # local pictures for photo backgrounds / foreground inserts
 ```
+
+**The music** is one track per video, mixed under the voice at `[audio] music_volume`.
+Which one is a setting like any other — `--music sweden.m4a` on the command line, a
+dropdown on every start form, a column in the loop queue for one video of a batch, and
+the same control in the montage room, where it also plays. Left blank it is drawn for
+you, seeded on the run rather than on the clock: the same run always draws the same
+track, which is what lets the montage room play the one the render will use. `none`
+is silence.
+
+Sort the folder into **shelves** and the draw narrows to one of them. Any subfolder of
+`assets/music/` holding a track is offered as its own choice, written with a trailing
+slash — `эпичное/` draws from that shelf, `эпичное/opening.m4a` is that one track, and
+a track sitting loose at the root is still just `sweden.m4a`, which is why every choice
+stored before there were shelves still resolves to the same file. Nesting is allowed
+and a shelf covers everything under it. The draw is the same draw: seeded on the run,
+so picking a shelf still lands the montage room and the render on the same track. A
+shelf holding nothing is not offered — a control that can only be set to silence is
+not a control — and one that has since been emptied rolls over everything instead.
 
 **Bring your own content.** `assets/music/`, `assets/footage/`, `assets/ads/` and the personal `configs/` (`characters/`, `fandoms/` except the example world, `ads/*.toml` except the example, `accounts/`) are git-ignored on purpose — drop your own (copyright-cleared) tracks, clips, cast and worlds in. The repo ships only neutral templates: `configs/characters/example.toml`, `configs/fandoms/example/`, `configs/ads/example_vpn.toml`, and a few demo images.
 
@@ -1518,7 +1549,7 @@ cp deploy.env.example deploy.env        # SSH_HOST и SSH_USER, больше н�
 **Настройки** открывают поверх монтажной настройки самого прогона — потому что каждая
 стадия цепочки тут кнопка наверху, и каждая стадия их читает. Иначе получается комната,
 которая жмёт **озвучку**, но не может выбрать голос, и жмёт **описание**, пока тумблер
-«сочинять ли его вообще» лежит на форме, с которой прогон ушёл час назад. Три группы —
+«сочинять ли его вообще» лежит на форме, с которой прогон ушёл час назад. Группы —
 ровно те стадии, которые ещё можно нажать:
 
 - **голос** — движок, клонированный голос, скорость речи и **начитаю сам**
@@ -1526,6 +1557,16 @@ cp deploy.env.example deploy.env        # SSH_HOST и SSH_USER, больше н�
   — стадия выписывает текст и ждёт wav-файлы, а тайминги слов снимает с них
   распознаватель. Отдельную строку можно начитать и без этого, кнопка в блоке строки
   была всегда; это — когда начитывать будешь все.
+- **музыка** — какой трек из `assets/music/` играет под голосом; единственная ручка в
+  этом листе, которую здесь **слышно**: предпросмотр крутит его под голосом по кругу и
+  на той же громкости, с какой его подмешает `assemble` (`[audio] music_volume`).
+  Пусто — и это по умолчанию — значит не «без музыки», а «какой выпадет»: жребий
+  посеян на самом прогоне, поэтому в монтажной играет ровно тот трек, который окажется
+  в готовом ролике, и предпросмотр не врёт. ПАПКА (всё, что кончается на `/`) — тот же
+  жребий, но по узкой полке: так у режима заводится своя музыка, а жребий остаётся.
+  `none` — тишина. Выбор, который с тех пор переименовали, перенесли или опустошили, —
+  тоже не ошибка: прогон скажет об этом в лог и бросит жребий заново, потому что
+  переехавший файл должен стоить выбора, а не музыки.
 - **субтитры** — стиль, которым пишется `.ass`, и вычищать ли мат из вожжённого текста,
   пока голос произносит всё как есть.
 - **что на выходе** — `write_metadata`, аккаунт для публикации, «не публиковать» и
@@ -1697,7 +1738,11 @@ slopgen drama ru --tts-engine qwen-local --voice марта
 
 ## Ассеты (`assets/`)
 
-`ads/<контракт>/overlay/` — угловые анимации (.webm с альфой, .gif, .png); `ads/<контракт>/native/` — готовые рекламные вставки; `music/` — фоновые треки (берётся случайный, тихо подмешивается); `fonts/` — шрифты сабов; `footage/` — локальные клипы для провайдера `local`; `footage/gameplay/` — фоновые лупы для профиля `gameplay`; `images/` — локальные картинки для фото-фона и вставок. Текущие демо-файлы — заглушки для теста, замени их настоящими.
+`ads/<контракт>/overlay/` — угловые анимации (.webm с альфой, .gif, .png); `ads/<контракт>/native/` — готовые рекламные вставки; `music/` — фоновые треки (один на ролик, тихо подмешивается), а `music/<полка>/` — они же по папкам, если хочешь, чтобы прогон тянул только из одной; `fonts/` — шрифты сабов; `footage/` — локальные клипы для провайдера `local`; `footage/gameplay/` — фоновые лупы для профиля `gameplay`; `images/` — локальные картинки для фото-фона и вставок. Текущие демо-файлы — заглушки для теста, замени их настоящими.
+
+**Музыка** — один трек на ролик, подмешанный под голос на громкости `[audio] music_volume`. Какой именно — такая же настройка, как остальные: `--music sweden.m4a` в командной строке, выпадающий список на каждой стартовой форме, своя колонка в очереди цикла для одного ролика из пачки и та же ручка в монтажной, где он ещё и играет. Оставишь пустым — трек выпадет сам, но жребий посеян на прогоне, а не на часах: один и тот же прогон всегда вытягивает один и тот же трек — именно поэтому монтажная играет то, что окажется в рендере. `none` — тишина.
+
+Разложишь папку по **полкам** — и жребий сузится до одной. Любая подпапка `assets/music/`, в которой лежит трек, предлагается отдельным выбором и пишется со слешем на конце: `эпичное/` тянет с этой полки, `эпичное/opening.m4a` — именно этот трек, а трек, лежащий просто в корне, так и остаётся `sweden.m4a` — поэтому всё, что было выбрано до появления полок, по-прежнему находит тот же файл. Вложенность разрешена, и полка покрывает всё, что под ней. Жребий при этом тот же самый: посеян на прогоне, так что и с выбранной полкой монтажная и рендер сходятся на одном треке. Пустая полка не предлагается вовсе — ручка, которую можно поставить только в тишину, не ручка, — а опустевшая с тех пор бросает жребий по всему каталогу.
 
 ## Произношение (`[tts.pronounce.<язык>]`)
 

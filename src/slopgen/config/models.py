@@ -1028,6 +1028,17 @@ class RunParams(BaseModel):
     # whether the shots are clips or stills. It binds the picture only, like
     # `visual_notes`, and says nothing about what is IN it.
     visual_style: str = ""
+    # WHICH track plays under the voice, by its path under `assets/music/`. Four
+    # answers, and the empty one is the oldest: "" means the pipeline takes one out of
+    # the folder itself, which is what every run did before there was a choice — but it
+    # takes it by a ROLL SEEDED ON THE RUN rather than at random, so the same video
+    # always gets the same track and the montage room can play the one the cut will
+    # carry. `none` is silence. A value ending in "/" is a FOLDER: the same roll over
+    # everything under that shelf, which is how a run gets one KIND of music without
+    # giving up the draw. Anything else is one track — `sweden.m4a` at the root, or
+    # `эпичное/opening.m4a` below it, so a choice stored before there were folders
+    # still names the same file.
+    music: str = ""
     # the montage look, as {effect name: dose 0-100} — grain, crt, vhs, glitch and the
     # rest of media/filters. Unlike `visual_style` this is not asked of a generator but
     # applied to the finished picture in the delivery pass, so it holds in every mode,

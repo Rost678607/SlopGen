@@ -281,6 +281,7 @@ function renderMont() {
   bindLanes();
   renderInspector();
   showSelection();
+  reloadMusic();
   drawFrame();
 }
 
@@ -994,6 +995,50 @@ function dropTarget(el, send1) {
   el.addEventListener("drop", (e) => { e.preventDefault(); go(e.dataTransfer.files[0]); });
 }
 
+/** The music under the voice: the very track the cut will carry, at the level it will
+ *  sit at (`montage_api.doc` resolves both). It is a second element rather than a
+ *  second mix: it loops under a video of any length, the level is a knob instead of a
+ *  re-render, and a track changed in the settings is heard on the next press.
+ *
+ *  Silence is a state it has to draw as well as sound: a run set to `none`, or a
+ *  world with nothing in `assets/music/`, leaves the element empty rather than holding
+ *  whatever was playing before the setting changed. */
+function reloadMusic() {
+  const m = mq("#mont-music");
+  if (!m) return;
+  const want = (MONT.doc.music || {});
+  const url = want.url ? tokd(want.url) : "";
+  m.volume = Math.max(Math.min(+want.volume || 0, 1), 0);
+  if (!url) {
+    m.pause();
+    m.removeAttribute("src");
+    m.load();
+    return;
+  }
+  // only when it actually changed: re-setting `src` restarts the track, and every
+  // reply from the room comes through here
+  if (m.dataset.track !== want.name) {
+    m.dataset.track = want.name;
+    m.src = url;
+  }
+  syncMusic();
+}
+
+/** Put the music where the playhead is and make it agree with the voice about whether
+ *  anything is playing. It loops on its own clock, so the position is the video's
+ *  seconds folded into the track's length. */
+function syncMusic() {
+  const m = mq("#mont-music"), a = mq("#mont-audio");
+  if (!m || !m.getAttribute("src")) return;
+  const len = m.duration;
+  if (len && isFinite(len)) {
+    const want = montTime() % len;
+    if (Math.abs(m.currentTime - want) > 0.3) m.currentTime = want;
+  }
+  if (a.paused) m.pause();
+  else if (m.paused) m.play().catch(() => { /* a track the browser will not start */ });
+}
+
 function reloadVoice() {
   // the whole track is one file and it has just changed under us; the cache buster is
   // not decoration, the server serves it `no-store` and the element still holds the old
@@ -1299,6 +1344,7 @@ function seek(t) {
   const a = mq("#mont-audio");
   a.currentTime = Math.max(0, Math.min(t, MONT.doc.total));
   drawFrame();
+  syncMusic();
 }
 
 // The same, for a preview running off its own timer rather than off the voice: setting
@@ -1307,6 +1353,7 @@ function seek(t) {
 const seekSilently = (t) => {
   mq("#mont-audio").currentTime = Math.max(0, Math.min(t, MONT.doc.total));
   drawFrame();
+  syncMusic();
 };
 
 // Playing ONE shot: the clock is the whole video's, so the end is a moment to stop at
@@ -1323,6 +1370,7 @@ function playShot(shot) {
   if (a.readyState < 2) return stepThrough(shot);
   montPlayUntil = shot.start + shot.duration;
   a.currentTime = shot.start;
+  syncMusic();
   a.play().catch(() => { montPlayUntil = null; stepThrough(shot); });
 }
 
@@ -1345,6 +1393,7 @@ function tick() {
     mq("#mont-audio").pause();
     return;
   }
+  syncMusic();
   drawFrame();
   montRaf = requestAnimationFrame(tick);
 }
@@ -1363,7 +1412,7 @@ function bindTransport() {
   // Moved without playing — a click on the ruler, a seek from an edit — still has to
   // repaint: the canvas is only driven by the animation frame while the track is
   // running, and outside that the picture would sit on whatever second it stopped at.
-  a.onseeked = () => drawFrame();
+  a.onseeked = () => { drawFrame(); syncMusic(); };
   a.onloadedmetadata = () => drawFrame();
   // Without a voice track there is no clock to run, but there is still a montage: the
   // seconds are the server's and the ruler is drawn from them, so scrubbing and cutting
@@ -1374,9 +1423,23 @@ function bindTransport() {
     mq("#mont-play").disabled = true;
     say(lab("js.mont.noaudio"), true);
   };
-  a.onplay = () => { mq("#mont-play").textContent = "⏸"; cancelAnimationFrame(montRaf); tick(); };
-  a.onpause = () => { mq("#mont-play").textContent = "▶"; cancelAnimationFrame(montRaf); drawFrame(); };
-  a.onended = () => { mq("#mont-play").textContent = "▶"; cancelAnimationFrame(montRaf); };
+  a.onplay = () => {
+    mq("#mont-play").textContent = "⏸";
+    cancelAnimationFrame(montRaf);
+    syncMusic();
+    tick();
+  };
+  a.onpause = () => {
+    mq("#mont-play").textContent = "▶";
+    cancelAnimationFrame(montRaf);
+    mq("#mont-music").pause();
+    drawFrame();
+  };
+  a.onended = () => {
+    mq("#mont-play").textContent = "▶";
+    cancelAnimationFrame(montRaf);
+    mq("#mont-music").pause();
+  };
   mq("#mont-zoom").oninput = () => { montPPS = +mq("#mont-zoom").value; renderMont(); };
   // Space plays. It is the one shortcut this screen genuinely needs — you press it a
   // hundred times an hour — and it stays out of the way of anything being typed.
@@ -1467,6 +1530,19 @@ const SETTINGS = [
     ],
   },
   {
+    title: "web.card.music",
+    rows: [
+      { f: "music", kind: "select", opts: "music", l: "web.f.music",
+        blank: "w.music.roll", note: "web.music.note" },
+    ],
+  },
+  {
+    title: "web.mont.fx",
+    rows: [
+      { f: "frame_effects", kind: "check", l: "web.f.fxauto", note: "web.fxauto.note" },
+    ],
+  },
+  {
     title: "web.card.subs",
     rows: [
       { f: "subtitle_style", kind: "select", opts: "subtitle_styles", l: "web.f.style" },
@@ -1495,9 +1571,11 @@ function settingRow(row, cur) {
     // named on the command line, an account since renamed — and a select that quietly
     // dropped it would rewrite that setting the moment anything else here was saved.
     const all = v && !list.includes(v) ? list.concat([v]) : list;
+    // …and a blank that does not always mean "nothing": for the music it means "the
+    // one this run rolled for itself", which is a real answer and the default one
     const options = [""].concat(all).map((x) =>
       `<option value="${esc(x)}"${x === (v || "") ? " selected" : ""}>${
-        esc(x ? word(x) : lab("w.none", "— нет —"))}</option>`).join("");
+        esc(x ? word(x) : lab(row.blank || "w.none", "— нет —"))}</option>`).join("");
     return `<label class="setrow"><span>${l}</span>
       <select data-set="${esc(row.f)}">${options}</select></label>${note}`;
   }
@@ -1577,6 +1655,7 @@ function bindMontage() {
   mq("#mont-close").onclick = () => {
     mq("#mont-set").hidden = true;
     mq("#mont-audio").pause();
+    mq("#mont-music").pause();
     cancelAnimationFrame(montRaf);
     mq("#mont").hidden = true;
     MONT = null;

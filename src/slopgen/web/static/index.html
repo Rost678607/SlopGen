@@ -322,6 +322,11 @@
         <button id="mont-frame" class="ghost" data-l="web.mont.frame">точный кадр</button>
       </div>
       <audio id="mont-audio" preload="auto"></audio>
+      <!-- the music, on its own element rather than mixed into the voice track: it
+           loops under a video of any length, its level is a knob rather than a
+           re-render, and a track changed in the settings is heard on the next press
+           instead of after a rebuild. -->
+      <audio id="mont-music" preload="auto" loop></audio>
 
       <div class="mont-fx">
         <div class="row"><b data-l="web.card.fx">плёнка и помехи</b>

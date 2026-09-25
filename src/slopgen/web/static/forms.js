@@ -248,6 +248,15 @@ const FORMS = {
             "v": "0",
             "cls": "rate-val"
           }
+        },
+        {
+          "f": "music",
+          "kind": "select",
+          "cls": "f-music",
+          "l": "web.f.music"
+        },
+        {
+          "note": "web.music.note"
         }
       ]
     },
@@ -570,6 +579,15 @@ const FORMS = {
             "v": "0",
             "cls": "rate-val"
           }
+        },
+        {
+          "f": "music",
+          "kind": "select",
+          "cls": "f-music",
+          "l": "web.f.music"
+        },
+        {
+          "note": "web.music.note"
         }
       ]
     },
@@ -924,6 +942,15 @@ const FORMS = {
             "v": "0",
             "cls": "rate-val"
           }
+        },
+        {
+          "f": "music",
+          "kind": "select",
+          "cls": "f-music",
+          "l": "web.f.music"
+        },
+        {
+          "note": "web.music.note"
         }
       ]
     },

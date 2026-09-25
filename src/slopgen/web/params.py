@@ -47,6 +47,8 @@ def common(b: dict) -> dict:
         "tts_engine": str(b.get("tts_engine", "")),
         "tts_rate": int(b.get("tts_rate", 0)),
         "keep_temp": bool(b.get("keep_temp", False)),
+        # which track plays under the voice; "" = the one the run rolls for itself
+        "music": str(b.get("music", "")),
         "filters": {k: max(0, min(100, int(v)))
                     for k, v in (b.get("filters") or {}).items()
                     if k in FILTER_HELP and int(v) > 0},
@@ -242,6 +244,9 @@ _FIELDS: list[dict] = [
     {"f": "cut_sensitivity", "kind": "range", "l": "web.f.cutrate", "min": 0, "max": 1,
      "step": 0.05, "modes": ["fandom"]},
     {"f": "frame_by_hand", "kind": "check", "l": "web.f.byhand", "modes": ["fandom"]},
+    # blank here is not "no music": it is the roll the run makes for itself
+    {"f": "music", "kind": "select", "l": "web.f.music", "opts": "music", "blank": True,
+     "blank_l": "w.music.roll"},
     {"f": "keep_temp", "kind": "check", "l": "web.f.keeptmp"},
 ]
 

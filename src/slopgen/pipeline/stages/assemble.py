@@ -10,8 +10,10 @@ time while the rest is still being generated (see :mod:`..parts`).
 
 from __future__ import annotations
 
+import logging
 import random
 import shutil
+from pathlib import Path
 
 from ...media import ffmpeg
 from .. import parts
@@ -19,15 +21,119 @@ from ..context import AppContext
 from ..job import VideoJob
 from .ads import build_overlay_spec
 
+log = logging.getLogger(__name__)
+
 MUSIC_EXTS = {".mp3", ".m4a", ".ogg", ".wav", ".flac"}
 
 
-def _pick_music(ctx: AppContext):
-    music_dir = ctx.g.paths.assets / "music"
-    if not music_dir.is_dir():
+# What the operator picked, when what they picked is silence. A reserved name rather
+# than a second field: the question has three answers and a select with three entries
+# is how it is asked, so it is one value all the way down.
+MUSIC_NONE = "none"
+
+
+def music_root(cfg) -> Path:
+    return cfg.paths.assets / "music"
+
+
+def tracks_in(cfg) -> list:
+    """Every music file under `assets/music/`, subfolders included, in a fixed order.
+
+    SORTED, because the order is what the roll below indexes into: a folder listed in
+    whatever order the filesystem hands back would give one machine a different track
+    from another for the same video. Sorted by the path RELATIVE to the root rather
+    than by bare name, so the order groups by folder — which is the order the operator
+    sees in the select and the order a folder-wide roll indexes into."""
+    d = music_root(cfg)
+    if not d.is_dir():
+        return []
+    return sorted((p for p in d.rglob("*")
+                   if p.is_file() and p.suffix.lower() in MUSIC_EXTS),
+                  key=lambda p: p.relative_to(d).as_posix())
+
+
+def track_key(cfg, path: Path) -> str:
+    """What the operator's choice calls this track: its path under `assets/music/`.
+
+    A track sitting at the root keeps its bare file name, which is what every stored
+    choice from before there were folders says — so those keep resolving to the same
+    file instead of quietly falling back to the roll."""
+    try:
+        return path.relative_to(music_root(cfg)).as_posix()
+    except ValueError:
+        return path.name
+
+
+def folders_in(cfg) -> list[str]:
+    """Every folder under `assets/music/` that holds a track, as a choice value.
+
+    The TRAILING SLASH is the whole of the distinction between "this folder, rolled"
+    and "this exact track" — one namespace and one select, the way `none` is a
+    reserved value rather than a second field. A folder is listed as soon as anything
+    below it is a track, nesting included, because a roll over a folder is a roll over
+    everything under it."""
+    d = music_root(cfg)
+    out: set[str] = set()
+    for p in tracks_in(cfg):
+        rel = p.relative_to(d).parent
+        while rel != Path("."):
+            out.add(rel.as_posix() + "/")
+            rel = rel.parent
+    return sorted(out)
+
+
+def tracks_under(cfg, folder: str) -> list:
+    """The tracks a folder choice rolls over — itself and everything nested in it."""
+    want = folder if folder.endswith("/") else folder + "/"
+    return [p for p in tracks_in(cfg) if track_key(cfg, p).startswith(want)]
+
+
+def music_for(params, cfg, job: VideoJob | None = None):
+    """The track that plays under this video, or None for silence.
+
+    Four answers now (see `RunParams.music`), and the interesting one is still the
+    default. It used to be `random.choice`, which is fine for a pipeline nobody watches
+    and wrong the moment there is a montage room: the room would have to either play
+    nothing or play a track the cut then did not use. So the roll is SEEDED on the run
+    — the same video draws the same track every time, on every machine, before and
+    after a resume — and the room can simply ask this function what the render is going
+    to do.
+
+    A FOLDER narrows what that roll draws from without giving up the draw: the seed is
+    the run either way, so picking `эпик/` still lands the room and the render on the
+    same track, and re-picking simply rolls over a different shelf.
+
+    A choice that no longer matches anything falls back to the roll rather than to
+    silence, whether it was a renamed file or an emptied folder: a moved asset should
+    cost the choice, not the music.
+
+    It takes the parameters and the config rather than an `AppContext` because the
+    montage room asks it on every reply it sends, and building a context there would
+    open an LLM client to answer a question about a folder."""
+    want = (getattr(params, "music", "") or "").strip()
+    if want == MUSIC_NONE:
         return None
-    tracks = [p for p in music_dir.iterdir() if p.suffix.lower() in MUSIC_EXTS]
-    return random.choice(tracks) if tracks else None
+    tracks = tracks_in(cfg)
+    if not tracks:
+        return None
+    pool = tracks
+    if want.endswith("/"):
+        pool = tracks_under(cfg, want)
+        if not pool:
+            log.warning("music: %r holds no tracks any more — rolling over all of them",
+                        want)
+            pool = tracks
+    elif want:
+        named = next((p for p in tracks if track_key(cfg, p) == want), None)
+        if named is not None:
+            return named
+        log.warning("music: %r is not in assets/music any more — rolling instead", want)
+    seed = str(job.workdir) if job is not None else str(getattr(params, "fandom", ""))
+    return random.Random(f"music|{seed}").choice(pool)
+
+
+def _pick_music(ctx: AppContext, job: VideoJob | None = None):
+    return music_for(ctx.params, ctx.g, job)
 
 
 FG_Y = {"center": "(H-h)/2", "top": "220", "bottom": "H-h-560"}
@@ -77,7 +183,7 @@ def run(job: VideoJob, ctx: AppContext) -> None:
     todo = [p for p in parts.ready(job) if p.file is None]
     fonts_dir = ctx.g.paths.assets / "fonts"
     fonts = fonts_dir if fonts_dir.is_dir() else None
-    music = _pick_music(ctx)
+    music = _pick_music(ctx, job)
     multi = len(job.parts) > 1
 
     at = {id(scene): i for i, scene in enumerate(job.scenes)}

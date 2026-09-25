@@ -2044,12 +2044,15 @@ async function loadOptions() {
   // An entry is either a bare name or `{v, note}` — a config entry the operator wrote,
   // shown with the line they wrote about it. The value submitted is the name in both
   // cases, so nothing downstream can tell the difference.
-  const fill = (sel, list, blank) => {
+  const fill = (sel, list, blank, empty) => {
     if (!sel) return;
     sel.innerHTML = (blank ? [""] : []).concat(list).map((x) => {
       const v = x && x.v !== undefined ? x.v : x;
       const note = x && x.note ? ` — ${lab(x.key || "", x.note)}` : "";
-      return `<option value="${esc(v)}">${esc(v ? word(v) + note : lab("w.none", "— нет —"))}</option>`;
+      // …and the blank line does not always mean "nothing": for the music it is the
+      // run's own roll, which is an answer rather than the absence of one
+      return `<option value="${esc(v)}">${
+        esc(v ? word(v) + note : lab(empty || "w.none", "— нет —"))}</option>`;
     }).join("");
   };
   fill($("#f-world"), opts.worlds);
@@ -2121,6 +2124,10 @@ async function loadOptions() {
   document.querySelectorAll(".f-voice-pick").forEach((el) => fill(el, opts.cloned_voices, true));
   document.querySelectorAll(".f-tts").forEach((el) => fill(el, opts.tts_engines, true));
   document.querySelectorAll(".f-subs").forEach((el) => fill(el, opts.subtitle_styles, true));
+  // what plays under the voice. Blank is the ordinary answer and the interesting one:
+  // the run rolls a track for itself, and the montage room plays that very one.
+  document.querySelectorAll(".f-music")
+    .forEach((el) => fill(el, opts.music || [], true, "w.music.roll"));
   document.querySelectorAll(".f-admode").forEach((el) => {
     fill(el, opts.ad_modes);
     el.value = "both";  // the model's own default, not whatever sorts first
@@ -2500,6 +2507,7 @@ function commonOf(form) {
     clean_subtitles: f.get("clean_subtitles") === "on",
     write_metadata: f.get("write_metadata") === "on",
     keep_temp: f.get("keep_temp") === "on",
+    music: f.get("music") || "",
     loop: loopOf(form),
     filters,
   };
@@ -3153,7 +3161,7 @@ function ovControl(spec, value, own) {
   if (spec.kind === "select")
     return `<select ${n} class="${cls.trim()}">` + (spec.options || []).map((o) =>
       `<option value="${esc(o)}"${String(o) === String(value) ? " selected" : ""}>` +
-      `${esc(o ? optWord(o) : lab("w.none", "—"))}</option>`).join("") + "</select>";
+      `${esc(o ? optWord(o) : lab(spec.blank_l || "w.none", "—"))}</option>`).join("") + "</select>";
   if (spec.kind === "chips") {
     const on = new Set(value || []);
     return `<span class="chips${cls}" ${n}>` + (spec.options || []).map((o) =>

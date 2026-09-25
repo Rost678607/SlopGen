@@ -26,6 +26,7 @@ import logging
 import shutil
 import threading
 from pathlib import Path
+from urllib.parse import quote
 from typing import get_args
 
 from fastapi import Cookie, HTTPException, Request, UploadFile
@@ -42,6 +43,7 @@ from ..pipeline.checkpoint import Checkpoint
 from ..pipeline.context import AppContext
 from ..pipeline.manual import ManualInputPending
 from ..pipeline.stages import metadata as metadata_stage
+from ..pipeline.stages.assemble import tracks_in
 from ..pipeline.stages import picture
 from ..tts import ENGINES as TTS_ENGINES
 
@@ -137,6 +139,12 @@ SETTINGS = {
     "tts_source": _pick(lambda store: {"engine", "manual"}, blank="engine"),
     "voice_override": _text,
     "tts_rate": _rate,
+    # what plays under the voice: a track in assets/music/, "" for the one the
+    # pipeline rolls for this run, or `none` for silence
+    "music": _pick(lambda store: {assemble.track_key(store.global_cfg, p)
+                                  for p in tracks_in(store.global_cfg)}
+                   | set(assemble.folders_in(store.global_cfg))
+                   | {assemble.MUSIC_NONE}),
     # the burned-in text, which is what pressing `subtitles` here will write
     "subtitle_style": _pick(lambda store: SUBTITLE_STYLES, blank=None),
     "clean_subtitles": _flag,
@@ -273,6 +281,31 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404, card_json) -> None
         # frame it draws and a line's own speed slider starts at the run's, so those
         # are the document's and not the sheet's.
         out["settings"] = {name: getattr(cp.params, name) for name in SETTINGS}
+        # …and the track itself, resolved: which file the cut will carry, where to
+        # fetch it and how loud it will sit under the voice. The room plays exactly
+        # that, so «случайная» is something you can hear rather than something you
+        # find out about afterwards (see `stages.assemble.music_for`).
+        track = assemble.music_for(cp.params, store.global_cfg, job)
+        key = assemble.track_key(store.global_cfg, track) if track else ""
+        chose = (cp.params.music or "").strip()
+        out["music"] = {
+            "name": key,
+            # quote() leaves "/" alone, which is what the path route wants: a track in
+            # a subfolder is fetched by the very key the select offered
+            "url": f"/api/music/{quote(key)}" if track else "",
+            "volume": store.global_cfg.audio.music_volume,
+            # a folder is still a roll — the operator picked the shelf, not the track
+            "rolled": bool(track) and (not chose or chose.endswith("/")),
+        }
+        # The effects laid over the track, and the base they may be fired out of. The
+        # rows carry their own geometry — where the thing is drawn, frame by frame —
+        # because the preview must not work the crop transform out a second time (see
+        # `effects.rows`).
+        cards = list(world.frames) if world else []
+        v = store.global_cfg.video
+        out["effects"] = fxeff.rows(job, cards, store.effects,
+                                    aspect=(v.width / v.height) if v.height else 9 / 16)
+        out["fx_base"] = [effect_json(e) for e in store.effects.values() if e.usable]
         return out
 
     # -- the document -------------------------------------------------------
