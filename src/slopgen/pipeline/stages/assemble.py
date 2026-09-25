@@ -16,6 +16,7 @@ import shutil
 from pathlib import Path
 
 from ...media import ffmpeg
+from .. import effects
 from .. import parts
 from ..context import AppContext
 from ..job import VideoJob
@@ -212,6 +213,9 @@ def run(job: VideoJob, ctx: AppContext) -> None:
             fonts_dir=fonts,
             # the run's montage filters, laid over this episode end to end
             fx=ctx.params.filters,
+            # and the effects fired over it, already rebased onto this episode's
+            # clock — it starts at zero however far into the serial it sits
+            draws=effects.for_part(job, ctx, scenes),
             tmp=tmp,
             on_progress=ctx.progress,
         )

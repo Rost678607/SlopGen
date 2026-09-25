@@ -41,6 +41,7 @@ from pathlib import Path
 from ...config.models import FIT_ACCEPTS, FrameCard
 from ...config.loader import card_is_stale, file_sha, frames_dir, write_frame_card
 from ...media.ffmpeg import video_dims
+from .. import effects
 from .. import framebase, manual
 from ..context import AppContext
 from ..job import FrameAsk, Scene, VideoJob
@@ -264,6 +265,9 @@ def run(job: VideoJob, ctx: AppContext) -> None:
         # operator has already cast on an earlier pass is their decision, and a re-run
         # of this stage is not a reason to take it back.
         job.frame_asks = []
+        # …and so are the effects: choosing is the thing this switch turns off, and a
+        # cue placed by hand is a choice already made (see `fx.settle`).
+        effects.settle(job, cards)
         log.info("picture: %d shots, cut by the speech and left for the operator",
                  len(job.frame_shots))
         return
@@ -296,9 +300,37 @@ def run(job: VideoJob, ctx: AppContext) -> None:
     job.frame_shots = _fuse(job.frame_shots, cards, min_scales(cards, ctx.g), stale, job)
 
     job.frame_asks = _asks_for(job, asks)
+    _effects(job, ctx, cards)
     covered = sum(1 for s in job.frame_shots if s.card)
     log.info("picture: %d shots, %d covered by the base, %d pictures to ask for",
              len(job.frame_shots), covered, len(job.frame_asks))
+
+
+def _effects(job: VideoJob, ctx: AppContext, cards: list[FrameCard]) -> None:
+    """Fire the effects the cards have ready, onto the words they are about.
+
+    Last, and after the fusing, because everything it reasons about is settled by then:
+    which picture is up over which stretch, and therefore what that picture can do. Run
+    any earlier it would be choosing effects for a card that the rhythm rules were
+    still free to replace.
+
+    It costs a model call and is skipped wherever that call could only answer
+    "nothing" — a base with no effects in it, a world whose cards carry none, a run
+    with the switch off. What is never skipped is the re-measuring: a cue the operator
+    placed by hand survives every pass of this stage, and its seconds still have to
+    follow the clock."""
+    specs = dict(getattr(ctx.store, "effects", {}) or {})
+    job.effect_cues = [q for q in job.effect_cues if q.pinned]
+    effects.settle(job, cards)
+    if not ctx.params.frame_effects or not effects.anything(cards, specs):
+        return
+    try:
+        job.effect_cues = effects.plan(job, ctx, cards, specs)
+    except Exception as e:  # an accent is not worth a run
+        log.warning("effects: nothing fired — %s", e)
+        return
+    effects.settle(job, cards)
+    log.info("picture: %d effects on the track", len(job.effect_cues))
 
 
 def _asks_for(job: VideoJob, asks: list[dict]) -> list[FrameAsk]:
@@ -500,6 +532,10 @@ def collect(job: VideoJob, ctx: AppContext) -> None:
             pin_card(job, a, card, rng)
 
     job.frame_shots = _fuse(job.frame_shots, cards, {}, frozenset(), job)
+    # A picture delivered here moves the track under whatever was already on it, so the
+    # cues are re-measured and the ones now pointing at a picture nobody can see are
+    # dropped. Nothing new is fired: the model was asked once, when the plan was made.
+    effects.settle(job, cards)
     framebase.apply_to_scenes(job, cards)
     job.pending_parts = []
 

@@ -748,6 +748,285 @@ class KenBurns(BaseModel):
         return [(self.move_start, self.rect_a), (self.move_end, self.rect_b)]
 
 
+# --- configs/effects/ -----------------------------------------------------
+#
+# The effects base: the arrows, the circles, the stings. A crop move says where to
+# LOOK; an effect says LOOK HERE, NOW — it lands on one word, it is over in a second,
+# and it is the one thing on the picture track that is deliberately synchronous with
+# the narration. (Everything else in this mode runs past the speech on purpose; see
+# `pipeline/framebase`. An arrow that arrives half a second after the word it points
+# at is not a late arrow, it is a wrong one.)
+#
+# Global rather than per world, unlike the frame base. A card is a picture OF
+# somewhere and belongs to the world it is of; an arrow is an arrow everywhere, and a
+# base that had to be copied into each new world would be copied wrong.
+
+# WHERE an effect sits, which is also whether a card is needed to place it at all.
+#
+#   point  — on a POINT of whatever card is up, put there by hand, and it TRAVELS with
+#            the picture: the crop move is a window over the card, so an arrow placed
+#            on a doorway is drawn in the card's own coordinates and converges with the
+#            zoom exactly as the doorway does.
+#
+#            A point and not a marked region, which is what it used to be. A crop
+#            target exists to be LOOKED at — it is a window the camera can move into,
+#            so it is a box of a particular size around a particular thing — and
+#            requiring one to put an arrow somewhere meant the base could only point at
+#            things somebody had already decided to zoom into. Half of what a video
+#            wants to point at is not a thing at all: a corner, a gap in a queue, the
+#            empty half of a desk. So the placement is a point, dropped anywhere,
+#            answering to nothing; give it a second point and the pair says how BIG it
+#            is as well as where (see :class:`CardEffect`).
+#   screen — at a fixed place in the frame, whatever is behind it. A flash, a border,
+#            a sting, anything with no picture at all. Offered on every shot, because
+#            it asks nothing of what is on screen.
+#   full   — the whole frame, covered. A flash, a tape glitch, a light leak: material
+#            that is not IN the picture but OVER it, so it is scaled to cover rather
+#            than placed, and `place` and `width` say nothing about it.
+EffectAnchor = Literal["point", "screen", "full"]
+
+# Where a screen-anchored effect sits in the frame. Nine positions and no free
+# coordinates, for the same reason the ad overlay has four: an effect placed at
+# (0.37, 0.62) is a number nobody can read back, and anything finer than this is what
+# the animation keys are for — or, where a free coordinate really is wanted, what a
+# `point` placed on the card is.
+ScreenPlace = Literal[
+    "center", "top", "bottom", "left", "right",
+    "top_left", "top_right", "bottom_left", "bottom_right",
+]
+
+# What ENDS a video effect, which is the one question a still never raises.
+#
+#   hold — it runs for as long as its animation says, looping the clip if that is
+#          shorter. A sparkle, a pulsing ring: material with no ending of its own.
+#   clip — the clip's own end is the effect's end and the animation's clock is
+#          ignored. An explosion that resolves, a stamp that lands: material that
+#          finishes.
+EffectFill = Literal["hold", "clip"]
+
+
+class EffectKey(BaseModel):
+    """One moment of an effect's animation: when, how big, how far off, how solid.
+
+    The same shape as :class:`MoveKey` and for the same reason — everything an effect
+    does over its life is a run of moments with straight travel between them, so
+    "fades in while growing, sits, drifts up and out" is four numbers at four times
+    rather than four switches with four hidden curves. Between keys every value is
+    interpolated linearly; before the first and after the last it holds.
+
+    `dx`/`dy` are offsets from wherever the effect sits, in the effect's OWN frame of
+    reference — its own drawn width as the unit, and its own axes as the directions —
+    and that is the field that makes an arrow work.
+
+    The unit, because an arrow has to hang above the thing it points at, and that is a
+    fact about the arrow ("half my own height up"): measured against the video's width,
+    the same number would slide the tip off the target the moment the camera came in
+    and the target grew. Being self-relative it also cannot be squashed by a 9:16
+    frame — one unit right and one unit down move the same number of pixels.
+
+    The axes, because an effect that has been AIMED has to approach along its own line.
+    The arrow points down and comes in from above; turn it to point left and it must
+    come in from the right, or it lands beside the thing instead of on it. So `rotate`
+    (and the aim a card or a cue adds to it) turns the offset with the picture — one
+    reading in `pipeline/effects.draw_for` and the same one in both previews.
+
+    `scale` multiplies the effect's own `width`. `alpha` is opacity, 0 to 1.
+
+    An empty key list is not a missing animation. It means the plainest thing there
+    is: the effect appears at its full size, holds, and goes — which is exactly right
+    for a clip that already animates itself."""
+
+    at: float = 0.0  # seconds on the animation's OWN clock (see `EffectSpec.clock`)
+    scale: float = 1.0  # multiplier on the effect's `width`
+    dx: float = 0.0  # offset ALONG THE EFFECT, in units of its own drawn width
+    dy: float = 0.0  # …and across it, in the same unit, so a diagonal stays square
+    alpha: float = 1.0  # 0 = invisible, 1 = solid
+    # Turned, in DEGREES clockwise about its own centre. Degrees rather than turns or
+    # radians because it is typed by a person and read off a protractor in their head,
+    # and about the centre because that is the only pivot that survives being resized.
+    #
+    # An arrow is the reason it exists: one picture of an arrow points in every
+    # direction there is, so a base does not need eight arrows — and a thing that
+    # points has to be aimed. It animates like everything else here, so an arrow may
+    # also swing in, and a stamp may land crooked.
+    rotate: float = 0.0
+
+
+class EffectSpec(BaseModel):
+    """One prepared effect: a picture, a clip, a sound, or a picture with a sound.
+
+    It lives in `configs/effects/<name>.toml` with its material beside it, the way a
+    voice lives beside its sample and a card beside its picture. Nothing here is
+    per-video: an effect is a TEMPLATE, and what a video does with it is one cue on
+    the timeline (see `pipeline.job.EffectCue`).
+
+    `description` is the field that makes the whole thing reachable by a model. The
+    effects pass is given this list and the words being spoken, and it fires what
+    fits; a line saying WHEN this effect is the right one ("когда в тексте называют
+    предмет, который видно на картинке") is what it reads. An effect nobody described
+    is still perfectly usable by hand and simply will not be chosen automatically,
+    which is the honest outcome — a model cannot guess what an unnamed png means.
+
+    `width` is a fraction of the FRAME's width — 0.4 is four tenths of the screen — and
+    it sizes the effect wherever nothing else does: a screen effect, or one dropped on
+    a single point of a card. Where a card gives it TWO points it says nothing, because
+    the box between them is the size already; and under `full` it says nothing either,
+    because the picture is scaled to cover the frame."""
+
+    name: str  # the file's stem, filled in by the loader
+    file: str = ""  # the picture or clip beside this file; "" = "<name>.png"
+    # a sound played with it, beside this file too. Alone — with no picture — it is a
+    # sound effect and nothing is drawn; together they are one effect and fire once.
+    sound: str = ""
+    description: str = ""  # WHEN to use it, in the operator's language; read by the model
+    note: str = ""  # why it is in the base at all, for the operator's eye only
+    anchor: EffectAnchor = "screen"
+    place: ScreenPlace = "center"  # where it sits, `anchor="screen"` only
+    width: float = 0.35  # its size; see above for what it is a fraction OF
+    hold: float = 1.2  # the length of the animation's own clock, ONE pass through it
+    fill: EffectFill = "hold"  # what ends it, `anchor` aside (see :data:`EffectFill`)
+    volume: float = 1.0  # what its sound is mixed in at, 0-2
+    keys: list[EffectKey] = []  # the animation; empty = appear, hold, go
+    # -- the middle, repeated ----------------------------------------------
+    # Two moments on that clock, cutting it into three: what happens on the way IN,
+    # the part that REPEATS, and what happens on the way OUT. `loop_to` at or before
+    # `loop_from` means there is no repeating part and the clock is played once, which
+    # is what every effect written before this did and what most of them want.
+    #
+    # It is two separators rather than three durations because that is what it is on
+    # the screen, and because the moments of the animation are placed on the same clock:
+    # a key at 0.4s belongs to the loop or to the entrance depending on where the
+    # separator sits, and asking the operator to keep two numbers in agreement about
+    # that is asking them to do arithmetic the editor can simply show.
+    loop_from: float = 0.0  # where the repeating part begins
+    loop_to: float = 0.0  # …and ends; <= loop_from means nothing repeats
+    loops: int = 1  # how many times it repeats, unless a cue on the timeline says otherwise
+    retired: bool = False  # keep it on disk, stop offering it
+    # -- runtime only, filled by the loader; never written back to the TOML --
+    root: Path | None = Field(default=None, exclude=True)  # the effects folder
+
+    @property
+    def path(self) -> Path | None:
+        """The picture or clip, or None for a sound-only effect."""
+        if not self.file and self.sound:
+            return None
+        name = self.file or f"{self.name}.png"
+        return (self.root / name) if self.root else Path(name)
+
+    @property
+    def sound_path(self) -> Path | None:
+        if not self.sound:
+            return None
+        return (self.root / self.sound) if self.root else Path(self.sound)
+
+    @property
+    def usable(self) -> bool:
+        """Has something to play and has not been retired. Either half is enough —
+        a sting with no picture and a circle with no sound are both whole effects."""
+        if self.retired:
+            return False
+        pic, snd = self.path, self.sound_path
+        return bool((pic and pic.is_file()) or (snd and snd.is_file()))
+
+    def moments(self) -> list[EffectKey]:
+        """The animation as the moments it passes through, in order — the reading
+        every renderer uses, so an effect with no keys and one with four are the same
+        thing to it (compare :meth:`KenBurns.points`)."""
+        if not self.keys:
+            return [EffectKey(at=0.0)]
+        return sorted(self.keys, key=lambda k: k.at)
+
+    @property
+    def cycles(self) -> bool:
+        """Whether this animation has a middle that repeats."""
+        return self.loop_to - self.loop_from > 0.02
+
+    def span(self, loops: int = 0) -> float:
+        """How long ONE firing lasts: the way in, the middle however many times, the
+        way out. `loops` is a cue overriding the effect's own count; 0 means follow the
+        effect (see `pipeline.job.EffectCue`).
+
+        An effect that does not cycle simply runs its clock once, which is why this is
+        the only place anything asks how long a firing is — the answer used to be
+        `hold` and is now derived from it, and every caller was already going through
+        one function to get it."""
+        if not self.cycles:
+            return max(self.hold, 0.1)
+        n = max(int(loops or self.loops), 1)
+        cycle = self.loop_to - self.loop_from
+        tail = max(self.hold - self.loop_to, 0.0)
+        return max(self.loop_from + n * cycle + tail, 0.1)
+
+    def clock(self, into: float, loops: int = 0) -> float:
+        """Where on the animation's own clock a moment of a FIRING falls.
+
+        The whole of the repeat is this one mapping, and it is deliberately the only
+        place that knows about it: before the first separator the two clocks are the
+        same, between them the firing's time is folded back into the cycle again and
+        again, and after the last repeat it runs on into the exit. Everything
+        downstream — the sampling, the preview, the render — reads keys off the clock
+        this returns and never learns that anything was repeated."""
+        if not self.cycles:
+            return into
+        n = max(int(loops or self.loops), 1)
+        cycle = self.loop_to - self.loop_from
+        if into < self.loop_from:
+            return into
+        ran = into - self.loop_from
+        if ran < n * cycle - 1e-9:
+            return self.loop_from + (ran % cycle)
+        return self.loop_to + (ran - n * cycle)
+
+
+class Point(BaseModel):
+    """A place on a card, in fractions of the fitted picture — the same coordinates a
+    :class:`Rect` uses for its centre, so a point and a crop window are measured
+    against the same frame and a point placed on the desk is on the desk however the
+    card is fitted."""
+
+    cx: float = 0.5
+    cy: float = 0.5
+
+
+class CardEffect(BaseModel):
+    """One effect a FRAME CARD has ready, and where on the picture it goes.
+
+    This is the half that cannot live in the effects base: an arrow is an arrow
+    everywhere, but "the arrow that points at the husband's cap" is a fact about one
+    card, and the coordinates it needs are coordinates on that card's file. So the
+    base holds the arrow and the card holds this — the effect's name, where on this
+    picture it is placed, and one line saying what firing it MEANS here.
+
+    That line is what the model chooses on. It is given the card that is up, this
+    list, and the words being spoken, and it answers with a word — so "круг вокруг
+    шапки" is enough and "эффект 3" is not. It is also this entry's NAME: the cue on
+    the timeline records which of a card's effects it fired by it.
+
+    `points` is the placement, and how many there are is the whole of the grammar:
+
+    * **none** — nothing on this picture holds it, so it falls back to the effect's
+      own `place` in the frame and stops travelling with the crop. A sting over a
+      card is a perfectly ordinary thing to want.
+    * **one** — it sits there, at the effect's own `width`.
+    * **two or more** — their bounding box is where AND how big: the effect is centred
+      in it and sized to it. That is what dragging a box around something on the card
+      leaves behind, and it is why nothing here needs a marked crop region any more.
+
+    Whatever the count, these are coordinates on the CARD, so the crop move carries
+    them: the picture converges on the desk and the arrow converges with it."""
+
+    effect: str = ""  # a name in the effects base
+    label: str = ""  # what firing it means here, in the world's own words; its name
+    points: list[Point] = []  # where on this picture (see above); empty = in the frame
+    width: float = 0.0  # a size override for this card; 0 = the effect's own
+    # How far it is turned ON THIS CARD, in degrees clockwise, ADDED to whatever the
+    # animation does. Aim and animation are different things: one picture of an arrow
+    # points in every direction, and which direction it points HERE is a fact about
+    # this picture — while a swing on the way in belongs to the effect and should keep
+    # happening whichever way it has been aimed.
+    turn: float = 0.0
+
+
 # --- configs/fandoms/<name>/ ----------------------------------------------
 
 
@@ -810,6 +1089,11 @@ class FrameCard(BaseModel):
     description: str = ""
     note: str = ""  # why this card was taken in, in the operator's own language
     targets: list[CropTarget] = []  # named regions; the whole frame is always implied
+    # What this picture can DO when it is up: the arrows, circles and stings somebody
+    # has hung on it, each aimed at one of the regions above (see :class:`CardEffect`).
+    # Empty is the ordinary case — a card is a picture first — and a card with none is
+    # never offered any, which is what keeps the effects pass from inventing them.
+    effects: list[CardEffect] = []
     file_sha: str = ""  # sha1 of the file when the targets were last written
     retired: bool = False  # keep the card on disk, stop spending it
     # What becomes of this picture where its shape is not the video's (see `CardFit`).
@@ -1170,6 +1454,16 @@ class RunParams(BaseModel):
     # with it off can open the same screen at the same breakpoint and argue with what
     # the matcher decided, which is the ordinary way to use it.
     frame_by_hand: bool = False
+    # Let a model fire the effects the cards have ready — the arrows, the circles, the
+    # stings — onto the words they are about (see `pipeline/effects`). On by default
+    # and costing nothing where nothing is prepared: a base with no effects in it, or
+    # a run whose cards carry none, never makes the call at all.
+    #
+    # Off is not "no effects": what it stops is the CHOOSING. Cues placed by hand in
+    # the montage room stay exactly where they were put, which is what the switch is
+    # for — a video whose effects were decided by somebody looking at it must not have
+    # a second opinion laid over them on the next pass of the picture stage.
+    frame_effects: bool = True
 
     @field_validator("fandom_invent", mode="before")
     @classmethod

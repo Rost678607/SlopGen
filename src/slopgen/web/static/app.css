@@ -120,6 +120,101 @@ section{padding:14px}
   border:1.5px dashed var(--line);border-radius:10px;cursor:pointer;text-align:center}
 .drop.over{border-color:var(--accent);color:var(--ink)}
 
+/* the effects base */
+/* Same grid as the frame base, because it is the same gesture — look at a wall of
+   things, open one — and a second layout for it would only be a second thing to
+   learn. A sound has no picture to show, so it shows a speaker and says so. */
+#fx-cards{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}
+#fx-cards .thumb.sound{display:grid;place-items:center;font-size:34px}
+/* two badges on one tile: a stack of absolutely-placed pills would sit on top of each
+   other, so they are laid out in a row that is placed once */
+#fx-cards .pills{position:absolute;top:6px;right:6px;display:flex;gap:4px;flex-wrap:wrap;
+  justify-content:flex-end;max-width:90%}
+#fx-cards .pills .pill{position:static}
+#fx-cards .thumb{background-size:contain;background-color:#0d0b10}
+.drop.small{padding:12px;font-size:12.5px;margin-top:10px}
+.fx-edit{display:flex;gap:14px;align-items:flex-start}
+.fx-edit aside{flex:1;min-width:0;display:flex;flex-direction:column;gap:8px}
+.fx-stage{width:360px;flex:none}
+/* The preview is the video's own shape, so a size given as a fraction of the frame
+   reads as what it will be. `.region` puts a stand-in square in the middle of it:
+   an effect pinned to a region is measured against the THING, and without something
+   to be measured against the number on the screen would mean nothing. */
+/* The stage is capped by HEIGHT rather than filling its column: a 9:16 box sized off
+   the width pushes the strip and the moment's numbers off the screen, and those are
+   the two things you are looking at while you drag. */
+.fx-screen{position:relative;aspect-ratio:9/16;height:min(330px,46vh);width:auto;
+  margin:0 auto;background:#17141d;
+  border:1px solid var(--line);border-radius:8px;overflow:hidden}
+/* a full-frame effect has nothing to be measured against: the frame IS the target */
+.fx-screen.full{outline:1px dashed color-mix(in srgb, var(--accent) 50%, transparent);
+  outline-offset:-3px}
+/* the stand-in, and it says what it is: a dashed square with nothing on it is a
+   question, not an explanation */
+.fx-target{position:absolute;left:50%;top:50%;width:34%;aspect-ratio:1;
+  transform:translate(-50%,-50%);border:1.5px dashed var(--line);border-radius:4px}
+.fx-target b{position:absolute;left:50%;bottom:-8px;transform:translate(-50%,100%);
+  font:10px/1 var(--mono);font-weight:400;color:var(--dim);white-space:nowrap}
+/* the effect itself, on the stage and draggable — it IS the placement control, so it
+   takes the pointer and everything inside it does not */
+.fx-piece{position:absolute;cursor:move;touch-action:none}
+.fx-piece img{width:100%;height:100%;object-fit:contain;display:block;
+  pointer-events:none;-webkit-user-drag:none}
+.fx-piece .sound{position:absolute;inset:0;display:grid;place-items:center;font-size:36px}
+/* a moment at zero opacity still has to be grabbable, or where it comes in FROM is the
+   one thing about it that cannot be edited */
+.fx-piece.ghosted{opacity:.14 !important;outline:1px dashed var(--line)}
+/* the two handles. They are different shapes because they do different things — a
+   corner is a size, a knob on a stalk is a turn — and both are labelled on hover. */
+.fx-piece .grip{position:absolute;right:-7px;bottom:-7px;width:13px;height:13px;
+  background:var(--accent);border-radius:3px;cursor:nwse-resize;
+  box-shadow:0 0 0 1.5px #000a}
+.fx-piece .spin{position:absolute;left:50%;top:-20px;width:13px;height:13px;
+  margin-left:-6.5px;border-radius:50%;background:var(--warn);cursor:grab;
+  box-shadow:0 0 0 1.5px #000a}
+.fx-piece .spin::before{content:"";position:absolute;left:5px;top:13px;width:3px;
+  height:8px;background:var(--warn)}
+.fx-piece .spin::after{content:"";position:absolute;inset:-9px}
+.fx-transport{gap:6px;margin-top:6px;flex-wrap:wrap}
+.fx-transport button{padding:3px 9px;font-size:12px}
+.fx-transport .mono{font-family:var(--mono);font-size:12px;color:var(--dim)}
+/* the moments, on the effect's own clock */
+.fx-track{position:relative;height:38px;margin-top:6px;border:1px solid var(--line);
+  border-radius:6px;background:var(--bg);cursor:pointer;touch-action:none}
+.fx-ruler{position:absolute;left:0;right:0;top:0;height:14px}
+.fx-ruler i{position:absolute;top:0;bottom:0;width:1px;background:var(--line)}
+.fx-ruler i b{position:absolute;left:3px;top:1px;font:9px/1 var(--mono);color:var(--dim);font-weight:400}
+/* the repeating middle: shaded between its two separators, which are handles you drag.
+   The band is behind the moments, because what it says is which of them repeat. */
+.fx-seps{position:absolute;left:0;right:0;top:14px;bottom:0}
+.fx-seps .band{position:absolute;top:0;bottom:0;
+  background:color-mix(in srgb, var(--accent) 16%, transparent);
+  border-left:1px solid var(--accent);border-right:1px solid var(--accent)}
+.fx-seps .sep{position:absolute;top:0;bottom:0;width:9px;margin-left:-4.5px;
+  cursor:ew-resize;touch-action:none;background:transparent}
+.fx-seps .sep::after{content:"";position:absolute;left:3px;top:2px;bottom:2px;width:3px;
+  border-radius:2px;background:var(--accent)}
+.fx-keyrow{position:absolute;left:0;right:0;bottom:4px;height:20px}
+/* the same diamond the montage room hangs its crop keys from, for the same reason: a
+   moment is a point in time and anything with width reads as a stretch of it */
+.fxk{position:absolute;top:2px;width:11px;height:15px;margin-left:-5.5px;
+  background:var(--dim);cursor:ew-resize;touch-action:none;
+  clip-path:polygon(0 0, 100% 0, 100% 62%, 50% 100%, 0 62%)}
+.fxk.on{background:var(--accent)}
+.fxk::before{content:"";position:absolute;inset:-8px}
+.fx-head{position:absolute;top:0;bottom:0;width:1px;background:var(--warn);pointer-events:none}
+.fx-keyfields{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.fx-keyfields label{font-size:11px;color:var(--dim);display:flex;flex-direction:column;gap:2px}
+.fx-keyfields input{width:66px}
+label.off{opacity:.4}
+/* the hooks on a card: the same list shape `#targets` has, two rows to a line */
+#card-fx{list-style:none;padding:0;margin:0 0 8px;display:flex;flex-direction:column;gap:6px}
+#card-fx li{border:1px solid var(--line);border-radius:6px;padding:6px;
+  display:flex;flex-direction:column;gap:5px}
+#card-fx li.dimrow{border:none;padding:0;color:var(--dim);font-size:12.5px}
+#card-fx .row{display:flex;gap:6px;align-items:center}
+#card-fx select,#card-fx input{min-width:0;flex:1}
+
 /* editor */
 /* Above `#panel`, and it has to be: the markup editor is opened FROM the asks panel
    (a delivered frame is a card, and the regions on it are what the card is worth), so
@@ -151,6 +246,25 @@ section{padding:14px}
   object-fit:contain;display:block;
   pointer-events:none;-webkit-user-drag:none;user-drag:none}
 #boxes{position:absolute;inset:0;pointer-events:none}
+/* the effect being placed on a card: the picture itself, faintly outlined so an
+   effect that is mostly transparent still has something to grab */
+#fxplace{position:absolute;inset:0;pointer-events:none}
+.fxghost{position:absolute;pointer-events:auto;cursor:move;touch-action:none;
+  outline:1px dashed color-mix(in srgb, var(--accent) 70%, transparent);outline-offset:2px}
+.fxghost img{width:100%;height:100%;object-fit:contain;display:block;
+  pointer-events:none;-webkit-user-drag:none}
+.fxghost .sound{position:absolute;inset:0;display:grid;place-items:center;font-size:28px}
+.fxghost .grip{position:absolute;right:-7px;bottom:-7px;width:14px;height:14px;
+  background:var(--accent);border-radius:3px;cursor:nwse-resize}
+/* the anchor: small, bright and not draggable — the ghost is what you take hold of,
+   and this is what says where it is fastened */
+.fxdot{position:absolute;width:9px;height:9px;margin:-4.5px 0 0 -4.5px;border-radius:50%;
+  background:var(--accent);box-shadow:0 0 0 1.5px #000a}
+.fxhint{position:absolute;left:50%;top:8px;transform:translateX(-50%);margin:0;
+  background:#000a;border-radius:6px;padding:4px 10px;font-size:12px;color:var(--dim)}
+#card-fx .chips.small button{font-size:11px;padding:2px 7px}
+#card-fx label.turn{font-size:11px;gap:4px}
+#card-fx label.turn input{width:62px}
 /* Two-tone marching ants. One colour is never enough here: a region can land on a
    lamp or on a shadow in the same picture, and a single hairline vanishes into
    whichever it happens to cross. A white dash over a black one reads on both. */
@@ -617,7 +731,12 @@ button:disabled:hover{border-color:var(--line)}
 .card{padding:12px 14px;display:grid;gap:9px;align-content:start;min-width:0;
   background:var(--panel);border:1px solid var(--line);border-radius:10px}
 .card h4{margin:0;font-size:14px;font-weight:600}
-.card>.dim{margin:0;font-size:12px;line-height:1.45}
+/* a note is a note wherever it sits: rows that only appear once something else
+   is set live inside a [data-when] wrapper, and the direct-child selector alone
+   left every one of those notes at body size (the fandom card's «beru na sebya»
+   and «effects» lines among them). */
+.card>.dim,
+.card>[data-when] .dim{margin:0;font-size:12px;line-height:1.45}
 .card label{display:grid;gap:4px;font-size:12.5px;color:var(--dim);min-width:0}
 .card label.inline{display:flex;gap:8px;align-items:center;color:var(--ink);font-size:13.5px}
 .card label.inline input:not([type=checkbox]){width:auto;flex:0 0 auto}
@@ -778,6 +897,9 @@ button.danger{border-color:var(--bad);color:var(--bad)}
 /* the left half: the picture, the transport, the look */
 .mont-view{width:min(320px,34vw);display:flex;flex-direction:column;gap:10px;
   min-height:0;overflow:auto}
+/* while a firing that sits on the picture is selected, the preview is something you
+   can take hold of */
+#mont-canvas.movable{cursor:move}
 .mont-screen{position:relative;aspect-ratio:9/16;background:#0d0b10;
   border:1px solid var(--line);border-radius:8px;overflow:hidden;flex:0 0 auto}
 .mont-screen canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
@@ -819,6 +941,8 @@ button.danger{border-color:var(--bad);color:var(--bad)}
 
 /* the shots. A block is the picture it shows, dimmed under a caption, because that is
    how a track is read at a glance — by the pictures, not by the names of them. */
+/* the height is set in JS: the block grows downward by the rows of its own effects
+   (see `montage.js`), and the lane has to make room for the deepest of them */
 .lane.shots{--h:74px;margin:6px 0 2px}
 /* the shots lane with no shots in it: the one place somebody looks when they cannot
    work out how to make one */
@@ -828,7 +952,10 @@ button.danger{border-color:var(--bad);color:var(--bad)}
 .notrack button{white-space:nowrap}
 .shot{position:absolute;top:0;height:70px;border:1px solid var(--line);border-radius:6px;
   overflow:hidden;cursor:pointer;background:#0d0b10}
-.shot .pic{position:absolute;inset:0;background:center/cover no-repeat;opacity:.55}
+/* the picture fills the top 70px whatever the block has grown to: what is below is the
+   effects this picture fires, and they are not part of it to look at */
+.shot .pic{position:absolute;left:0;right:0;top:0;height:70px;
+  background:center/cover no-repeat;opacity:.55}
 .shot .tag{position:absolute;left:0;right:0;bottom:0;padding:2px 5px;font-size:11px;
   background:#0009;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .shot .kind{position:absolute;left:4px;top:3px;font:10px/1.4 var(--mono);color:#fffc;
@@ -864,6 +991,49 @@ button.danger{border-color:var(--bad);color:var(--bad)}
 /* the hit area is bigger than the diamond: 12px of rotated square is a target a
    fingertip misses, and the shape is what it looks like, not what it catches */
 .kf::before{content:"";position:absolute;inset:-8px}
+
+/* the effects: a block over the seconds one is up, in the gap between the pictures
+   and the words — which is where it is in the video too, drawn on the still and
+   placed on the word. The lane itself is pressable, and that is the way a new one is
+   hung: press above the word, get what this picture can fire. */
+.lane.fx{--h:20px;cursor:pointer}
+.fxm{position:absolute;top:2px;height:13px;border-radius:3px;cursor:pointer;
+  background:color-mix(in srgb, var(--accent) 34%, var(--bg));
+  border:1px solid var(--accent);overflow:hidden;display:flex;align-items:center}
+.fxm b{font:9.5px/1 var(--mono);font-weight:400;padding:0 4px;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis}
+/* the ones INSIDE a shot: same block, drawn on the picture's own strip, so what binds
+   them to it is the geometry rather than a badge saying so */
+.shot .fxm.in{background:color-mix(in srgb, var(--accent) 46%, #0d0b10);
+  border-color:color-mix(in srgb, var(--accent) 70%, transparent)}
+.shot .fxm.in.on{background:var(--accent);color:#20101c}
+.shot .tag{bottom:auto;top:53px}
+.fxm.on{background:var(--accent);color:#fff}
+/* placed by hand: the automatic pass may not take it back, and the track says so */
+.fxm.hand::after{content:"✔";position:absolute;right:3px;top:1px;font-size:9px;color:var(--ok)}
+/* an effect the base no longer holds: still on the track, still yours to take off */
+.fxm.gone{border-style:dashed;border-color:var(--warn);background:transparent;color:var(--warn)}
+
+/* the picker: what this picture can fire and what you are adding yourself, as two
+   headed groups — the difference between the two is the thing the list has to say */
+.fxgroup{margin:12px 0 4px;font-size:12.5px;display:flex;gap:8px;align-items:baseline;
+  flex-wrap:wrap}
+.fxgroup .dim{font-weight:400;font-size:11.5px}
+.fxpick{display:flex;flex-direction:column;gap:6px;margin:0}
+.fxpick button{display:flex;align-items:center;gap:9px;text-align:left;padding:7px 9px;
+  width:100%}
+.fxpick .face{width:38px;height:38px;flex:none;display:grid;place-items:center;
+  background:#0d0b10;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.fxpick .face img{max-width:100%;max-height:100%;display:block}
+.fxpick .face .sound{font-size:19px}
+.fxpick .what{display:flex;flex-direction:column;gap:2px;min-width:0}
+.fxpick button .dim{font-size:11.5px}
+/* the empty effects lane: the one place somebody stands when they cannot work out how
+   to put one on, so that is where it is said */
+.fxadd{position:absolute;inset:2px 0 auto;height:13px;display:flex;align-items:center;
+  justify-content:center;border:1px dashed var(--line);border-radius:5px;
+  font-size:11px;color:var(--dim);font-style:normal}
+.lane.fx:hover .fxadd{border-color:var(--accent);color:var(--ink)}
 
 /* every word start, exact, under the shots — this is the ruler the cuts really run on */
 .lane.cues{--h:10px;cursor:pointer}

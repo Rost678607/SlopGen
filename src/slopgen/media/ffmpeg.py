@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dc_field
 from pathlib import Path
 from typing import Callable
 
@@ -295,10 +295,73 @@ def make_photo_part(img: Path, dur: float, out: Path, cfg: GlobalConfig, motion:
     ])
 
 
+def effect_at(d: EffectDraw, at: float) -> tuple[float, float, float, float, float] | None:
+    """Where an effect is at ONE instant: (cx, cy, width, alpha, turn), or None when it
+    is not up at that moment.
+
+    The path is a run of samples and everything that renders it interpolates; this is
+    that reading for a single frame, which is what the true-frame button needs. It walks
+    the very list the delivery pass walks, because a still that composed the effect from
+    somewhere else would be a second answer to the one question that button exists to
+    answer truthfully."""
+    if not d.path or not (d.start - 1e-6 <= at <= d.end + 1e-6):
+        return None
+    pts = d.path
+    if at <= pts[0][0]:
+        p = pts[0]
+    elif at >= pts[-1][0]:
+        p = pts[-1]
+    else:
+        p = pts[-1]
+        for a, b in zip(pts, pts[1:]):
+            if at <= b[0]:
+                k = (at - a[0]) / max(b[0] - a[0], 1e-6)
+                p = tuple(a[i] + (b[i] - a[i]) * k for i in range(6))
+                break
+    return p[1], p[2], p[3], p[4], p[5]
+
+
+def _still_effects(draws: list[EffectDraw], at: float, cfg: GlobalConfig,
+                   idx: int, tag: str) -> tuple[list[str], list[str], str]:
+    """The inputs and filters that stamp whatever is going off at `at` onto one frame.
+
+    Everything here is a NUMBER rather than an expression: a still is one instant, so
+    the ramps the delivery pass builds collapse to the values they hold at it, and what
+    is left is an overlay per effect with nothing time-varying in it."""
+    args: list[str] = []
+    nodes: list[str] = []
+    v = cfg.video
+    for d in draws:
+        now = effect_at(d, at)
+        if now is None or d.asset is None or now[3] <= 0.01:
+            continue
+        cx, cy, w, alpha, turn = now
+        args += ["-loop", "1", "-i", str(d.asset)]
+        chain = ["format=rgba"]
+        if alpha < 0.999:
+            chain.append(f"colorchannelmixer=aa={alpha:.3f}")
+        if abs(turn) > 0.05:
+            chain.append(f"rotate={turn:.3f}*PI/180:ow='hypot(iw,ih)':oh='hypot(iw,ih)'"
+                         f":c=black@0")
+            try:
+                aw, ah = video_dims(d.asset)
+                w = w * (((aw ** 2 + ah ** 2) ** 0.5 / aw) if aw else 1.0)
+            except Exception:
+                w = w * 2 ** 0.5
+        chain.append(f"scale={max(int(round(w * v.width)), 2)}:-1")
+        nodes.append(f"[{idx}:v]{','.join(chain)}[sfx{idx}]")
+        nodes.append(f"{tag}[sfx{idx}]overlay=x={int(round(cx * v.width))}-w/2"
+                     f":y={int(round(cy * v.height))}-h/2:format=yuv420[sv{idx}]")
+        tag = f"[sv{idx}]"
+        idx += 1
+    return args, nodes, tag
+
+
 def still_frame(src: Path, out: Path, cfg: GlobalConfig, *, seconds: float = 0.0,
                 shot_s: float = 0.0, move: KenBurns | None = None, phase: float = 0.0,
                 fit: str = "crop", ax: float = 0.5, ay: float = 0.5,
-                fx: dict[str, int] | None = None, photo: bool = True) -> None:
+                fx: dict[str, int] | None = None, photo: bool = True,
+                draws: list[EffectDraw] | None = None, at: float = 0.0) -> None:
     """One frame of the finished video, as the finished video would show it.
 
     The montage screen previews the timeline in the browser, which is the right place
@@ -333,7 +396,14 @@ def still_frame(src: Path, out: Path, cfg: GlobalConfig, *, seconds: float = 0.0
         n = 0
         args = ["-ss", f"{max(seconds, 0.0):.3f}", "-i", str(src)]
     nodes.extend(filter_graph(fx or {}, cfg, "[v]", "[vfx]"))
-    nodes.append(f"[vfx]select='eq(n\\,{n})'[out]")
+    # the effects go on where they go on in the delivery pass — after the look, before
+    # anything meant to be read — so a frame pulled here shows what will be there.
+    # `at` is the moment on the VIDEO's clock, which is the clock a cue is placed on;
+    # `seconds` above is into the shot, and the two are not the same number.
+    extra, fx_nodes, tag = _still_effects(list(draws or []), at, cfg, 1, "[vfx]")
+    args += extra
+    nodes.extend(fx_nodes)
+    nodes.append(f"{tag}select='eq(n\\,{n})'[out]")
     _run([
         "ffmpeg", "-y", *args, "-filter_complex", ";".join(nodes),
         "-map", "[out]", "-fps_mode", "passthrough", "-frames:v", "1",
@@ -526,6 +596,168 @@ def _overlay_xy(position: str, margin: int = 40, top: int = 140, bottom: int = 4
     }[position]
 
 
+# --- effects: the arrows, the circles and the stings ------------------------
+#
+# They are drawn in the delivery pass and nowhere else, which is the same answer the
+# montage look and the ad overlay get, for a reason that is specific to these: an
+# effect is placed on a WORD, the word is a moment on the finished video's clock, and
+# this is the first place that clock exists as one thing. Drawing them into the
+# per-scene segments instead would mean cutting every effect at every scene boundary
+# and re-deriving where it was in its own animation, which is the arithmetic
+# `BgAsset.move_at` already exists to avoid doing twice.
+#
+# They go on AFTER the montage filters and BEFORE the subtitles. Not under the grain,
+# because an arrow is a graphic somebody is meant to read and a hashed arrow is a
+# smudge; not over the captions, because the captions are what the video is saying.
+
+
+@dataclass
+class EffectDraw:
+    """One effect, laid on the finished video's clock and ready to render.
+
+    `path` is the whole of the geometry — where the effect's CENTRE is, how wide it
+    is and how solid, as fractions of the frame, at moments in seconds. One shape
+    covers both anchors and every animation, so nothing here ever asks what kind of
+    effect it was handed: a circle pinned to a zooming region is forty samples of the
+    same four numbers a static sting spells once. What computes it is
+    `pipeline/effects.draw_for`, which is where the crop move is known.
+
+    A `sound` with no `asset` is a whole effect and draws nothing."""
+
+    name: str
+    asset: Path | None = None  # the picture or clip
+    sound: Path | None = None
+    start: float = 0.0
+    duration: float = 0.0
+    # (at, cx, cy, width, alpha, turn) — `at` in seconds, the place and the size in
+    # fractions of the frame, the turn in degrees clockwise about the effect's centre
+    path: list[tuple[float, float, float, float, float, float]] = dc_field(default_factory=list)
+    loop: bool = False  # a clip shorter than the effect: loop it to fill the time
+    volume: float = 1.0
+    # a FULL-FRAME effect: the picture is scaled to cover rather than placed, so it is
+    # pinned at the centre and its `path` width is how far past the frame it reaches
+    # (see `pipeline/effects.cover_for`). It changes nothing else here — the animation,
+    # the fade and the sound are the same ones every other effect gets.
+    cover: bool = False
+
+    @property
+    def end(self) -> float:
+        return self.start + self.duration
+
+
+def _ramp(pts: list[tuple[float, float]], var: str = "t") -> str:
+    """A piecewise-linear function of TIME, as one ffmpeg expression.
+
+    The same sum-of-clamped-ramps `_ken_burns` builds against the output frame index,
+    written against seconds instead: start at the first value and add each leg's
+    change, each gated by its own `clip(...,0,1)`. Before the first moment every clip
+    is 0 and the value holds there; after the last they are all 1 and it holds at the
+    end. A single moment degenerates to a constant, which is what an effect that does
+    not move actually is."""
+    if not pts:
+        return "0"
+    out = f"{pts[0][1]:.5f}"
+    for (t0, v0), (t1, v1) in zip(pts, pts[1:]):
+        span = max(t1 - t0, 1e-3)
+        out += f"{v1 - v0:+.5f}*clip(({var}{-t0:+.4f})/{span:.4f},0,1)"
+    return f"({out})"
+
+
+def _effect_input_args(d: EffectDraw, fps: float) -> list[str]:
+    """How one effect's picture is opened.
+
+    A still is looped forever and gated by `enable`: it has no clock of its own, so
+    there is nothing to line up. A clip does have one, and `-itsoffset` is what puts
+    its first frame where the effect starts — which is also what makes every time
+    expression below readable, since after it the clip's own timestamps and the
+    video's are the same numbers."""
+    asset = d.asset
+    ext = asset.suffix.lower() if asset else ""
+    at = ["-itsoffset", f"{d.start:.3f}"]
+    loop = ["-stream_loop", "-1"] if d.loop else []
+    if ext in (".png", ".jpg", ".jpeg", ".webp"):
+        return ["-loop", "1", "-framerate", f"{fps:g}", "-i", str(asset)]
+    if ext == ".gif":
+        return ["-ignore_loop", "0" if d.loop else "1", *at, "-i", str(asset)]
+    if ext == ".webm":
+        return [*loop, *at, "-c:v", "libvpx-vp9", "-i", str(asset)]
+    return [*loop, *at, "-i", str(asset)]
+
+
+def _effect_video(d: EffectDraw, idx: int, tag: str, out_tag: str,
+                  cfg: GlobalConfig) -> list[str]:
+    """The filters that put one effect on the picture.
+
+    Three things happen to it and each is skipped when it would do nothing, because a
+    filter that changes nothing still costs a decode of every frame it touches:
+
+    * SIZE. Constant where the effect neither animates its scale nor rides a moving
+      crop window, and then it is a plain `scale`. Otherwise `eval=frame`, which is
+      the whole reason a circle can stay the size of the thing it circles while the
+      camera comes in on it.
+    * OPACITY, through `geq`. `fade` would be cheaper and cannot express this: an
+      effect is allowed to pulse, and fade only knows in and out. The expression is
+      per-pixel and the picture is small, which is the trade being made.
+    * PLACE, in the `overlay` itself. `W`/`H` are the video's, `w`/`h` the effect's
+      after scaling, so a centre in fractions of the frame is one expression and
+      needs to know nothing about how big either turned out."""
+    v = cfg.video
+    pts = d.path
+    chain: list[str] = ["format=rgba"]
+    alphas = [(t, a) for t, _cx, _cy, _w, a, _r in pts]
+    if any(a < 0.999 for _t, a in alphas):
+        # BEFORE the scale, and that order is not a preference. `scale=eval=frame`
+        # hands on a picture whose SIZE changes every frame, and `geq` allocates
+        # against the size it was started with — the two in the other order abort the
+        # process outright (SIGABRT on ffmpeg 7.1, measured). Here geq also runs on
+        # the source picture rather than on the blown-up one, which is cheaper.
+        #
+        # Its own clock is the frame's timestamp, which `-itsoffset` (and a looped
+        # still starting with the video) has already put on the same seconds as `t`.
+        chain.append(
+            f"geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
+            f"a='alpha(X,Y)*clip({_ramp(alphas, 'T')},0,1)'")
+    # TURNED, before it is sized. `rotate` grows its canvas to the picture's diagonal so
+    # the corners are not cut off, which means the drawn thing would come out smaller
+    # than asked by exactly that padding — so the scale that follows is given the
+    # padding back. The other order is not an option: `scale=eval=frame` hands on a
+    # picture whose size changes every frame, and a filter that sized its own output
+    # from the first one it saw would be looking at the wrong number from then on.
+    turns = [(t, r) for t, _cx, _cy, _w, _a, r in pts]
+    pad = 1.0
+    if any(abs(r) > 0.05 for _t, r in turns):
+        # `t` and not `T`: the clock is spelled differently in every filter that has
+        # one — `geq` says T, `rotate` says t, `overlay` and `scale` say t — and the
+        # wrong letter is not a wrong angle, it is a filtergraph that will not parse.
+        chain.append(f"rotate=a='{_ramp(turns, 't')}*PI/180'"
+                     f":ow='hypot(iw,ih)':oh='hypot(iw,ih)':c=black@0")
+        try:
+            aw, ah = video_dims(d.asset) if d.asset else (1, 1)
+            pad = ((aw ** 2 + ah ** 2) ** 0.5 / aw) if aw else 1.0
+        except Exception:
+            pad = 2 ** 0.5
+    widths = [(t, w * pad) for t, _cx, _cy, w, _a, _r in pts]
+    if len({round(w, 4) for _t, w in widths}) <= 1:
+        chain.append(f"scale={max(int(round(widths[0][1] * v.width)), 2)}:-1")
+    else:
+        chain.append(f"scale=w='{v.width}*{_ramp(widths)}':h=-1:eval=frame")
+    if d.cover:
+        # A full-frame effect is scaled by WIDTH like every other one — the path
+        # already carries how far past the frame that has to reach — and then cropped
+        # back to the frame around its centre, so a landscape light-leak over a
+        # vertical video loses its sides instead of being squashed into them. The crop
+        # is what makes `overlay` at the centre exact rather than nearly right.
+        chain.append(f"crop=w='min(iw,{v.width})':h='min(ih,{v.height})'"
+                     f":x='(iw-out_w)/2':y='(ih-out_h)/2'")
+    x = f"W*{_ramp([(t, cx) for t, cx, _cy, _w, _a, _r in pts])}-w/2"
+    y = f"H*{_ramp([(t, cy) for t, _cx, cy, _w, _a, _r in pts])}-h/2"
+    return [
+        f"[{idx}:v]{','.join(chain)}[fx{idx}]",
+        f"{tag}[fx{idx}]overlay=x='{x}':y='{y}':format=yuv420"
+        f":enable='between(t,{d.start:.3f},{d.end:.3f})'{out_tag}",
+    ]
+
+
 def _overlay_input_args(asset: Path) -> list[str]:
     ext = asset.suffix.lower()
     if ext == ".gif":
@@ -710,9 +942,11 @@ def _delivery_cmd(
     overlay: OverlaySpec | None,
     fonts_dir: Path | None,
     fx: dict[str, int] | None = None,
+    draws: list[EffectDraw] | None = None,
 ) -> list[str]:
     """The one delivery pass: join what is left, run the montage filters over the
-    whole picture, burn subtitles, mix background music, stamp the ad overlay, encode."""
+    whole picture, draw the effects, burn subtitles, mix background music and the
+    effects' own sounds, stamp the ad overlay, encode."""
     cmd: list[str] = ["ffmpeg", "-y"]
     for seg in segments:
         cmd += ["-i", str(seg)]
@@ -724,6 +958,21 @@ def _delivery_cmd(
     if overlay:
         cmd += _overlay_input_args(overlay.asset)
         overlay_idx, n = n, n + 1
+    # Every effect opens one input for its picture and one for its sound, and an
+    # effect that is only a sound opens only the second. They are counted here rather
+    # than inferred later because a filtergraph refers to inputs by NUMBER, and the
+    # number is the one thing about them that must not be worked out twice.
+    seen: list[tuple[EffectDraw, int, int]] = []
+    for d in (draws or []):
+        vi = ai = -1
+        if d.asset is not None and d.path:
+            cmd += _effect_input_args(d, cfg.video.fps)
+            vi, n = n, n + 1
+        if d.sound is not None:
+            cmd += ["-i", str(d.sound)]
+            ai, n = n, n + 1
+        if vi >= 0 or ai >= 0:
+            seen.append((d, vi, ai))
 
     filters: list[str] = []
     # concat every scene into one continuous, re-timed pair of streams.
@@ -740,6 +989,14 @@ def _delivery_cmd(
     # legibility for nothing, and a partner's logo is not ours to run through a tube.
     filters.extend(filter_graph(fx or {}, cfg, "[vbase]", "[vfx]"))
     vtag = "[vfx]"
+    # The effects, in the order they fire. Each takes the picture as it stands and
+    # hands on the picture with itself on it, so two overlapping ones stack in time
+    # order rather than fighting over one tag (see :func:`_effect_video`).
+    for d, vi, _ai in seen:
+        if vi < 0:
+            continue
+        filters.extend(_effect_video(d, vi, vtag, f"[vx{vi}]", cfg))
+        vtag = f"[vx{vi}]"
     if ass:
         sub = f"ass={ass}" + (f":fontsdir={fonts_dir}" if fonts_dir else "")
         filters.append(f"{vtag}{sub}[vs]")
@@ -770,6 +1027,23 @@ def _delivery_cmd(
         filters.append(f"[{music_idx}:a]volume={cfg.audio.music_volume}[bgm]")
         filters.append(f"[voice][bgm]amix=inputs=2:duration=first:dropout_transition=0[mix]")
         atag = "[mix]"
+    # The effects' own sounds, each delayed to where its effect goes off. `adelay`
+    # rather than an input offset, because a pad of silence is a thing that can be
+    # read back off the command; and `normalize=0`, because the voice has already been
+    # levelled and dividing it by however many stings a video happens to carry would
+    # make the narration quieter the more of them there are.
+    sounds: list[str] = []
+    for d, _vi, ai in seen:
+        if ai < 0:
+            continue
+        ms = max(int(d.start * 1000), 0)
+        filters.append(f"[{ai}:a]adelay={ms}:all=1,volume={d.volume:.3f}[snd{ai}]")
+        sounds.append(f"[snd{ai}]")
+    if sounds:
+        filters.append(
+            f"{atag}{''.join(sounds)}amix=inputs={len(sounds) + 1}:duration=first"
+            f":dropout_transition=0:normalize=0[amixed]")
+        atag = "[amixed]"
 
     cmd += [
         "-filter_complex", ";".join(filters),
@@ -795,11 +1069,18 @@ def finalize(
     overlay: OverlaySpec | None = None,
     fonts_dir: Path | None = None,
     fx: dict[str, int] | None = None,
+    draws: list[EffectDraw] | None = None,
     tmp: Path | None = None,
     on_progress: Callable[[str, int, int], None] | None = None,
 ) -> None:
     """Join the scene ``segments``, lay the montage filters over the picture, burn
     subtitles, mix background music and stamp the ad overlay onto the delivered file.
+
+    ``draws`` are the effects laid over this episode, already on its own clock (see
+    :class:`EffectDraw` and `pipeline/effects.render`). They are drawn in this pass and
+    their sounds mixed in it, for the same reason the filters are: it is the first
+    moment the episode exists as one picture on one clock, and an effect is placed on
+    a word rather than on a scene.
 
     ``fx`` is the run's filters as ``{name: dose}`` (see :mod:`.filters`). They are
     applied in this pass and nowhere else, so they cover the finished video end to
@@ -828,7 +1109,7 @@ def finalize(
         ready, batch = _fold_segments(segments, tmp, f"{out.stem}_p{attempt}", batch, target, on_progress)
         want = sum(duration_of(p) for p in ready)
         try:
-            _run(_delivery_cmd(ready, out, cfg, ass, music, overlay, fonts_dir, fx))
+            _run(_delivery_cmd(ready, out, cfg, ass, music, overlay, fonts_dir, fx, draws))
             # The delivery pass is the last place anything can go quietly missing, and
             # the one place nobody looks: what comes out of it is the file that gets
             # published. It answers for its own inputs — a scene that was already short

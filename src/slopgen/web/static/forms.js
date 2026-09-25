@@ -166,6 +166,18 @@ const FORMS = {
             {
               "note": "web.byhand.note",
               "cls": "dim"
+            },
+            {
+              "f": "frame_effects",
+              "kind": "checkbox",
+              "inline": true,
+              "checked": true,
+              "id": "f-fxauto",
+              "l": "web.f.fxauto"
+            },
+            {
+              "note": "web.fxauto.note",
+              "cls": "dim"
             }
           ]
         }

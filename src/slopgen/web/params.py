@@ -234,6 +234,9 @@ def fandom_params(store: ConfigStore, b: dict) -> RunParams:
         frame_fit=b.get("frame_fit", "close"),
         cut_sensitivity=float(b.get("cut_sensitivity", 0.35)),
         frame_by_hand=by_hand,
+        # on unless the operator says otherwise, and free where nothing is prepared:
+        # a base with no effects in it never reaches the model (see pipeline/effects)
+        frame_effects=bool(b.get("frame_effects", True)),
         **common(b),
         manual_orchestration=OrchestrationConfig(
             name=source,
@@ -383,6 +386,7 @@ _FIELDS: list[dict] = [
     {"f": "cut_sensitivity", "kind": "range", "l": "web.f.cutrate", "min": 0, "max": 1,
      "step": 0.05, "modes": ["fandom"]},
     {"f": "frame_by_hand", "kind": "check", "l": "web.f.byhand", "modes": ["fandom"]},
+    {"f": "frame_effects", "kind": "check", "l": "web.f.fxauto", "modes": ["fandom"]},
     # blank here is not "no music": it is the roll the run makes for itself
     {"f": "music", "kind": "select", "l": "web.f.music", "opts": "music", "blank": True,
      "blank_l": "w.music.roll"},

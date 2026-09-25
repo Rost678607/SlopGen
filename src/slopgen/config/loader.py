@@ -13,6 +13,7 @@ from .models import (
     AdConfig,
     CharacterConfig,
     ContentTypeConfig,
+    EffectSpec,
     FandomConfig,
     FrameCard,
     GlobalConfig,
@@ -56,6 +57,11 @@ def _load_dir(subdir: str, model):
 
 FANDOM_TOML = "fandom.toml"  # the config file inside a fandom's folder
 FRAMES_DIR = "frames"  # the frame base inside a fandom's folder: cards + their pictures
+# The effects base: one folder for every world, holding each effect's TOML and the
+# picture, clip or sound beside it. `_load_dir` globs *.toml only, so the material
+# sitting in the same folder is ignored for free — and it has to sit there, the way a
+# card's picture does, because an effect separated from its file is nothing at all.
+EFFECTS_DIR = "effects"
 
 
 def _load_fandoms(subdir: str = "fandoms") -> dict[str, FandomConfig]:
@@ -281,6 +287,28 @@ def write_frame_card(card: FrameCard) -> Path:
     card.root.mkdir(parents=True, exist_ok=True)
     path = card.root / f"{card.name}.toml"
     path.write_bytes(tomli_w.dumps(card.model_dump()).encode())
+    return path
+
+
+def effects_dir() -> Path:
+    """Where the effects base lives. Created on demand by whoever writes into it,
+    never on load — an empty folder appearing in every checkout would only say that
+    slopgen has been run."""
+    return CONFIGS_DIR / EFFECTS_DIR
+
+
+def write_effect(spec: EffectSpec) -> Path:
+    """Persist one effect to `configs/effects/<name>.toml`.
+
+    The material beside it is not touched: it was put there by whoever brought it,
+    exactly as a card's picture is. Runtime-only `root` is excluded by the model."""
+    if not spec.name or "/" in spec.name or "\\" in spec.name or spec.name.startswith("."):
+        raise ConfigError(f"unusable effect name: {spec.name!r}")
+    root = spec.root or effects_dir()
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / f"{spec.name}.toml"
+    body = {k: v for k, v in spec.model_dump().items() if k != "name"}
+    path.write_bytes(tomli_w.dumps(body).encode())
     return path
 
 

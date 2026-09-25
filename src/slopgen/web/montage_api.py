@@ -39,11 +39,13 @@ from ..config.models import SubtitleStyle
 from ..media import ffmpeg
 from ..media import filters as fxmod
 from ..media.stock import IMAGE_EXTS, VIDEO_EXTS
-from ..pipeline import montage, orchestrator
+from ..pipeline import effects as fxeff
+from ..pipeline import framebase, montage, orchestrator
 from ..pipeline.checkpoint import Checkpoint
 from ..pipeline.context import AppContext
 from ..pipeline.manual import ManualInputPending
 from ..pipeline.stages import metadata as metadata_stage
+from ..pipeline.stages import assemble
 from ..pipeline.stages.assemble import tracks_in
 from ..pipeline.stages import picture
 from ..tts import ENGINES as TTS_ENGINES
@@ -134,6 +136,7 @@ SETTINGS = {
     # the look, and the two picture-track questions this screen has always owned
     "filters": _look,
     "frame_by_hand": _flag,
+    "frame_effects": _flag,
     "cut_sensitivity": _sensitivity,
     # the voice, which is what pressing `tts` here will use
     "tts_engine": _pick(lambda store: set(TTS_ENGINES)),
@@ -163,7 +166,8 @@ SETTINGS = {
 _locks: dict[str, threading.Lock] = {}
 
 
-def mount(app, *, store: ConfigStore, sup, guard, run_or_404, card_json) -> None:
+def mount(app, *, store: ConfigStore, sup, guard, run_or_404, card_json,
+          effect_json) -> None:
     """Hang the montage routes on the app, using its session guard, its run lookup and
     its supervisor — the last because a stage pressed here reports where a stage run by
     the chain reports: the run's own log and the run's own bar."""
@@ -507,10 +511,121 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404, card_json) -> None
         cp, i, job = open_job(run, int(b.get("video", 0)))
         sens = float(b.get("sensitivity", cp.params.cut_sensitivity))
         montage.recut(job, sens)
+        # the cuts are new, so an effect aimed at a region of a card that is no longer
+        # up at that moment has nothing left to point at (see `effects.settle`)
+        world = store.fandoms.get(run.params.fandom) if run.params.mode == "fandom" else None
+        fxeff.settle(job, list(world.frames) if world else [])
         cp.data["params"]["cut_sensitivity"] = min(max(sens, 0.0), 1.0)
         run.params.cut_sensitivity = min(max(sens, 0.0), 1.0)
         save(cp, i, job)
         return doc(run, cp, i, job)
+
+    # -- what is pointed at -------------------------------------------------
+    #
+    # The same three gestures the cuts have, on the other track: put one on this word,
+    # take that one off, and make it stay up longer. What an effect may BE is not
+    # decided here at all — that is the effects base, which is a configuration screen,
+    # because an arrow is a thing the operator owns rather than a thing this video has.
+
+    @app.post("/api/runs/{run_id}/montage/effect")
+    async def fire_effect(run_id: str, request: Request,
+                          slopgen: str | None = Cookie(default=None)) -> dict:
+        """Fire one effect on one word.
+
+        It is named the way the model names it — by the label the card gave it, or by
+        the effect's own name where it is not hung on a card — so the room and the
+        automatic pass are choosing out of one list and cannot mean different things by
+        the same word."""
+        guard(slopgen)
+        run = run_or_404(run_id)
+        b = await body_of(request)
+        cp, i, job = open_job(run, int(b.get("video", 0)))
+        world = world_of(run)
+        cards = [c for c in world.frames if c.usable]
+        scene, word = int(b.get("scene", -1)), int(b.get("word", -1))
+        cues, _regions, _total = framebase.timeline(job.scenes)
+        at = next((c.at for c in cues if c.scene == scene and c.word == word), None)
+        if at is None:
+            raise HTTPException(status_code=409, detail="there is no such word")
+        key = str(b.get("effect", "")).strip()
+        opt = next((o for o in fxeff.options_at(job, at, cards, store.effects)
+                    if o.key.casefold() == key.casefold()), None)
+        if opt is None:
+            raise HTTPException(status_code=404,
+                                detail=f"{key!r} is not on offer over that word")
+        try:
+            n = fxeff.place(job, scene, word, opt)
+        except ValueError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from None
+        save(cp, i, job)
+        out = doc(run, cp, i, job)
+        out["at"] = n
+        return out
+
+    @app.delete("/api/runs/{run_id}/montage/effect")
+    async def drop_effect(run_id: str, video: int = 0, cue: int = -1,
+                          slopgen: str | None = Cookie(default=None)) -> dict:
+        """Take one effect off the track."""
+        guard(slopgen)
+        run = run_or_404(run_id)
+        cp, i, job = open_job(run, video)
+        try:
+            fxeff.drop(job, cue)
+        except ValueError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from None
+        save(cp, i, job)
+        return doc(run, cp, i, job)
+
+    @app.put("/api/runs/{run_id}/montage/effect")
+    async def hold_effect(run_id: str, request: Request,
+                          slopgen: str | None = Cookie(default=None)) -> dict:
+        """Everything about one firing that is not WHEN it goes off.
+
+        `points` moves it on the picture, for this video only — the room's drag, given
+        as coordinates on the card; `turn` aims it, in degrees on top of the card's own
+        aim. `loops` is how many times its middle repeats, and
+        the length then follows from the count, because three pulses ARE three pulses
+        long. `hold` is for everything else, where seconds are the only thing to say."""
+        guard(slopgen)
+        run = run_or_404(run_id)
+        b = await body_of(request)
+        cp, i, job = open_job(run, int(b.get("video", 0)))
+        world = store.fandoms.get(run.params.fandom) if run.params.mode == "fandom" else None
+        cards = list(world.frames) if world else []
+        try:
+            if b.get("points") is not None:
+                fxeff.put(job, int(b.get("cue", -1)), list(b["points"]), cards, store.effects)
+            elif b.get("turn") is not None:
+                fxeff.turn_to(job, int(b.get("cue", -1)), float(b["turn"]), store.effects)
+            elif b.get("loops") is not None:
+                fxeff.repeat(job, int(b.get("cue", -1)), int(b["loops"]), store.effects)
+            else:
+                fxeff.hold_for(job, int(b.get("cue", -1)), float(b.get("hold", 1.0)))
+        except (TypeError, ValueError) as e:
+            raise HTTPException(status_code=409, detail=str(e)) from None
+        save(cp, i, job)
+        return doc(run, cp, i, job)
+
+    @app.get("/api/runs/{run_id}/montage/effect")
+    async def effect_menu(run_id: str, video: int = 0, at: float = 0.0,
+                          slopgen: str | None = Cookie(default=None)) -> list[dict]:
+        """What could be fired at this moment — what the picture that is up has ready,
+        plus everything in the base that needs no picture."""
+        guard(slopgen)
+        run = run_or_404(run_id)
+        _cp, _i, job = open_job(run, video)
+        world = store.fandoms.get(run.params.fandom) if run.params.mode == "fandom" else None
+        cards = [c for c in (world.frames if world else []) if c.usable]
+        return [{"key": o.key, "effect": o.spec.name, "placed": o.placed,
+                 "anchor": o.spec.anchor, "what": o.spec.description,
+                 # where the offer comes from: this card, the frame, or the base at
+                 # large — which is the one thing the operator has to be able to tell
+                 # apart at a glance (see `effects.Option.source`)
+                 "source": o.source,
+                 "sound": bool(o.spec.sound_path and o.spec.sound_path.is_file()),
+                 "url": f"/api/effects/{o.spec.name}/file" if (
+                     o.spec.path and o.spec.path.is_file()) else ""}
+                for o in fxeff.options_at(job, at, cards, store.effects)]
 
     # -- what is shown ------------------------------------------------------
 
@@ -727,12 +842,18 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404, card_json) -> None
         out = Path(job.workdir) / "montage" / "still.jpg"
         out.parent.mkdir(parents=True, exist_ok=True)
         photo = card.path.suffix.lower() in IMAGE_EXTS
+        # whatever is going off at that moment, too: this is the button that answers
+        # "what will actually be there", and an effect missing from its answer is the
+        # one thing it may not leave out
+        v = store.global_cfg.video
+        draws = fxeff.render(job, list(world.frames), store.effects,
+                             aspect=(v.width / v.height) if v.height else 9 / 16)
         try:
             await run_in_threadpool(
                 ffmpeg.still_frame, card.path, out, store.global_cfg,
                 seconds=into, shot_s=shot.duration, move=shot.move if photo else None,
                 fit=card.fit, ax=card.fit_x, ay=card.fit_y,
-                fx=cp.params.filters, photo=photo)
+                fx=cp.params.filters, photo=photo, draws=draws, at=max(at, 0.0))
         except Exception as e:
             log.exception("rendering a true frame failed")
             raise HTTPException(status_code=502, detail=f"{type(e).__name__}: {e}")

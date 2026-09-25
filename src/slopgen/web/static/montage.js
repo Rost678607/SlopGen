@@ -64,6 +64,7 @@ async function openMontage(id, title, video = 0) {
   MONT = { id, title, video, doc: d };
   montSel = null;
   montPics.clear();
+  montFx.clear();
   montDrafts.clear();
   mq("#mont-title").textContent = title;
   reloadVoice();
@@ -260,8 +261,19 @@ function renderMont() {
   // so that is where it is said — not in a grey line in the far corner. Both ways in
   // are here: cut the whole thing on the speech at once, or click the word a shot
   // should start on, which now works from nothing (see `montage.open_track`).
+  // the two homes a firing can have: inside the picture it belongs to, or on the lane
+  // under everything for the ones that belong to no picture at all
+  const split = fxSplit(d);
+  const packs = new Map();
+  let deepest = 0;
+  split.inShot.forEach((list, n) => {
+    const rows = packFx(list);
+    packs.set(n, rows);
+    deepest = Math.max(deepest, rows.count);
+  });
+  mq("#lane-shots").style.setProperty("--h", 74 + deepest * FX_ROW_H + "px");
   mq("#lane-shots").innerHTML = d.shots.length
-    ? d.shots.map(shotHTML).join("")
+    ? d.shots.map((s, i) => shotHTML(s, i, split.inShot.get(i) || [], packs.get(i))).join("")
     : `<div class="notrack">${d.scenes.some((sc) => sc.voiced)
         ? `<span>${lab("js.mont.notrack")}</span>
            <button class="ghost" id="mont-lay">${lab("js.mont.laytrack")}</button>`
@@ -274,6 +286,18 @@ function renderMont() {
         data-shot="${n}" data-key="${i}" style="left:${X(sh.start + k.at)}px"
         title="${esc(`${(+k.at).toFixed(1)}${lab("js.s")} · ${k.of || lab("js.mont.whole")}`)}"></i>`;
     })).join("");
+  // the effects, each a block over the seconds it is up. An unknown one — the base no
+  // longer has it — is still drawn, because it is still on the track and still
+  // somebody's to take off.
+  const loose = packFx(split.loose);
+  mq("#lane-fx").style.setProperty("--h",
+    Math.max(loose.count, 1) * FX_ROW_H + 5 + "px");
+  mq("#lane-fx").innerHTML = (split.loose.length ? "" :
+    `<i class="fxadd">${lab("js.mont.fx.laneempty")}</i>`)
+    + split.loose.map(({ q, i }) => {
+      const el = fxBlockHTML(q, i, X(q.start), X(q.duration));
+      return el.replace("style=\"", `style="top:${loose.rows.get(i) * FX_ROW_H + 2}px;`);
+    }).join("");
   mq("#lane-cues").innerHTML = d.scenes.flatMap((sc) =>
     sc.words.map((w, i) =>
       `<i class="cue" style="left:${X(w.start)}px" data-s="${sc.i}" data-w="${i}"
@@ -283,12 +307,18 @@ function renderMont() {
   bindLanes();
   renderInspector();
   showSelection();
+  bindCanvasDrag();
   reloadMusic();
+  const q = montSel && montSel.kind === "fx" ? (d.effects || [])[montSel.i] : null;
+  mq("#mont-canvas").classList.toggle("movable",
+    !!(q && q.known && q.anchor === "point" && q.card));
   drawFrame();
 }
 
 function stateLine(d) {
   const bits = [`${d.shots.length} ${lab("js.mont.shots")}`, clock(d.total)];
+  if ((d.effects || []).length)
+    bits.push(`${lab("js.mont.left.effects")} ${d.effects.length}`);
   for (const b of d.blocking || []) bits.push(`${lab("js.mont.left." + b.what)} ${b.n}`);
   return bits.join(" · ");
 }
@@ -302,18 +332,81 @@ function rulerHTML(total) {
   return out;
 }
 
-function shotHTML(s, i) {
+// How many rows a set of firings needs, and which row each one goes in.
+//
+// First fit, in start order, which gives the two things the eye wants from a stack of
+// them: the one that starts earliest is on the TOP row, and anything that overlaps
+// something already placed drops to the next row instead of being drawn over it. The
+// lane (or the shot block) then grows by however many rows came out.
+const FX_ROW_H = 15;
+
+function packFx(cues) {
+  const ends = [];          // the last end in each row so far
+  const rows = new Map();   // cue index -> row
+  [...cues].sort((a, b) => a.q.start - b.q.start).forEach(({ q, i }) => {
+    let r = 0;
+    while (ends[r] !== undefined && ends[r] > q.start + 1e-6) r++;
+    ends[r] = q.start + q.duration;
+    rows.set(i, r);
+  });
+  return { rows, count: Math.max(ends.length, 0) };
+}
+
+/** Every firing, split the way the timeline draws them: the ones BOUND to a picture,
+ *  grouped under the shot they belong to, and the ones added by hand, which belong to
+ *  no picture and live on their own lane below. A bound cue whose shot is no longer
+ *  under it — a re-cut moved the picture — falls back to the lane, which is honest:
+ *  it is no longer inside anything. */
+function fxSplit(d) {
+  const inShot = new Map();   // shot index -> [{q, i}]
+  const loose = [];
+  (d.effects || []).forEach((q, i) => {
+    const host = q.bound
+      ? d.shots.findIndex((sh) => q.start >= sh.start - 1e-6
+          && q.start < sh.start + sh.duration && sh.card === q.card)
+      : -1;
+    if (host >= 0) {
+      if (!inShot.has(host)) inShot.set(host, []);
+      inShot.get(host).push({ q, i });
+    } else loose.push({ q, i });
+  });
+  return { inShot, loose };
+}
+
+function fxBlockHTML(q, i, left, width) {
+  const on = montSel && montSel.kind === "fx" && montSel.i === i;
+  return `<i class="fxm${on ? " on" : ""}${q.known ? "" : " gone"}${q.pinned ? " hand" : ""}"
+    data-fx="${i}" style="left:${left}px;width:${Math.max(width - 2, 10)}px"
+    title="${esc(`${q.effect}${q.said ? " · " + q.said : ""}${q.cycles ? ` ×${q.loops}` : ""}`)}">
+    <b>${esc(q.effect)}${q.cycles ? ` ×${q.loops}` : ""}</b></i>`;
+}
+
+function shotHTML(s, i, mine = [], rows = null) {
   const card = cardOf(s.card);
   const thumb = card ? `background-image:url('${tokd(card.poster || card.url)}')` : "";
   const sel = montSel && montSel.kind === "shot" && montSel.i === i;
+  // the block stretches DOWN by however many rows of its own effects it carries: they
+  // are things this picture does, they cannot leave it, and drawing them inside it is
+  // what says so without a word of explanation
+  const deep = rows ? rows.count * FX_ROW_H + 2 : 0;
+  const fired = mine.map(({ q, i: n }) =>
+    `<i class="fxm in${montSel && montSel.kind === "fx" && montSel.i === n ? " on" : ""}${
+        q.known ? "" : " gone"}" data-fx="${n}"
+      style="left:${X(q.start - s.start)}px;width:${Math.max(X(q.duration) - 2, 10)}px;
+             top:${70 + (rows ? rows.rows.get(n) : 0) * FX_ROW_H}px"
+      title="${esc(`${q.effect}${q.said ? " · " + q.said : ""}${q.cycles ? ` ×${q.loops}` : ""}`)}">
+      <b>${esc(q.effect)}${q.cycles ? ` ×${q.loops}` : ""}</b></i>`).join("");
   return `<div class="shot${sel ? " sel" : ""}${s.card ? "" : " empty"}"
-      data-shot="${i}" style="left:${X(s.start)}px;width:${Math.max(X(s.duration) - 2, 8)}px">
+      data-shot="${i}" style="left:${X(s.start)}px;width:${Math.max(X(s.duration) - 2, 8)}px;
+                              height:${70 + deep}px">
     <div class="pic" style="${thumb}"></div>
     <div class="tag">${esc(s.card || lab("js.mont.nopicture"))}</div>
     ${s.move ? `<div class="kind">${esc((s.move.keys || []).length >= 2
         ? lab("mv.keys") : lab("mv." + s.move.kind, s.move.kind))}</div>` : ""}
     ${s.pinned ? `<span class="pin">✔</span>` : ""}
-    <button class="uncut" title="${esc(lab("js.mont.uncut"))}">✕</button>
+    <button class="uncut" title="${esc(lab(opensRegion(s) ? "js.mont.unpicture"
+                                                            : "js.mont.uncut"))}">✕</button>
+    ${fired}
   </div>`;
 }
 
@@ -417,6 +510,9 @@ function bindLanes() {
   mq("#lane-lines").querySelectorAll(".line").forEach((el) => {
     el.onclick = () => pick({ kind: "line", i: +el.dataset.line });
   });
+  mq("#lane-shots").querySelectorAll(".fxm").forEach((el) => {
+    el.onclick = (e) => { e.stopPropagation(); pick({ kind: "fx", i: +el.dataset.fx }); };
+  });
   mq("#lane-shots").querySelectorAll(".shot").forEach((el) => {
     const i = +el.dataset.shot;
     el.onclick = () => pick({ kind: "shot", i });
@@ -427,6 +523,7 @@ function bindLanes() {
     };
   });
   bindKeyMarkers();
+  bindFxLane();
   // `offsetX` is measured against whatever was under the pointer — a tick, a label —
   // so it is asked of the lane itself, which is the thing the clock is drawn on.
   const scrub = (e) => seek((e.clientX - e.currentTarget.getBoundingClientRect().left) / montPPS);
@@ -565,6 +662,354 @@ async function send(path, opts, after) {
   return d;
 }
 
+// -------------------------------------------------------------------- effects
+//
+// An effect lives on a WORD — that is the whole of its timing, exactly as a cut does —
+// so the gesture is the same one this screen is built around, moved one lane up:
+// press the effects lane above the word, and what can be fired there is offered.
+//
+// Why the lane and not the word itself: the word is already the cut, and a modifier
+// key or a mode toggle would be a second meaning for one gesture, which is how a room
+// stops being obvious. The lane is where effects are drawn, so it is where they are
+// placed.
+
+function bindFxLane() {
+  const lane = mq("#lane-fx");
+  lane.querySelectorAll(".fxm").forEach((el) => {
+    el.onclick = (e) => { e.stopPropagation(); pick({ kind: "fx", i: +el.dataset.fx }); };
+  });
+  lane.onclick = async (e) => {
+    const x = e.clientX - e.currentTarget.getBoundingClientRect().left;
+    // the lane is for the ones that belong to no picture: laid over whatever is there,
+    // free to be dragged anywhere. What the picture itself can do is fired from the
+    // picture — the button in its block — and lives inside it.
+    await hangEffect(x / montPPS, ["free", "frame"]);
+  };
+}
+
+/** The word nearest a moment on the clock, as {scene, word, at, text}. Nearest rather
+ *  than "the one being spoken", because the press lands between words as often as on
+ *  one, and an effect placed half a word early is placed wrong. */
+function wordNear(t) {
+  let best = null;
+  for (const sc of MONT.doc.scenes || []) {
+    sc.words.forEach((w, i) => {
+      const d = Math.abs(w.start - t);
+      if (!best || d < best.d) best = { d, scene: sc.i, word: i, at: w.start, text: w.t };
+    });
+  }
+  return best;
+}
+
+async function hangEffect(t, only) {
+  const near = wordNear(t);
+  if (!near) return say(lab("js.mont.fx.noword"), true);
+  let menu;
+  try {
+    menu = await api(`/api/runs/${MONT.id}/montage/effect?video=${MONT.video}&at=${near.at}`);
+  } catch (err) { return say(err.message, true); }
+  if (only) menu = menu.filter((o) => only.includes(o.source));
+  if (!menu.length)
+    return say(lab(only && only.includes("card")
+      ? "js.mont.fx.nocard" : "js.mont.fx.none"), true);
+  const chosen = await chooseEffect(menu, near.text, only);
+  if (!chosen) return;
+  send("/effect", { method: "POST",
+    body: J({ scene: near.scene, word: near.word, effect: chosen }) },
+    (d) => { montSel = { kind: "fx", i: d.at }; });
+}
+
+/** The picker, in the two groups the question actually has: what THIS PICTURE has
+ *  ready, and what you are adding yourself.
+ *
+ *  They were one flat list and that was the complaint: an entry a card carries — aimed
+ *  at something on it, chosen by the pass too — and an effect being dropped in from the
+ *  base by hand are different acts with different consequences, and nothing on the row
+ *  said which was which. So they are two headed groups, each row shows the thing
+ *  itself, and each says in one line what pressing it will do.
+ *
+ *  It borrows the ask sheet rather than growing a second modal — same backdrop, same
+ *  Escape — and the answer is which button was pressed instead of yes or no. */
+function chooseEffect(menu, word, only) {
+  const box = mq("#mont-ask");
+  const groups = [
+    ["card", "js.mont.fx.fromcard", "js.mont.fx.fromcard.note"],
+    ["free", "js.mont.fx.fromfree", "js.mont.fx.fromfree.note"],
+    ["frame", "js.mont.fx.fromframe", "js.mont.fx.fromframe.note"],
+  ];
+  const row = (o, i) => `
+    <button data-opt="${i}">
+      <span class="face">${o.url
+        ? `<img src="${tokd(o.url)}" alt="">`
+        : `<span class="sound">🔊</span>`}</span>
+      <span class="what">
+        <b>${esc(o.key)}</b>
+        ${o.what ? `<span class="dim">${esc(o.what)}</span>` : ""}
+        <span class="dim">${lab("js.mont.fx.will." + o.source)}${
+          o.sound && o.url ? " · " + lab("js.mont.fx.withsound") : ""}</span>
+      </span>
+    </button>`;
+  // which of the two doors this came through, said once at the top, with a pointer to
+  // the other one — a menu that quietly holds half the answers is worse than two menus
+  const bound = only && only.includes("card");
+  mq("#ask-title").textContent = lab(bound ? "js.mont.fx.pick.card" : "js.mont.fx.pick.free");
+  mq("#ask-body").innerHTML =
+    `<p class="what">${lab("js.mont.fx.on")} «${esc(word)}»</p>`
+    + `<p class="what dim">${lab(bound ? "js.mont.fx.elsewhere.free"
+                                       : "js.mont.fx.elsewhere.card")}</p>`
+    + groups.map(([src, head, note]) => {
+      const rows = menu.map((o, i) => [o, i]).filter(([o]) => o.source === src);
+      if (!rows.length) return "";
+      return `<h4 class="fxgroup">${lab(head)}<span class="dim">${lab(note)}</span></h4>
+              <div class="fxpick">${rows.map(([o, i]) => row(o, i)).join("")}</div>`;
+    }).join("");
+  mq("#ask-yes").hidden = true;
+  box.hidden = false;
+  return new Promise((done) => {
+    const close = (answer) => {
+      box.hidden = true;
+      mq("#ask-yes").hidden = false;
+      document.removeEventListener("keydown", onKey, true);
+      askOff = null;
+      done(answer);
+    };
+    const onKey = (e) => {
+      if (e.key === "Escape") { e.stopPropagation(); close(null); }
+    };
+    askOff = close;
+    mq("#ask-body").querySelectorAll("[data-opt]").forEach((b) => {
+      b.onclick = () => close(menu[+b.dataset.opt].key);
+    });
+    mq("#ask-no").onclick = () => close(null);
+    box.onclick = (e) => { if (e.target === box) close(null); };
+    document.addEventListener("keydown", onKey, true);
+  });
+}
+
+function fxInspector() {
+  const q = (MONT.doc.effects || [])[montSel.i];
+  if (!q) return `<p class="dim">${lab("js.mont.pickone")}</p>`;
+  const spec = (MONT.doc.fx_base || []).find((e) => e.name === q.effect);
+  return `
+  <div class="insp-head"><b>${esc(q.effect)}</b>
+    <span class="dim">${q.start.toFixed(1)}${lab("js.s")}</span>
+    <span class="grow"></span>
+    <button class="ghost" id="i-fxdrop">${lab("js.mont.fx.drop")}</button>
+  </div>
+  <p class="said"><span class="dim">${lab("js.mont.fx.on")}</span> «${esc(q.said || "—")}»
+    ${q.card ? `<span class="dim"> · ${esc(q.card)}${q.hook ? " → " + esc(q.hook) : ""}</span>` : ""}
+  </p>
+  ${q.card && !q.placed ? `<p class="warn">${lab("js.mont.fx.unplaced-long")}</p>` : ""}
+  ${q.anchor === "point" && q.card ? `<p class="dim">${lab(q.moved
+      ? "js.mont.fx.moved" : "js.mont.fx.dragme")}
+      ${q.moved ? `<button class="ghost" id="i-fxreset">${lab("js.mont.fx.reset")}</button>` : ""}</p>` : ""}
+  ${q.silent && !q.known ? "" : `<div class="block">
+    <label class="inline">${lab("js.mont.fx.turn")}
+      <input type="number" id="i-fxturn" step="15" min="-180" max="180"
+             value="${+(q.turn || 0).toFixed(1)}"></label>
+    <span class="dim">${q.turn_card
+      ? `${lab("js.mont.fx.turn.card")} ${Math.round(q.turn_card)}°` : ""}</span>
+  </div>`}
+  ${q.known ? "" : `<p class="warn">${lab("js.mont.fx.gone")}</p>`}
+  ${q.pinned ? `<p class="dim">${lab("js.mont.fx.hand")}</p>` : ""}
+  ${spec && spec.description ? `<p class="dim">${esc(spec.description)}</p>` : ""}
+  <div class="block">
+    ${q.cycles
+      // an effect whose animation has a repeating middle is as long as its repeats
+      // make it, so the count is the control and the seconds are the readout — two
+      // fields saying the same thing would be two ways to disagree about it
+      ? `<label class="inline">${lab("js.mont.fx.loops")}
+           <input type="number" id="i-fxloops" step="1" min="1" max="99"
+                  value="${q.loops}"></label>
+         <span class="dim">× ${q.cycle_s.toFixed(2)}${lab("js.s")}
+           = ${q.duration.toFixed(1)}${lab("js.s")}</span>`
+      : `<label class="inline">${lab("js.mont.fx.hold")}
+           <input type="number" id="i-fxhold" step="0.1" min="0.1" max="30"
+                  value="${q.duration.toFixed(1)}"></label>`}
+  </div>`;
+}
+
+function bindFxInspector() {
+  const i = montSel.i;
+  mq("#i-fxdrop").onclick = () =>
+    send(`/effect?video=${MONT.video}&cue=${i}`, { method: "DELETE" },
+         () => { montSel = null; });
+  const hold = mq("#i-fxhold");
+  if (hold) hold.onchange = () =>
+    send("/effect", { method: "PUT", body: J({ cue: i, hold: +hold.value }) },
+         () => { montSel = { kind: "fx", i }; });
+  const turn = mq("#i-fxturn");
+  if (turn) turn.onchange = () =>
+    send("/effect", { method: "PUT", body: J({ cue: i, turn: +turn.value }) },
+         () => { montSel = { kind: "fx", i }; });
+  const reset = mq("#i-fxreset");
+  if (reset) reset.onclick = () =>
+    send("/effect", { method: "PUT", body: J({ cue: i, points: [] }) },
+         () => { montSel = { kind: "fx", i }; });
+  const loops = mq("#i-fxloops");
+  if (loops) loops.onchange = () =>
+    send("/effect", { method: "PUT", body: J({ cue: i, loops: +loops.value }) },
+         () => { montSel = { kind: "fx", i }; });
+}
+
+// Dragging a firing on the preview. It moves the effect on the CARD — the coordinates
+// are worked back through the crop window that is up at that instant — but it writes
+// them onto the CUE, so the picture keeps saying what it says everywhere else and this
+// one video gets the nudge. Only a selected, point-anchored firing takes the pointer;
+// the canvas has no other gesture, so there is no mode to enter and nothing else to
+// miss.
+function bindCanvasDrag() {
+  const cv = mq("#mont-canvas");
+  cv.onpointerdown = (e) => {
+    const q = montSel && montSel.kind === "fx" ? (MONT.doc.effects || [])[montSel.i] : null;
+    if (!q || !q.known || q.anchor !== "point" || !q.card) return;
+    const shot = MONT.doc.shots.find((sh) =>
+      q.start >= sh.start && q.start < sh.start + sh.duration);
+    if (!shot) return;
+    e.preventDefault();
+    const r = cv.getBoundingClientRect();
+    // the window over the card at the moment the firing STARTS: the effect travels with
+    // the crop afterwards, so where it is pinned is a fact about that instant
+    const win = windowAt(shot, q.start - shot.start);
+
+    // EVERYTHING below is measured from the state at pointerdown, held still for the
+    // whole drag. Reading the live values back on every move is how both of these went
+    // wrong before: each event re-applied the whole delta to a path it had already
+    // moved, so the thing ran away from the pointer at several times its speed.
+    const path0 = (q.path || []).map((pt) => ({ ...pt }));
+    const base = { turn: q.turn || 0, points: (q.points || []).map((pt) => ({ ...pt })) };
+    const down = { x: e.clientX, y: e.clientY };
+    // where it IS right now, which is both the pivot a turn swings about and the point
+    // a move is measured from — an arrow that flies in from above the frame would
+    // otherwise be turned about somewhere off the screen
+    const here = fxAtTime(q, montTime()) || path0[0] || { cx: 0.5, cy: 0.5 };
+    const mid = { x: r.left + r.width * here.cx, y: r.top + r.height * here.cy };
+    const at0 = Math.atan2(e.clientY - mid.y, e.clientX - mid.x);
+
+    // Shift turns instead of moving: the canvas is a picture and cannot grow handles,
+    // so its one gesture is split by the one modifier everything else here uses for the
+    // same thing. The number is in the inspector too, for when a number is what you have.
+    const turning = e.shiftKey;
+    // what the cue's placement is measured from. A cue with no placement of its own is
+    // moved from where the CARD put it — worked back out of the screen — so nothing
+    // jumps to the pointer the moment it is touched.
+    const anchor = base.points.length ? base.points
+      : [{ cx: clampf(win.cx - win.scale / 2 + here.cx * win.scale),
+           cy: clampf(win.cy - win.scale / 2 + here.cy * win.scale) }];
+    let turn = base.turn, points = anchor;
+    cv.setPointerCapture(e.pointerId);
+
+    const move = (ev) => {
+      if (turning) {
+        const now = Math.atan2(ev.clientY - mid.y, ev.clientX - mid.x);
+        turn = Math.round((base.turn + (now - at0) * 180 / Math.PI) / 15) * 15;
+        q.path = path0.map((pt) => ({ ...pt, r: (pt.r || 0) + turn - base.turn }));
+        drawFrame();
+        return;
+      }
+      // the screen delta in frame fractions, which is what the preview moves by…
+      const sx = (ev.clientX - down.x) / r.width, sy = (ev.clientY - down.y) / r.height;
+      q.path = path0.map((pt) => ({ ...pt, cx: pt.cx + sx, cy: pt.cy + sy }));
+      // …and the same delta in CARD fractions, which is what gets saved. The window is
+      // what converts one into the other: a crop half the picture wide moves the card
+      // half as far as it moves the screen.
+      points = anchor.map((pt) => ({ cx: clampf(pt.cx + sx * win.scale),
+                                     cy: clampf(pt.cy + sy * win.scale) }));
+      drawFrame();
+    };
+    const up = () => {
+      cv.removeEventListener("pointermove", move);
+      cv.removeEventListener("pointerup", up);
+      const moved = Math.abs(turning ? turn - base.turn : 0) > 0.01
+        || (!turning && q.path.length && Math.abs(q.path[0].cx - path0[0].cx) > 1e-4);
+      // a press that did not move is not an edit: it selected the thing, which it had
+      // already done, and a round trip that writes the same numbers back is a redraw
+      // nobody asked for
+      if (!moved) { q.path = path0; drawFrame(); return; }
+      const body = turning ? { cue: montSel.i, turn } : { cue: montSel.i, points };
+      send("/effect", { method: "PUT", body: J(body) },
+           () => { /* the reply carries the true path */ });
+    };
+    cv.addEventListener("pointermove", move);
+    cv.addEventListener("pointerup", up);
+  };
+}
+
+const clampf = (v) => Math.min(Math.max(v, 0), 1);
+
+// -- what they look like -----------------------------------------------------
+
+const montFx = new Map();  // effect name -> HTMLImageElement
+
+function fxPicOf(name) {
+  if (montFx.has(name)) return montFx.get(name);
+  const spec = (MONT.doc.fx_base || []).find((e) => e.name === name);
+  if (!spec || !spec.url) { montFx.set(name, null); return null; }
+  const el = new Image();
+  el.crossOrigin = "anonymous";
+  el.addEventListener("load", () => drawFrame());
+  el.src = tokd(spec.url);
+  montFx.set(name, el);
+  return el;
+}
+
+/** Draw whatever is going off right now.
+ *
+ * The path — where the thing is, how wide, how solid, moment by moment — is computed
+ * on the server and sent with the cue, so this interpolates and does not calculate.
+ * That is deliberate: mapping a card region through a travelling crop window is the
+ * one piece of arithmetic in this feature that is actually hard, and a second
+ * implementation of it in a browser would be a second answer to it. */
+/** Where a firing is at one moment of the video: the sampled path, interpolated. One
+ *  reading for everything that needs it — what is drawn, and what a drag pivots about
+ *  — because a rotation about where the thing ISN'T is a rotation nobody can aim. */
+function fxAtTime(q, t) {
+  const pts = q.path || [];
+  if (!pts.length) return null;
+  if (t <= pts[0].at) return pts[0];
+  if (t >= pts[pts.length - 1].at) return pts[pts.length - 1];
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i], b = pts[i + 1];
+    if (t > b.at) continue;
+    const k = b.at > a.at ? (t - a.at) / (b.at - a.at) : 1;
+    return { cx: lerp(a.cx, b.cx, k), cy: lerp(a.cy, b.cy, k),
+             w: lerp(a.w, b.w, k), a: lerp(a.a, b.a, k),
+             r: lerp(a.r || 0, b.r || 0, k) };
+  }
+  return pts[pts.length - 1];
+}
+
+function drawEffects(ctx, cv, t) {
+  for (const q of MONT.doc.effects || []) {
+    if (!q.known || t < q.start || t > q.start + q.duration) continue;
+    const p = fxAtTime(q, t);
+    if (!p) continue;
+    const pic = fxPicOf(q.effect);
+    const w = p.w * cv.width;
+    ctx.save();
+    ctx.globalAlpha = Math.max(Math.min(p.a, 1), 0);
+    if (p.r) {
+      // turned about its own centre, which is the pivot the render uses (the `rotate`
+      // filter grows its canvas to the diagonal and the scale gives the padding back)
+      ctx.translate(p.cx * cv.width, p.cy * cv.height);
+      ctx.rotate(p.r * Math.PI / 180);
+      ctx.translate(-p.cx * cv.width, -p.cy * cv.height);
+    }
+    if (pic && pic.complete && pic.naturalWidth) {
+      const h = w * pic.naturalHeight / pic.naturalWidth;
+      ctx.drawImage(pic, p.cx * cv.width - w / 2, p.cy * cv.height - h / 2, w, h);
+    } else {
+      // a sound has nothing to draw and still has to be visible while it plays, or
+      // the preview says the effect did not happen
+      ctx.fillStyle = "#fff";
+      ctx.font = `${Math.round(cv.width * 0.06)}px system-ui`;
+      ctx.textAlign = "center";
+      ctx.fillText("🔊", p.cx * cv.width, p.cy * cv.height);
+    }
+    ctx.restore();
+  }
+}
+
 // ---------------------------------------------------------------- what is selected
 
 // Selecting something off-screen and being shown a panel about it, with the thing
@@ -573,8 +1018,9 @@ async function send(path, opts, after) {
 // would fight the playhead.
 function showSelection() {
   if (!montSel) return;
-  const el = mq(montSel.kind === "shot"
-    ? `#lane-shots [data-shot="${montSel.i}"]` : `#lane-lines [data-line="${montSel.i}"]`);
+  const el = mq(montSel.kind === "shot" ? `#lane-shots [data-shot="${montSel.i}"]`
+    : montSel.kind === "fx" ? `[data-fx="${montSel.i}"]`
+    : `#lane-lines [data-line="${montSel.i}"]`);
   if (!el) return;
   const box = mq("#mont-time");
   const x = parseFloat(el.style.left) || 0;
@@ -613,8 +1059,11 @@ function renderInspector() {
     return;
   }
   keepCaret(box, () => {
-    box.innerHTML = montSel.kind === "shot" ? shotInspector() : lineInspector();
-    if (montSel.kind === "shot") bindShotInspector(); else bindLineInspector();
+    box.innerHTML = montSel.kind === "shot" ? shotInspector()
+      : montSel.kind === "fx" ? fxInspector() : lineInspector();
+    if (montSel.kind === "shot") bindShotInspector();
+    else if (montSel.kind === "fx") bindFxInspector();
+    else bindLineInspector();
   });
   if (montSel.kind === "line") {
     const text = mq("#i-text");
@@ -641,6 +1090,7 @@ function shotInspector() {
   <div class="insp-head"><b>${lab("js.mont.shot")} ${montSel.i + 1}</b>
     <span class="dim">${s.start.toFixed(1)}–${(s.start + s.duration).toFixed(1)}${lab("js.s")}</span>
     <span class="grow"></span>
+    <button class="ghost" id="i-fxadd">${lab("js.mont.fx.addbound")}</button>
     ${s.card ? `<button class="ghost" id="i-mark">${lab("js.mark-it-up")}</button>` : ""}
     ${s.card ? `<button class="ghost" id="i-clear">${lab("js.mont.clearshot")}</button>` : ""}
   </div>
@@ -756,6 +1206,17 @@ function moveNote(lead, span, dur) {
 }
 
 function bindShotInspector() {
+  // …on the word under the playhead, or the one this shot starts on when the head is
+  // somewhere else entirely. An effect is placed on a WORD and the picker says which
+  // one it picked, so there is nothing to guess at and nothing to aim a pointer at.
+  const add = mq("#i-fxadd");
+  if (add) add.onclick = () => {
+    const s = MONT.doc.shots[montSel.i];
+    const t = montTime();
+    // what THIS PICTURE can do, on the word under the playhead — and the firing lives
+    // inside this shot, which is both where it is drawn and as far as it may run
+    hangEffect(s && (t < s.start || t > s.start + s.duration) ? s.start : t, ["card"]);
+  };
   const s = MONT.doc.shots[montSel.i];
   const cast = (over) => send("/shot", { method: "PUT", body: J({
     shot: montSel.i, card: s.card, move: (s.move && s.move.kind) || "",
@@ -1189,6 +1650,10 @@ function drawFrame() {
   paintLook(ctx, cv, montFit,
             (w.cx - s / 2) * cv.width, (w.cy - s / 2) * cv.height,
             s * cv.width, s * cv.height, t);
+  // after the look and before the caption, which is the order the render uses: an
+  // arrow is a graphic meant to be read, so it stays out of the grain and under the
+  // words (see `media/ffmpeg._delivery_cmd`)
+  drawEffects(ctx, cv, t);
   drawCaption(ctx, cv, t);
 }
 

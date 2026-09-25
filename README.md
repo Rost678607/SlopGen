@@ -734,6 +734,9 @@ hour ago. The groups are the stages that can still be pressed:
   that has since been renamed, moved or emptied is not an error either: the run says so
   in the log and rolls again, because a moved file should cost the choice, not the
   music.
+- **effects** (`frame_effects`) — whether the model hangs the frame base's prepared
+  arrows, circles and sounds on the words itself. What you placed by hand is never
+  touched either way; the whole feature is its own section below.
 - **subtitles** — the style the `.ass` is written in, and whether swearing is cleaned
   out of the burned-in text while the voice keeps every word.
 - **what comes out** — `write_metadata`, the account to publish to, the dry run, and
@@ -761,6 +764,219 @@ way to use the room. It is on the wizard's form too, where it also adds the `pic
 breakpoint to an ordinary run — one that walked past it would carry an empty track into
 the footage stage — but a setting that changes what a button in here means belongs where
 the button is.
+
+## The effects base (`configs/effects/`)
+
+A frame base says **what is on screen**. The effects base says **what goes off on top
+of it**: an arrow pointing at the thing being named, a ring drawn around it, a sting
+under a line. It is the one layer of this mode that is deliberately *synchronous* with
+the narration — the picture track runs past the speech on purpose (that asynchrony is
+most of what makes a wall of stills read as edited footage), and an arrow that arrives
+half a second after the word it points at is not a late arrow, it is a wrong one. So an
+effect is placed on a **word**, exactly as a cut is, and survives re-voicing for the
+same reason: the seconds move, the word does not.
+
+- **One base for every world**, unlike the frames, and that follows from what the two
+  things are. A card is a picture *of somewhere* and belongs to the world it is of; an
+  arrow is an arrow anywhere, and a base that had to be copied into each new world
+  would be copied wrong. What binds an effect to a world at all is the card that hangs
+  it on one of its own regions — and that lives on the card, where the coordinates are.
+- **An effect is a picture, a clip, a sound, or a picture with a sound.** `configs/
+  effects/<name>.toml` with its material beside it, the way a card lives beside its
+  picture and a cloned voice beside its sample. A sound alone is a whole effect and
+  draws nothing; a picture alone is a silent one. Drop a file into **Configuration →
+  effects** and it becomes one; the second half is brought in the editor.
+- **`description` is what makes it reachable by a model.** It is one line saying *when
+  this effect is the right one* — "когда в тексте называют предмет, который видно на
+  картинке" — and it is what the effects pass reads. An effect nobody described is
+  perfectly usable by hand and will simply never be chosen automatically, which is the
+  honest outcome: a model cannot guess what an unnamed png means.
+- **Three anchors, and the first one travels with the picture.** `point` places the
+  effect on the picture itself — a point dropped anywhere on the card, or a box dragged
+  around something — and the crop move is a window over that same picture, so a ring
+  around a cap converges with the zoom exactly as the cap does. The path across the
+  frame is computed from the move as arithmetic and handed to ffmpeg as a path, rather
+  than being drawn in screen coordinates and left to drift off the thing it points at.
+  `screen` puts it at one of nine places in the frame whatever is behind it: a flash, a
+  border, a sting, anything with no picture at all. `full` covers the whole frame — a
+  light leak, a tape glitch, material that is not *in* the picture but *over* it, so it
+  is scaled to cover rather than placed. That difference also decides *where an effect
+  can come from*: a point effect is coordinates on one file and can only be offered by
+  that file's card, while the other two ask nothing of what is on screen and are offered
+  over every stretch.
+- **A point, and not a marked region.** A crop target exists to be *looked at*: it is a
+  window the camera can move into, so it is a box of a particular size around a
+  particular thing. Requiring one to put an arrow somewhere meant the base could only
+  point at things somebody had already decided to zoom into — and half of what a video
+  wants to point at is not a thing at all: a corner, a gap in a queue, the empty half of
+  a desk. So the placement answers to nothing. Drop a point anywhere, or drag a box
+  around whatever you meant, and drag it again when it is wrong.
+- **`width` is a fraction of the frame** — 0.35 is a third of the screen — and it sizes
+  the effect wherever nothing else does: a screen effect, or one dropped on a single
+  point. Give it **two** points and they are the size as well as the place, and `width`
+  says nothing: the box you dragged *is* the box, because a multiplier on top of a
+  direct manipulation is a second control for one decision. Under `full` it says nothing
+  either.
+- **The animation is a run of moments**, the same shape a hand-placed crop move has:
+  when, how big, how far off centre (in the effect's own widths AND its own axes, so an
+  arrow's tip stays on its target however far the camera comes in and whichever way it
+  has been aimed — pointed left, it comes in from the right), how turned, how solid. Everything between two
+  moments is interpolated; before the first and after the last it holds. Five ready-made
+  ones fill the list in one press (**rise**, **pop**, **blink**, **float away**, and
+  none at all) and are a starting point rather than a type — what is saved is the
+  moments, so wanting the pop a tenth slower is an edited number and not a feature
+  request.
+- **The editor is a stage and a strip**, because those are the two things you are
+  actually doing: moving the thing, and deciding when it does that. The stage is the
+  video's own shape with the effect on it — **drag it** and you are editing the selected
+  moment's offset, drag its corner and you are editing that moment's size, drag the knob
+  above it and you are aiming the whole thing — and a point effect is
+  shown over a stand-in square, which is what its size is measured against on a real
+  card. Under it, every moment as a marker on the effect's own clock: press the strip to
+  move the playhead, drag a marker to move that moment in time, **＋ a moment** to add
+  one where the playhead is (it takes the values the animation already has there, so
+  adding one never changes what the effect does — it only gives you somewhere to change
+  it). The numbers stay, for when a number is what you have; they are simply no longer
+  the only way in, which is what made the first version of this screen a spreadsheet
+  about a picture nobody could see.
+- **Turned, too.** Every moment carries a `rotate` in degrees, so one picture of an
+  arrow points in every direction there is and a base does not need eight of them. It
+  animates like everything else: an arrow may swing in, a stamp may land crooked. On
+  the stage it has a knob of its own above the thing — drag it round, hold **Shift**
+  for fifteens — and it turns about the centre, which is the only pivot that survives
+  being resized. In the render it is the `rotate` filter with the angle as an
+  expression; the canvas it turns on grows to the picture's diagonal so the corners are
+  not cut off, and the scale that follows is given that padding back, which is why a
+  turned effect is the size you asked for rather than that size divided by √2.
+
+- **Turned, and turned over time.** A moment carries an angle like it carries a size,
+  so one picture of an arrow points in every direction there is and a base does not need
+  eight arrows. Two moments with different angles is a swing — an arrow that arrives
+  turning, a stamp that lands crooked. ffmpeg spells its clock `t` in `rotate` and `T`
+  in `geq`, and the render gives the rotation its padding back so a turned picture is
+  the size you asked for rather than the size of its own diagonal.
+- **Aimed where it is used, in three places that add up.** The ANIMATION turns
+  (`EffectKey.rotate`, the knob on the effect's own stage); the CARD aims — which way
+  the arrow points on *that* picture, the knob on its ghost in the card editor or the
+  **turn°** field beside it; and a single FIRING aims again — which way it points over
+  *this* line, **Shift**-drag on the montage preview or the **turn°** field in its
+  inspector. They ADD rather than override, which is the point of having three: an
+  arrow aimed at a doorway on one card still swings in the way its animation says, and
+  nudging it for one video does not throw away the aim every other video is using.
+  **Shift** snaps to fifteens everywhere, because most of what anybody aims at is a
+  right angle or a diagonal. The knob in the effect's own editor turns **every moment**
+  by the same amount, and that is not a shortcut — it is the difference between aiming
+  a thing and animating it. Turning one moment and leaving the rest at zero does not
+  point the arrow: it makes it spin up to the angle and back down, which reads as the
+  animation having broken. A swing is authored deliberately, with **Alt** (this moment
+  only) or by typing into that moment's **turn°**.
+- **Two doors, because there are two different acts.** An effect the CARD carries —
+  aimed at something on that picture, the same list the automatic pass fires from — is
+  fired from the picture: select the shot and press **＋ this picture's effect**, and it
+  goes on the word under the playhead. Anything else you own is fired from the lane
+  under the shots: press it above a word and the rest of the base is offered, to be
+  dropped in and dragged where you meant. Each menu says in a line where the other one
+  is, so nothing is hidden; each row shows the thing itself and what pressing it will do
+  ("goes to its own point on the picture", "lands in the middle of the frame — drag it
+  from there").
+- **And the timeline draws that difference instead of explaining it.** A shot's block
+  **stretches downward** and its own firings live inside it: they are things that
+  picture does, they are clipped to it, and a cut or a re-voicing that shortens the shot
+  shortens them. Everything laid over the frame by hand sits on its own lane below,
+  outside any block. Where two of the same kind overlap in time the later one drops to
+  the next row and the lane (or the block) grows by a row, so the one that starts
+  earliest is always the one on top and nothing is ever drawn over anything.
+- **Moved for one video, on the preview itself.** Select a firing in the montage room
+  and the preview takes the pointer: drag it and it goes where you drop it — worked back
+  through the crop window that is up at that instant, so what is stored is a point on
+  the CARD and the effect goes on travelling with the picture. It is stored on the
+  **cue**, not on the card, so the arrow keeps pointing where it always did in every
+  other video, and **put it back where the card says** undoes it. A box keeps its shape
+  while it moves; an effect that was never placed becomes a point where you dropped it.
+- **The true frame draws them too.** The `точный кадр` button renders one frame through
+  real ffmpeg, and it is the button that answers "what will actually be there" — so it
+  stamps whatever is going off at that moment, at the size, opacity and angle the
+  animation has arrived at, in the same place in the chain the delivery pass puts it.
+
+- **A middle that repeats: in, loop, out.** An animation's clock can be cut by **two
+  separators** into the way *in*, the part that *repeats*, and the way *out* — and then
+  a firing is the entrance, the middle however many times, and the exit. Both are
+  dragged on the strip, which is also where the moments live, because a key at 0.4s
+  belongs to the entrance or to the loop depending on where the separator sits and
+  asking you to keep two numbers in agreement about that is asking you to do arithmetic
+  the editor can simply show. The same three parts are there as lengths (**way in**,
+  **middle**, **way out**) for when a number is what you have, and **repeats** is the
+  default count.
+  The **length is never typed** for one of these: three pulses *are* three pulses long,
+  so the count is the control and the seconds are the readout. A cue on the timeline
+  may say a different count — three pulses here, six over the next line — and the
+  montage room's inspector shows **repeats** instead of a duration for exactly those,
+  with the arithmetic beside it (`× 0.65s = 1.95s`). Nothing about the render changes:
+  the repeat is a fold in the animation's clock, so the sampled path comes out the same
+  shape it always did and ffmpeg is told nothing new.
+
+- **A clip either loops or ends the effect.** `hold` runs it for its hold and loops
+  whatever is shorter — a sparkle, a pulsing ring, material with no ending of its own.
+  `clip` makes the clip's own end the effect's end: an explosion that resolves, a stamp
+  that lands. `.webm` is worth knowing about here: it is the one format that carries an
+  alpha channel through a video codec, and an arrow with square black corners is not an
+  arrow.
+- **A card hangs one on the picture, by dragging it there.** In the card editor, under
+  the regions, is the list of what this picture can *do*: which effect, one line saying
+  what firing it means **here** — «обвести шапку» — and three placements: a **point**, a
+  **box**, or **in the frame** (not on the picture at all). Press one and the effect
+  appears on the stage, drawn the way it will actually look, with a dot marking what it
+  is pinned to; drag it onto the thing, drag its corner to resize, drag the knob above it to aim it. That line is what the
+  model picks on, so "эффект 3" is not enough and «обвести шапку» is. The ghost is drawn
+  at the moment the animation has ARRIVED at — offsets and all — rather than at its
+  anchor: an arrow that hangs above what it points at would otherwise be drawn sitting
+  on it, and every arrow in the base would get placed one arrow-length too high by
+  somebody doing exactly what the picture told them.
+- **Who fires them.** After the pictures are chosen — and only then, because only then
+  is it settled which card is up over which stretch and therefore what that stretch can
+  do — one model call is made over the whole video. It is given each stretch, the
+  picture on it, what that picture has ready, and the words being spoken numbered end to
+  end; it answers with a word number per effect. What it may **not** decide is rhythm:
+  no two effects closer than two seconds, the same one not twice inside twelve, and a
+  ceiling of eight a minute over the whole track. Meaning and rhythm are different kinds
+  of judgement and neither is any good at the other's job — the same split the frame
+  base makes between its matcher and its picker.
+- **It costs nothing where nothing is prepared.** A base with no effects, a world whose
+  cards hang none, or the switch off, and the call is never made. **Let the model place
+  effects** (`frame_effects`) is on the fandom form and in the montage room's settings;
+  off, it stops the *choosing* only — what you placed by hand is never touched by it,
+  and never dropped by the rhythm rules either.
+- **In the montage room** the effects have a lane of their own, between the stills and
+  the words, which is where they are in the video too — drawn on the picture, placed on
+  a word. Press the empty lane above a word and you are offered what that picture can
+  fire there. Press a block to select it, set how long it stays up, or take it off. The
+  preview draws them over the frame, from the same path the render uses rather than a
+  second implementation of the one piece of arithmetic here that is genuinely hard. An
+  effect whose file has since left the base is still drawn on the lane, marked, and
+  still yours to remove; one whose card never had it placed anywhere says so, because
+  it will hang in the frame rather than on the thing.
+- **Nudged for one video.** An effect is placed once, on the card, and that is where
+  it goes in every video that fires it. Sometimes one line wants it half a hand to the
+  left — so a firing selected in the montage room can simply be **dragged on the
+  preview**. The drop point is worked back through the crop window that was up at that
+  instant, so what gets written down is a place on the CARD, and the effect goes on
+  travelling with the picture exactly as before; it is written onto the CUE, so the
+  card keeps saying what it says everywhere else. The inspector says when a firing has
+  been moved and offers it back (**put it back where the card says**). A box keeps its
+  shape while it is dragged: every point moves by the same amount, so the ring around
+  something does not resize itself on the way.
+- **The true frame draws them.** «Точный кадр» renders one frame through the real
+  chain, and it now stamps whatever is going off at that moment onto it — at that
+  instant the ramps collapse to numbers, so the effect is a plain overlay. A button
+  that exists to answer *what will actually be there* may not leave out the layer you
+  just placed.
+
+- **Where they land in the render.** In the delivery pass, after the montage filters and
+  before the subtitles: an arrow is a graphic meant to be read, so it stays out of the
+  grain, and the captions stay over everything because they are what the video is
+  saying. Their sounds are mixed in the same pass, delayed to the moment they go off, at
+  their own volume and without renormalising the voice — so the narration does not get
+  quieter the more stings a video happens to carry.
 
 ## Visuals profiles (`configs/visuals/`)
 
@@ -917,6 +1133,7 @@ Everything is hand-editable TOML; a new file in the folder = a new entity, no co
 - `presets/*.toml` — full parameter bundles for one-command runs.
 - `characters/*.toml` — AI-drama cast members (`name`, `age`, `appearance`, compiled `visual_prompt`).
 - `fandoms/<name>/` — a **folder**, not a file, because a world is more than settings: `fandom.toml` (`docs` in reading order, `tone`, `lore_tool`, plus the machine-written `canon` + `docs_sha`), one or more `.md` lore documents, and `characters/*.toml` — the world's own cast, shelved with the world it belongs to and written differently from the global `characters/`: `appearance` plus `plurality` (`one` / `many` / `class`), no age and no personality, because a world's character is a look and the rest of it is lore. The folder name is the fandom's identity; the TOML is optional.
+- `effects/*.toml` + the picture, clip or sound next to each one — the effects base: what a card can DO while it is up (`anchor` point/screen/full, `place`, `width`, `hold`, `fill`, `volume`, `keys` — each with its own `rotate` — the animation as moments — and `loop_from`/`loop_to`/`loops`, the two separators and the repeat count). One base for every world; which card fires which is written on the card. See [the effects base](#the-effects-base-configseffects).
 - `orchestration/*.toml` — AI-drama generator chains (ordered `[[stages]]` with `model`/`key_mode`/`key`/`metric`/`amount`, plus an optional per-stage `clip_seconds`); a stage's `model` may also be `manual` or `search`, which are the operator rather than a generator.
 - `visuals/*.toml` — visuals profiles: background source/linkage/AI model/interval/motion/continuous, the `manual` flag (you supply the material — found for a stock source, generated for an AI one), foreground inserts, described below.
 - `llm/*.toml` — LLM connections (`provider`, `model`, `key_env`, `temperature`, `web_search`); the active one is named in `slopgen.toml` `[llm].profile`.
@@ -1610,6 +1827,9 @@ cp deploy.env.example deploy.env        # SSH_HOST и SSH_USER, больше н�
   `none` — тишина. Выбор, который с тех пор переименовали, перенесли или опустошили, —
   тоже не ошибка: прогон скажет об этом в лог и бросит жребий заново, потому что
   переехавший файл должен стоить выбора, а не музыки.
+- **эффекты** (`frame_effects`) — вешает ли нейронка сама заготовленные стрелки, обводы
+  и звуки карточек на слова. Поставленное руками не трогается в любом случае; про всю
+  эту машинерию — свой раздел ниже.
 - **субтитры** — стиль, которым пишется `.ass`, и вычищать ли мат из вожжённого текста,
   пока голос произносит всё как есть.
 - **что на выходе** — `write_metadata`, аккаунт для публикации, «не публиковать» и
@@ -1636,6 +1856,209 @@ cp deploy.env.example deploy.env        # SSH_HOST и SSH_USER, больше н�
 обычному прогону брейкпоинт `picture` (проскочивший его унёс бы пустую дорожку в стадию
 видеоряда), — но настройка, меняющая смысл здешней кнопки, должна лежать там же, где
 кнопка.
+
+## База эффектов (`configs/effects/`)
+
+База кадров говорит, **что на экране**. База эффектов — **что поверх него срабатывает**:
+стрелка на предмет, который называют, обвод вокруг него, звук под фразой. Это
+единственный слой режима, который нарочно **синхронен** речи: дорожка картинки идёт
+мимо narration'а специально (именно эта рассинхронность и делает из стопки стопкадров
+смонтированный ролик), а стрелка, приехавшая на полсекунды позже своего слова, — не
+опоздавшая стрелка, а неправильная. Поэтому эффект вешается на **слово**, ровно как
+склейка, и по той же причине переживает переозвучку: секунды едут, слово — нет.
+
+- **База одна на все миры**, в отличие от кадров, и это следует из природы вещей.
+  Карточка — картинка *откуда-то*, она принадлежит своему миру; стрелка везде стрелка, а
+  базу, которую надо копировать в каждый новый мир, скопируют неправильно. К миру эффект
+  привязывает карточка, которая вешает его на свою область, — и живёт эта привязка на
+  карточке, там же, где координаты.
+- **Эффект — это картинка, клип, звук или картинка со звуком.** `configs/effects/
+  <имя>.toml`, материал лежит рядом — как картинка рядом с карточкой и сэмпл рядом с
+  клонированным голосом. Один звук — полноценный эффект, который ничего не рисует; одна
+  картинка — молчаливый. Кинь файл в **конфигурация → эффекты**, и он станет эффектом;
+  вторую половину приносят уже в редакторе.
+- **`description` — то, чем эффект вообще достижим для нейронки.** Одна строка про то,
+  *когда он уместен*: «когда в тексте называют предмет, который видно на картинке». Её и
+  читает проход эффектов. Неописанный эффект прекрасно ставится руками и просто никогда
+  не будет выбран сам — это честный исход: угадать, что значит безымянный png, модель не
+  может.
+- **Три привязки, и первая едет вместе с картинкой.** `point` ставит эффект на саму
+  картинку — точкой в любом её месте или рамкой, обведённой вокруг чего угодно, — а
+  кроп-движение это окно по той же картинке: обвод вокруг шапки сходится с наездом ровно
+  так же, как сама шапка. Путь по кадру считается из движения арифметикой и отдаётся
+  ffmpeg как путь, а не рисуется в экранных координатах, чтобы потом сползти с предмета.
+  `screen` ставит эффект в одно из девяти мест кадра, что бы за ним ни было: вспышка,
+  рамка, звук — всё, у чего вообще нет картинки. `full` кроет весь кадр — засветка,
+  плёночный глитч, материал, который не *в* картинке, а *поверх* неё, поэтому он
+  масштабируется до покрытия, а не ставится куда-то. Эта же разница решает, *откуда
+  эффект может взяться*: точечный — это координаты на одном файле, и предложить его может
+  только карточка этого файла; остальные два ничего не требуют от того, что на экране, и
+  предлагаются на любом куске.
+- **Точка, а не размеченная область.** Область кропа существует, чтобы в неё *смотреть*:
+  это окно, в которое может въехать камера, то есть рамка определённого размера вокруг
+  определённого предмета. Требовать её, чтобы ткнуть стрелкой, значило, что база умеет
+  показывать только на то, во что кто-то уже решил наехать, — а половина того, на что
+  ролику надо показать, вообще не предмет: угол, просвет в очереди, пустая половина
+  стола. Поэтому размещение не отчитывается ни перед чем: ставь точку где угодно или
+  обводи рамкой что имел в виду, и перетаскивай, когда не туда.
+- **`width` — доля от ширины кадра** (0.35 — треть экрана), и она задаёт размер там, где
+  его не задаёт ничего другое: у экранного эффекта и у поставленного одной точкой. Дай
+  **две** точки — и они задают и место, и размер, а `width` молчит: обведённая рамка *и
+  есть* рамка, потому что множитель поверх прямого перетаскивания — это второй орган
+  управления на одно решение. Под `full` она тоже молчит.
+- **Анимация — набор моментов**, той же формы, что и расставленное руками
+  кроп-движение: когда, насколько крупно, насколько смещён (в долях собственного размера И в
+  собственных осях — поэтому кончик стрелки держится на предмете, как бы близко ни
+  подъехала камера и куда бы её ни нацелили: повёрнутая влево подлетает справа),
+  насколько повёрнут, насколько виден. Между моментами всё интерполируется, до первого и после последнего —
+  держится. Пять заготовок заполняют список одним нажатием (**всплыть**, **пружинка**,
+  **мигает**, **уплывает** и «без анимации») и остаются отправной точкой, а не типом:
+  сохраняются моменты, поэтому «пружинку на десятую медленнее» правят числом, а не
+  заявкой на фичу.
+- **Редактор — это холст и полоса**, потому что делаешь ты ровно две вещи: двигаешь
+  предмет и решаешь, когда он это делает. Холст — формы самого видео, с эффектом на нём:
+  **тяни его** — правишь смещение выбранного момента, тяни за угол — его крупность, за
+  ручку сверху — поворот; а
+  точечный эффект показан поверх квадрата-заменителя, то есть того, относительно чего на
+  настоящей карточке меряется его размер. Под холстом — все моменты метками на
+  собственных часах эффекта: нажатием по полосе двигаешь голову воспроизведения, меткой
+  — сам момент во времени, **＋ момент** добавляет его там, где стоит голова (и берёт
+  значения, которые анимация в этот миг и так имеет, — то есть добавление момента ничего
+  не меняет, оно лишь даёт, что менять). Числа никуда не делись — если ты знаешь, что
+  хочешь 0.15 с, набери 0.15, — они просто перестали быть единственным входом, из-за чего
+  первая версия этого экрана была таблицей про картинку, которую никто не видел.
+- **И повёрнутым.** У каждого момента есть `rotate` в градусах: одна картинка стрелки
+  показывает во все стороны сразу, и восемь стрелок базе не нужны. Он анимируется, как
+  и всё остальное: стрелка может влететь, разворачиваясь, печать — лечь криво. На
+  холсте у поворота своя ручка над предметом (тяни по кругу, с **Shift** — по
+  пятнадцать градусов), и крутится он вокруг центра — единственной оси, которая
+  переживает изменение размера. В рендере это фильтр `rotate` с углом-выражением;
+  холст, на котором он вертится, растёт до диагонали картинки, чтобы не срезать углы, а
+  следующий за ним scale получает эту прибавку обратно — поэтому повёрнутый эффект
+  выходит того размера, который просили, а не того же, делённого на √2.
+
+- **Повёрнутый — и поворачивающийся.** У момента есть угол, как есть размер, поэтому
+  одна картинка стрелки показывает во все стороны сразу и базе не нужно восьми стрелок.
+  Два момента с разными углами — это поворот на лету: стрелка, которая приезжает
+  доворачиваясь, печать, которая ложится криво. В ffmpeg часы называются `t` в `rotate`
+  и `T` в `geq`, а рендер возвращает повороту его поля обратно — чтобы повёрнутая
+  картинка была того размера, который просили, а не размера собственной диагонали.
+- **Нацеливают там, где пользуются, и три угла складываются.** АНИМАЦИЯ поворачивает
+  (`EffectKey.rotate`, ручка на холсте самого эффекта); КАРТОЧКА целит — куда стрелка
+  показывает на *этой* картинке: ручка на призраке в редакторе карточки или поле
+  **поворот°** рядом; и одно СРАБАТЫВАНИЕ целит ещё раз — куда она показывает над *этой*
+  строкой: **Shift**-перетаскивание по превью в монтажной или поле **поворот°** в
+  инспекторе. Они **складываются**, а не перекрывают друг друга — ради этого их и три:
+  стрелка, нацеленная на дверь, всё так же доворачивается по своей анимации, а
+  подправленная для одного ролика не выбрасывает прицел, которым пользуются все
+  остальные. С **Shift** угол везде липнет к пятнадцати градусам: целятся обычно в
+  прямой угол или в диагональ. Ручка в редакторе самого эффекта поворачивает **все
+  моменты** сразу на одну и ту же величину, и это не срезанный угол, а разница между
+  «нацелить» и «анимировать»: повернуть один момент, оставив остальные в нуле, — не
+  значит навести стрелку, значит заставить её раскрутиться до угла и обратно, что и
+  читается как сломанная анимация. Поворот на лету делается нарочно — с **Alt** (только
+  этот момент) или числом в поле **поворот°** у самого момента.
+- **Сдвинуть для одного ролика — прямо на превью.** Выбери срабатывание в монтажной, и
+  превью берёт курсор: тащи — эффект окажется там, куда бросил. Точка считается обратно
+  через кроп-окно, которое стоит в этот момент, поэтому хранится координата на
+  **карточке** и эффект по-прежнему едет вместе с картинкой. Лежит она при этом на
+  **метке**, а не на карточке: во всех остальных роликах стрелка показывает туда же, куда
+  и показывала, а «вернуть как на карточке» отменяет сдвиг. Рамка при переносе держит
+  форму; эффект, которому места не ставили, становится точкой там, куда его принесли.
+- **Точный кадр рисует их тоже.** Кнопка `точный кадр` гонит один кадр через настоящий
+  ffmpeg, и это та кнопка, которая отвечает на вопрос «что там будет на самом деле», —
+  поэтому она ставит и то, что срабатывает в этот момент: с тем размером, прозрачностью
+  и углом, до которых доехала анимация, и в том же месте цепочки, где их ставит финальный
+  проход.
+
+- **Повторяющаяся середина: вход, цикл, выход.** Часы анимации режутся **двумя
+  разделителями** на *вход*, повторяющуюся *середину* и *выход* — и тогда одно
+  срабатывание это вход, середина сколько-то раз и выход. Оба разделителя таскаются по
+  той же полосе, где лежат моменты: ключ на 0.4с относится ко входу или к циклу
+  в зависимости от того, где стоит разделитель, и просить оператора держать два числа
+  в согласии об этом — значит просить его считать то, что редактор может просто
+  показать. Те же три части есть числами (**вход**, **цикл**, **выход**) — когда у тебя
+  на руках именно число, — и **повторов** задаёт счёт по умолчанию.
+  **Длину такому эффекту не набирают**: три пульса *и есть* три пульса длиной, поэтому
+  орган управления — счётчик, а секунды — показание. Метка на таймлайне может сказать
+  свой счёт (здесь три, над следующей строкой шесть), и в монтажной у таких меток
+  вместо длительности показаны **повторы**, а рядом арифметика (`× 0.65с = 1.95с`).
+  В рендере при этом не меняется ничего: повтор — это складка на часах анимации,
+  поэтому снятый путь выходит той же формы, что и всегда, и ffmpeg ни о чём новом не
+  узнаёт.
+
+- **Клип либо зацикливается, либо сам кончает эффект.** `hold` — держим столько,
+  сколько сказано, и зацикливаем то, что короче: искра, пульсирующее кольцо, материал без
+  собственного конца. `clip` — конец клипа и есть конец эффекта: взрыв, который
+  отыгрывает, печать, которая ставится. Про `.webm` стоит знать: это единственный формат,
+  доносящий альфу через видеокодек, а стрелка с чёрными углами — не стрелка.
+- **Карточка вешает эффект на картинку — перетаскиванием.** В редакторе карточки, под
+  областями, список того, что эта картинка **умеет**: какой эффект, одна строка, что его
+  вызов значит **здесь** («обвести шапку»), и три размещения — **точкой**, **рамкой** или
+  **в кадре** (то есть не на картинке вовсе). Нажми — и эффект появится на холсте ровно
+  таким, каким будет выглядеть, с точкой, показывающей, к чему он привязан; тащи его на
+  предмет, тяни за угол — размер, за ручку сверху — поворот всего эффекта. По этой строке и выбирает нейронка,
+  поэтому «эффект 3» не годится, а «обвести шапку» — да. Призрак рисуется в том моменте,
+  куда анимация **приехала**, со всеми смещениями, а не в точке привязки: иначе стрелку,
+  которая висит НАД предметом, рисовало бы прямо на нём — и каждую стрелку в базе
+  ставили бы на одну свою длину выше, делая ровно то, что показала картинка.
+- **Кто их вызывает.** После того как подобраны картинки — и только после, потому что
+  лишь тогда ясно, какая карточка стоит на каком куске и, значит, что этот кусок умеет, —
+  делается один вызов модели на всё видео. Ей дают каждый кусок, картинку на нём, что эта
+  картинка умеет, и слова, пронумерованные сквозняком; она отвечает номером слова на
+  каждый эффект. Чего она **не** решает — ритм: два эффекта ближе двух секунд нельзя,
+  один и тот же дважды за двенадцать секунд нельзя, и потолок — восемь в минуту на всю
+  дорожку. Смысл и ритм — разные суждения, и ни одно не годится на работу другого; ровно
+  тот же раздел, что у базы кадров между подборщиком и ритмом.
+- **Там, где ничего не заготовлено, это ничего не стоит.** Пустая база, мир, чьи
+  карточки ничего не вешают, или снятая галочка — и вызова просто нет. **Эффекты
+  расставит нейронка** (`frame_effects`) есть на форме фандома и в настройках монтажной;
+  выключенная, она отменяет только **выбор**: поставленное руками она не трогает и
+  ритмом не срезает.
+- **В монтажной** у эффектов своя дорожка — между стопкадрами и словами, то есть там же,
+  где они и в видео: нарисованы на картинке, поставлены на слово. Нажми пустую дорожку
+  над словом — предложат то, что кладётся поверх. Нажми блок — выберешь эффект,
+  поставишь, сколько он висит, или снимешь. Превью рисует их поверх кадра по тому же
+  пути, который считает рендер, а не по второй реализации единственной по-настоящему
+  трудной арифметики в этой фиче. Эффект, чей файл ушёл из базы, всё равно нарисован на
+  дорожке, помечен и всё ещё твой, чтобы его снять; а тот, которому на карточке не
+  поставили место, так и говорит — он будет висеть в кадре, а не на предмете.
+- **Две двери, потому что это два разных действия.** То, что несёт КАРТОЧКА, —
+  нацеленное на предмет, тот самый список, из которого стреляет автоматический проход, —
+  вызывается от картинки: выбери кадр и нажми **＋ эффект кадра**, он встанет на слово
+  под головой воспроизведения. Всё остальное, что у тебя есть, вызывается с полосы под
+  кадрами: нажми её над словом — предложат остальную базу, которая падает в центр кадра
+  и тащится куда надо. Каждое меню одной строкой говорит, где второе, так что ничего не
+  спрятано; в каждой строке видно сам эффект и сказано, что произойдёт («встанет на свою
+  точку на картинке», «упадёт в центр кадра — потом перетащи»).
+- **И таймлайн эту разницу рисует, а не объясняет.** Блок кадра **растягивается вниз**, и
+  его собственные срабатывания лежат внутри него: это то, что делает эта картинка, они
+  обрезаются её границами, и склейка или переозвучка, укоротившая кадр, укорачивает их.
+  Всё, что положено поверх руками, лежит на своей полосе ниже, вне блоков. Где два
+  однородных пересекаются по времени, тот, что позже, уходит на следующую строку, а
+  полоса (или блок) вырастает на строку — так что сверху всегда тот, кто начинается
+  раньше, и ничто ничем не перекрыто.
+- **Сдвинуть в одном ролике.** Эффект размещают один раз, на карточке, и там он стоит
+  во всех роликах, которые его вызывают. Иногда одной строке хочется его на полладони
+  левее — поэтому выбранное срабатывание в монтажной можно просто **потащить по
+  превью**. Точка, куда его бросили, пересчитывается назад через кроп-окно, которое
+  стояло в тот момент, так что записывается место на КАРТОЧКЕ и эффект по-прежнему едет
+  вместе с картинкой; записывается оно на МЕТКУ, так что карточка продолжает говорить
+  своё для всех остальных. В инспекторе видно, что срабатывание сдвинуто, и есть
+  «вернуть как на карточке». Рамка при перетаскивании держит форму: все точки едут на
+  одно и то же, поэтому обвод по дороге не меняет размер.
+- **Точный кадр рисует их.** «Точный кадр» отдаёт один кадр через настоящую цепочку — и
+  теперь ставит на него то, что в этот момент срабатывает: в одном мгновении все
+  рампы схлопываются в числа, и эффект становится обычным оверлеем. Кнопка,
+  существующая ради ответа на вопрос «что там будет на самом деле», не имеет права
+  умалчивать про слой, который ты только что поставил.
+
+- **Куда они ложатся в рендере.** В финальном проходе — после плёночных фильтров и до
+  субтитров: стрелку положено читать, поэтому она не уходит под зерно, а титры остаются
+  поверх всего, потому что титры — это то, что видео говорит. Звуки подмешиваются в том
+  же проходе, с задержкой до момента срабатывания, своей громкостью и без
+  перенормировки голоса — чтобы озвучка не становилась тише от того, что в ролике
+  случилось много звяков.
 
 ## Профили видеоряда (`configs/visuals/`)
 
@@ -1792,6 +2215,7 @@ slopgen drama ru --tts-engine qwen-local --voice марта:зло       # …в
 - `presets/*.toml` — бандлы параметров для запуска одной командой.
 - `characters/*.toml` — каст ИИ-дорамы (`name`, `age`, `appearance`, компилируемый `visual_prompt`).
 - `fandoms/<имя>/` — **папка**, а не файл, потому что мир — это больше, чем настройки: `fandom.toml` (`docs` в порядке чтения, `tone`, `lore_tool` плюс машинные `canon` и `docs_sha`), один или несколько `.md` с лором и `characters/*.toml` — собственный каст мира, лежащий рядом с миром, которому принадлежит, и записанный не так, как общий `characters/`: `appearance` плюс `plurality` (`one` / `many` / `class`), без возраста и без характера, потому что персонаж мира — это внешность, а всё остальное про него — лор. Имя папки и есть имя фандома; TOML необязателен.
+- `effects/*.toml` + картинка, клип или звук рядом с каждым — база эффектов: что карточка **умеет**, пока стоит (`anchor` point/screen/full, `place`, `width`, `hold`, `fill`, `volume`, `keys` — у каждого свой `rotate` — анимация моментами — и `loop_from`/`loop_to`/`loops`: два разделителя и число повторов). База одна на все миры; какая карточка что вызывает — написано на карточке. См. [базу эффектов](#база-эффектов-configseffects).
 - `orchestration/*.toml` — цепочки ИИ-генераторов для дорамы (упорядоченные `[[stages]]` с `model`/`key_mode`/`key`/`metric`/`amount` и необязательным `clip_seconds` на этап); в `model` этапа можно поставить ещё и `manual` или `search` — это оператор, а не генератор.
 - `visuals/*.toml` — профили видеоряда: источник фона, привязка, ИИ-модель, интервал, движение, непрерывный режим, флаг `manual` (материал даёшь ты: для стока — найденный, для ИИ — сгенерированный), передние вставки — описаны ниже.
 - `llm/*.toml` — подключения к нейронкам (`provider`, `model`, `key_env`, `temperature`, `web_search`); активное называется в `slopgen.toml` `[llm].profile`.

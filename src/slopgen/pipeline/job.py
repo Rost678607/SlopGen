@@ -6,7 +6,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from ..config.models import KenBurns
+from ..config.models import KenBurns, Point
 
 
 class Word(BaseModel):
@@ -179,6 +179,56 @@ class FrameShot(BaseModel):
     ask_id: str = ""  # the manual-manifest id when this shot is (or was) an ask
 
 
+class EffectCue(BaseModel):
+    """One effect firing on the finished video's clock: which one, and on what word.
+
+    The picture track and the narration run past each other on purpose (see
+    :mod:`.framebase`), and an effect is the one thing on that track that does NOT:
+    an arrow lands on the word it points at or it lands wrong. So a cue is anchored
+    exactly as a cut is — to a WORD — and for the same reason: re-voicing a line moves
+    every second after it, and the word is what survives that. The seconds here are
+    derived from the anchor and re-derived whenever the clock moves.
+
+    `card` and `hook` say which of a card's ready effects this firing IS — the picture
+    it was hung on, and that entry's own label (`config.models.CardEffect`). The
+    PLACEMENT is not copied: where on the picture the thing sits is read back off the
+    card every time it is drawn, so moving it in the card editor moves it in every
+    video that ever fired it, which is the point of a base. What is carried is the
+    identity, because a cue outlives the pass that chose it and a card re-cast under
+    it should leave the arrow pointing at nothing rather than silently at whatever is
+    now in that corner (see `pipeline.effects.settle`).
+
+    `pinned` is the operator's hand, and it means here what it means on a shot: the
+    effects pass may not overrule it, and it may not be dropped by the rhythm rails
+    either. Somebody looking at the video decided this one."""
+
+    effect: str  # EffectSpec.name
+    anchor_scene: int = -1
+    anchor_word: int = -1
+    start: float = 0.0  # absolute seconds in the finished video, re-derived from above
+    duration: float = 0.0
+    card: str = ""  # the card it was hung on; "" = it sits in the frame, not in the picture
+    hook: str = ""  # which of that card's ready effects, by its label
+    # WHERE, when this one firing is not where the card says. Empty is the ordinary
+    # case and means "wherever the card put it", so moving it in the card editor moves
+    # it in every video that fires it. Dragging it in the montage room fills this in
+    # instead — the same effect, nudged for this video only, because a picture that is
+    # right everywhere else should not be re-aimed for one line.
+    points: list[Point] = []
+    # …and how far it is turned in THIS firing, in degrees clockwise, on top of the
+    # card's own aim. The same override one step further in: the card says which way
+    # the arrow points on that picture, and this says which way it points this once.
+    turn: float = 0.0
+    word: str = ""  # the word it fires on, for the screen to show back
+    pinned: bool = False  # the operator placed it; nothing automatic may take it back
+    # How many times the effect's repeating middle runs in THIS firing (see
+    # `config.models.EffectSpec.loops`). 0 is not "none": it means follow the effect,
+    # which is what an automatic cue and a freshly placed one both do. The montage room
+    # is where it stops being 0 — three pulses here, six over the next line — and the
+    # firing's length is derived from it rather than typed.
+    loops: int = 0
+
+
 class FrameAsk(BaseModel):
     """One picture the base is missing, and every shot it would cover.
 
@@ -241,6 +291,9 @@ class VideoJob(BaseModel):
     # per scene (see pipeline/framebase.py). Empty in every other mode.
     frame_shots: list[FrameShot] = Field(default_factory=list)
     frame_asks: list[FrameAsk] = Field(default_factory=list)  # pictures still to be made
+    # the effects laid over that track — arrows, circles, stings — each on the word it
+    # is about (see :class:`EffectCue` and pipeline/effects.py). Empty everywhere else.
+    effect_cues: list[EffectCue] = Field(default_factory=list)
     cast_prompts: dict[str, str] = Field(default_factory=dict)  # drama: name → visual_prompt
     entities: list[Entity] = Field(default_factory=list)  # drama: recurring non-cast visuals
     # fandom: the world's compiled canon sheet, carried here so a resumed run writes

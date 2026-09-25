@@ -34,9 +34,10 @@ from starlette.concurrency import run_in_threadpool
 from pydantic import ValidationError
 
 from ..config import ConfigStore, RunParams
-from ..config.loader import (delete_config, fandom_docs, file_sha, frames_dir,
-                             lore_sha, read_lore, update_global, write_character,
-                             write_config, write_frame_card)
+from ..config.loader import (delete_config, effects_dir, fandom_docs, file_sha,
+                             frames_dir, lore_sha, read_lore, update_global,
+                             write_character, write_config, write_effect,
+                             write_frame_card)
 from ..config.envfile import set_env_var
 from ..llm import characters as char_ai
 from ..llm import lore as lore_ai
@@ -51,7 +52,8 @@ from ..tts import ENGINES as TTS_ENGINES
 from ..tts import refs
 from ..tts.base import VOICE_PRESETS
 from ..tts.demo import DEMO_TEXT, speak as speak_demo
-from ..config.models import (AccountConfig, AdConfig, CharacterConfig, CropTarget,
+from ..config.models import (AccountConfig, AdConfig, CardEffect, CharacterConfig,
+                             CropTarget, EffectKey, EffectSpec, Point,
                              FrameCard, LLMProfile, OrchestrationConfig,
                              OrchestrationConfig, OrchestrationStage, PresetConfig,
                              Rect, VisualsConfig,
@@ -84,6 +86,13 @@ log = logging.getLogger(__name__)
 HERE = Path(__file__).parent
 
 ALLOWED_SUFFIXES = IMAGE_EXTS | VIDEO_EXTS
+# What an effect may be made of. The picture half is the same set a card accepts —
+# with `.webm`, which a card has no use for and an effect does: it is the one format
+# that carries an alpha channel through a video codec, and an arrow with square black
+# corners is not an arrow. The sound half is deliberately wide, because a sting is
+# whatever the operator downloaded.
+SOUND_SUFFIXES = {".wav", ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".flac"}
+EFFECT_SUFFIXES = ALLOWED_SUFFIXES | {".webm"} | SOUND_SUFFIXES
 
 
 def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
@@ -436,6 +445,12 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
                     setattr(c, axis, min(max(float(body[axis]), 0.0), 1.0))
                 except (TypeError, ValueError):
                     pass
+        if "effects" in body:
+            # an entry naming an effect the base does not have is dropped here rather
+            # than kept and skipped later: the operator is standing in front of the
+            # list it came from, and a line that can never fire is not a setting
+            c.effects = [h for h in (_card_effect(x) for x in body["effects"])
+                         if h.effect in store.effects]
         if "targets" in body:
             c.targets = [_target(t) for t in body["targets"]]
             # the regions were just drawn on THIS picture, so this is the moment its
@@ -508,6 +523,183 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
                 path.unlink()
         w.frames.remove(c)
         return {"deleted": True, "name": c.name}
+
+    # -- the effects base --------------------------------------------------
+    #
+    # One base for every world, unlike the frames: a card is a picture OF somewhere
+    # and belongs to the world it is of, while an arrow is an arrow anywhere. What
+    # binds an effect to a world at all is the card that hangs it on one of its own
+    # regions (`FrameCard.effects`), and that lives on the card, where the
+    # coordinates are.
+
+    def effect_or_404(name: str) -> EffectSpec:
+        e = store.effects.get(name)
+        if e is None:
+            raise HTTPException(status_code=404, detail=f"no effect named {name!r}")
+        return e
+
+    @app.get("/api/music/{name:path}")
+    async def music_file(name: str, slopgen: str | None = Cookie(default=None)):
+        """One track out of `assets/music/`, for the montage room to play under the
+        voice. Matched against the folder's own listing rather than joined onto it, so
+        a name with a `..` in it finds nothing instead of finding something else — which
+        is why the path converter is safe here: the slashes a subfolder needs never
+        reach the filesystem, they are only ever compared against keys we generated."""
+        guard(slopgen)
+        cfg = store.global_cfg
+        track = next((p for p in tracks_in(cfg) if track_key(cfg, p) == name), None)
+        if track is None:
+            raise HTTPException(status_code=404, detail=f"no track named {name!r}")
+        return FileResponse(track)
+
+    @app.get("/api/effects")
+    async def effects(slopgen: str | None = Cookie(default=None)) -> list[dict]:
+        guard(slopgen)
+        return [_effect_json(e) for _n, e in sorted(store.effects.items())]
+
+    @app.get("/api/effects/{name}/file")
+    async def effect_file(name: str, slopgen: str | None = Cookie(default=None)):
+        guard(slopgen)
+        e = effect_or_404(name)
+        p = e.path
+        if p is None or not p.is_file():
+            raise HTTPException(status_code=404, detail="this effect has no picture")
+        return FileResponse(p)
+
+    @app.get("/api/effects/{name}/sound")
+    async def effect_sound(name: str, slopgen: str | None = Cookie(default=None)):
+        guard(slopgen)
+        e = effect_or_404(name)
+        p = e.sound_path
+        if p is None or not p.is_file():
+            raise HTTPException(status_code=404, detail="this effect has no sound")
+        return FileResponse(p)
+
+    @app.post("/api/effects")
+    async def new_effect(file: UploadFile, name: str = Form(""),
+                         description: str = Form(""),
+                         slopgen: str | None = Cookie(default=None)) -> dict:
+        """Take a file into the effects base — a picture, a clip, or a sound.
+
+        Which of the three it is decides nothing but the field it lands in and what
+        the effect can do without a second file: a sound alone is a sting, a picture
+        alone is silent. The operator fills the rest in in the editor, the way a fresh
+        card is described there rather than in a modal."""
+        guard(slopgen)
+        suffix = Path(file.filename or "").suffix.lower()
+        if suffix not in EFFECT_SUFFIXES:
+            raise HTTPException(
+                status_code=415,
+                detail=f"{suffix or 'that'} is neither a picture, a clip nor a sound")
+        root = effects_dir()
+        root.mkdir(parents=True, exist_ok=True)
+        stem = _free_stem(name or description or Path(file.filename or "эффект").stem,
+                          set(store.effects))
+        dest = root / f"{stem}{suffix}"
+        with open(dest, "wb") as out:
+            shutil.copyfileobj(file.file, out)
+        sound = suffix in SOUND_SUFFIXES
+        spec = EffectSpec(
+            name=stem, file="" if sound else dest.name, sound=dest.name if sound else "",
+            description=description, root=root,
+        )
+        write_effect(spec)
+        # into the loaded store too: it is built once per process, and an effect only
+        # on disk would be invisible until the next restart
+        store.effects[stem] = spec
+        return _effect_json(spec)
+
+    @app.put("/api/effects/{name}")
+    async def save_effect(name: str, request: Request,
+                          slopgen: str | None = Cookie(default=None)) -> dict:
+        """Everything about one effect except its material: what it means, where it
+        sits, how big, how long, and the moments of its animation."""
+        guard(slopgen)
+        e = effect_or_404(name)
+        body = await request.json()
+        for f in ("description", "note", "file", "sound"):
+            if f in body:
+                setattr(e, f, str(body[f] or ""))
+        if "anchor" in body and str(body["anchor"]) in ANCHOR_NAMES:
+            e.anchor = str(body["anchor"])
+        if "place" in body and str(body["place"]) in PLACE_NAMES:
+            e.place = str(body["place"])
+        if "fill" in body:
+            e.fill = "clip" if str(body["fill"]) == "clip" else "hold"
+        if "retired" in body:
+            e.retired = bool(body["retired"])
+        for f, lo, hi in (("width", 0.01, 4.0), ("hold", 0.1, 30.0), ("volume", 0.0, 2.0),
+                         ("loop_from", 0.0, 30.0), ("loop_to", 0.0, 30.0)):
+            if f in body:
+                try:
+                    setattr(e, f, min(max(float(body[f]), lo), hi))
+                except (TypeError, ValueError):
+                    pass
+        if "loops" in body:
+            try:
+                e.loops = min(max(int(body["loops"]), 1), 99)
+            except (TypeError, ValueError):
+                pass
+        # the separators live on the animation's own clock and cannot leave it, and the
+        # second cannot precede the first — a pair that says the loop ends before it
+        # begins is not a loop, it is two numbers
+        e.loop_from = min(max(e.loop_from, 0.0), e.hold)
+        e.loop_to = min(max(e.loop_to, 0.0), e.hold)
+        if e.loop_to <= e.loop_from:
+            e.loop_from = e.loop_to = 0.0
+        if "keys" in body:
+            e.keys = [_effect_key(k) for k in (body["keys"] or [])]
+            e.keys.sort(key=lambda k: k.at)
+        write_effect(e)
+        return _effect_json(e)
+
+    @app.post("/api/effects/{name}/material")
+    async def effect_material(name: str, file: UploadFile,
+                              slopgen: str | None = Cookie(default=None)) -> dict:
+        """Give an effect its other half — the sound for a picture, or the picture for
+        a sound — or replace what it has. The old file is left on disk: it may be what
+        another effect is made of, and an effects folder is not ours to tidy."""
+        guard(slopgen)
+        e = effect_or_404(name)
+        suffix = Path(file.filename or "").suffix.lower()
+        if suffix not in EFFECT_SUFFIXES:
+            raise HTTPException(
+                status_code=415,
+                detail=f"{suffix or 'that'} is neither a picture, a clip nor a sound")
+        root = e.root or effects_dir()
+        root.mkdir(parents=True, exist_ok=True)
+        sound = suffix in SOUND_SUFFIXES
+        dest = root / f"{e.name}{'_sound' if sound else ''}{suffix}"
+        with open(dest, "wb") as out:
+            shutil.copyfileobj(file.file, out)
+        if sound:
+            e.sound = dest.name
+        else:
+            e.file = dest.name
+        write_effect(e)
+        return _effect_json(e)
+
+    @app.delete("/api/effects/{name}")
+    async def retire_effect(name: str, purge: bool = False,
+                            slopgen: str | None = Cookie(default=None)) -> dict:
+        """Softly by default, for good on `purge` — the same two gestures a card gets,
+        for the same reason: a retired effect keeps its file and stops being offered,
+        and only what is inside the effects folder is ever unlinked."""
+        guard(slopgen)
+        e = effect_or_404(name)
+        if not purge:
+            e.retired = True
+            write_effect(e)
+            return _effect_json(e)
+        root = (e.root or effects_dir()).resolve()
+        for path in (e.path, e.sound_path, root / f"{e.name}.toml"):
+            if path is None:
+                continue
+            path = Path(path).resolve()
+            if path.is_file() and path.parent == root:
+                path.unlink()
+        store.effects.pop(e.name, None)
+        return {"deleted": True, "name": e.name}
 
     # -- the settings the terminal keeps under Configuration ---------------
 
@@ -2258,7 +2450,7 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
     # its one way of finding a run — a second definition of either would be a second
     # place for them to disagree.
     montage_api.mount(app, store=store, sup=sup, guard=guard, run_or_404=run_or_404,
-                      card_json=_card_json)
+                      card_json=_card_json, effect_json=_effect_json)
 
     @app.get("/api/runs/{run_id}/events")
     async def run_events(run_id: str, after: int = 0,
@@ -2458,7 +2650,93 @@ def _card_json(world: str, c: FrameCard) -> dict:
         "targets": [{"label": t.label, "of": t.of,
                      "cx": t.rect.cx, "cy": t.rect.cy, "scale": t.rect.scale}
                     for t in c.targets],
+        # what this picture can DO: the arrows and circles hung on its regions, and
+        # the stings that go with them (see config.models.CardEffect)
+        "effects": [{"effect": h.effect, "label": h.label, "width": h.width,
+                     "turn": h.turn,
+                     "points": [{"cx": pt.cx, "cy": pt.cy} for pt in h.points]}
+                    for h in c.effects],
     }
+
+
+PLACE_NAMES = ("center", "top", "bottom", "left", "right",
+               "top_left", "top_right", "bottom_left", "bottom_right")
+ANCHOR_NAMES = ("point", "screen", "full")
+
+
+def _effect_json(e) -> dict:
+    """One effect as the browser reads it: what it is made of, where it sits, and the
+    moments of its animation. Two urls rather than one, because a picture and a sound
+    are both optional halves and either may be the whole of it.
+
+    `ratio` is the file's own width over its height, and the editors need it rather
+    than wanting it: an effect is sized by its WIDTH everywhere (see
+    `config.models.EffectSpec`), so how tall the thing will be drawn is knowable only
+    from the file — and a ghost on a card drawn at the wrong height is a placement
+    somebody will get wrong by exactly that much."""
+    pic, snd = e.path, e.sound_path
+    ratio = 1.0
+    if pic is not None and pic.is_file():
+        try:
+            w, h = ffmpeg_media.video_dims(pic)
+            ratio = (w / h) if h else 1.0
+        except Exception:
+            ratio = 1.0
+    return {
+        "name": e.name, "file": e.file, "sound": e.sound,
+        "description": e.description, "note": e.note,
+        "anchor": e.anchor, "place": e.place, "fill": e.fill,
+        "width": e.width, "hold": e.hold, "volume": e.volume,
+        # the two separators and the default count: entrance, the middle N times, exit
+        "loop_from": e.loop_from, "loop_to": e.loop_to, "loops": e.loops,
+        "cycles": e.cycles, "span": e.span(),
+        "retired": e.retired, "usable": e.usable,
+        # what to DRAW it as: a still is itself, a clip is a frame out of it, a sound
+        # is nothing and the strip says so
+        "kind": ("sound" if pic is None
+                 else "video" if pic.suffix.lower() in (VIDEO_EXTS | {".webm"})
+                 else "image"),
+        "ratio": ratio,
+        "url": f"/api/effects/{e.name}/file" if (pic and pic.is_file()) else "",
+        "sound_url": f"/api/effects/{e.name}/sound" if (snd and snd.is_file()) else "",
+        "keys": [{"at": k.at, "scale": k.scale, "dx": k.dx, "dy": k.dy, "alpha": k.alpha}
+                 for k in e.keys],
+    }
+
+
+def _effect_key(k: dict) -> EffectKey:
+    num = lambda name, default, lo, hi: min(max(float(k.get(name, default) or 0.0), lo), hi)
+    try:
+        return EffectKey(at=num("at", 0.0, 0.0, 60.0), scale=num("scale", 1.0, 0.01, 8.0),
+                         dx=num("dx", 0.0, -2.0, 2.0), dy=num("dy", 0.0, -2.0, 2.0),
+                         alpha=num("alpha", 1.0, 0.0, 1.0))
+    except (TypeError, ValueError):
+        return EffectKey()
+
+
+def _card_effect(h: dict) -> CardEffect:
+    """One entry of a card's ready effects, off the editor's JSON.
+
+    The points are the placement (see `config.models.CardEffect`) and they are clamped
+    rather than refused: they arrive from a drag on a picture, where the pointer
+    leaving the stage is an ordinary thing to do and not an error worth a red box."""
+    try:
+        width = min(max(float(h.get("width", 0.0) or 0.0), 0.0), 4.0)
+    except (TypeError, ValueError):
+        width = 0.0
+    points = []
+    for pt in (h.get("points") or [])[:8]:
+        try:
+            points.append(Point(cx=min(max(float(pt.get("cx", 0.5)), 0.0), 1.0),
+                                cy=min(max(float(pt.get("cy", 0.5)), 0.0), 1.0)))
+        except (TypeError, ValueError, AttributeError):
+            continue
+    try:
+        turn = round((float(h.get("turn", 0.0) or 0.0) % 360 + 540) % 360 - 180, 1)
+    except (TypeError, ValueError):
+        turn = 0.0
+    return CardEffect(effect=str(h.get("effect", "")), label=str(h.get("label", "")),
+                      points=points, width=width, turn=turn)
 
 
 def _target(t: dict) -> CropTarget:

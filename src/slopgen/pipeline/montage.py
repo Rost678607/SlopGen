@@ -43,6 +43,13 @@ other shot keeps its card, every anchor keeps its word, and not one line that wa
 already voiced is re-voiced. Measured on a three-line job: cards identical, anchors on
 the same words, audio paths untouched, one duration changed.
 
+DELETION is the half with a real decision in it, and it is written down at
+:func:`drop_line`: whatever was anchored inside the removed line has nowhere left to
+be, one of them inherits the word the line used to end on, and the rest go with it.
+Which one inherits is the whole question — the picture that was up when the line ended,
+not the first one to be asked — and getting it wrong cost the picture AFTER the removed
+line, silently, on every deletion.
+
 The one thing insertion really does break is the naming. The `tts` stage writes
 `tts/scene_NN` by POSITION, so a line pushed from 2 to 3 leaves its take under the name
 the new line is about to be voiced into — and the new take would land on top of the old
@@ -63,6 +70,7 @@ from ..config.loader import file_sha, frames_dir, write_frame_card
 from ..config.models import FrameCard, MoveKey, Rect
 from ..media import filters as fxmod
 from ..media.ffmpeg import duration_of
+from . import effects as effects_mod
 from . import framebase
 from .context import AppContext
 from .job import FrameShot, Scene, VideoJob, Word
@@ -392,8 +400,24 @@ def set_text(job: VideoJob, index: int, text: str) -> None:
     _rebind(job, index, before)
 
 
+def anchored(job: VideoJob) -> list:
+    """Everything on this video that is fastened to a WORD, in one list.
+
+    Two tracks hang off the narration now — where the picture changes, and where an
+    effect goes off — and every structural edit to the lines has to move both of them
+    the same way. Written twice, they drift apart at exactly the edit nobody tests: a
+    line inserted in the middle shifts the cuts and leaves the arrows pointing into
+    the line before. So the edits below walk this instead, and what they need of a
+    member is only that it carries `anchor_scene` and `anchor_word`.
+
+    Order matters and is stable: shots first, then cues, both in the order the job
+    holds them — :func:`_anchor_fractions` keys by position in this list and
+    :func:`_rebind` reads those keys back."""
+    return list(job.frame_shots) + list(job.effect_cues)
+
+
 def _anchor_fractions(job: VideoJob, index: int) -> dict[int, float]:
-    """Where in a line each shot anchored there currently sits, as 0..1 of the line.
+    """Where in a line each anchor currently sits, as 0..1 of the line.
 
     Word INDICES do not survive a rewrite — six words become seven and every anchor
     after the third points at the wrong one — while the place in the line does: a cut
@@ -402,18 +426,24 @@ def _anchor_fractions(job: VideoJob, index: int) -> dict[int, float]:
     the words move and put back on the nearest word after (see :func:`_rebind`)."""
     scene = job.scenes[index]
     n = max(len(scene.words) - 1, 1)
-    return {i: (s.anchor_word / n)
-            for i, s in enumerate(job.frame_shots)
-            if s.anchor_scene == index and s.anchor_word >= 0}
+    return {i: (a.anchor_word / n)
+            for i, a in enumerate(anchored(job))
+            if a.anchor_scene == index and a.anchor_word >= 0}
 
 
 def _rebind(job: VideoJob, index: int, fractions: dict[int, float]) -> None:
-    """Put the shots anchored in one line back on a word, then re-measure the clock."""
+    """Put everything anchored in one line back on a word, then re-measure the clock."""
     scene = job.scenes[index]
     n = max(len(scene.words) - 1, 1)
+    all_of_them = anchored(job)
     for i, frac in fractions.items():
-        if i < len(job.frame_shots):
-            job.frame_shots[i].anchor_word = min(round(frac * n), max(len(scene.words) - 1, 0))
+        if i < len(all_of_them):
+            all_of_them[i].anchor_word = min(round(frac * n), max(len(scene.words) - 1, 0))
+    # a cue also carries the word it fires on, for the screen to show back; after a
+    # rewrite that word is a different word
+    for q in job.effect_cues:
+        if q.anchor_scene == index and 0 <= q.anchor_word < len(scene.words):
+            q.word = scene.words[q.anchor_word].text
     retime(job)
 
 
@@ -425,6 +455,7 @@ def voice(job: VideoJob, ctx: AppContext, index: int, rate: int | None = None,
     question as HOW: `марта:зло` is another recording of the same person, and the model
     copies the delivery it was shown (see `config.models.VoiceConfig`). `""` puts the
     line back on the run's voice, None leaves it where it is.
+
     The clock moves under everything after it, which is why `retime` follows: the cuts
     themselves are not re-decided — they were placed on words and those words are
     still the same words — they are re-measured (see `framebase.reanchor`)."""
@@ -556,9 +587,9 @@ def add_line(job: VideoJob, after: int, text: str = "", slot=None) -> int:
     if not scene.gen_model and slot is not None:
         scene.gen_model, scene.key_mode, scene.key = slot.model, slot.key_mode, slot.key
         scene.clip_target_s = scene.clip_target_s or slot.clip_seconds
-    for s in job.frame_shots:
-        if s.anchor_scene >= at:
-            s.anchor_scene += 1
+    for a in anchored(job):
+        if a.anchor_scene >= at:
+            a.anchor_scene += 1
     job.scenes.insert(at, scene)
     _settle_takes(job)
     retime(job)
@@ -570,22 +601,52 @@ def drop_line(job: VideoJob, index: int) -> None:
 
     The cheap structural edit, and the only one offered here: nothing that survives it
     has to be re-made, because a removed line takes only its own seconds with it.
-    Shots anchored INSIDE it go to the first word of whatever follows, which is where
-    a picture that covered the removed line now begins, and any two shots that land on
-    the same word after that are one shot — the picture cannot change twice at once."""
+
+    What is homeless afterwards is whatever was anchored INSIDE it, and there is only
+    one place for it to go: the first word of the line that follows (the last word of
+    the one before, when the line being removed is the last). One of them may move
+    there, and it is the LAST of them — the picture that was up when the removed line
+    ended, which is what a viewer would have been looking at at the moment the deletion
+    lands on. The ones before it were up only during seconds that no longer exist, so
+    they go with the line, and that is the honest outcome.
+
+    Unless a shot already starts at that word. Then the two are competing for one cut
+    and the one that was there first wins: its stretch survives the deletion whole,
+    while the homeless one's was inside the part being removed.
+
+    It used to be settled by dropping the later of two shots that ended up on the same
+    word, and the later one was the shot that had owned that word all along. Deleting a
+    line ate the picture AFTER it: four shots went in, three came out, and the survivor
+    silently inherited the missing one's seconds. Effects are not thinned out at all,
+    for the opposite reason: two of them on one word is an ordinary thing to want."""
     if not 0 <= index < len(job.scenes) or len(job.scenes) <= 1:
         raise ValueError("a video needs at least one line")
-    for s in job.frame_shots:
-        if s.anchor_scene == index:
-            s.anchor_scene, s.anchor_word = index + 1, 0
-        if s.anchor_scene > index:
-            s.anchor_scene -= 1
+    if index + 1 < len(job.scenes):
+        landing = (index + 1, 0)
+    else:
+        before = job.scenes[index - 1]
+        landing = (index - 1, max(len(before.words) - 1, 0))
+    ordered = _ordered(job)
+    taken = {(s.anchor_scene, s.anchor_word) for s in ordered if s.anchor_scene != index}
+    homeless = [s for s in ordered if s.anchor_scene == index]
+    heir = homeless[-1] if (homeless and landing not in taken) else None
+    if heir is not None:
+        heir.anchor_scene, heir.anchor_word = landing
+    job.frame_shots = [s for s in ordered
+                       if s.anchor_scene != index or s is heir]
+    for q in job.effect_cues:
+        if q.anchor_scene == index:
+            q.anchor_scene, q.anchor_word = landing
+    # …and everything after the removed line moves up one
+    for a in anchored(job):
+        if a.anchor_scene > index:
+            a.anchor_scene -= 1
     del job.scenes[index]
     # an anchor that ran off the end goes to the last word there is
     last = len(job.scenes) - 1
-    for s in job.frame_shots:
-        if s.anchor_scene > last:
-            s.anchor_scene, s.anchor_word = last, max(len(job.scenes[last].words) - 1, 0)
+    for a in anchored(job):
+        if a.anchor_scene > last:
+            a.anchor_scene, a.anchor_word = last, max(len(job.scenes[last].words) - 1, 0)
     _settle_takes(job)
     retime(job)
     _dedupe(job)
@@ -624,12 +685,21 @@ def settle(job: VideoJob) -> None:
 
 
 def retime(job: VideoJob) -> None:
-    """Re-measure the whole track against the clock as it stands now."""
+    """Re-measure the whole track against the clock as it stands now.
+
+    Both tracks, because there are two of them: the cuts hang off words, and so do the
+    effects (see `pipeline/effects`). A line re-voiced at the top of the video moves
+    every cut after it AND every arrow, and an arrow left behind is not a late accent,
+    it is one pointing at the wrong word."""
     # …against a track that OPENS, which is the one thing about it nobody placed and
     # nothing may take away (see `open_heads`). First, so a shot put back here is
     # measured by the same pass as the rest of them.
     open_heads(job)
     framebase.reanchor(job.scenes, job.frame_shots)
+    effects_mod.reanchor(job)
+    # a firing that sits on a picture is inside that picture's shot, and the shot's
+    # length is exactly what a cut or a re-voicing changes (see `effects.clip_to_shots`)
+    effects_mod.clip_to_shots(job)
     _retell(job)
 
 
@@ -797,6 +867,10 @@ def recut(job: VideoJob, sensitivity: float) -> int:
     alternative — dropping forty cuts one at a time — is not one."""
     job.frame_shots = framebase.plan_cuts(job.scenes, min(max(sensitivity, 0.0), 1.0))
     job.frame_asks = []
+    # The effects survive: they are placed on WORDS, and the words did not move. What
+    # cannot survive is an effect pinned to a region of a card that this re-cut has
+    # just taken off the screen, and `effects.settle` is what drops exactly those —
+    # asked for by the caller, which is the one that knows the base.
     return len(job.frame_shots)
 
 

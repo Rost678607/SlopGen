@@ -97,6 +97,115 @@
       </div>
     </div>
 
+    <!-- The effects base: what a picture can DO when it is up. One base for every
+         world, unlike the frames — a card is a picture of somewhere and belongs to
+         the world it is of, an arrow is an arrow anywhere. Hanging one on a
+         particular region of a particular card happens in the card editor, where the
+         coordinates are. -->
+    <div id="cfg-effects" hidden>
+      <div class="panel">
+        <div class="row"><b data-l="web.fx.head">эффекты</b>
+          <span class="dim" data-l="web.fx.note">стрелка, обвод, звук — то, что нейронка может сама вызвать на слове</span>
+          <span class="grow"></span>
+          <span class="dim" id="fx-state"></span></div>
+      </div>
+      <div id="fx-cards"></div>
+      <label class="drop" id="fx-drop">
+        <input type="file" id="fx-upload" accept="image/*,video/*,audio/*" hidden>
+        <span data-l="web.fx.drop">перетащи картинку, клип или звук — станет новым эффектом</span>
+      </label>
+
+      <div class="panel" id="fx-editor" hidden>
+        <div class="row"><b id="fx-name"></b>
+          <span class="grow"></span>
+          <span class="saved" id="fx-saved"></span>
+          <button id="fx-del" class="ghost" data-l="web.fx.del">🗑 удалить</button>
+          <button id="fx-save" class="primary" data-l="web.save">сохранить</button></div>
+        <div class="fx-edit">
+          <!-- The stage is the video's own shape and the effect is ON it, draggable.
+               Everything an animation is — where, how big, how solid, when — is either
+               a drag here or a marker on the strip below, because those are the two
+               things an operator is actually doing: moving the thing, and deciding
+               when it does that. The numbers are the same edit said in digits, for
+               when a number is what you have. -->
+          <div class="fx-stage">
+            <div class="fx-screen" id="fx-screen">
+              <!-- the stand-in: an effect pinned to a point has no card to sit on here,
+                   so the middle of the frame plays the part of the thing it will be
+                   put on, and the size on screen is the size it will be around
+                   something that big. -->
+              <i class="fx-target" id="fx-target" hidden><b data-l="web.fx.target">предмет</b></i>
+              <!-- the effect itself: drag the body to move it, the corner to size it,
+                   the knob above it to turn it. All three edit the SELECTED moment. -->
+              <div class="fx-piece" id="fx-piece">
+                <span class="grip" title="размер"></span>
+                <span class="spin" title="повернуть"></span>
+              </div>
+            </div>
+            <div class="row fx-transport">
+              <button id="fx-play" class="ghost">▶</button>
+              <span class="mono" id="fx-clock">0.00</span>
+              <span class="grow"></span>
+              <button id="fx-addkey" class="ghost" data-l="web.fx.addkey">＋ момент</button>
+              <button id="fx-delkey" class="ghost" data-l="web.fx.delkey">удалить момент</button>
+            </div>
+            <!-- the moments, on the effect's own clock: press the strip to move the
+                 playhead, drag a marker to move that moment in time -->
+            <div class="fx-track" id="fx-track">
+              <div class="fx-ruler" id="fx-ruler"></div>
+              <!-- the two separators cutting the clock into the way IN, the part that
+                   REPEATS and the way OUT. They are on the same strip as the moments
+                   because they decide which side of the loop each moment is on. -->
+              <div class="fx-seps" id="fx-seps"></div>
+              <div class="fx-keyrow" id="fx-keyrow"></div>
+              <div class="fx-head" id="fx-head"></div>
+            </div>
+            <div class="fx-keyfields" id="fx-keyfields"></div>
+            <div class="row">
+              <span class="dim" id="fx-material"></span>
+            </div>
+            <label class="drop small" id="fx-drop2">
+              <input type="file" id="fx-upload2" accept="image/*,video/*,audio/*" hidden>
+              <span data-l="web.fx.drop2">принести вторую половину — звук к картинке или картинку к звуку</span>
+            </label>
+          </div>
+          <aside>
+            <label data-l="web.fx.when">когда его звать — это читает нейронка
+              <textarea id="fx-descr" rows="3"></textarea></label>
+            <label data-l="web.fx.note2">заметка для себя
+              <textarea id="fx-note" rows="2"></textarea></label>
+            <div class="grid">
+              <label data-l="web.fx.anchor">к чему привязан<select id="fx-anchor"></select></label>
+              <label data-l="web.fx.place">где в кадре<select id="fx-place"></select></label>
+              <label data-l="web.fx.width">размер<input type="number" id="fx-width" step="0.05" min="0.01" max="4"></label>
+              <label data-l="web.fx.hold">сколько висит, с<input type="number" id="fx-hold" step="0.1" min="0.1" max="30"></label>
+              <label data-l="web.fx.fill">чем кончается<select id="fx-fill"></select></label>
+              <label data-l="web.fx.volume">громкость<input type="number" id="fx-volume" step="0.1" min="0" max="2"></label>
+            </div>
+            <p class="dim" id="fx-width-note"></p>
+            <!-- Looping is a property of the ANIMATION, so it lives with it: a middle
+                 that repeats, and how many times by default. A cue on the timeline may
+                 say otherwise, and then the firing is as long as its own count makes
+                 it — the length is never typed twice. -->
+            <label class="inline"><input type="checkbox" id="fx-loop">
+              <span data-l="web.fx.loop">зациклить середину</span></label>
+            <div class="grid" id="fx-loop-fields" hidden>
+              <label data-l="web.fx.loop.in">вход, с<input type="number" id="fx-loop-in" step="0.05" min="0" max="30"></label>
+              <label data-l="web.fx.loop.cycle">цикл, с<input type="number" id="fx-loop-cycle" step="0.05" min="0.05" max="30"></label>
+              <label data-l="web.fx.loop.out">выход, с<input type="number" id="fx-loop-out" step="0.05" min="0" max="30"></label>
+              <label data-l="web.fx.loop.times">повторов<input type="number" id="fx-loops" step="1" min="1" max="99"></label>
+            </div>
+            <p class="dim" id="fx-loop-note"></p>
+            <label class="inline"><input type="checkbox" id="fx-retired">
+              <span data-l="web.fx.retired">убран из базы — больше не предлагается</span></label>
+            <h3 data-l="web.fx.keys">анимация <small data-l="web.fx.keys.hint">моменты: когда, насколько крупно, куда смещён, насколько виден</small></h3>
+            <div class="chips" id="fx-presets"></div>
+            <p class="dim" data-l="web.fx.keys.how">тяни эффект по холсту — это сдвиг выбранного момента; за угол — крупность</p>
+          </aside>
+        </div>
+      </div>
+    </div>
+
     <div id="cfg-keys" hidden>
       <div class="panel">
         <h3 data-l="web.cfg.keys">ключи API <span class="dim" data-l="web.cfg.keys.note">лежат в .env, в гит не попадают; значения не показываются</span></h3>
@@ -223,6 +332,10 @@
            is how a region is drawn — a draggable rect would eat that gesture. -->
       <div id="safe" hidden><span class="fitgrip">✥</span></div>
       <div id="boxes"></div>
+      <!-- where an effect sits on THIS picture: the thing itself, draggable, over the
+           regions rather than among them. A region is a window the camera moves into;
+           an effect is drawn on top, and the two are told apart by being two layers. -->
+      <div id="fxplace"></div>
       <div id="preview" hidden></div>
       <p id="nofile" hidden data-l="web.frames.none">картинки ещё нет — размечать нечего.<br data-l="web.frames.none2">принеси её, и области можно будет расставить</p>
     </div>
@@ -240,6 +353,13 @@
       <p class="dim" id="fit-note"></p>
       <h3 data-l="web.frames.targets">области <small data-l="web.frames.hint">нажми на предмет и отведи в сторону — точка нажатия станет центром</small></h3>
       <ul id="targets"></ul>
+      <!-- What this picture can DO. An effect itself lives in the effects base, which
+           is global; what belongs here is the pairing — this arrow, on that region of
+           this card, meaning this — because the coordinates are coordinates on this
+           one file, and the line saying what it means is what the model chooses on. -->
+      <h3 data-l="web.frames.fx">эффекты <small data-l="web.frames.fx.hint">что можно вызвать на этой картинке; подпись читает нейронка</small></h3>
+      <ul id="card-fx"></ul>
+      <div class="row"><button id="card-fx-add" class="ghost" data-l="web.frames.fx.add">＋ повесить эффект</button></div>
       <button id="playmove" class="ghost" data-l="web.frames.preview">показать движение по двум первым</button>
     </aside>
   </div>
@@ -372,6 +492,11 @@
                three other things for the same pixels. -->
           <div class="lane keys" id="lane-keys"></div>
           <div class="lane shots" id="lane-shots"></div>
+          <!-- What goes OFF over the picture: the arrows, the circles, the stings. Its
+               own lane between the stills and the words, because that is where an
+               effect actually lives — it is drawn on the picture and placed on a word,
+               and clicking the empty lane is how a new one is hung on the nearest. -->
+          <div class="lane fx" id="lane-fx"></div>
           <div class="lane cues" id="lane-cues"></div>
           <div class="lane lines" id="lane-lines"></div>
           <div class="head" id="mont-head" hidden></div>

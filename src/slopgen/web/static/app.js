@@ -202,6 +202,7 @@ const CFG = [
   ["ads", "js.ad-contracts", "ads"],
   ["accounts", "js.accounts", "list"],
   ["orchestration", "js.generator-chains", "orch"],
+  ["effects", "js.effects", "effects"],
   ["presets", "js.presets", "list"],
   ["access", "js.access", "access"],
 ];
@@ -229,6 +230,7 @@ function openCfg(key) {
   $("#cfg-voices").hidden = how !== "voices";
   $("#cfg-orch").hidden = how !== "orch";
   $("#cfg-ads").hidden = how !== "ads";
+  $("#cfg-effects").hidden = how !== "effects";
   $("#cfg-access").hidden = how !== "access";
   $("#cfg-todo").hidden = !!how;
   if (how === "world") openSub(sub);
@@ -237,6 +239,7 @@ function openCfg(key) {
   else if (how === "voices") loadVoices();
   else if (how === "orch") loadOrch();
   else if (how === "ads") loadAds();
+  else if (how === "effects") loadEffects();
   else if (how === "access") loadAccess();
   else if (how === "list") loadConfigs(key, lab(entry[1]));
   else $("#cfg-todo-title").textContent = lab(entry[1]);
@@ -1084,6 +1087,729 @@ function adLive(el, c, inp) {
   if (when) when.textContent = adWhen(ov);
 }
 
+// ------------------------------------------------------------- the effects base
+//
+// The other half of what a picture can do. The frame base says WHAT is on screen; this
+// says what goes off on top of it — an arrow, a circle, a sting — and the editor here
+// is where an effect's animation is written down, once, for every video that ever
+// fires it.
+//
+// The preview is a 9:16 box with the thing in it, run off the very keys in the list
+// beside it. Approximate, exactly as the montage canvas is: what the render does is
+// ffmpeg's answer, and the question this box answers is "does 0.15s of fade read as a
+// pop or as a stutter", which is a question about taste and can be asked in a browser.
+
+let fxAll = [];
+let fxCur = null;      // the effect being edited
+let fxKeys = [];       // its animation, as the list is currently edited
+let fxTimer = null;    // the preview's own clock
+
+const FX_ANCHORS = ["point", "screen", "full"];
+const FX_PLACES = ["center", "top", "bottom", "left", "right",
+                   "top_left", "top_right", "bottom_left", "bottom_right"];
+const FX_FILLS = ["hold", "clip"];
+
+// Ready-made animations, as the moments they are made of. They are a starting point
+// and not a type: pressing one fills the list, and the list is what is saved — so an
+// operator who wants the pop a tenth slower edits a number instead of asking for a
+// switch nobody has built yet. `h` is the effect's own hold, so a preset stretches to
+// whatever length the thing is up for.
+const FX_PRESETS = {
+  none: () => [],
+  rise: (h) => [
+    { at: 0, scale: 0.85, dx: 0, dy: 0.12, alpha: 0 },
+    { at: Math.min(0.22, h / 3), scale: 1, dx: 0, dy: 0, alpha: 1 },
+    { at: Math.max(h - 0.25, h / 2), scale: 1, dx: 0, dy: 0, alpha: 1 },
+    { at: h, scale: 1.04, dx: 0, dy: -0.12, alpha: 0 },
+  ],
+  pop: (h) => [
+    { at: 0, scale: 0.35, dx: 0, dy: 0, alpha: 0 },
+    { at: Math.min(0.12, h / 4), scale: 1.18, dx: 0, dy: 0, alpha: 1 },
+    { at: Math.min(0.26, h / 2), scale: 1, dx: 0, dy: 0, alpha: 1 },
+    { at: Math.max(h - 0.15, h / 2), scale: 1, dx: 0, dy: 0, alpha: 1 },
+    { at: h, scale: 1, dx: 0, dy: 0, alpha: 0 },
+  ],
+  blink: (h) => [
+    { at: 0, scale: 1, dx: 0, dy: 0, alpha: 1 },
+    { at: h * 0.25, scale: 1, dx: 0, dy: 0, alpha: 0.15 },
+    { at: h * 0.5, scale: 1, dx: 0, dy: 0, alpha: 1 },
+    { at: h * 0.75, scale: 1, dx: 0, dy: 0, alpha: 0.15 },
+    { at: h, scale: 1, dx: 0, dy: 0, alpha: 1 },
+  ],
+  float: (h) => [
+    { at: 0, scale: 1, dx: 0, dy: 0.25, alpha: 0 },
+    { at: Math.min(0.3, h / 3), scale: 1, dx: 0, dy: 0, alpha: 1 },
+    { at: h, scale: 1.1, dx: 0, dy: -0.7, alpha: 0 },
+  ],
+};
+
+async function loadEffects() {
+  fxAll = await api("/api/effects");
+  $("#fx-state").textContent = fxAll.length
+    ? `${fxAll.length} · ${fxAll.filter((e) => e.usable).length} ${lab("js.fx.live")}`
+    : "";
+  $("#fx-cards").innerHTML = fxAll.map((e) => `
+    <div class="frame-card ${e.retired ? "retired" : ""}" data-fx="${esc(e.name)}">
+      <div class="thumb ${e.usable ? "" : "none"} ${e.kind === "sound" ? "sound" : ""}"
+           ${e.url ? `style="background-image:url('${tokd(e.url)}')"` : ""}>
+        ${e.kind === "sound" ? "🔊" : e.usable ? "" : lab("js.no-picture-yet")}
+        <span class="pills">
+          ${e.sound_url && e.kind !== "sound" ? `<span class="pill">🔊</span>` : ""}
+          ${e.anchor !== "screen" ? `<span class="pill">${esc(lab("fx.anchor." + e.anchor, e.anchor))}</span>` : ""}
+        </span>
+      </div>
+      <div class="meta"><b>${esc(e.name)}</b><span>${esc((e.description || "").slice(0, 60))}</span></div>
+    </div>`).join("") || `<p class="empty">${lab("js.fx.none")}</p>`;
+  $("#fx-cards").querySelectorAll("[data-fx]").forEach((el) => {
+    el.onclick = () => openEffect(el.dataset.fx);
+  });
+  if (fxCur) {
+    const again = fxAll.find((e) => e.name === fxCur.name);
+    if (again) openEffect(again.name); else closeEffect();
+  }
+}
+
+function closeEffect() {
+  fxCur = null;
+  stopFxPreview();
+  $("#fx-editor").hidden = true;
+}
+
+function openEffect(name) {
+  fxCur = fxAll.find((e) => e.name === name);
+  if (!fxCur) return;
+  fxKeys = (fxCur.keys || []).map((k) => ({ ...k }));
+  $("#fx-editor").hidden = false;
+  $("#fx-name").textContent = fxCur.name;
+  $("#fx-descr").value = fxCur.description || "";
+  $("#fx-note").value = fxCur.note || "";
+  $("#fx-width").value = fxCur.width;
+  $("#fx-hold").value = fxCur.hold;
+  $("#fx-volume").value = fxCur.volume;
+  $("#fx-retired").checked = !!fxCur.retired;
+  $("#fx-del").textContent = lab("web.fx.del");
+  $("#fx-del").classList.remove("danger");
+  fillSel("#fx-anchor", FX_ANCHORS, fxCur.anchor, "fx.anchor.");
+  fillSel("#fx-place", FX_PLACES, fxCur.place, "fx.place.");
+  fillSel("#fx-fill", FX_FILLS, fxCur.fill, "fx.fill.");
+  $("#fx-material").textContent = [
+    fxCur.url ? lab("js.fx.haspic") : lab("js.fx.nopic"),
+    fxCur.sound_url ? lab("js.fx.hassound") : lab("js.fx.nosound"),
+  ].join(" · ");
+  fxLoop = { from: fxCur.loop_from || 0, to: fxCur.loop_to || 0,
+             loops: fxCur.loops || 1 };
+  fxNotes();
+  drawFxLoop();
+  fxTime = 0;
+  fxKeySel = fxKeys.length ? 0 : -1;
+  // the picture is re-inserted per effect, and the two handles have to survive that:
+  // they are part of the control, not part of what is being controlled
+  $("#fx-piece").innerHTML =
+    `<span class="grip" title="${esc(lab("js.fx.grip"))}"></span>`
+    + `<span class="spin" title="${esc(lab("js.fx.spin"))}"></span>`;
+  drawFxPresets();
+  drawFxTrack();
+  drawFxStage();
+  bindFxStage();
+}
+
+function fillSel(sel, names, value, prefix) {
+  const el = $(sel);
+  el.innerHTML = names.map((n) =>
+    `<option value="${n}">${esc(lab(prefix + n, n))}</option>`).join("");
+  el.value = value;
+}
+
+function fxNotes() {
+  // What `width` is a fraction OF depends on where the thing ends up, and the two
+  // fields it does NOT apply to are dimmed rather than hidden: a control that is
+  // simply gone reads as a control this build does not have.
+  const anchor = $("#fx-anchor").value;
+  $("#fx-width-note").textContent = lab("js.fx.width." + anchor, lab("js.fx.width.screen"));
+  $("#fx-place").closest("label").classList.toggle("off", anchor !== "screen");
+  $("#fx-width").closest("label").classList.toggle("off", anchor === "full");
+}
+
+function drawFxPresets() {
+  $("#fx-presets").innerHTML = Object.keys(FX_PRESETS).map((k) =>
+    `<button data-preset="${k}">${esc(lab("js.fx.preset." + k, k))}</button>`).join("");
+  $("#fx-presets").querySelectorAll("[data-preset]").forEach((b) => {
+    b.onclick = () => {
+      fxKeys = FX_PRESETS[b.dataset.preset](fxHold())
+        .map((k) => ({ ...k, at: +k.at.toFixed(2) }));
+      fxKeySel = fxKeys.length ? 0 : -1;
+      drawFxTrack();
+      drawFxStage();
+    };
+  });
+}
+
+// -- the animation, as a stage and a strip -----------------------------------
+//
+// Two controls and they are the same edit seen twice: WHERE the thing is, dragged on
+// a canvas the shape of the video, and WHEN it is there, on a strip of moments under
+// it. The numbers stay — an operator who knows they want 0.15s types 0.15 — but they
+// are no longer the only way in, which is what made the first version of this screen
+// a spreadsheet about a picture nobody could see.
+
+let fxTime = 0;      // the playhead, in seconds into the FIRING (loops included)
+let fxKeySel = -1;   // which moment is being edited
+let fxPlaying = false;
+let fxLoop = { from: 0, to: 0, loops: 1 };   // the two separators and the count
+
+// Two clocks, and keeping them apart is the whole of the loop. The ANIMATION's clock
+// is where the moments and the separators live and it is what the strip draws; the
+// FIRING's clock is how long the thing is actually up for, which is the way in plus
+// the middle however many times plus the way out. The browser's copy of
+// `EffectSpec.clock` / `.span`, and it has to stay a copy: the preview is only worth
+// looking at while it agrees with the render.
+const fxHold = () => Math.max(+$("#fx-hold").value || 1.2, 0.2);
+const fxCycles = () => fxLoop.to - fxLoop.from > 0.02;
+const fxCycleLen = () => Math.max(fxLoop.to - fxLoop.from, 0.05);
+const fxLoopN = () => Math.max(fxLoop.loops | 0, 1);
+
+function fxSpan() {
+  if (!fxCycles()) return fxHold();
+  return fxLoop.from + fxLoopN() * fxCycleLen() + Math.max(fxHold() - fxLoop.to, 0);
+}
+
+/** firing seconds → animation seconds */
+function fxClock(t) {
+  if (!fxCycles()) return t;
+  if (t < fxLoop.from) return t;
+  const ran = t - fxLoop.from, total = fxLoopN() * fxCycleLen();
+  if (ran < total - 1e-9) return fxLoop.from + (ran % fxCycleLen());
+  return fxLoop.to + (ran - total);
+}
+
+/** animation seconds → firing seconds, taking the FIRST pass through the middle —
+ *  which is what pressing a place on the strip can honestly mean */
+function fxFiring(ct) {
+  if (!fxCycles() || ct <= fxLoop.to) return ct;
+  return fxLoop.from + fxLoopN() * fxCycleLen() + (ct - fxLoop.to);
+}
+
+function fxKeyAt(t) {
+  // the moment being edited, if the playhead is on one — within a hair, since a
+  // marker is dragged in seconds and «on it» cannot be an equality
+  return fxKeys.findIndex((k) => Math.abs(k.at - t) < 0.02);
+}
+
+function drawFxTrack() {
+  const hold = fxHold();
+  const px = (t) => (Math.min(Math.max(t, 0), hold) / hold) * 100;
+  const step = hold > 4 ? 1 : hold > 1.6 ? 0.5 : 0.2;
+  let ticks = "";
+  for (let t = 0; t <= hold + 1e-6; t += step)
+    ticks += `<i style="left:${px(t)}%"><b>${t.toFixed(step < 1 ? 1 : 0)}</b></i>`;
+  $("#fx-ruler").innerHTML = ticks;
+  // the middle, shaded, with a handle at each end — the three parts have to be
+  // legible at a glance or the moments in them mean nothing
+  $("#fx-seps").innerHTML = fxCycles()
+    ? `<i class="band" style="left:${px(fxLoop.from)}%;width:${px(fxLoop.to) - px(fxLoop.from)}%"></i>
+       <i class="sep" data-sep="from" style="left:${px(fxLoop.from)}%"></i>
+       <i class="sep" data-sep="to" style="left:${px(fxLoop.to)}%"></i>` : "";
+  $("#fx-keyrow").innerHTML = fxKeys.map((k, i) =>
+    `<i class="fxk${i === fxKeySel ? " on" : ""}" data-k="${i}" style="left:${px(k.at)}%"
+        title="${k.at.toFixed(2)}${lab("js.s")}"></i>`).join("");
+  // the head is at the moment of the ANIMATION being shown, so during a repeat it
+  // runs the middle again and again — which is the loop, seen
+  $("#fx-head").style.left = px(fxClock(fxTime)) + "%";
+  $("#fx-clock").textContent = fxCycles()
+    ? `${fxTime.toFixed(2)} / ${fxSpan().toFixed(2)} · ×${fxLoopN()}`
+    : `${fxTime.toFixed(2)} / ${hold.toFixed(2)}`;
+  bindFxTrack();
+  drawFxKeyFields();
+}
+
+function bindFxTrack() {
+  const track = $("#fx-track");
+  const seek = (e) => {
+    const r = track.getBoundingClientRect();
+    const ct = Math.min(Math.max((e.clientX - r.left) / r.width, 0), 1) * fxHold();
+    fxTime = fxFiring(ct);
+    const on = fxKeyAt(ct);
+    if (on >= 0) fxKeySel = on;
+    drawFxTrack();
+    drawFxStage();
+  };
+  track.onpointerdown = (e) => {
+    if (e.target.classList.contains("fxk") || e.target.classList.contains("sep")) return;
+    fxPlaying = false;
+    seek(e);
+  };
+  bindFxSeps();
+  $("#fx-keyrow").querySelectorAll(".fxk").forEach((el) => {
+    const i = +el.dataset.k;
+    el.onpointerdown = (e) => {
+      e.stopPropagation();
+      fxPlaying = false;
+      fxKeySel = i;
+      // the playhead goes to the moment being taken hold of, because the stage above
+      // is what says what that moment looks like — selecting one and being shown
+      // another is the confusion this whole screen exists to remove
+      fxTime = fxFiring(fxKeys[i].at);
+      const r = $("#fx-track").getBoundingClientRect();
+      el.setPointerCapture(e.pointerId);
+      // NOTHING here redraws the strip. Rebuilding it from innerHTML replaces the very
+      // element the pointer was captured on, so the move and up listeners are left on a
+      // node no longer in the document and the drag ends before it begins — the same
+      // bug the crop-region boxes carry a comment about. A drag moves the marker by
+      // hand; the list is rebuilt on RELEASE, when nothing is holding anything.
+      const paint = () => {
+        el.style.left = (Math.min(fxKeys[i].at, fxHold()) / fxHold()) * 100 + "%";
+        $("#fx-head").style.left = (fxClock(fxTime) / fxHold()) * 100 + "%";
+        drawFxStage();
+      };
+      const move = (ev) => {
+        const t = Math.min(Math.max((ev.clientX - r.left) / r.width, 0), 1) * fxHold();
+        fxKeys[i].at = +t.toFixed(2);
+        fxTime = fxFiring(fxKeys[i].at);
+        paint();
+      };
+      const up = () => {
+        el.removeEventListener("pointermove", move);
+        el.removeEventListener("pointerup", up);
+        // sorting is left to the release too: a moment dragged past its neighbour would
+        // otherwise change index mid-drag and the pointer would be holding another one
+        const mine = fxKeys[fxKeySel];
+        fxKeys.sort((a, b) => a.at - b.at);
+        fxKeySel = fxKeys.indexOf(mine);
+        drawFxTrack();
+      };
+      el.addEventListener("pointermove", move);
+      el.addEventListener("pointerup", up);
+      $("#fx-keyrow").querySelectorAll(".fxk").forEach((x) => x.classList.toggle("on", x === el));
+      drawFxKeyFields();
+      paint();
+    };
+  });
+}
+
+// The separators, dragged. They move on the ANIMATION's clock like everything else on
+// this strip, and they carry the moments' meaning with them: drag the first one past a
+// key and that key stops being the way in and becomes part of what repeats.
+function bindFxSeps() {
+  $("#fx-seps").querySelectorAll(".sep").forEach((el) => {
+    const which = el.dataset.sep;
+    el.onpointerdown = (e) => {
+      e.stopPropagation();
+      fxPlaying = false;
+      const r = $("#fx-track").getBoundingClientRect();
+      el.setPointerCapture(e.pointerId);
+      const band = $("#fx-seps .band");
+      const move = (ev) => {
+        const t = Math.min(Math.max((ev.clientX - r.left) / r.width, 0), 1) * fxHold();
+        // they may not cross: a middle that ends before it begins is not a middle
+        if (which === "from") fxLoop.from = Math.min(+t.toFixed(2), fxLoop.to - 0.05);
+        else fxLoop.to = Math.max(+t.toFixed(2), fxLoop.from + 0.05);
+        // by hand, for the reason the moments are (see above): a redraw here would take
+        // the handle out from under the pointer
+        const pc = (v) => (v / fxHold()) * 100;
+        el.style.left = pc(which === "from" ? fxLoop.from : fxLoop.to) + "%";
+        if (band) {
+          band.style.left = pc(fxLoop.from) + "%";
+          band.style.width = pc(fxLoop.to) - pc(fxLoop.from) + "%";
+        }
+        drawFxLoop();
+        drawFxStage();
+      };
+      const up = () => {
+        el.removeEventListener("pointermove", move);
+        el.removeEventListener("pointerup", up);
+        drawFxTrack();
+      };
+      el.addEventListener("pointermove", move);
+      el.addEventListener("pointerup", up);
+    };
+  });
+}
+
+// The same three parts as numbers, for when a number is what you have. They are
+// LENGTHS rather than positions — the way in, the middle, the way out — because that
+// is what somebody means when they say a pulse is a fifth of a second; the separators
+// are where those lengths land, and the editor keeps the two in step rather than
+// asking the operator to.
+function drawFxLoop() {
+  const on = fxCycles();
+  $("#fx-loop").checked = on;
+  $("#fx-loop-fields").hidden = !on;
+  $("#fx-hold").closest("label").classList.toggle("off", on);
+  if (on) {
+    $("#fx-loop-in").value = +fxLoop.from.toFixed(2);
+    $("#fx-loop-cycle").value = +fxCycleLen().toFixed(2);
+    $("#fx-loop-out").value = +Math.max(fxHold() - fxLoop.to, 0).toFixed(2);
+    $("#fx-loops").value = fxLoopN();
+  }
+  $("#fx-loop-note").textContent = on
+    ? `${lab("js.fx.loop.total")} ${fxSpan().toFixed(2)}${lab("js.s")}`
+    : lab("js.fx.loop.off");
+}
+
+$("#fx-loop").onchange = () => {
+  if ($("#fx-loop").checked) {
+    // a middle nobody has placed yet is the middle half of the animation, which is
+    // where it is in every effect that has one
+    const h = fxHold();
+    // three is what a pulse is: once reads as a mistake, twice as a stutter. One
+    // means the effect has never been looped, not that somebody chose one repeat.
+    fxLoop = { from: +(h * 0.25).toFixed(2), to: +(h * 0.75).toFixed(2),
+               loops: fxLoop.loops > 1 ? fxLoop.loops : 3 };
+  } else {
+    fxLoop = { from: 0, to: 0, loops: fxLoop.loops };
+  }
+  fxTime = 0;
+  drawFxLoop();
+  drawFxTrack();
+  drawFxStage();
+};
+
+["#fx-loop-in", "#fx-loop-cycle", "#fx-loop-out", "#fx-loops"].forEach((id) => {
+  $(id).onchange = () => {
+    const inS = Math.max(+$("#fx-loop-in").value || 0, 0);
+    const cyc = Math.max(+$("#fx-loop-cycle").value || 0.05, 0.05);
+    const out = Math.max(+$("#fx-loop-out").value || 0, 0);
+    fxLoop.from = +inS.toFixed(2);
+    fxLoop.to = +(inS + cyc).toFixed(2);
+    fxLoop.loops = Math.min(Math.max(+$("#fx-loops").value | 0, 1), 99);
+    // the animation's clock is the three parts laid end to end, so it follows them
+    $("#fx-hold").value = +(fxLoop.to + out).toFixed(2);
+    fxTime = Math.min(fxTime, fxSpan());
+    drawFxLoop();
+    drawFxTrack();
+    drawFxStage();
+  };
+});
+
+// The four numbers of the moment under the playhead. Only one moment's, because a
+// table of every moment is what this screen used to be: five rows of five fields, and
+// nothing anywhere saying which of them was the one you were looking at.
+function drawFxKeyFields() {
+  const box = $("#fx-keyfields");
+  const k = fxKeys[fxKeySel];
+  if (!k) {
+    box.innerHTML = `<p class="dim">${esc(lab(fxKeys.length
+      ? "js.fx.pickmoment" : "js.fx.nomoments"))}</p>`;
+    return;
+  }
+  const f = (name, step, min, max) =>
+    `<label>${esc(lab("js.fx.k." + name))}<input type="number" data-k="${name}"
+       step="${step}" ${min !== undefined ? `min="${min}"` : ""}
+       ${max !== undefined ? `max="${max}"` : ""} value="${+(k[name] || 0).toFixed(3)}"></label>`;
+  box.innerHTML = f("at", 0.05, 0) + f("scale", 0.05, 0.01) + f("dx", 0.05)
+                + f("dy", 0.05) + f("alpha", 0.05, 0, 1) + f("rotate", 5, -360, 360);
+  box.querySelectorAll("input").forEach((inp) => {
+    inp.onchange = () => {
+      k[inp.dataset.k] = +inp.value;
+      if (inp.dataset.k === "at") {
+        fxKeys.sort((a, b) => a.at - b.at);
+        fxKeySel = fxKeys.indexOf(k);
+        fxTime = k.at;
+      }
+      drawFxTrack();
+      drawFxStage();
+    };
+  });
+}
+
+$("#fx-addkey").onclick = () => {
+  // it takes the values the animation ALREADY has at this instant, so adding a moment
+  // never changes what the effect does — it only gives you somewhere to change it
+  const ct = fxClock(fxTime);
+  const now = fxAt(fxKeys, ct);
+  fxKeys.push({ at: +ct.toFixed(2), scale: +now.scale.toFixed(3),
+                dx: +now.dx.toFixed(3), dy: +now.dy.toFixed(3),
+                alpha: +now.alpha.toFixed(3), rotate: +(now.rotate || 0).toFixed(1) });
+  fxKeys.sort((a, b) => a.at - b.at);
+  fxKeySel = fxKeyAt(ct);
+  drawFxTrack();
+  drawFxStage();
+};
+
+$("#fx-delkey").onclick = () => {
+  if (fxKeySel < 0) return;
+  fxKeys.splice(fxKeySel, 1);
+  fxKeySel = Math.min(fxKeySel, fxKeys.length - 1);
+  drawFxTrack();
+  drawFxStage();
+};
+
+// -- the stage ---------------------------------------------------------------
+
+const fxAt = (keys, t) => {
+  // the same reading the renderer uses: held before the first moment and after the
+  // last, straight travel in between (see pipeline/effects._key_at)
+  if (!keys.length) return { scale: 1, dx: 0, dy: 0, alpha: 1, rotate: 0 };
+  if (t <= keys[0].at) return keys[0];
+  for (let i = 0; i < keys.length - 1; i++) {
+    const a = keys[i], b = keys[i + 1];
+    if (t <= b.at) {
+      const p = (t - a.at) / Math.max(b.at - a.at, 1e-6);
+      return {
+        scale: a.scale + (b.scale - a.scale) * p,
+        dx: a.dx + (b.dx - a.dx) * p,
+        dy: a.dy + (b.dy - a.dy) * p,
+        alpha: a.alpha + (b.alpha - a.alpha) * p,
+        rotate: (a.rotate || 0) + ((b.rotate || 0) - (a.rotate || 0)) * p,
+      };
+    }
+  }
+  return keys[keys.length - 1];
+};
+
+// Where the effect sits on the stage right now, in px — the browser's copy of
+// `pipeline/effects.draw_for`, and it has to be: what this shows is where the render
+// puts it. `point` has no card here, so it is shown over a stand-in square, which is
+// the thing its size is measured against on a real card.
+function fxLayout() {
+  const box = $("#fx-screen");
+  const w = box.clientWidth, h = box.clientHeight;
+  const anchor = $("#fx-anchor").value;
+  const spec = fxCur || {};
+  const ratio = spec.ratio || 1;
+  const k = fxAt(fxKeys, fxClock(Math.min(fxTime, fxSpan())));
+  let cx = 0.5, cy = 0.5, width = Math.max(+$("#fx-width").value || 0.3, 0.01);
+  if (anchor === "full") {
+    width = Math.max(1, ratio / videoAspect);
+  } else if (anchor === "screen") {
+    const p = ({ center: [0.5, 0.5], top: [0.5, 0.22], bottom: [0.5, 0.76],
+                 left: [0.24, 0.5], right: [0.76, 0.5], top_left: [0.24, 0.22],
+                 top_right: [0.76, 0.22], bottom_left: [0.24, 0.76],
+                 bottom_right: [0.76, 0.76] }[$("#fx-place").value] || [0.5, 0.5]);
+    cx = p[0]; cy = p[1];
+  }
+  const size = Math.max(width * k.scale, 0.01);
+  // the offsets are in the effect's OWN widths, so in pixels they are simply `px` —
+  // and in its own AXES, so they turn with it (see `effects.draw_for`): an arrow
+  // pointed left has to come in from the right, or its tip lands beside the thing
+  const px = size * w;
+  const off = spun(k.dx, k.dy, k.rotate || 0);
+  return { px, ph: px / ratio, alpha: k.alpha, rotate: k.rotate || 0,
+           left: cx * w + off.x * px - px / 2,
+           top: cy * h + off.y * px - px / ratio / 2, w, h, anchor };
+}
+
+function drawFxStage() {
+  if (!fxCur) return;
+  const piece = $("#fx-piece"), box = $("#fx-screen");
+  const lay = fxLayout();
+  box.classList.toggle("full", lay.anchor === "full");
+  $("#fx-target").hidden = lay.anchor !== "point";
+  if (!piece.querySelector("img,.sound")) {
+    piece.insertAdjacentHTML("afterbegin", fxCur.url
+      ? `<img src="${tokd(fxCur.url)}" alt="" draggable="false">`
+      : `<span class="sound">🔊</span>`);
+  }
+  // the handles hang OUTSIDE the box and the box is turned, so they turn with it —
+  // which is what you want: the corner stays the corner of the thing it resizes.
+  const spin = piece.querySelector(".spin");
+  if (spin) spin.hidden = !fxCur.url;
+  piece.style.width = lay.px + "px";
+  piece.style.height = lay.ph + "px";
+  piece.style.left = lay.left + "px";
+  piece.style.top = lay.top + "px";
+  piece.style.opacity = lay.alpha;
+  piece.style.transform = lay.rotate ? `rotate(${lay.rotate}deg)` : "";
+  // a fully transparent moment still has to be grabbable, or the one thing you want
+  // to fix about it — where it comes in from — cannot be dragged
+  piece.classList.toggle("ghosted", lay.alpha < 0.08);
+}
+
+// Dragging the thing itself. It edits the SELECTED moment, because an animation is a
+// run of moments and "move it" with none of them chosen is not a question anyone can
+// answer — so with nothing selected it takes the moment under the playhead, and with
+// no moments at all it makes one there and moves that.
+function bindFxStage() {
+  const piece = $("#fx-piece");
+  piece.onpointerdown = (e) => {
+    if (!fxCur) return;
+    e.preventDefault();
+    fxPlaying = false;
+    if (fxKeySel < 0 || Math.abs((fxKeys[fxKeySel] || {}).at - fxTime) > 0.25) {
+      const on = fxKeyAt(fxTime);
+      if (on >= 0) fxKeySel = on;
+      else { $("#fx-addkey").onclick(); }
+    }
+    const k = fxKeys[fxKeySel];
+    if (!k) return;
+    const grip = e.target.classList.contains("grip");
+    const spin = e.target.classList.contains("spin");
+    const lay = fxLayout();
+    // the centre the turn is measured about, in page coordinates
+    const r0 = piece.getBoundingClientRect();
+    const mid = { x: r0.left + r0.width / 2, y: r0.top + r0.height / 2 };
+    const at0 = Math.atan2(e.clientY - mid.y, e.clientX - mid.x);
+    // A turn aims the WHOLE animation unless Alt says otherwise, and that is the
+    // difference between aiming a thing and animating it. Turning one moment and
+    // leaving the rest at zero does not point the arrow — it makes it spin up to the
+    // angle and back down again, which is what "the animation breaks when I rotate it"
+    // was. Alt is how a swing is authored: one moment at a time, on purpose.
+    const one = e.altKey;
+    const from = { x: e.clientX, y: e.clientY, dx: k.dx, dy: k.dy, scale: k.scale,
+                   rotate: k.rotate || 0,
+                   turns: fxKeys.map((m) => m.rotate || 0) };
+    piece.setPointerCapture(e.pointerId);
+    const move = (ev) => {
+      const mx = (ev.clientX - from.x) / Math.max(lay.px, 1);
+      const my = (ev.clientY - from.y) / Math.max(lay.px, 1);
+      if (spin) {
+        // how far the pointer has swung ROUND the centre, which is the only reading of
+        // a turn that survives the thing being moved or resized mid-drag
+        const now = Math.atan2(ev.clientY - mid.y, ev.clientX - mid.x);
+        let deg = from.rotate + (now - at0) * 180 / Math.PI;
+        // a modifier snaps to fifteens, because most of what anybody aims at is a
+        // right angle or a diagonal and nudging one degree at a time is not aiming
+        if (ev.shiftKey) deg = Math.round(deg / 15) * 15;
+        const wrap = (v) => +((v % 360 + 540) % 360 - 180).toFixed(1);
+        if (one) k.rotate = wrap(deg);
+        else {
+          // every moment turns by the same amount, so whatever swing the animation
+          // already had is kept and the whole of it is simply aimed elsewhere
+          const by = deg - from.rotate;
+          fxKeys.forEach((m, i) => (m.rotate = wrap((from.turns[i] || 0) + by)));
+        }
+      } else if (grip) {
+        // the corner is the moment's own size, read as the DISTANCE from the centre —
+        // which is the one reading that still means "bigger" when the thing has been
+        // turned. Along x it would mean bigger at 0° and sideways at 90°.
+        const was = Math.hypot(from.x - mid.x, from.y - mid.y);
+        const now = Math.hypot(ev.clientX - mid.x, ev.clientY - mid.y);
+        k.scale = clamp(from.scale * (now / Math.max(was, 1)), 0.02, 8);
+      } else {
+        // the pointer moves in the FRAME's axes and the offset lives in the effect's,
+        // so the delta is turned back the other way before it is stored — otherwise
+        // dragging a turned effect right moves it sideways by exactly its angle
+        const back = spun(mx, my, -(k.rotate || 0));
+        k.dx = +(from.dx + back.x).toFixed(3);
+        k.dy = +(from.dy + back.y).toFixed(3);
+      }
+      drawFxStage();
+      drawFxKeyFields();
+    };
+    const up = () => {
+      piece.removeEventListener("pointermove", move);
+      piece.removeEventListener("pointerup", up);
+      drawFxTrack();
+    };
+    piece.addEventListener("pointermove", move);
+    piece.addEventListener("pointerup", up);
+    drawFxTrack();
+  };
+}
+
+function playFx() {
+  fxPlaying = !fxPlaying;
+  $("#fx-play").textContent = fxPlaying ? "❚❚" : "▶";
+  if (fxTimer) cancelAnimationFrame(fxTimer);
+  if (!fxPlaying) return;
+  let last = performance.now();
+  const step = (now) => {
+    if (!fxPlaying) return;
+    const span = fxSpan();
+    fxTime += (now - last) / 1000;
+    last = now;
+    if (fxTime > span + 0.35) fxTime = 0;   // a beat of nothing between runs
+    drawFxTrack();
+    drawFxStage();
+    fxTimer = requestAnimationFrame(step);
+  };
+  fxTimer = requestAnimationFrame(step);
+}
+
+function stopFxPreview() {
+  fxPlaying = false;
+  if (fxTimer) cancelAnimationFrame(fxTimer);
+  fxTimer = null;
+}
+
+// -- what the editor writes back ---------------------------------------------
+
+$("#fx-anchor").onchange = () => { fxNotes(); drawFxStage(); };
+["#fx-place", "#fx-width"].forEach((id) => {
+  $(id).onchange = () => drawFxStage();
+});
+// the length is the strip's own scale, so changing it redraws both
+$("#fx-hold").onchange = () => {
+  fxLoop.to = Math.min(fxLoop.to, fxHold());
+  fxLoop.from = Math.min(fxLoop.from, Math.max(fxLoop.to - 0.05, 0));
+  fxTime = Math.min(fxTime, fxSpan());
+  drawFxLoop();
+  drawFxTrack();
+  drawFxStage();
+};
+$("#fx-play").onclick = () => playFx();
+
+$("#fx-save").onclick = async () => {
+  if (!fxCur) return;
+  const body = {
+    description: $("#fx-descr").value, note: $("#fx-note").value,
+    anchor: $("#fx-anchor").value, place: $("#fx-place").value,
+    fill: $("#fx-fill").value, retired: $("#fx-retired").checked,
+    width: +$("#fx-width").value, hold: +$("#fx-hold").value,
+    volume: +$("#fx-volume").value, keys: fxKeys,
+    loop_from: fxLoop.from, loop_to: fxLoop.to, loops: fxLoopN(),
+  };
+  await api(`/api/effects/${encodeURIComponent(fxCur.name)}`, {
+    method: "PUT", headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  $("#fx-saved").textContent = lab("js.saved");
+  setTimeout(() => ($("#fx-saved").textContent = ""), 1500);
+  await loadEffects();
+};
+
+// Asked twice, exactly as a card is, and for the same reason: the second press takes
+// the file with it, and a base people tidy is a base where that has to be deliberate.
+$("#fx-del").onclick = async (e) => {
+  if (!fxCur) return;
+  const key = `fx:${fxCur.name}`;
+  if (!armed.has(key))
+    return armForget(e.currentTarget, key, "web.fx.del", "js.fx.del-sure");
+  clearTimeout(armed.get(key));
+  armed.delete(key);
+  const name = fxCur.name;
+  try {
+    await api(`/api/effects/${encodeURIComponent(name)}?purge=true`, { method: "DELETE" });
+  } catch (err) { return say(err.message, true); }
+  say(`${name} — ${lab("js.fx.deleted")}`);
+  closeEffect();
+  loadEffects();
+};
+
+function bindFxDrop(dropId, inputId, send) {
+  const drop = $(dropId);
+  drop.onclick = () => $(inputId).click();
+  $(inputId).onchange = (e) => e.target.files[0] && send(e.target.files[0]);
+  ["dragover", "dragenter"].forEach((k) => drop.addEventListener(k, (e) => {
+    e.preventDefault(); drop.classList.add("over");
+  }));
+  ["dragleave", "drop"].forEach((k) =>
+    drop.addEventListener(k, () => drop.classList.remove("over")));
+  drop.addEventListener("drop", (e) => {
+    e.preventDefault();
+    if (e.dataTransfer.files[0]) send(e.dataTransfer.files[0]);
+  });
+}
+
+bindFxDrop("#fx-drop", "#fx-upload", async (file) => {
+  const body = new FormData();
+  body.append("file", file);
+  body.append("name", file.name.replace(/\.[^.]+$/, ""));
+  const e = await api("/api/effects", { method: "POST", body });
+  await loadEffects();
+  openEffect(e.name);
+  say(lab("js.fx.added"));
+});
+
+bindFxDrop("#fx-drop2", "#fx-upload2", async (file) => {
+  if (!fxCur) return;
+  const body = new FormData();
+  body.append("file", file);
+  await api(`/api/effects/${encodeURIComponent(fxCur.name)}/material`,
+            { method: "POST", body });
+  await loadEffects();
+});
+
 // ------------------------------------------------------- the list-shaped kinds
 let cfgData = null;
 
@@ -1317,6 +2043,11 @@ function openCard(name) {
   // editing while the picture is being made — but the geometry stays shut.
   $("#stage").classList.toggle("nofile", !card.usable);
   $("#nofile").hidden = card.usable;
+  cardFx = (card.effects || []).map((h) => ({ ...h }));
+  // the base may not have been looked at this session, and the list of effects is what
+  // the rows are built out of
+  (fxAll.length ? Promise.resolve(fxAll) : api("/api/effects").then((e) => (fxAll = e)))
+    .then(listCardFx).catch(() => listCardFx());
   if (!card.usable) {
     img.hidden = vid.hidden = true;
     $("#boxes").innerHTML = "";
@@ -1518,6 +2249,7 @@ function drawTargets() {
   }).join("");
   document.querySelectorAll(".box").forEach(bindBox);
   listTargets();
+  drawCardFxGhost();
 }
 
 // Moving and resizing an existing region, which the `move` cursor has been promising
@@ -1572,6 +2304,9 @@ function place(b, t, f) {
 }
 
 function listTargets() {
+  // the hooks name regions by LABEL, so a region renamed here has to be re-offered
+  // there — otherwise the select quietly shows the old name as if it still existed
+  if ($("#card-fx")) listCardFx();
   const active = document.activeElement;
   const keep = active && active.tagName === "INPUT" && active.closest("#targets")
     ? { i: +active.closest("li").dataset.i, f: active.dataset.f,
@@ -1610,6 +2345,294 @@ function listTargets() {
     if (back) { back.focus(); back.setSelectionRange(keep.pos, keep.pos); }
   }
 }
+
+// -- what this card can do ---------------------------------------------------
+//
+// The effect itself is global (see the effects base); what a card holds is the
+// PAIRING — which effect, on which of its regions, and one line saying what firing it
+// means here. That line is what the model picks on, so it is the field the list puts
+// first and the only one that is ever really written.
+
+let cardFx = [];      // the hooks of the card being edited
+let cardFxSel = -1;   // which of them is being placed on the picture
+
+// The three placements a hook can have, as the buttons that set them. They are the
+// whole of `CardEffect.points` (see the model): a point, a box, or nothing at all.
+const FX_PLACINGS = {
+  // one point: it sits there, at the effect's own size
+  point: (h, f) => [{ cx: 0.5, cy: 0.5 }].map((p) => centreOf(h, p)),
+  // two: the box between them is where AND how big, which is what a drag leaves
+  box: (h) => {
+    const c = centreOf(h, { cx: 0.5, cy: 0.5 });
+    const r = 0.14;
+    return [{ cx: c.cx - r, cy: c.cy - r * 1.0 }, { cx: c.cx + r, cy: c.cy + r * 1.0 }];
+  },
+  // none: it is not on the picture at all and falls back to the frame
+  none: () => [],
+};
+
+// Where a hook currently is, so switching between the three keeps the place somebody
+// already chose instead of jumping back to the middle.
+function centreOf(h, fallback) {
+  const pts = (h && h.points) || [];
+  if (!pts.length) return fallback;
+  const xs = pts.map((p) => p.cx), ys = pts.map((p) => p.cy);
+  return { cx: (Math.min(...xs) + Math.max(...xs)) / 2,
+           cy: (Math.min(...ys) + Math.max(...ys)) / 2 };
+}
+
+const fxSpecOf = (name) => (fxAll || []).find((e) => e.name === name) || null;
+
+/** An offset given in the effect's own axes, said in the frame's. Degrees clockwise,
+ *  y down — the same convention CSS `rotate()` and ffmpeg's `rotate` use, so what the
+ *  preview draws and what the render draws are one arithmetic. */
+function spun(dx, dy, deg) {
+  if (!deg) return { x: dx, y: dy };
+  const r = deg * Math.PI / 180, c = Math.cos(r), s = Math.sin(r);
+  return { x: dx * c - dy * s, y: dx * s + dy * c };
+}
+
+/** A hook's placement in PICTURE fractions: {cx, cy, w, h} of the fitted frame, or
+ *  null where it is not on the picture. The browser's copy of `effects.spot`, and it
+ *  has to stay the browser's copy of it: what is drawn here is where the render puts
+ *  it, and two answers to that would make the editor a liar. */
+function fxSpot(h) {
+  const pts = (h.points || []);
+  const spec = fxSpecOf(h.effect);
+  if (!pts.length || !spec) return null;
+  const ratio = spec.ratio || 1;   // the file's own width / height
+  if (pts.length === 1) {
+    const w = (h.width > 0 ? h.width : spec.width);
+    return { cx: pts[0].cx, cy: pts[0].cy, w, h: w / ratio / videoAspect };
+  }
+  const xs = pts.map((p) => p.cx), ys = pts.map((p) => p.cy);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs);
+  const y0 = Math.min(...ys), y1 = Math.max(...ys);
+  // the box IS the size (see `effects.spot`): the wider of its two sides in frame-width
+  // units decides, and the drawn height follows from the file's own shape
+  const w = Math.max(x1 - x0, (y1 - y0) * videoAspect, 0.01);
+  return { cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, w, h: w / ratio / videoAspect };
+}
+
+// The ghost on the picture: the effect itself, where it will actually be drawn, with a
+// grip on its corner. It is the placement — drag it and the points move — so it is an
+// element over the stage rather than something painted into the picture.
+function drawCardFxGhost() {
+  const box = $("#fxplace");
+  if (!box) return;
+  const h = cardFx[cardFxSel];
+  if (!card || !card.usable || !h) { box.innerHTML = ""; return; }
+  const spot = fxSpot(h);
+  if (!spot) {
+    box.innerHTML = `<p class="fxhint">${esc(lab("js.fx.drop-hint"))}</p>`;
+    return;
+  }
+  const spec = fxSpecOf(h.effect);
+  const f = frame();
+  const inner = spec && spec.url
+    ? `<img src="${tokd(spec.url)}" alt="" draggable="false">`
+    : `<span class="sound">🔊</span>`;
+  // the anchor itself, which is what the drag actually moves — an effect whose
+  // animation carries it far from its point would otherwise have nothing on screen
+  // saying what it is pinned TO
+  const dots = (h.points || []).map((pt) =>
+    `<i class="fxdot" style="left:${f.x + pt.cx * f.w}px;top:${f.y + pt.cy * f.h}px"></i>`).join("");
+  box.innerHTML = dots
+    + `<div class="fxghost">${inner}`
+    + `<span class="grip" title="${esc(lab("js.fx.grip"))}"></span>`
+    + (spec && spec.url ? `<span class="spin" title="${esc(lab("js.fx.spin"))}"></span>` : "")
+    + `</div>`;
+  const el = box.querySelector(".fxghost");
+  placeGhost(el, h);
+  bindGhost(el, h);
+}
+
+/** Put the ghost where the render will put the effect — the one function both the
+ *  drawing and the dragging go through, so a drag cannot drift away from what a
+ *  redraw would have shown.
+ *
+ *  SETTLED, not resting: it is drawn the way the effect will look once its animation
+ *  has arrived, offsets and rotation and all. Otherwise an arrow that hangs above what
+ *  it points at is drawn sitting on it, and every arrow in the base gets placed one
+ *  arrow-length too high by an operator doing exactly what the picture told them. */
+function placeGhost(el, h) {
+  const spot = fxSpot(h);
+  if (!el || !spot) return;
+  const f = frame();
+  const k = settledKey(fxSpecOf(h.effect));
+  const w = spot.w * k.scale * f.w, hh = spot.h * k.scale * f.h;
+  // the offset turns with the thing, aim included — the same reading the render uses
+  const off = spun(k.dx, k.dy, (k.rotate || 0) + (h.turn || 0));
+  el.style.left = f.x + spot.cx * f.w + off.x * w - w / 2 + "px";
+  el.style.top = f.y + spot.cy * f.h + off.y * w - hh / 2 + "px";
+  el.style.width = w + "px";
+  el.style.height = hh + "px";
+  el.style.opacity = Math.max(k.alpha, 0.25);
+  // the animation's own turning plus this card's aim, which is what the render adds
+  // up too (see `effects.aim`)
+  const turn = (k.rotate || 0) + (h.turn || 0);
+  el.style.transform = turn ? `rotate(${turn}deg)` : "";
+}
+
+/** The moment an effect has ARRIVED at: the most solid one, and the latest of those
+ *  when several tie. What an animation is for is getting somewhere, and that is the
+ *  state worth drawing on a card — the ones before it are the arrival. */
+function settledKey(spec) {
+  const keys = (spec && spec.keys) || [];
+  if (!keys.length) return { scale: 1, dx: 0, dy: 0, alpha: 1, rotate: 0 };
+  let best = keys[0];
+  for (const k of keys) if (k.alpha >= best.alpha) best = k;
+  return best;
+}
+
+function bindGhost(el, h) {
+  el.onpointerdown = (e) => {
+    e.stopPropagation();          // the stage would start drawing a crop region
+    e.preventDefault();
+    const grip = e.target.classList.contains("grip");
+    const spin = e.target.classList.contains("spin");
+    const f = frame();
+    const st = $("#stage").getBoundingClientRect();
+    const r0 = el.getBoundingClientRect();
+    const mid = { x: r0.left + r0.width / 2, y: r0.top + r0.height / 2 };
+    const at0 = Math.atan2(e.clientY - mid.y, e.clientX - mid.x);
+    const from = { x: e.clientX - st.left, y: e.clientY - st.top,
+                   pts: (h.points || []).map((p) => ({ ...p })), width: h.width,
+                   turn: h.turn || 0 };
+    const spec = fxSpecOf(h.effect);
+    el.setPointerCapture(e.pointerId);
+    const move = (ev) => {
+      const dx = (ev.clientX - st.left - from.x) / f.w;
+      const dy = (ev.clientY - st.top - from.y) / f.h;
+      if (spin) {
+        // how far the pointer has swung ROUND the centre — the same reading the
+        // effect's own editor uses, so the two gestures are one gesture
+        const now = Math.atan2(ev.clientY - mid.y, ev.clientX - mid.x);
+        let deg = from.turn + (now - at0) * 180 / Math.PI;
+        if (ev.shiftKey) deg = Math.round(deg / 15) * 15;
+        h.turn = +((deg % 360 + 540) % 360 - 180).toFixed(1);
+      } else if (!grip) {
+        // the body moves the whole placement, points and all
+        h.points = from.pts.map((p) => ({ cx: clamp(p.cx + dx, 0, 1),
+                                          cy: clamp(p.cy + dy, 0, 1) }));
+      } else if (from.pts.length >= 2) {
+        // the corner moves the second point: the box is the size
+        const last = from.pts.length - 1;
+        h.points = from.pts.map((p, i) => i === last
+          ? { cx: clamp(p.cx + dx, 0, 1), cy: clamp(p.cy + dy, 0, 1) } : { ...p });
+      } else {
+        // a single point has no box, so the corner is the per-card SIZE — which is
+        // what `CardEffect.width` is for, and the one number this override ever means
+        const base = from.width > 0 ? from.width : (spec ? spec.width : 0.3);
+        h.width = clamp(base + dx * 2, 0.02, 3);
+      }
+      // the ghost is MOVED, not redrawn: a redraw replaces the element the pointer is
+      // captured on and the drag dies after one event, which is what "it barely moves"
+      // was. The dots and the list catch up on release.
+      placeGhost(el, h);
+    };
+    const up = () => {
+      el.removeEventListener("pointermove", move);
+      el.removeEventListener("pointerup", up);
+      drawCardFxGhost();
+      listCardFx();
+    };
+    el.addEventListener("pointermove", move);
+    el.addEventListener("pointerup", up);
+  };
+}
+
+const PLACINGS = ["point", "box", "none"];
+
+function placingOf(h) {
+  const n = ((h && h.points) || []).length;
+  return n === 0 ? "none" : n === 1 ? "point" : "box";
+}
+
+function listCardFx() {
+  const base = (fxAll || []).filter((e) => e.usable && !e.retired);
+  if (!base.length) {
+    $("#card-fx").innerHTML = `<li class="dimrow">${lab("js.fx.nobase")}</li>`;
+    $("#card-fx-add").disabled = true;
+    drawCardFxGhost();
+    return;
+  }
+  $("#card-fx-add").disabled = false;
+  $("#card-fx").innerHTML = cardFx.map((h, i) => {
+    const spec = fxSpecOf(h.effect);
+    const kind = spec ? spec.anchor : "point";
+    const now = placingOf(h);
+    return `
+    <li data-i="${i}" class="${i === cardFxSel ? "sel" : ""}">
+      <div class="row">
+        <select data-f="effect">${base.map((e) =>
+          `<option value="${esc(e.name)}"${e.name === h.effect ? " selected" : ""}>${esc(e.name)}</option>`).join("")}</select>
+        <button data-del="${i}" class="ghost">×</button>
+      </div>
+      <div class="row">
+        <input data-f="label" value="${esc(h.label || "")}" placeholder="${lab("js.fx.means")}">
+      </div>
+      ${kind === "point" ? `<div class="row chips small">
+        ${PLACINGS.map((k) => `<button data-place="${k}" class="${k === now ? "on" : ""}"
+            >${esc(lab("js.fx.placing." + k))}</button>`).join("")}
+        <span class="grow"></span>
+        <label class="inline turn">${esc(lab("js.fx.turn"))}
+          <input data-f="turn" type="number" step="15" min="-180" max="180"
+                 value="${+(h.turn || 0).toFixed(1)}"></label>
+      </div>
+      <p class="dim">${esc(lab("js.fx.placing.hint." + now))} ${
+        esc(lab("js.fx.turn.hint"))}</p>` : `<p class="dim">${esc(lab("fx.anchor." + kind, kind))} — ${
+        esc(lab("js.fx.placing.hint.frame"))}</p>`}
+    </li>`;
+  }).join("") || `<li class="dimrow">${lab("js.fx.nohooks")}</li>`;
+  $("#card-fx").querySelectorAll("li[data-i]").forEach((li) => {
+    const i = +li.dataset.i;
+    li.onclick = (e) => {
+      if (e.target.closest("button") || e.target.closest("select")
+          || e.target.tagName === "INPUT") return;
+      cardFxSel = cardFxSel === i ? -1 : i;
+      listCardFx();
+    };
+    li.querySelectorAll("[data-f]").forEach((el) => {
+      el.onchange = () => {
+        cardFx[i][el.dataset.f] = el.dataset.f === "turn" ? +el.value : el.value;
+        cardFxSel = i;
+        listCardFx();
+      };
+      if (el.tagName === "INPUT" && el.dataset.f === "label")
+        el.oninput = () => (cardFx[i].label = el.value);
+    });
+    li.querySelectorAll("[data-place]").forEach((b) => {
+      b.onclick = (e) => {
+        e.stopPropagation();
+        const h = cardFx[i];
+        h.points = FX_PLACINGS[b.dataset.place](h);
+        cardFxSel = i;
+        listCardFx();
+      };
+    });
+    li.querySelector("[data-del]").onclick = (e) => {
+      e.stopPropagation();
+      cardFx.splice(i, 1);
+      if (cardFxSel >= cardFx.length) cardFxSel = -1;
+      listCardFx();
+    };
+  });
+  drawCardFxGhost();
+}
+
+$("#card-fx-add").onclick = () => {
+  const base = (fxAll || []).filter((e) => e.usable && !e.retired);
+  if (!base.length) return;
+  const spec = base[0];
+  // it arrives PLACED, in the middle of the picture, because the commonest next thing
+  // to do is drag it onto something — and a hook with nothing on the stage reads as a
+  // control that did nothing
+  cardFx.push({ effect: spec.name, label: "", width: 0, turn: 0,
+                points: spec.anchor === "point" ? [{ cx: 0.5, cy: 0.5 }] : [] });
+  cardFxSel = cardFx.length - 1;
+  listCardFx();
+};
 
 // drag a new region
 let dragFrom = null;
@@ -1676,6 +2699,7 @@ $("#save").onclick = async () => {
   const body = {
     description: $("#ed-descr").value, prompt: $("#ed-prompt").value,
     note: $("#ed-note").value, retired: $("#ed-retired").checked, targets,
+    effects: cardFx.filter((h) => h.effect),
     // the fit travels with the regions, and it has to: they are fractions OF the
     // frame the fit decides, so one saved without the other is a region on a frame
     // that is no longer there
@@ -2680,6 +3704,7 @@ function fandomBody(form) {
       dry_run: f.get("dry_run") === "on",
       frame_fit: f.get("frame_fit"), cut_sensitivity: +f.get("cut_sensitivity"),
       frame_by_hand: f.get("frame_by_hand") === "on",
+      frame_effects: f.get("frame_effects") === "on",
     breakpoints: [...chosenBps.fandom],
     ...commonOf(form),
   };
