@@ -783,6 +783,21 @@ Everything downstream is the machinery user-assisted generation already had, reu
 
 Named connections: `provider` (`deepseek`/`gemini`/`openrouter`/`custom`), `model`, `base_url`, `temperature`, `web_search`. The active one is chosen by `[llm].profile` in `slopgen.toml`. API keys never live in TOML — they are env variables in `.env`; the TUI Configuration → LLM section lets you pick model presets per provider, paste the key (saved to `.env` automatically), toggle web search, activate and delete profiles.
 
+**`temperature` is set for the prose, and the JSON is re-asked cooler.** Every stage but
+one talks to the model in JSON, and above roughly 1.2 a model stops being able to hold
+the envelope its prose travels in — it degenerates mid-sentence and then writes past the
+closing quote, so a perfectly good idea comes back unparseable. Measured on
+`deepseek-chat` at `temperature = 2.0`: 3 in 10 single answers were invalid JSON with a
+short niche brief and 8 in 10 with a long one — which, retried three times, is one failed
+stage in thirty-seven for the short brief and one in two for the long one, the second
+being frequent enough that it reads as "topic generation is broken". So the first try
+uses the temperature you set and a try that comes back unparseable is re-asked at a
+ceiling of 1.2, then 0.7. It is only ever a ceiling: a profile at 0.7 is untouched, and
+heat is taken away only from a model that has just proved it cannot spell JSON at that
+heat, so the answer that reaches the video is the hottest one that actually parsed. Set
+the temperature as high as you like — the deliberately stupid profile is a real use — and
+know that the duds you get there are the model, not a crash.
+
 **Web search** (`web_search = true`): gives the model a real `web_search` tool via standard OpenAI function calling. Before writing the script the model calls it, slopgen runs a keyless DuckDuckGo search and feeds the results back, so the narration is grounded in real, verified facts instead of invented names/events. Works on any provider whose model supports tool use (OpenAI, DeepSeek, OpenRouter, Gemini's compat endpoint); a model without tool calling will simply not use it.
 
 **Prices and the bill.** `price_in`, `price_cached` and `price_out` are what the model costs in USD per million tokens, taken off the provider's price list (cached input is what a prompt-cache hit costs; leave it 0 and a hit is billed like a miss). They are configuration rather than a table shipped with slopgen because prices change and a stale one quietly reports the wrong number. Left at 0, a run still counts every token — it just cannot put money on them. Either way the whole bill goes into the run's `checkpoint.json` as it happens and reads back with:
@@ -1583,6 +1598,21 @@ cp deploy.env.example deploy.env        # SSH_HOST и SSH_USER, больше н�
 ## Профили нейронок (`configs/llm/`)
 
 Именованные подключения: `provider` (`deepseek`/`gemini`/`openrouter`/`custom`), `model`, `base_url`, `temperature`, `web_search`. Активный выбирается через `[llm].profile` в `slopgen.toml`. Ключи API никогда не лежат в TOML — только в `.env`; в TUI (Конфигурация → Профили нейронок) есть пресеты моделей по провайдеру, ввод ключа (сам сохранится в `.env`), тумблер веб-поиска, активация и удаление профилей.
+
+**`temperature` ставится под прозу, а JSON переспрашивается холоднее.** Все стадии, кроме
+одной, разговаривают с моделью в JSON, и примерно выше 1.2 модель перестаёт удерживать
+конверт, в котором едет её же проза: вырождается посреди фразы и дописывает за
+закрывающую кавычку — и совершенно годная идея возвращается неразбираемой. Замерено на
+`deepseek-chat` при `temperature = 2.0`: 3 ответа из 10 были невалидным JSON на коротком
+нишевом брифе и 8 из 10 на длинном, а это при трёх повторах — одна сорванная стадия из
+тридцати семи для короткого и одна из двух для длинного; второе случается достаточно
+часто, чтобы читаться как «генерация темы сломана». Поэтому первая попытка идёт на твоей
+температуре, а попытка, вернувшаяся неразбираемой, переспрашивается с потолком 1.2, затем
+0.7. Это всегда именно потолок: профиль на 0.7 не трогается, а жар снимается только с
+модели, которая только что доказала, что на нём не умеет писать JSON, — так что до ролика
+доезжает самый горячий ответ из тех, что разобрались. Ставь температуру какую хочешь —
+намеренно тупой профиль это честный сценарий использования, — и знай, что пустышки оттуда
+это модель, а не падение.
 
 **Веб-поиск** (`web_search = true`): даёт модели настоящий инструмент `web_search` через стандартный function calling. Перед написанием сценария модель сама его вызывает, слопген выполняет бесключевой поиск DuckDuckGo и возвращает результаты — так озвучка опирается на реальные проверенные факты, а не на выдуманные имена/события. Работает на любом провайдере, чья модель поддерживает tool-use (OpenAI, DeepSeek, OpenRouter, compat-эндпоинт Gemini); модель без tool-calling просто не станет его использовать.
 

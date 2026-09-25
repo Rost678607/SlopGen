@@ -141,10 +141,10 @@ class ChatLLM:
             pass
 
     def _post(self, messages: list[dict], tools: list | None, json_mode: bool = True,
-              kind: str = "", attempt: int = 0) -> dict:
+              kind: str = "", attempt: int = 0, temperature: float | None = None) -> dict:
         body: dict = {
             "model": self.model,
-            "temperature": self.cfg.temperature,
+            "temperature": self.cfg.temperature if temperature is None else temperature,
             "messages": messages,
         }
         if tools:
@@ -166,7 +166,7 @@ class ChatLLM:
         return data["choices"][0]["message"]
 
     def _run_tools(self, messages: list[dict], tools: list, bound: dict | None = None,
-                   kind: str = "", attempt: int = 0) -> str:
+                   kind: str = "", attempt: int = 0, temperature: float | None = None) -> str:
         """Drive the tool-calling loop: let the model call tools until it answers.
 
         `bound` holds this call's own executors (a tool closed over run-specific data,
@@ -174,7 +174,8 @@ class ChatLLM:
         from .tools import TOOL_EXECUTORS
 
         for _ in range(self.MAX_TOOL_ROUNDS):
-            msg = self._post(messages, tools, kind=kind, attempt=attempt)
+            msg = self._post(messages, tools, kind=kind, attempt=attempt,
+                             temperature=temperature)
             calls = msg.get("tool_calls")
             if not calls:
                 return msg.get("content") or ""
@@ -200,7 +201,8 @@ class ChatLLM:
                         result = f"tool '{name}' failed: {e}. Check the arguments and try again."
                 messages.append({"role": "tool", "tool_call_id": call.get("id", ""), "content": str(result)})
         # ran out of rounds — force a final answer without tools
-        return self._post(messages, None, kind=kind, attempt=attempt).get("content") or ""
+        return self._post(messages, None, kind=kind, attempt=attempt,
+                          temperature=temperature).get("content") or ""
 
     def describe_image(self, prompt: str, image: bytes, mime: str = "image/jpeg") -> str:
         """Vision call: send an image + prompt, return the model's plain-text answer.
@@ -239,9 +241,42 @@ class ChatLLM:
                 ).get("content") or ""
             except (httpx.HTTPError, KeyError) as e:
                 last_err = e
-                if i < self.ATTEMPTS - 1 and isinstance(e, httpx.TransportError):
-                    time.sleep(1.5 * (i + 1))
+                # `attempt`, not `i`: this loop counts in `attempt`, and the name it
+                # used to back off on does not exist here — so the one thing the retry
+                # was for, a dropped connection, raised NameError instead of retrying.
+                if attempt < self.ATTEMPTS - 1 and isinstance(e, httpx.TransportError):
+                    time.sleep(1.5 * (attempt + 1))
         raise LLMError(f"LLM call '{kind}' failed: {last_err}")
+
+    # Temperature ceilings for the JSON retries. A profile is set for the PROSE — the
+    # shipped ones sit at 1.2 and an operator who wants the model stupid on purpose
+    # goes higher — and above about 1.2 the model stops being able to hold the
+    # envelope the prose travels in: it degenerates mid-sentence and then writes past
+    # the closing quote, so the answer is unparseable however good the idea in it was.
+    #
+    # Measured on `deepseek-chat`, share of single answers that were invalid JSON:
+    #
+    #                                t=2.0   t=1.2   t=0.7
+    #   short niche brief             3/10    0/10    0/10
+    #   long niche brief              8/10    0/10    0/10
+    #
+    # …which with three tries is one failed stage in 37 for the short brief — rare
+    # enough to look like bad luck — and one in two for the long one. That is the whole
+    # bug: nothing is wrong with either brief, and the retry loop was re-rolling the
+    # same dice three times.
+    #
+    # So the first try is the operator's own setting, and a try that comes back
+    # unparseable is re-asked cooler. It is a CEILING and never a floor: a profile at
+    # 0.7 is untouched, and heat is only ever taken away from a model that has just
+    # proved it cannot spell JSON at that heat. Which keeps the funny profile funny —
+    # the answer that reaches the video is the hottest one that parsed.
+    JSON_TEMPERATURE_CAPS = (None, 1.2, 0.7)
+
+    def _json_temperature(self, i: int) -> float:
+        """The temperature for JSON retry `i`: the profile's, capped (see above)."""
+        own = self.cfg.temperature
+        cap = self.JSON_TEMPERATURE_CAPS[min(i, len(self.JSON_TEMPERATURE_CAPS) - 1)]
+        return own if cap is None else min(own, cap)
 
     def complete_json(
         self,
@@ -282,15 +317,18 @@ class ChatLLM:
         last_err: Exception | None = None
         for i in range(self.ATTEMPTS):
             attempt = attempt + i if i else attempt
+            temp = self._json_temperature(i)
             try:
                 messages = [
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},
                 ]
                 content = (
-                    self._run_tools(messages, schemas, bound, kind=kind, attempt=attempt)
+                    self._run_tools(messages, schemas, bound, kind=kind, attempt=attempt,
+                                    temperature=temp)
                     if schemas
-                    else self._post(messages, None, kind=kind, attempt=attempt).get("content") or ""
+                    else self._post(messages, None, kind=kind, attempt=attempt,
+                                    temperature=temp).get("content") or ""
                 )
                 # some free models wrap JSON in markdown fences despite json mode
                 content = content.strip().removeprefix("```json").removeprefix("```").removesuffix("```")
