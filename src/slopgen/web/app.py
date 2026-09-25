@@ -25,6 +25,7 @@ import shutil
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import quote
 
 from fastapi import Cookie, FastAPI, Form, HTTPException, Request, UploadFile
 from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse, Response,
@@ -54,7 +55,7 @@ from ..config.models import (AccountConfig, AdConfig, CharacterConfig, CropTarge
                              FrameCard, LLMProfile, OrchestrationConfig,
                              OrchestrationConfig, OrchestrationStage, PresetConfig,
                              Rect, VisualsConfig,
-                             VoiceConfig)
+                             VoiceConfig, VoiceSample)
 from ..media.stock import IMAGE_EXTS, VIDEO_EXTS
 from ..pipeline import manual, review
 from ..pipeline.stages.assemble import (
@@ -653,8 +654,10 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
                 for e in TTS_ENGINES.values()
             ],
             # the clones are engine-independent: a card IS the voice, and any engine
-            # that clones can speak with it (see config/README on configs/voices)
-            "cloned": sorted(store.voices),
+            # that clones can speak with it (see config/README on configs/voices).
+            # `card:recording` is in the list too, because auditioning a delivery is
+            # most of what the demo is for once a card holds more than one.
+            "cloned": store.voice_specs(),
             "demo_text": DEMO_TEXT,
         }
 
@@ -745,33 +748,67 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
         guard(slopgen)
         return [_voice_json(v) for v in sorted(store.voices.values(), key=lambda v: v.name)]
 
-    @app.get("/api/voices/{name}/sample")
-    async def voice_sample(name: str, slopgen: str | None = Cookie(default=None)):
-        """The sample itself, so a card can be listened to rather than only read."""
-        guard(slopgen)
+    def card_and_sample(name: str, which: str = ""):
+        """The card, and the one of its recordings the request is about.
+
+        Every route below takes an optional `which`, because a recording is not a
+        lesser kind of thing than the card's own: it is measured, denoised, transcribed
+        and deleted by exactly the same operations (see `config.models.VoiceSample`).
+        One resolver and an argument, rather than a second set of five routes."""
         v = store.voices.get(name)
-        if v is None or v.ref_path is None or not v.ref_path.is_file():
-            raise HTTPException(status_code=404, detail="this card has no sample")
-        return FileResponse(v.ref_path)
+        if v is None:
+            raise HTTPException(status_code=404, detail=f"no voice named {name!r}")
+        sample = v.sample(which)
+        if sample is None:
+            known = ", ".join(v.sample_names) or "none"
+            raise HTTPException(
+                status_code=404,
+                detail=f"'{name}' has no recording called {which!r} (it has: {known})")
+        return v, sample
+
+    def with_file(name: str, which: str = ""):
+        """…and its audio, or a 404. Half the routes cannot do anything without it."""
+        v, sample = card_and_sample(name, which)
+        if sample.ref_path is None or not Path(sample.ref_path).is_file():
+            raise HTTPException(status_code=404, detail="this recording has no sample")
+        return v, sample, Path(sample.ref_path)
+
+    def save_card(v) -> None:
+        # a card with no other recordings is written without the table, rather than with
+        # an empty one: the model fills it back in, and the file stays a file a person
+        # reads (see `cli/voices_cmd._write_card`, which writes it the same way)
+        drop = {"root"} if v.samples else {"root", "samples"}
+        write_config("voices", v.name, v.model_dump(mode="json", exclude=drop))
+
+    @app.get("/api/voices/{name}/sample")
+    async def voice_sample(name: str, which: str = "",
+                           slopgen: str | None = Cookie(default=None)):
+        """The recording itself, so a card can be listened to rather than only read."""
+        guard(slopgen)
+        _, _, path = with_file(name, which)
+        return FileResponse(path)
 
     @app.put("/api/voices/{name}")
-    async def save_voice(name: str, request: Request,
+    async def save_voice(name: str, request: Request, which: str = "",
                          slopgen: str | None = Cookie(default=None)) -> dict:
         """Edit a cloned voice's card — above all its transcript.
 
         `text` is what is said in the sample, typed by hand on purpose: lifting it off
         the audio with a recognizer was tried and the errors do not stay put, the model
-        reconciling a wrong transcript with the audio by drifting (see VoiceConfig).
-        So this field is the one that most wants a comfortable place to edit it."""
+        reconciling a wrong transcript with the audio by drifting (see VoiceSample).
+        So this field is the one that most wants a comfortable place to edit it.
+
+        `which` edits one of the card's other recordings instead. `lang` is not among
+        its fields on purpose: a card is one person speaking one language, and a
+        delivery of theirs cannot be in another."""
         guard(slopgen)
-        v = store.voices.get(name)
-        if v is None:
-            raise HTTPException(status_code=404, detail=f"no voice named {name!r}")
+        v, sample = card_and_sample(name, which)
         b = await request.json()
-        for f in ("text", "ref_url", "lang", "description"):
+        fields = ("text", "ref_url", "description") + (() if which else ("lang",))
+        for f in fields:
             if f in b:
-                setattr(v, f, str(b[f]))
-        write_config("voices", name, v.model_dump(mode="json", exclude={"root"}))
+                setattr(sample, f, str(b[f]))
+        save_card(v)
         return _voice_json(v)
 
     def _report_json(r) -> dict:
@@ -839,9 +876,15 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
     @app.post("/api/voices")
     async def new_voice(file: UploadFile, name: str = Form(...), text: str = Form(""),
                         lang: str = Form("ru"), description: str = Form(""),
-                        clean: bool = Form(False),
+                        clean: bool = Form(False), as_: str = Form("", alias="as"),
                         slopgen: str | None = Cookie(default=None)) -> dict:
         """Take in a new cloned voice: the sample and the card, together.
+
+        `as` puts the recording INTO an existing card instead of making a new one —
+        another take of the same person, kept for the way it is read. That is the only
+        intonation control a cloning engine has: it imitates the delivery of the sample
+        it was shown, so `марта:зло` is Марта recorded while shouting and there is no
+        parameter that would have produced it (see `config.models.VoiceConfig`).
 
         They are written as a pair because they are worthless apart — cloning here is
         zero-shot, so the (sample, transcript) pair IS the voice, and a card whose
@@ -864,6 +907,16 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
         guard(slopgen)
         if not name.strip() or "/" in name:
             raise HTTPException(status_code=422, detail="unusable voice name")
+        which = as_.strip()
+        card = store.voices.get(name)
+        if which:
+            # A colon would make the recording unaddressable: `card:recording` is how a
+            # delivery is named everywhere, so the name cannot contain the separator.
+            if "/" in which or ":" in which:
+                raise HTTPException(status_code=422,
+                                    detail="a recording's name cannot contain / or :")
+            if card is None:
+                raise HTTPException(status_code=404, detail=f"no voice named {name!r}")
         suffix = Path(file.filename or "").suffix.lower()
         if suffix not in SAMPLE_SUFFIXES:
             raise HTTPException(status_code=415, detail=f"{suffix or 'that'} is not audio")
@@ -871,8 +924,11 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
             raise HTTPException(status_code=503, detail="ffmpeg is not on PATH")
         root = Path("configs/voices")
         root.mkdir(parents=True, exist_ok=True)
-        dest = root / f"{name}.wav"
-        raw = root / f"{name}{suffix}.upload"
+        # `марта.wav` for the card itself, `марта.зло.wav` for one of its deliveries —
+        # one folder, and a filename that says which card a recording belongs to
+        stem = f"{name}.{which}" if which else name
+        dest = root / f"{stem}.wav"
+        raw = root / f"{stem}{suffix}.upload"
         with open(raw, "wb") as out:
             shutil.copyfileobj(file.file, out)
         rnnoise = _rnnoise() if clean else None
@@ -895,39 +951,51 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
             ) from e
         finally:
             raw.unlink(missing_ok=True)
-        # A card imported before under another container leaves its sample behind, and
-        # a folder with both `марта.m4a` and `марта.wav` in it is a folder where the
-        # next reader has to guess which one the card means.
-        for old in root.glob(f"{name}.*"):
-            if old != dest and old.suffix.lower() in SAMPLE_SUFFIXES:
+        # A recording imported before under another container leaves its file behind,
+        # and a folder with both `марта.m4a` and `марта.wav` in it is a folder where the
+        # next reader has to guess which one the card means. The STEM has to match
+        # exactly, not merely the glob: `марта.зло.wav` also begins with `марта.`, and
+        # re-importing the card's own sample must not take its deliveries down with it.
+        for old in root.glob(f"{stem}.*"):
+            if old != dest and old.stem == stem and old.suffix.lower() in SAMPLE_SUFFIXES:
                 old.unlink(missing_ok=True)
-        v = VoiceConfig(name=name, ref=dest.name, text=text, lang=lang,
-                        description=description, root=root)
-        write_config("voices", name, v.model_dump(mode="json", exclude={"root"}))
+        if which:
+            card.samples[which] = VoiceSample(ref=dest.name, text=text,
+                                              description=description, root=root)
+            v = card
+        else:
+            # A re-import replaces the card, and the card's OTHER recordings survive it:
+            # they are separate files of the same person, and nothing about replacing
+            # the default take says anything about them.
+            v = VoiceConfig(name=name, ref=dest.name, text=text, lang=lang,
+                            description=description, root=root,
+                            samples=card.samples if card else {})
+        save_card(v)
         store.voices[name] = v
         after = await run_in_threadpool(refs.inspect, dest)
-        return {**_voice_json(v), "before": _report_json(before),
+        return {**_voice_json(v), "added": which, "before": _report_json(before),
                 "report": _report_json(after),
-                "said": await run_in_threadpool(_said_json, name, dest, text, lang)}
+                "said": await run_in_threadpool(_said_json, name, dest, text,
+                                                v.lang or lang)}
 
     @app.post("/api/voices/{name}/check")
-    async def check_voice(name: str, slopgen: str | None = Cookie(default=None)) -> dict:
-        """Measure the sample a card already holds, without changing it.
+    async def check_voice(name: str, which: str = "",
+                          slopgen: str | None = Cookie(default=None)) -> dict:
+        """Measure the recording a card already holds, without changing it.
 
         Worth its own button because the numbers are what the denoiser's are compared
         against, and because a card imported long ago has never been measured at all —
         the checks used to run only in `slopgen voices add`."""
         guard(slopgen)
-        v = store.voices.get(name)
-        if v is None or v.ref_path is None or not Path(v.ref_path).is_file():
-            raise HTTPException(status_code=404, detail="this card has no sample")
-        path = Path(v.ref_path)
+        v, sample, path = with_file(name, which)
         return {"report": _report_json(await run_in_threadpool(refs.inspect, path)),
-                "said": await run_in_threadpool(_said_json, name, path, v.text, v.lang)}
+                "said": await run_in_threadpool(_said_json, name, path, sample.text,
+                                                v.lang)}
 
     @app.post("/api/voices/{name}/clean")
-    async def clean_voice(name: str, slopgen: str | None = Cookie(default=None)) -> dict:
-        """Run RNNoise over the sample this card already holds, in place.
+    async def clean_voice(name: str, which: str = "",
+                          slopgen: str | None = Cookie(default=None)) -> dict:
+        """Run RNNoise over a recording this card already holds, in place.
 
         This is the terminal's "import + denoise" pointed at a card instead of at a
         file on disk, and it is the common case: the recording is already in the
@@ -940,12 +1008,9 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
         page says so rather than blocking it — an operator who wants another pass on a
         bad phone recording is not making a mistake."""
         guard(slopgen)
-        v = store.voices.get(name)
-        if v is None or v.ref_path is None or not Path(v.ref_path).is_file():
-            raise HTTPException(status_code=404, detail="this card has no sample")
+        v, sample, path = with_file(name, which)
         if not refs.have_ffmpeg():
             raise HTTPException(status_code=503, detail="ffmpeg is not on PATH")
-        path = Path(v.ref_path)
         rnnoise = _rnnoise()
         before = await run_in_threadpool(refs.inspect, path)
         # Via a temporary file: the source IS the destination here, and ffmpeg reading
@@ -963,16 +1028,32 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
             raise HTTPException(status_code=422,
                                 detail="ffmpeg could not clean this sample") from e
         after = await run_in_threadpool(refs.inspect, path)
-        return {**_voice_json(v), "before": _report_json(before),
+        return {**_voice_json(v), "which": which, "before": _report_json(before),
                 "report": _report_json(after),
-                "said": await run_in_threadpool(_said_json, name, path, v.text, v.lang)}
+                "said": await run_in_threadpool(_said_json, name, path, sample.text,
+                                                v.lang)}
 
     @app.delete("/api/voices/{name}")
-    async def remove_voice(name: str, slopgen: str | None = Cookie(default=None)) -> dict:
+    async def remove_voice(name: str, which: str = "",
+                           slopgen: str | None = Cookie(default=None)) -> dict:
+        """Delete a card and every recording in it — or, with `which`, one recording.
+
+        Deleting a delivery leaves the card standing, so this is also the way back out
+        of a take that turned out to clone as a different person."""
         guard(slopgen)
+        if which:
+            v, sample = card_and_sample(name, which)
+            if sample.ref_path and Path(sample.ref_path).is_file():
+                Path(sample.ref_path).unlink()
+            v.samples.pop(which, None)
+            save_card(v)
+            return {"deleted": True, "voice": _voice_json(v)}
         v = store.voices.pop(name, None)
-        if v is not None and v.ref_path and v.ref_path.is_file():
-            v.ref_path.unlink()
+        # the card's own sample and all of its deliveries: separate files, one person,
+        # and none of them is worth anything once the card naming them is gone
+        for s in ([v, *v.samples.values()] if v is not None else []):
+            if s.ref_path and Path(s.ref_path).is_file():
+                Path(s.ref_path).unlink()
         return {"deleted": delete_config("voices", name)}
 
     @app.get("/api/orchestrations")
@@ -2226,12 +2307,28 @@ KEY_VARS = [
 
 
 def _voice_json(v) -> dict:
-    p = v.ref_path
-    return {"name": v.name, "text": v.text, "lang": v.lang, "ref": v.ref,
-            "ref_url": v.ref_url, "description": v.description,
+    """A card as the voices screen reads it: the default recording's fields at the top
+    level, where they have always been, plus the card's other deliveries beside them.
+
+    Flattened rather than nested so that a page written before recordings existed keeps
+    working unchanged — `text` on a card still means what the card itself says."""
+    return {**_sample_json(v, v.name, ""), "name": v.name, "lang": v.lang,
+            "samples": [_sample_json(s, v.name, which) for which, s in v.samples.items()]}
+
+
+def _sample_json(s, card: str, which: str) -> dict:
+    """One recording: what it says, whether its file is there, and where to hear it.
+
+    `spec` is the important one — it is the name this recording answers to everywhere a
+    voice is named, from `--voice` to a line pinned at the montage screen."""
+    p = s.ref_path
+    url = f"/api/voices/{quote(card)}/sample"
+    return {"which": which, "spec": f"{card}:{which}" if which else card,
+            "text": s.text, "ref": s.ref, "ref_url": s.ref_url,
+            "description": s.description,
             "has_sample": bool(p and p.is_file()),
             "seconds": _audio_seconds(p) if p and p.is_file() else 0.0,
-            "url": f"/api/voices/{v.name}/sample"}
+            "url": url + (f"?which={quote(which)}" if which else "")}
 
 
 def _audio_seconds(path: Path) -> float:

@@ -255,6 +255,18 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404, card_json) -> None
         out["stages"] = montage.stages(job, cp.params,
                                        montage.completed(job, cp.completed(i)))
         out["cut"] = bool(job.final_paths)
+        # Every cloned voice a LINE can be pinned to: each card, and `card:recording`
+        # for its other deliveries (see `ConfigStore.voice_specs`). The picker on a line
+        # offers these, so what it offers is exactly what `--voice` accepts.
+        #
+        # Empty on an engine that cannot clone, which takes the picker off the line
+        # entirely — and that is the honest answer rather than a hidden control. A
+        # catalogue engine would be handed `марта:зло` as a voice NAME and fail with
+        # "Invalid voice", and the delivery it names does not exist there in any form:
+        # picking a recording is the intonation control of cloning specifically.
+        engine = cp.params.tts_engine or store.global_cfg.tts.engine or "edge"
+        info = TTS_ENGINES.get(engine)
+        out["voices"] = store.voice_specs() if (info is None or info.clones) else []
         out["world"] = run.params.fandom if world is not None else ""
         out["cards"] = [card_json(run.params.fandom, c)
                         for c in (world.frames if world else []) if c.usable]
@@ -359,10 +371,14 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404, card_json) -> None
             raise HTTPException(status_code=409,
                                 detail="there is nothing written on this line to say")
         rate = b.get("rate")
+        # `voice` absent leaves the line on whatever it uses; present-and-empty is the
+        # operator choosing «как во всём ролике», which is a change and not a no-op.
+        spec = b.get("voice")
         try:
             await run_in_threadpool(
                 montage.voice, job, context(cp), line,
-                int(rate) if rate is not None and str(rate) != "" else None)
+                int(rate) if rate is not None and str(rate) != "" else None,
+                None if spec is None else str(spec))
         except Exception as e:
             log.exception("re-voicing line %d failed", line)
             raise HTTPException(status_code=502, detail=f"{type(e).__name__}: {e}")

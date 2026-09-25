@@ -23,6 +23,7 @@ from .models import (
     ShapesConfig,
     VisualsConfig,
     VoiceConfig,
+    VoiceSample,
 )
 
 CONFIGS_DIR = Path("configs")
@@ -329,13 +330,22 @@ class ConfigStore:
         self.visuals: dict[str, VisualsConfig] = _load_dir("visuals", VisualsConfig)
         self.llm_profiles: dict[str, LLMProfile] = _load_dir("llm", LLMProfile)
         self.characters: dict[str, CharacterConfig] = _load_dir("characters", CharacterConfig)
-        # cloned voices: the card and its audio sample live side by side, so each one
-        # is told where it was loaded from and resolves `ref` against that folder.
+        # cloned voices: the card and its audio samples live side by side, so each one
+        # is told where it was loaded from and resolves `ref` against that folder. Each
+        # of the card's extra recordings too — they are the same kind of thing in the
+        # same folder, and a sample that cannot find its file clones nothing.
         self.voices: dict[str, VoiceConfig] = _load_dir("voices", VoiceConfig)
         for v in self.voices.values():
             v.root = CONFIGS_DIR / "voices"
+            for s in v.samples.values():
+                s.root = v.root
         self.orchestrations: dict[str, OrchestrationConfig] = _load_dir("orchestration", OrchestrationConfig)
         self.shapes: dict[str, ShapesConfig] = _load_dir("shapes", ShapesConfig)
+        # the effects base: arrows, circles, stings. Like a cloned voice, each entry
+        # is told where it was loaded from, because its material lies beside it.
+        self.effects: dict[str, EffectSpec] = _load_dir(EFFECTS_DIR, EffectSpec)
+        for e in self.effects.values():
+            e.root = CONFIGS_DIR / EFFECTS_DIR
         self.fandoms: dict[str, FandomConfig] = _load_fandoms()
 
     def active_llm_profile(self) -> LLMProfile:
@@ -360,6 +370,53 @@ class ConfigStore:
         for ct in self.content_types.values():
             langs.update(ct.voices.keys())
         return sorted(langs)
+
+    # -- cloned voices: cards and their recordings, in one namespace -------
+
+    def voice_sample(self, spec: str) -> tuple[VoiceConfig, VoiceSample, str] | None:
+        """Resolve a voice name into (card, recording, recording's name), or None when
+        no card of that name exists — which is what makes a name a catalogue voice.
+
+        `марта` is the card's default recording; `марта:зло` is one of its others. The
+        colon is read as a separator only when what stands before it IS a card, because
+        a catalogue name can contain one of its own —
+        `ru-RU-Svetlana:DragonHDOmniLatestNeural` is a single voice and not a recording
+        of a card called `ru-RU-Svetlana`. A card whose own name contains a colon
+        therefore wins over the split, which is the same rule said once more.
+
+        Raises when the card exists and the recording does not. Falling back to the
+        default delivery there would be worse than failing: the run would finish, the
+        operator would have asked forty lines to be whispered, and every one of them
+        would come out announced."""
+        if not spec:
+            return None
+        card = self.voices.get(spec)
+        if card is not None:
+            return card, card, ""
+        base, _, which = spec.rpartition(":")
+        card = self.voices.get(base) if which else None
+        if card is None:
+            return None
+        sample = card.sample(which)
+        if sample is None:
+            known = ", ".join(card.sample_names) or "none but the default one"
+            raise ConfigError(
+                f"voice '{base}' has no recording called '{which}' — it has {known}. "
+                f"Add one: `slopgen voices record {base} <sample.wav> --as {which} "
+                "--text \u2026`"
+            )
+        return card, sample, which
+
+    def voice_specs(self) -> list[str]:
+        """Every cloned voice a run can be pointed at: each card, and `card:recording`
+        for each of its other deliveries. One flat list on purpose — a picker offering
+        these offers exactly what `--voice` accepts, and the two kinds are resolved
+        from the one namespace."""
+        out: list[str] = []
+        for name in sorted(self.voices):
+            out.append(name)
+            out.extend(f"{name}:{s}" for s in self.voices[name].sample_names)
+        return out
 
     # -- parameter resolution: CLI > preset > account defaults > global ----
 

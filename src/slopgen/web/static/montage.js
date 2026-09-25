@@ -331,7 +331,10 @@ function lineHTML(sc) {
       // the run's own rate is pinned to it all the same, and "· 0%" on every line is
       // a column of noise saying nothing
       rateOf(sc) !== (MONT.doc.rate || 0)
-        ? ` · ${rateOf(sc) > 0 ? "+" : ""}${rateOf(sc)}%` : ""}</div>
+        ? ` · ${rateOf(sc) > 0 ? "+" : ""}${rateOf(sc)}%` : ""}${
+      // …and the delivery, on the same terms: shown only where this line is pinned to
+      // a recording of its own, because that is the only case where it is news
+      sc.voice ? ` · ${esc(sc.voice)}` : ""}</div>
     <div class="words">${words}</div>
   </div>`;
 }
@@ -872,6 +875,24 @@ function bindShotInspector() {
 const rateOf = (sc) =>
   (sc.rate === null || sc.rate === undefined ? (MONT.doc.rate || 0) : sc.rate);
 
+// Which recording of the voice says this line. Blank is "whatever the run says with",
+// and it is the honest default: a line is not pinned until somebody pins it, and the
+// picker must not make the whole video's delivery look like a per-line choice.
+//
+// The list is every cloned voice there is, cards and their deliveries alike
+// (`ConfigStore.voice_specs`), because that is one namespace — so a line can be moved
+// to another recording of the same person, which is what this is for, and to another
+// person entirely, which drama will eventually want.
+function deliveryPicker(sc) {
+  const specs = MONT.doc.voices || [];
+  if (!specs.length) return "";
+  const opt = (v, t) =>
+    `<option value="${esc(v)}"${v === (sc.voice || "") ? " selected" : ""}>${esc(t)}</option>`;
+  return `<label class="inline">${lab("js.mont.delivery")}
+      <select id="i-voice">${opt("", lab("js.mont.asrun"))}${
+        specs.map((v) => opt(v, v)).join("")}</select></label>`;
+}
+
 function lineInspector() {
   const sc = MONT.doc.scenes[montSel.i];
   if (!sc) return `<p class="dim">${lab("js.mont.pickone")}</p>`;
@@ -892,7 +913,8 @@ function lineInspector() {
     <label class="inline">${lab("web.f.rate")}
       <input type="range" id="i-rate" min="-50" max="50" step="5" value="${rateOf(sc)}">
       <span class="dose" id="i-rate-v">${rateOf(sc)}</span></label>
-    <button class="primary" id="i-voice">${lab("js.mont.revoice")}</button>
+    ${deliveryPicker(sc)}
+    <button class="primary" id="i-say">${lab("js.mont.revoice")}</button>
   </div>
   <div class="take" id="i-take-voice"><span class="say">${lab("js.mont.ownvoice")}</span>
     <input type="file" hidden accept="audio/*"></div>`;
@@ -933,13 +955,18 @@ function bindLineInspector() {
     await commitText(i);
     say(lab("js.mont.textsaved"));
   };
-  mq("#i-voice").onclick = async (e) => {
+  mq("#i-say").onclick = async (e) => {
     e.target.disabled = true;
     await commitText(i);              // say what is written, not what was written
     say(lab("js.mont.voicing"));
-    await send("/voice", { method: "POST", body: J({ scene: i, rate: +rate.value }) },
+    // the delivery travels with the request and is PINNED by it, exactly as the speed
+    // is: both are properties of the take being made (see `stages.tts.resynth_one`)
+    const pick = mq("#i-voice");
+    const body = { scene: i, rate: +rate.value };
+    if (pick) body.voice = pick.value;
+    await send("/voice", { method: "POST", body: J(body) },
                () => { reloadVoice(); say(lab("js.mont.voiced")); });
-    const back = mq("#i-voice");
+    const back = mq("#i-say");
     if (back) back.disabled = false;
   };
   // A new line arrives silent and is selected straight away, because the only reason

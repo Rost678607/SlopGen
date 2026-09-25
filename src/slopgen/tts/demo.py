@@ -39,14 +39,17 @@ ATTEMPTS = 3
 
 def voice_for(store, name: str, lang: str) -> Voice:
     """A menu entry turned into something an engine can speak with, by the SAME rule
-    the pipeline uses (`pipeline/stages/tts._resolve_voice`)."""
-    card = store.voices.get(name)
-    if card is None:
+    the pipeline uses (`pipeline/stages/tts._resolve_voice`) — which includes
+    `марта:зло`, one of the card's other deliveries. Auditioning those is most of what
+    the demo is for once a card holds more than one recording."""
+    found = store.voice_sample(name)
+    if found is None:
         return Voice(name=name, lang=lang)
-    ref = card.ref_path
+    card, sample, _which = found
+    ref = sample.ref_path
     return Voice(name=name, lang=card.lang or lang,
                  ref_audio=Path(ref) if ref else None,
-                 ref_text=card.text, ref_url=card.ref_url)
+                 ref_text=sample.text, ref_url=sample.ref_url)
 
 
 def clipper(store, lang: str):

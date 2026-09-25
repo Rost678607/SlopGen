@@ -445,6 +445,15 @@ button:disabled:hover{border-color:var(--line)}
 .panel .grid label.inline{grid-column:1 / -1}
 .panel label.inline input:not([type=checkbox]){width:auto;flex:0 0 auto}
 .panel .grid label.wide{grid-column:1 / -1}
+/* A card's other recordings, inside the card. They are the same kind of thing as its
+   own sample — same buttons, same fields — so they get the same panel, indented and a
+   shade quieter rather than restyled: what says they are subordinate is the position,
+   not a different look. The block holding them is set off by a rule above it, because
+   without one the first delivery reads as another field of the card. */
+.recs{display:grid;gap:10px;border-top:1px solid var(--line);padding-top:12px}
+.panel .panel.sub{margin-bottom:0;margin-left:14px;padding:10px 12px;
+  background:transparent;gap:10px}
+
 /* a line of controls: they sit together, they wrap rather than overflow, and a select
    in one is sized by its content instead of eating the row */
 .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}

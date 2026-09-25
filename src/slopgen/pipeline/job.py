@@ -130,6 +130,14 @@ class Scene(BaseModel):
     # when the operator re-voices a fragment at another speed from the TTS breakpoint,
     # so a later re-run of the stage reproduces that take instead of the run's.
     tts_rate: int | None = None
+    # WHO says this ONE line, as a voice spec ("" = the run's voice). Its reason for
+    # existing is intonation: a cloning engine copies the delivery of the sample it was
+    # shown, so a line that has to be shouted is voiced with another recording of the
+    # same person shouting — `марта:зло` (see `config.models.VoiceConfig.samples`). A
+    # spec and not a resolved voice, for the same reason `tts_rate` is a number and not
+    # an audio file: it is the operator's CHOICE, and the stage's re-run must be able
+    # to reproduce the take from it.
+    voice: str = ""
     audio_tempo: float = 1.0  # atempo factor applied so the voice fits the clip
     video_tempo: float = 1.0  # setpts factor applied to the clip for the same reason
     part: int = 1  # drama: output part number; cuts happen after the last scene in a part

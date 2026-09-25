@@ -176,6 +176,10 @@ def read(job: VideoJob, params) -> dict:
             # the speed THIS line was voiced at, when it is not the run's (see
             # `Scene.tts_rate`); null means it follows the run
             "rate": scene.tts_rate,
+            # …and which recording of the voice said it, when it is not the run's
+            # (`Scene.voice`): on a cloning engine that IS the intonation. "" follows
+            # the run, which is what every line does until one is pinned.
+            "voice": scene.voice,
             "part": scene.part,
             "words": [
                 {"t": w.text, "start": m["at"],
@@ -413,9 +417,14 @@ def _rebind(job: VideoJob, index: int, fractions: dict[int, float]) -> None:
     retime(job)
 
 
-def voice(job: VideoJob, ctx: AppContext, index: int, rate: int | None = None) -> float:
+def voice(job: VideoJob, ctx: AppContext, index: int, rate: int | None = None,
+          with_voice: str | None = None) -> float:
     """Say this line again, now, at `rate` percent (None = whatever it already uses).
 
+    `with_voice` says WHO says it — a voice spec, which on a cloning engine is the same
+    question as HOW: `марта:зло` is another recording of the same person, and the model
+    copies the delivery it was shown (see `config.models.VoiceConfig`). `""` puts the
+    line back on the run's voice, None leaves it where it is.
     The clock moves under everything after it, which is why `retime` follows: the cuts
     themselves are not re-decided — they were placed on words and those words are
     still the same words — they are re-measured (see `framebase.reanchor`)."""
@@ -424,7 +433,7 @@ def voice(job: VideoJob, ctx: AppContext, index: int, rate: int | None = None) -
     if not job.scenes[index].text.strip():
         raise ValueError("there is nothing written on this line to say")
     before = _anchor_fractions(job, index)
-    seconds = tts_stage.resynth_one(job, ctx, index, rate=rate)
+    seconds = tts_stage.resynth_one(job, ctx, index, rate=rate, voice=with_voice)
     job.scenes[index].duration = seconds
     _rebind(job, index, before)
     return seconds

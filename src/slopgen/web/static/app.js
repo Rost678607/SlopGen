@@ -542,60 +542,136 @@ function reportHTML(d) {
   return `<div class="report">${rows.join("")}</div>`;
 }
 
-async function loadVoices() {
-  const vs = await api("/api/voices");
-  $("#voices").innerHTML = vs.map((v) => `
-    <div class="panel cfg-item" data-voice="${esc(v.name)}">
-      <div class="row"><b>${esc(v.name)}</b>
-        <span class="dim">${v.has_sample ? `${v.seconds} c` : lab("js.the-sample-is-gone")} · ${esc(v.lang)}</span>
+// One recording, drawn: its head of buttons, and its body of fields. The card's own
+// sample and each of the card's other deliveries go through the same two functions,
+// because they are the same kind of thing — measured, denoised and transcribed alike
+// (see `config.models.VoiceSample`). Only two fields differ: `lang` belongs to the
+// card, because a person does not speak one language angrily and another calmly.
+const sampleHead = (title, s, extra = "") => `
+      <div class="row"><b>${esc(title)}</b>
+        <span class="dim">${s.has_sample ? `${s.seconds} c` : lab("js.the-sample-is-gone")}${extra}</span>
         <span class="grow"></span>
         <button data-check class="ghost">${lab("js.check")}</button>
         <button data-clean class="ghost">${lab("js.denoise")}</button>
         <button data-save class="primary">${lab("js.save")}</button>
-        <button data-del class="ghost">${lab("js.delete")}</button></div>
+        <button data-del class="ghost">${lab("js.delete")}</button></div>`;
+
+const sampleBody = (v, s) => `
       <div data-report></div>
-      ${v.has_sample ? `<audio controls preload="none" src="${tokd(v.url)}"></audio>` : ""}
-      <label>${lab("js.what-the-sample-says-word-for-word")}
-        <textarea data-f="text" rows="2">${esc(v.text)}</textarea></label>
+      ${s.has_sample ? `<audio controls preload="none" src="${tokd(s.url)}"></audio>` : ""}
+      <label>${lab(s.which ? "js.v.rectext" : "js.what-the-sample-says-word-for-word")}
+        <textarea data-f="text" rows="2">${esc(s.text)}</textarea></label>
       <div class="grid">
-        <label>${lab("js.language")}<input data-f="lang" value="${esc(v.lang)}"></label>
-        <label>${lab("js.sample-url-for-cloud-engines")}<input data-f="ref_url" value="${esc(v.ref_url)}"></label>
-      </div>
+        ${s.which ? "" : `<label>${lab("js.language")}<input data-f="lang" value="${esc(v.lang)}"></label>`}
+        <label>${lab("js.sample-url-for-cloud-engines")}<input data-f="ref_url" value="${esc(s.ref_url)}"></label>
+      </div>`;
+
+// …and the card's other recordings, which are the only intonation control a cloning
+// engine has: it imitates the reading of the sample it was shown, so an angry line is
+// an angry TAKE of the same person and not a parameter. `марта:зло` is what a run or a
+// single line is then pinned to.
+const deliveries = (v) => `
+      <div class="recs">
+        <div class="row"><b>${lab("js.v.deliveries")}</b>
+          <span class="dim">${lab("js.v.recnote")}</span></div>
+        ${v.samples.map((s) => `
+          <div class="panel sub" data-rec="${esc(s.which)}">
+            ${sampleHead(s.spec, s)}
+            ${sampleBody(v, s)}
+          </div>`).join("") || `<p class="dim">${lab("js.v.none")}</p>`}
+        <form data-recnew class="grid">
+          <label>${lab("js.v.recname")}<input name="as" required placeholder="зло"></label>
+          <label class="wide">${lab("js.v.rectext")}
+            <textarea name="text" rows="2"></textarea></label>
+          <label class="wide">${lab("web.f.sample")}
+            <input type="file" name="file" accept="audio/*" required></label>
+          <label class="inline wide"><input type="checkbox" name="clean" value="true">
+            <span>${lab("web.f.denoise")}</span></label>
+          <div class="row"><span class="grow"></span>
+            <button class="primary">${lab("js.v.addrec")}</button></div>
+        </form>
+      </div>`;
+
+async function loadVoices() {
+  const vs = await api("/api/voices");
+  $("#voices").innerHTML = vs.map((v) => `
+    <div class="panel cfg-item" data-voice="${esc(v.name)}">
+      ${sampleHead(v.name, v, ` · ${esc(v.lang)}`)}
+      ${sampleBody(v, v)}
+      ${deliveries(v)}
     </div>`).join("") || `<p class="empty">${lab("js.no-voices-yet")}</p>`;
   $("#voices").querySelectorAll("[data-voice]").forEach((el) => {
     const name = el.dataset.voice;
-    el.querySelector("[data-save]").onclick = async () => {
-      const body = {};
-      el.querySelectorAll("[data-f]").forEach((i) => (body[i.dataset.f] = i.value));
-      await api(`/api/voices/${encodeURIComponent(name)}`, { method: "PUT",
-        headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-      say(`${name} ${lab("js.saved")}`);
-    };
-    el.querySelector("[data-del]").onclick = async () => {
-      await api(`/api/voices/${encodeURIComponent(name)}`, { method: "DELETE" });
-      say(`${name} ${lab("js.deleted")}`);
-      loadVoices();
-    };
-    // Measuring and denoising are two buttons rather than one, and denoising is not
-    // something the card does to itself: it CHANGES the recording, in place, and
-    // RNNoise is not idempotent — pressing it twice keeps eating at what is left.
-    const work = async (btn, what, url) => {
-      const box = el.querySelector("[data-report]");
+    bindSample(el, name, "");
+    el.querySelectorAll("[data-rec]").forEach((r) => bindSample(r, name, r.dataset.rec));
+    el.querySelector("[data-recnew]").onsubmit = async (e) => {
+      e.preventDefault();
+      const btn = e.target.querySelector("button");
       btn.disabled = true;
-      box.innerHTML = `<div class="dim">${what}</div>`;
       try {
-        const r = await api(url, { method: "POST" });
-        box.innerHTML = reportHTML(r);
-        if (r.before) say(`${name} — ${lab("js.cleaned")}`);
-      } catch (err) { box.innerHTML = ""; say(err.message, true); }
+        // the card is named by the row this form sits in, not by a field in it
+        const fd = new FormData(e.target);
+        fd.append("name", name);
+        const r = await api("/api/voices", { method: "POST", body: fd });
+        say(lab("js.v.recadded"));
+        await loadVoices();
+        showReport(name, r.added, r);
+      } catch (err) { say(err.message, true); }
       finally { btn.disabled = false; }
     };
-    const at = (verb) => `/api/voices/${encodeURIComponent(name)}/${verb}`;
-    el.querySelector("[data-check]").onclick = (e) =>
-      work(e.target, lab("js.measuring"), at("check"));
-    el.querySelector("[data-clean]").onclick = (e) =>
-      work(e.target, lab("js.cleaning"), at("clean"));
   });
+}
+
+// Where a freshly imported recording's measurement goes, once the list has been drawn
+// again: onto its own row, and not into a box that is about to be replaced.
+function showReport(name, which, r) {
+  const card = document.querySelector(`#voices [data-voice="${CSS.escape(name)}"]`);
+  if (!card) return;
+  const holder = which
+    ? card.querySelector(`[data-rec="${CSS.escape(which)}"]`)
+    : card;
+  const box = holder && [...holder.querySelectorAll("[data-report]")]
+    .find((b) => b.closest("[data-rec]") === (which ? holder : null));
+  if (box) box.innerHTML = reportHTML(r);
+}
+
+// Bind one recording's four buttons. `el` is the card's panel for its own sample and the
+// nested block for a delivery, and everything is scoped to it: a card's Save must send
+// the card's transcript and not the whispered take's, and both live in the same panel.
+function bindSample(el, name, which) {
+  const q = which ? `?which=${encodeURIComponent(which)}` : "";
+  const at = (verb) => `/api/voices/${encodeURIComponent(name)}/${verb}${q}`;
+  const mine = (sel) => [...el.querySelectorAll(sel)]
+    .filter((i) => i.closest("[data-rec]") === (which ? el : null));
+  const title = which ? `${name}:${which}` : name;
+  mine("[data-save]")[0].onclick = async () => {
+    const body = {};
+    mine("[data-f]").forEach((i) => (body[i.dataset.f] = i.value));
+    await api(`/api/voices/${encodeURIComponent(name)}${q}`, { method: "PUT",
+      headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    say(`${title} ${lab("js.saved")}`);
+  };
+  mine("[data-del]")[0].onclick = async () => {
+    await api(`/api/voices/${encodeURIComponent(name)}${q}`, { method: "DELETE" });
+    say(`${title} ${lab("js.deleted")}`);
+    loadVoices();
+  };
+  // Measuring and denoising are two buttons rather than one, and denoising is not
+  // something the card does to itself: it CHANGES the recording, in place, and
+  // RNNoise is not idempotent — pressing it twice keeps eating at what is left.
+  const box = mine("[data-report]")[0];
+  const work = async (btn, what, url) => {
+    btn.disabled = true;
+    box.innerHTML = `<div class="dim">${what}</div>`;
+    try {
+      const r = await api(url, { method: "POST" });
+      box.innerHTML = reportHTML(r);
+      if (r.before) say(`${title} — ${lab("js.cleaned")}`);
+    } catch (err) { box.innerHTML = ""; say(err.message, true); }
+    finally { btn.disabled = false; }
+  };
+  mine("[data-check]")[0].onclick = (e) => work(e.target, lab("js.measuring"), at("check"));
+  mine("[data-clean]")[0].onclick = (e) => work(e.target, lab("js.cleaning"), at("clean"));
 }
 
 $("#voice-new").onsubmit = async (e) => {
@@ -607,11 +683,7 @@ $("#voice-new").onsubmit = async (e) => {
     e.target.reset();
     say(lab("js.voice-added"));
     await loadVoices();
-    // the card is drawn fresh, so the measurement from the import goes on the new one
-    // rather than into a box that is about to be replaced
-    const box = document.querySelector(
-      `#voices [data-voice="${CSS.escape(r.name)}"] [data-report]`);
-    if (box) box.innerHTML = reportHTML(r);
+    showReport(r.name, "", r);
   } catch (err) { say(err.message, true); }
   finally { btn.disabled = false; }
 };

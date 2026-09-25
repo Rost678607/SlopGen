@@ -23,6 +23,14 @@ An engine with no speed parameter of its own (`native_rate = False`) is stretche
 `atempo` afterwards, which is the same operation the footage stage already performs on
 a drama's voice.
 
+**The delivery is per line too, and for the same reason the speed is.** No cloning
+engine here has a parameter for intonation; what it has is the sample, whose reading
+it imitates. So a card holds several recordings of one person
+(`config.models.VoiceConfig.samples`) and a line can name the one it wants —
+``Scene.voice = "марта:зло"``, resolved at synthesis time and part of the cache key,
+so re-pinning one line re-voices that line and no other. A line that names nothing
+is voiced by the run's voice, which is the whole video's delivery.
+
 **What is spoken is not always what is written.** A few words come out wrong no
 matter how they are spelled in the script — a Cyrillic acronym whose letters form
 a pronounceable syllable gets read as that syllable, so «НЛО» is said "нло"
@@ -54,7 +62,7 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 
 from ...media.ffmpeg import duration_of
-from ...tts import TTSError, Voice, build as build_engine, verify_take
+from ...tts import ENGINES, TTSError, Voice, build as build_engine, verify_take
 from ...tts import align as aligner
 from ..context import AppContext
 from ..job import VideoJob, Word
@@ -91,27 +99,43 @@ def _voice_name(ctx: AppContext, engine: str) -> str:
     return _DEFAULT_VOICES.get(engine, {}).get(ctx.params.lang, "")
 
 
-def _resolve_voice(ctx: AppContext, engine: str) -> Voice:
+def _resolve_voice(ctx: AppContext, engine: str, spec: str = "") -> Voice:
     """Turn a name into either a catalogue voice or a cloning pair.
 
     One namespace on purpose: `--voice марта` and `--voice ru-RU-SvetlanaNeural` are
     the same option, and which kind it is depends only on whether a card of that name
     exists under `configs/voices/`. That keeps the cloned voices usable everywhere a
-    voice name is accepted today, without a second flag to remember."""
+    voice name is accepted today, without a second flag to remember.
+
+    `марта:зло` is the same namespace one level down: one of the card's other
+    recordings, which is how a delivery is chosen (see `config.models.VoiceConfig`).
+    The whole spec travels into `Voice.name`, so the voiced-line cache tells two
+    deliveries of one person apart as readily as it tells two people apart.
+
+    `spec` overrides the run's voice, and is how ONE line comes out in another
+    delivery: it is the spec `Scene.voice` holds. Empty means the run's own."""
     lang = ctx.params.lang
-    name = _voice_name(ctx, engine)
-    card = ctx.store.voices.get(name) if name else None
-    if card is not None:
-        ref = card.ref_path
+    name = spec or _voice_name(ctx, engine)
+    found = ctx.store.voice_sample(name) if name else None
+    if found is not None:
+        card, sample, which = found
+        ref = sample.ref_path
         if ref is None or not Path(ref).exists():
+            what = f"recording '{which}'" if which else "sample"
             raise RuntimeError(
-                f"voice '{name}' points at a sample that is not there "
-                f"({card.ref or '<no ref>'}) — fix configs/voices/{name}.toml"
+                f"voice '{name}' points at a {what} that is not there "
+                f"({sample.ref or '<no ref>'}) — fix configs/voices/{card.name}.toml"
             )
         return Voice(name=name, lang=card.lang or lang, ref_audio=Path(ref),
-                     ref_text=card.text, ref_url=card.ref_url)
-    if not name:
-        known = ", ".join(sorted(ctx.store.voices)) or "none yet"
+                     ref_text=sample.text, ref_url=sample.ref_url)
+    info = ENGINES.get(engine)
+    if not name or (info is not None and not info.catalogue):
+        # Reached with a NAME only when the engine cannot read one: everything it could
+        # have spoken is a card, and this is not a card. Saying so here is the whole
+        # point — the alternative is a cloning model being handed `ru-RU-Svetlana…`
+        # and failing an hour later with whatever a local model says about a sample
+        # it never got.
+        known = ", ".join(ctx.store.voice_specs()) or "none yet"
         raise RuntimeError(
             f"engine '{engine}' has no voice catalogue — it only clones. Pick one of "
             f"your voice cards ({known}) with --voice, or create one: "
@@ -368,12 +392,44 @@ class _Speaker:
         # backing off helps a throttled server and does nothing for a local dice roll
         self.retry_delay = self.id != "qwen-local"
         self.align_dir = None if self.engine.gives_timings else _require_aligner(ctx)
-        if self.engine.clones and self.voice.is_clone and self.align_dir is not None:
-            _check_reference(self.voice, self.engine, self.align_dir,
-                             ctx.g.tts.check_reference)
+        # Resolved voices, by the spec that asked for them; the run's own sits under
+        # the empty spec, which is what a line that names nothing asks for. `_checked`
+        # is keyed by the SAMPLE rather than by the spec, so the same recording reached
+        # two ways — as the run's voice and as `марта` spelled out on a line — is
+        # listened to once.
+        self._voices: dict[str, Voice] = {"": self.voice}
+        self._checked: set[str] = set()
+        self._listen(self.voice)
 
-    def speak(self, spoken: str, path: Path, rate: str) -> list[dict]:
-        words = self.engine.synthesize(spoken, self.voice, rate, path)
+    def voice_for(self, spec: str) -> Voice:
+        """Who says THIS line: the run's voice, or the one the line names.
+
+        A line carries a spec and not a resolved voice (`Scene.voice`), because a spec
+        is the operator's choice and survives everything the card does afterwards — a
+        re-recorded sample or a fixed transcript reaches the lines pinned to it the
+        next time a speaker is built, exactly as it reaches the run's own voice.
+
+        Resolved once per spec and kept for as long as this speaker lives, because
+        resolution is cheap but what follows it is not: a cloning sample is listened to
+        before it is trusted, and doing that per line would be a recognizer pass per
+        line."""
+        if spec not in self._voices:
+            self._voices[spec] = _resolve_voice(self.ctx, self.id, spec)
+            self._listen(self._voices[spec])
+        return self._voices[spec]
+
+    def _listen(self, voice: Voice) -> None:
+        """Check a cloning sample before anything is voiced with it, once per sample."""
+        if not (self.engine.clones and voice.is_clone and self.align_dir is not None):
+            return
+        if voice.cache_key in self._checked:
+            return
+        self._checked.add(voice.cache_key)
+        _check_reference(voice, self.engine, self.align_dir, self.ctx.g.tts.check_reference)
+
+    def speak(self, spoken: str, path: Path, rate: str, voice: Voice | None = None) -> list[dict]:
+        voice = voice or self.voice
+        words = self.engine.synthesize(spoken, voice, rate, path)
         if words is None:
             # A cloning model is shown the reference transcript as an example and does
             # not always stop at the line it was asked for; the recogniser can tell
@@ -382,7 +438,7 @@ class _Speaker:
             if self.engine.clones:
                 words, seconds, matched = aligner.clip_to_script(
                     path, spoken, self.align_dir, duration_of(path))
-                verify_take(self.engine, spoken, self.voice, seconds, matched)
+                verify_take(self.engine, spoken, voice, seconds, matched)
             else:
                 words = aligner.align(path, spoken, self.align_dir, duration_of(path))
         return words
@@ -424,10 +480,15 @@ def _synth_scene(scene, index: int, path: Path, speaker: "_Speaker", rate: str,
     text as WRITTEN, not as respelled for the voice. A cached result (same spoken
     text, engine, voice and rate) is reused unless the caller forbids it; keying the
     cache on the spoken form means editing the pronounce table re-voices exactly the
-    lines it touches, and nothing else."""
+    lines it touches, and nothing else.
+
+    WHO says it is the line's own business too (`Scene.voice`): a line pinned to
+    another recording of the same person is voiced with that one, and since the cache
+    key carries the recording, re-pinning a line re-voices that line alone."""
     table = table or {}
     spoken = _spoken(scene.text, table)
-    voice_key = speaker.voice.cache_key
+    voice = speaker.voice_for(scene.voice)
+    voice_key = voice.cache_key
     raw_words: list[dict] = (
         (_cached_words(path, spoken, voice_key, rate, speaker.id) or []) if use_cache else []
     )
@@ -440,7 +501,7 @@ def _synth_scene(scene, index: int, path: Path, speaker: "_Speaker", rate: str,
                      index, attempt + 1, speaker.attempts, delay)
             time.sleep(delay)
         try:
-            raw_words = speaker.speak(spoken, path, rate)
+            raw_words = speaker.speak(spoken, path, rate, voice)
             # the picture shows the script's spelling, not the crutch fed to the voice
             raw_words = _as_written(raw_words, table)
             if not raw_words:
@@ -467,7 +528,8 @@ def audio_path(job: VideoJob, index: int, suffix: str = ".mp3") -> Path:
     return job.workdir / "tts" / f"scene_{index:02d}{suffix}"
 
 
-def resynth_one(job: VideoJob, ctx: AppContext, index: int, rate: int | None = None) -> float:
+def resynth_one(job: VideoJob, ctx: AppContext, index: int, rate: int | None = None,
+                voice: str | None = None) -> float:
     """Re-voice a single line right now, ignoring the cache, and write the result
     back into the scene. Used by the voiceover breakpoint, where the operator edits
     a line and wants to hear the new take without leaving the screen. Returns the
@@ -479,12 +541,19 @@ def resynth_one(job: VideoJob, ctx: AppContext, index: int, rate: int | None = N
     rest of the video keeps the run's. Pass None to voice it at whatever the line
     already uses.
 
+    `voice` is the same arrangement for WHO says it (``scene.voice``) — which on a
+    cloning engine is how it is said, since another recording of the same person is
+    the only intonation control there is. `""` puts the line back on the run's voice;
+    None leaves whatever it already uses alone.
+
     The sidecar cache is refreshed too, so the stage's own re-run on resume picks
     this take up instead of paying for the same synthesis twice."""
     scene = job.scenes[index]
     speaker = _speaker_for(ctx)
     if rate is not None:
         scene.tts_rate = int(rate)
+    if voice is not None:
+        scene.voice = str(voice)
     rate_pct = _scene_rate(scene, ctx)
     path = audio_path(job, index, speaker.suffix)
     path.parent.mkdir(parents=True, exist_ok=True)

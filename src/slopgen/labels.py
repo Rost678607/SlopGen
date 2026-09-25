@@ -2704,3 +2704,33 @@ EN.update({
     "w.music.roll": "— as it rolls —",
     "web.music.note": "what plays under the voice, out of assets/music/. \"As it rolls\" is a draw seeded on the run itself: the montage room and the finished video land on the same track, so the preview is not lying to you. An entry ending in a slash is a folder: the same draw, over that shelf only. \"— none —\" is silence. The level is one setting for all of it — audio.music_volume in the general settings.",
 })
+
+
+# Intonation on a cloned voice, which is not a parameter but another recording: a card
+# holds several takes of one person, and a line is pinned to the one it should be read
+# with (see `config.models.VoiceConfig.samples`). The UI word is «интонация» rather than
+# "recording", because that is the question an operator is actually asking.
+RU.update({
+    "js.v.deliveries": "интонации",
+    "js.v.recnote": "ещё записи того же человека: модель копирует подачу образца, "
+                    "и другой подачи, кроме записанной, взять негде",
+    "js.v.none": "пока ни одной — карточка говорит одной подачей",
+    "js.v.recname": "как называется: зло, шёпот",
+    "js.v.rectext": "что сказано в ЭТОЙ записи — слово в слово",
+    "js.v.addrec": "добавить интонацию",
+    "js.v.recadded": "интонация добавлена",
+    "js.mont.delivery": "интонация",
+    "js.mont.asrun": "как во всём ролике",
+})
+EN.update({
+    "js.v.deliveries": "deliveries",
+    "js.v.recnote": "more recordings of the same person: the model copies the sample's "
+                    "reading, and there is no delivery to be had that nobody recorded",
+    "js.v.none": "none yet — this card speaks one way",
+    "js.v.recname": "what it is called: angry, whisper",
+    "js.v.rectext": "what THIS recording says — word for word",
+    "js.v.addrec": "add a delivery",
+    "js.v.recadded": "delivery added",
+    "js.mont.delivery": "delivery",
+    "js.mont.asrun": "as the whole video",
+})

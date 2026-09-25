@@ -7514,6 +7514,16 @@ class VoicePane(_DemoMixin, EntityPane):
         data = {"name": name, "ref": self._ref, "text": vals["text"],
                 "lang": vals["lang"] or "ru", "ref_url": vals["url"],
                 "description": vals["description"]}
+        # A card's other recordings — the deliveries a line can be pinned to — are the
+        # web room's to edit, and this form has no field for them. But it rebuilds the
+        # whole file from the fields it does have, so without carrying them across, a
+        # save made here would delete every intonation the card had
+        # (`config.models.VoiceConfig.samples`). Their `ref` names a file literally, so
+        # they keep pointing at their own recordings even when the card is renamed.
+        old = self.app.store.voices.get(name)
+        if old is not None and old.samples:
+            data["samples"] = {k: s.model_dump(mode="json", exclude={"root"})
+                               for k, s in old.samples.items()}
         path = self._config_dir() / f"{name}.toml"
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "wb") as f:

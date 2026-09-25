@@ -528,13 +528,16 @@ class CharacterConfig(BaseModel):
 # --- configs/voices/*.toml ------------------------------------------------
 
 
-class VoiceConfig(BaseModel):
-    """A cloned voice: a sample of somebody speaking, plus what they say in it.
+class VoiceSample(BaseModel):
+    """One recording to clone from, and exactly what is said in it.
 
     Cloning here is zero-shot — there is no training step and no profile living
     inside a model, just a (sample, transcript) pair handed to the synthesizer with
-    every line. That is why this is a config and not an artifact: the card IS the
-    voice, it is portable, and the same card works on any engine that clones.
+    every line. Which means the sample decides the DELIVERY as much as the timbre:
+    the model imitates the reading it was shown. Show it somebody speaking evenly
+    and every line comes out even; show it the same person pressing, and the lines
+    press. There is no parameter for that on any cloning engine here, and that is
+    why a card holds several of these (see :class:`VoiceConfig`).
 
     `text` is typed by a human on purpose. Lifting it off the sample with a
     recognizer was tried and the errors do not stay put — the model reconciles a
@@ -542,17 +545,16 @@ class VoiceConfig(BaseModel):
     spoke words from the SAMPLE in the middle of the synthesized line. Ten seconds
     of typing buys the whole voice.
 
-    The sample lives next to the card (`ref` is relative to configs/voices/) because
-    the two are worthless apart. `slopgen voices add` writes both and refuses the
-    samples known to break cloning — clipped, too short, too noisy."""
+    The recording lives next to the card (`ref` is relative to configs/voices/)
+    because the two are worthless apart. `slopgen voices add` writes both and refuses
+    the samples known to break cloning — clipped, too short, too noisy.
+    """
 
-    name: str
     ref: str = ""  # sample filename, relative to the card's own folder
     text: str = ""  # what is said in the sample, exactly, typed by hand
     # cloud engines enrol a voice from a URL and cannot be handed a local file; fill
-    # this in only if you want THIS card to work in the cloud too (see tts/qwen_api)
+    # this in only if you want THIS sample to work in the cloud too (see tts/qwen_api)
     ref_url: str = ""
-    lang: str = "ru"
     description: str = ""
     root: Path | None = Field(default=None, exclude=True)  # set by the loader
 
@@ -561,6 +563,48 @@ class VoiceConfig(BaseModel):
         if not self.ref:
             return None
         return (self.root / self.ref) if self.root else Path(self.ref)
+
+
+class VoiceConfig(VoiceSample):
+    """A cloned voice: one person, and every recording of them there is.
+
+    The card IS the voice — it is a config and not an artifact, portable, and the
+    same card works on any engine that clones. Its own `ref`/`text` are the default
+    recording, the one a bare ``--voice марта`` speaks with.
+
+    `samples` are the OTHER recordings of the same person, kept for the way they are
+    read rather than for the voice: `марта:зло` is Марта shouting, `марта:шёпот` is
+    Марта barely audible, and both are addressed wherever a voice name is accepted.
+    That is this pipeline's only answer to intonation on a cloning engine, and it is
+    an honest one — an emotion nobody recorded cannot be asked for. Two things are
+    worth knowing before cutting them:
+
+    * They should come out of ONE session, ideally one continuous recording. Timbre
+      travels with the delivery, so a sample recorded closer to the microphone or on
+      another day clones as a slightly different person — and a video that switches
+      between two of those switches narrator mid-sentence.
+    * What is bought is per-LINE control, not per-word: a whole line is spoken in the
+      delivery of the sample it was voiced with. Leaning on one word inside a line is
+      an SSML matter, and SSML belongs to Azure (see `tts/azure.py`).
+    """
+
+    name: str
+    lang: str = "ru"
+    samples: dict[str, VoiceSample] = {}
+
+    def sample(self, which: str = "") -> VoiceSample | None:
+        """The recording named `which`, the default one when nothing is named, and
+        None when this card has no such sample — the caller says what that means."""
+        if not which:
+            return self
+        return self.samples.get(which)
+
+    @property
+    def sample_names(self) -> list[str]:
+        """The extra recordings, in the order they were written into the card. Not
+        sorted: the operator's own order is information — the first one they cut is
+        usually the one the rest are variations on."""
+        return list(self.samples)
 
 
 # How well a card has to fit a stretch of narration before it is spent on it. The
