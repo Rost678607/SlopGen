@@ -1036,6 +1036,11 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
         VoiceSample). So this field is the one that most wants a comfortable place to
         edit it.
 
+        `rename` is the other half of both: a card renamed here takes its recordings,
+        its default pointer and every content type that named it along (what it cannot
+        take is a pin inside a run — see `ConfigStore.rename_voice`), and a delivery
+        renamed here keeps its place in the card's order.
+
         The CARD carries what belongs to the person rather than to any one take: `lang`,
         because a card is one person speaking one language and a delivery of theirs
         cannot be in another — and `default`, which is the one control this whole shape
@@ -1044,13 +1049,29 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
         line pinned to a delivery by name stays where it was put."""
         guard(slopgen)
         b = await request.json()
+        # `rename` is done FIRST and by the store, because it is the one edit that moves
+        # files and rewrites other configs (see `ConfigStore.rename_voice`). The rest of
+        # the body is then applied to the card under its new name, so one Save can
+        # rename a thing and change its fields at once — which is what a form where the
+        # name is a field means by Save.
+        notes: list[str] = []
+        rename = str(b.get("rename", "")).strip()
+        try:
+            if rename and which and rename != which:
+                notes = store.rename_delivery(name, which, rename)
+                which = rename
+            elif rename and not which and rename != name:
+                notes = store.rename_voice(name, rename)
+                name = rename
+        except Exception as e:  # noqa: BLE001 — a taken name, an unusable one, no card
+            raise HTTPException(status_code=422, detail=str(e)) from e
         if which:
             v, sample = card_and_sample(name, which)
             for f in ("text", "ref_url", "description"):
                 if f in b:
                     setattr(sample, f, str(b[f]))
             save_card(v)
-            return _voice_json(v)
+            return {**_voice_json(v), "notes": notes}
         v = store.voices.get(name)
         if v is None:
             raise HTTPException(status_code=404, detail=f"no voice named {name!r}")
@@ -1063,7 +1084,7 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
             except Exception as e:  # noqa: BLE001 — a delivery that is not in the card
                 raise HTTPException(status_code=422, detail=str(e)) from e
         save_card(v)
-        return _voice_json(v)
+        return {**_voice_json(v), "notes": notes}
 
     def _report_json(r) -> dict:
         """A measurement in the shape the page draws it. `-inf` is a real answer here —

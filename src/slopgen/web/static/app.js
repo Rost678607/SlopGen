@@ -573,8 +573,9 @@ const sampleBody = (s) => `
       <label>${lab("js.v.rectext")}
         <textarea data-f="text" rows="2">${esc(s.text)}</textarea></label>
       <div class="grid">
+        <label>${lab("js.v.recname")}<input data-rename value="${esc(s.which)}"></label>
         <label>${lab("js.v.recdescr")}<input data-f="description" value="${esc(s.description)}"></label>
-        <label>${lab("js.sample-url-for-cloud-engines")}<input data-f="ref_url" value="${esc(s.ref_url)}"></label>
+        <label class="wide">${lab("js.sample-url-for-cloud-engines")}<input data-f="ref_url" value="${esc(s.ref_url)}"></label>
       </div>`;
 
 // The card: the person, and what belongs to them rather than to any one take of them.
@@ -588,8 +589,9 @@ const cardHead = (v) => `
         <button data-cardsave class="primary">${lab("js.save")}</button>
         <button data-carddel class="ghost">${lab("js.delete")}</button></div>
       <div class="grid">
+        <label>${lab("web.f.title")}<input data-rename value="${esc(v.name)}"></label>
         <label>${lab("js.language")}<input data-cf="lang" value="${esc(v.lang)}"></label>
-        <label>${lab("js.v.who")}<input data-cf="description" value="${esc(v.description)}"></label>
+        <label class="wide">${lab("js.v.who")}<input data-cf="description" value="${esc(v.description)}"></label>
       </div>`;
 
 // …and the deliveries themselves, which are the only intonation control a cloning
@@ -695,9 +697,13 @@ function bindCard(el, name) {
   el.querySelector("[data-cardsave]").onclick = async () => {
     const body = {};
     el.querySelectorAll("[data-cf]").forEach((i) => (body[i.dataset.cf] = i.value));
-    await api(url, { method: "PUT", headers: { "content-type": "application/json" },
+    // the name is a field like any other, and Save is what commits it: a rename moves
+    // the card's file, the recordings named after it and the content types pointing at
+    // it, and says so (see `ConfigStore.rename_voice`)
+    body.rename = el.querySelector("[data-rename]").value;
+    const r = await api(url, { method: "PUT", headers: { "content-type": "application/json" },
       body: JSON.stringify(body) });
-    say(`${name} ${lab("js.saved")}`);
+    sayRename(name, body.rename, r, lab("js.saved"));
     loadVoices();
   };
   el.querySelector("[data-carddel]").onclick = async () => {
@@ -717,6 +723,18 @@ function showReport(name, which, r) {
   if (box) box.innerHTML = reportHTML(r);
 }
 
+// What to say after a Save that may also have been a rename. The notes come from the
+// server and are the things the operator cannot see from here: a wav that moved, a
+// content type that now names something else — and the one that never moves, a line
+// already pinned inside a run.
+function sayRename(was, now, reply, saved) {
+  const notes = (reply && reply.notes) || [];
+  if (was === now && !notes.length) { say(`${was} ${saved}`); return; }
+  say(was === now ? `${was} ${saved}`
+                  : `${was} → ${now}${notes.length ? " · " + notes.join(" · ") : ""}`);
+  if (was !== now) say(lab("js.v.renamednote"));
+}
+
 // Bind one delivery's buttons. `el` is that delivery's own panel — nothing is nested
 // inside anything else now, so every field this reads belongs to this recording.
 function bindSample(el, name, which) {
@@ -726,9 +744,13 @@ function bindSample(el, name, which) {
   el.querySelector("[data-save]").onclick = async () => {
     const body = {};
     el.querySelectorAll("[data-f]").forEach((i) => (body[i.dataset.f] = i.value));
-    await api(`/api/voices/${encodeURIComponent(name)}${q}`, { method: "PUT",
+    body.rename = el.querySelector("[data-rename]").value;
+    const r = await api(`/api/voices/${encodeURIComponent(name)}${q}`, { method: "PUT",
       headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-    say(`${title} ${lab("js.saved")}`);
+    sayRename(title, `${name}:${body.rename}`, r, lab("js.saved"));
+    // a renamed delivery has a new address, and the panel bound to the old one would
+    // edit nothing — so the room is drawn again rather than left looking right
+    if (body.rename !== which) loadVoices();
   };
   el.querySelector("[data-del]").onclick = async () => {
     await api(`/api/voices/${encodeURIComponent(name)}${q}`, { method: "DELETE" });

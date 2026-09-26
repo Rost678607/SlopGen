@@ -350,6 +350,41 @@ def set_default(
            "names no delivery of its own[/dim]")
 
 
+@app.command("rename")
+def rename_voice(
+    ctx: typer.Context,
+    name: str = typer.Argument(..., help="a voice card, or `card:delivery` for one intonation"),
+    new: str = typer.Argument(..., help="what to call it from now on"),
+) -> None:
+    """Rename a voice card, or one delivery inside it.
+
+    Everything that can follow does: the card's file, the recordings named after it,
+    the pointer at the default delivery, and any content type that named this voice.
+
+    What cannot follow is a pin inside a run — `Scene.voice` in a checkpoint, or a
+    `--voice` already typed into a command — because those record a particular video
+    rather than a setting. A run resumed after a rename fails at the voicing stage,
+    loudly and by name, rather than quietly speaking forty lines in the wrong delivery.
+    Rename before you pin, not after."""
+    store: ConfigStore = ctx.obj
+    card, _, which = name.rpartition(":")
+    try:
+        if which and card in store.voices:
+            notes = store.rename_delivery(card, which, new)
+            spec, to = f"{card}:{which}", f"{card}:{new}"
+        else:
+            notes = store.rename_voice(name, new)
+            spec, to = name, new
+    except Exception as e:  # noqa: BLE001 — no such voice, a taken name, an unusable one
+        typer.secho(f"error: {e}", fg="red")
+        raise typer.Exit(1) from e
+    rprint(f"[green]✔ '{spec}' → '{to}'[/green]")
+    for note in notes:
+        rprint(f"  [dim]{note}[/dim]")
+    rprint("[dim]lines already pinned to the old name inside a run are NOT rewritten — "
+           "a resumed run will say so at the voicing stage[/dim]")
+
+
 @app.command()
 def remove(
     ctx: typer.Context,

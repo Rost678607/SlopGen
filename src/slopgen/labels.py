@@ -3128,6 +3128,8 @@ RU.update({
     "js.v.none": "пока ни одной — карточке нечем говорить",
     "js.v.recname": "как называется: зло, шёпот",
     "js.v.firstname": "как называется эта запись (по умолчанию «обычная»)",
+    "js.v.renamednote": "переименовано. Строки, уже приколотые к старому имени внутри "
+                        "прогона, не переписаны — такой прогон скажет об этом на озвучке",
     "js.v.rectext": "что сказано в ЭТОЙ записи — слово в слово",
     "js.v.recdescr": "что это за подача: кричит, шепчет, устал",
     "js.v.who": "кто это",
@@ -3152,6 +3154,8 @@ EN.update({
     "js.v.none": "none yet — this card has nothing to speak with",
     "js.v.recname": "what it is called: angry, whisper",
     "js.v.firstname": "what this recording is called (\u00abобычная\u00bb by default)",
+    "js.v.renamednote": "renamed. Lines already pinned to the old name inside a run are "
+                        "not rewritten — such a run will say so at the voicing stage",
     "js.v.rectext": "what THIS recording says — word for word",
     "js.v.recdescr": "what this delivery is: shouting, whispering, worn out",
     "js.v.who": "who this is",

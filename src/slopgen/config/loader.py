@@ -511,6 +511,121 @@ class ConfigStore:
                     return True
         return False
 
+    def _check_voice_name(self, name: str, *, what: str) -> str:
+        name = (name or "").strip()
+        if not name or "/" in name or ":" in name or name.startswith("."):
+            raise ConfigError(
+                f"unusable {what} name: {name!r} — it cannot be empty, start with a dot, "
+                "or contain / or :, because the colon is what separates a card from one "
+                "of its deliveries everywhere a voice is named")
+        return name
+
+    def _move_recording(self, card: str, which: str, sample: VoiceSample,
+                        to_card: str, to_which: str) -> str | None:
+        """Give a delivery's file the name its new address implies, and return the note
+        to show for it — or None when the file is left where it is.
+
+        Left alone in two cases, both deliberate. A recording ANOTHER card also names is
+        not this rename's to move (see :meth:`names_recording`); and a file that does not
+        follow the `<card>.<delivery>.wav` convention was put there by hand or by an
+        older version, so its name is information of somebody's own and renaming it would
+        be tidying up after a person who did not ask."""
+        ref = sample.ref_path
+        if ref is None or not Path(ref).is_file():
+            return None
+        old = Path(ref)
+        if self.names_recording(old, except_=(card, which)):
+            return f"{old.name} is named by another card too, so it stays where it is"
+        want = f"{card}.{which}"
+        if old.stem != want:
+            return None
+        new = old.with_name(f"{to_card}.{to_which}{old.suffix}")
+        if new == old:
+            return None
+        if new.exists():
+            return f"{new.name} already exists, so {old.name} keeps its name"
+        old.replace(new)
+        sample.ref = new.name
+        return f"{old.name} → {new.name}"
+
+    def _revoice_content_types(self, old: str, new: str) -> list[str]:
+        """Point every content type that named this voice at its new name.
+
+        The only place in the configs where a voice name is written down other than the
+        card itself (`ContentTypeConfig.voices`), and the one a rename can actually fix:
+        a run's own checkpoint also holds voice specs, but that is the record of a video
+        already being made and not ours to edit (see the note in `rename_voice`)."""
+        notes: list[str] = []
+        for name, ct in self.content_types.items():
+            hit = {lang: v for lang, v in ct.voices.items()
+                   if v == old or v.startswith(old + ":")}
+            if not hit:
+                continue
+            for lang, v in hit.items():
+                ct.voices[lang] = new + v[len(old):]
+            write_config("content", name, ct.model_dump(mode="json"))
+            notes.append(f"content type '{name}' now says {', '.join(ct.voices[l] for l in hit)}")
+        return notes
+
+    def rename_voice(self, name: str, new: str) -> list[str]:
+        """Rename a card, and everything that follows from it: the file, the recordings
+        named after it, and the content types pointing at it. Returns what moved.
+
+        What it CANNOT follow is a pin inside a run — `Scene.voice` in a checkpoint, or
+        a `--voice` typed into a command. Those are records of a particular video and not
+        settings, so they are left alone and fail loudly if that video is resumed: the
+        resolver says which deliveries the card has rather than quietly voicing forty
+        lines in the wrong one. Rename before you pin, not after."""
+        new = self._check_voice_name(new, what="voice")
+        card = self.voices.get(name)
+        if card is None:
+            raise ConfigError(f"no voice named '{name}'")
+        if new == name:
+            return []
+        if new in self.voices:
+            raise ConfigError(f"there is already a voice called '{new}'")
+        notes = [n for which, smp in card.samples.items()
+                 if (n := self._move_recording(name, which, smp, new, which))]
+        card.name = new
+        self.voices.pop(name, None)
+        self.voices[new] = card
+        write_config("voices", new, card.as_config())
+        delete_config("voices", name)
+        notes += self._revoice_content_types(name, new)
+        return notes
+
+    def rename_delivery(self, name: str, which: str, new: str) -> list[str]:
+        """Rename one delivery inside its card, keeping the table's order.
+
+        The order is information — the first take cut is usually the one the rest are
+        variations on, and it is what `default` falls back to — so the entry is renamed
+        in place rather than removed and appended. The pointer follows it, and a pin in a
+        run does not (see :meth:`rename_voice`)."""
+        new = self._check_voice_name(new, what="delivery")
+        card = self.voices.get(name)
+        if card is None:
+            raise ConfigError(f"no voice named '{name}'")
+        if which not in card.samples:
+            known = ", ".join(card.sample_names) or "nothing at all"
+            raise ConfigError(
+                f"voice '{name}' has no delivery called '{which}' — it has {known}")
+        if new == which:
+            return []
+        if new in card.samples:
+            raise ConfigError(f"'{name}' already has a delivery called '{new}'")
+        sample = card.samples[which]
+        # asked BEFORE the table is rebuilt: once the old key is gone `default` names
+        # nothing, `default_name` falls back to the first entry, and the pointer would
+        # quietly land on a delivery nobody chose
+        was_default = card.default_name == which
+        notes = [n for n in [self._move_recording(name, which, sample, name, new)] if n]
+        card.samples = {(new if k == which else k): v for k, v in card.samples.items()}
+        if was_default:
+            card.default = new
+        write_config("voices", name, card.as_config())
+        notes += self._revoice_content_types(f"{name}:{which}", f"{name}:{new}")
+        return notes
+
     def set_default_delivery(self, name: str, which: str) -> VoiceConfig:
         """Point a card at another of its deliveries, and hand the card back to be
         written. The one operation this whole shape exists for, so it lives next to the
