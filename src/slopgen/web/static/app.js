@@ -557,7 +557,7 @@ function reportHTML(d) {
 const sampleHead = (s) => `
       <div class="row">
         ${s.is_default
-          ? `<span class="pill on" title="${esc(lab("js.v.mainnote"))}">★ ${lab("js.v.main")}</span>`
+          ? `<span class="pill-on" title="${esc(lab("js.v.mainnote"))}">★ ${lab("js.v.main")}</span>`
           : `<button data-main class="ghost">${lab("js.v.makemain")}</button>`}
         <b>${esc(s.which)}</b>
         <span class="dim">${s.has_sample ? `${s.seconds} c` : lab("js.the-sample-is-gone")}</span>
@@ -4124,6 +4124,7 @@ function commonOf(form) {
     voice_override: f.get("voice_override") || "",
     tts_engine: f.get("tts_engine") || "",
     tts_rate: +(f.get("tts_rate") || 0),
+    tts_deliveries: f.get("tts_deliveries") === "on",
     subtitle_style: f.get("subtitle_style") || "",
     ad_mode: f.get("ad_mode") || "both",
     visual_notes: f.get("visual_notes") || "",

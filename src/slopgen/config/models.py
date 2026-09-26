@@ -70,7 +70,8 @@ class LLMConfig(BaseModel):
     # goes to `profile` as before. Kinds: idea, length, script, drama_outline,
     # drama_script, fandom_outline, fandom_script, fandom_canon, fandom_brief,
     # lore_lookup, drama_entities, drama_shot_fix, char_compile, char_autofill,
-    # style_compile, metadata, profanity, censor, lookup, bp_rewrite, bp_scenes, vision.
+    # style_compile, metadata, profanity, censor, lookup, bp_rewrite, bp_scenes,
+    # tts_delivery, vision.
     stage_profiles: dict[str, str] = {}
     # legacy inline settings (deepseek | gemini | openrouter | custom)
     provider: str = "deepseek"
@@ -1464,6 +1465,14 @@ class RunParams(BaseModel):
     # then recovered by the aligner, since a microphone emits no WordBoundary events.
     tts_source: Literal["engine", "manual"] = "engine"
     tts_rate: int = 0  # speech rate offset in percent (-50 = half speed, +50 = 50% faster)
+    # Let the writer cast the INTONATIONS: with a cloned voice whose card holds more
+    # than one delivery, a pass over the finished script pins the lines that are shouted
+    # or whispered to the recording that is (see `llm/delivery.py`). Off by default, and
+    # not because it is expensive — it is one call per video — but because it is an
+    # opinion about somebody's voice: a card with two takes is not necessarily a card
+    # that wants them alternated, and the operator pinning three lines by hand at the
+    # breakpoint is the other perfectly good way to use one.
+    tts_deliveries: bool = False
     # -- drama mode --------------------------------------------------------
     scenario: str = ""  # the drama's premise/plot; empty = the LLM invents one
     parts: int = 1  # drama only: split one drama into this many cliffhanger parts

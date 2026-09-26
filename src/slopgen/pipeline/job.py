@@ -138,6 +138,13 @@ class Scene(BaseModel):
     # an audio file: it is the operator's CHOICE, and the stage's re-run must be able
     # to reproduce the take from it.
     voice: str = ""
+    # …and whether that spec was the WRITER's idea rather than the operator's (see
+    # `llm/delivery.py`). It decides one thing: whether a later pass may replace it. A
+    # line the operator pinned themselves is theirs — a re-run of the stage sends it to
+    # the model as context and never as a line to recast — while an automatic pin is
+    # re-decided whenever the casting runs again, and dropped when the line no longer
+    # calls for it. It is also what the montage screen shows the difference by.
+    voice_auto: bool = False
     audio_tempo: float = 1.0  # atempo factor applied so the voice fits the clip
     video_tempo: float = 1.0  # setpts factor applied to the clip for the same reason
     part: int = 1  # drama: output part number; cuts happen after the last scene in a part

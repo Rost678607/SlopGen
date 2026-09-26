@@ -61,6 +61,9 @@ def common(b: dict) -> dict:
         "voice_override": str(b.get("voice_override", "")),
         "tts_engine": str(b.get("tts_engine", "")),
         "tts_rate": int(b.get("tts_rate", 0)),
+        # whether the writer casts the intonations (see `llm/delivery.py`); a no-op on
+        # any voice that is not a card with several deliveries in it
+        "tts_deliveries": bool(b.get("tts_deliveries", False)),
         "keep_temp": bool(b.get("keep_temp", False)),
         # which track plays under the voice; "" = the one the run rolls for itself
         "music": str(b.get("music", "")),
@@ -366,6 +369,7 @@ _FIELDS: list[dict] = [
      "blank": True},
     {"f": "tts_rate", "kind": "range", "l": "web.f.rate", "min": -50, "max": 50,
      "step": 5},
+    {"f": "tts_deliveries", "kind": "check", "l": "web.f.deliveries"},
     {"f": "subtitle_style", "kind": "select", "l": "web.card.subs",
      "opts": "subtitle_styles", "blank": True},
     {"f": "clean_subtitles", "kind": "check", "l": "web.f.clean"},

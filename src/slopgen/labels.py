@@ -1295,6 +1295,12 @@ WEB_RU: dict[str, str] = {
     "web.f.engine": 'движок',
     "web.f.clone": 'клонированный голос',
     "web.f.rate": 'скорость речи, %',
+    "web.f.deliveries": 'интонации расставит нейронка',
+    "web.deliveries.note": 'у клонированного голоса, в карточке которого несколько '
+                           'интонаций: сценарий прочитают один раз и приколют к другой '
+                           'записи те строки, которые кричат или шепчут. Остальные '
+                           'говорят основной, и, если её потом перенести, поедут за ней. '
+                           'Что ты приколол руками, нейронка не трогает',
     "web.card.picture": 'картинка',
     "web.f.limits": 'ограничения',
     "web.f.style": 'стиль',
@@ -1418,6 +1424,12 @@ WEB_EN: dict[str, str] = {
     "web.f.engine": 'engine',
     "web.f.clone": 'cloned voice',
     "web.f.rate": 'speech rate, %',
+    "web.f.deliveries": 'let the writer cast the intonations',
+    "web.deliveries.note": 'For a cloned voice whose card holds several deliveries: the '
+                           'script is read once and the lines that are shouted or '
+                           'whispered are pinned to the recording that is. The rest speak '
+                           'with the default one and follow it if you move it later. '
+                           'Anything you pinned by hand is left alone',
     "web.card.picture": 'picture',
     "web.f.limits": 'limits',
     "web.f.style": 'style',
@@ -3130,6 +3142,7 @@ RU.update({
     "js.mont.delivery": "интонация",
     "js.mont.asrun": "как во всём ролике",
     "js.mont.pinned": "приколото вручную",
+    "js.mont.byai": "интонацию выбрала нейронка — выбери сам, и она останется за тобой",
 })
 EN.update({
     "js.v.deliveries": "deliveries",
@@ -3153,4 +3166,5 @@ EN.update({
     "js.mont.delivery": "delivery",
     "js.mont.asrun": "as the whole video",
     "js.mont.pinned": "pinned by hand",
+    "js.mont.byai": "the writer chose this intonation — choose one yourself and it stays yours",
 })

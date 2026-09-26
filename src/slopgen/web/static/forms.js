@@ -249,6 +249,16 @@ const FORMS = {
           "l": "web.f.clone"
         },
         {
+          "f": "tts_deliveries",
+          "kind": "checkbox",
+          "inline": true,
+          "l": "web.f.deliveries"
+        },
+        {
+          "note": "web.deliveries.note",
+          "cls": "dim"
+        },
+        {
           "f": "tts_rate",
           "kind": "range",
           "min": "-50",
@@ -831,6 +841,16 @@ const FORMS = {
           "l": "web.f.clone"
         },
         {
+          "f": "tts_deliveries",
+          "kind": "checkbox",
+          "inline": true,
+          "l": "web.f.deliveries"
+        },
+        {
+          "note": "web.deliveries.note",
+          "cls": "dim"
+        },
+        {
           "f": "tts_rate",
           "kind": "range",
           "min": "-50",
@@ -1245,6 +1265,16 @@ const FORMS = {
           "kind": "select",
           "cls": "f-voice-pick",
           "l": "web.f.clone"
+        },
+        {
+          "f": "tts_deliveries",
+          "kind": "checkbox",
+          "inline": true,
+          "l": "web.f.deliveries"
+        },
+        {
+          "note": "web.deliveries.note",
+          "cls": "dim"
         },
         {
           "f": "tts_rate",

@@ -188,6 +188,10 @@ def read(job: VideoJob, params) -> dict:
             # (`Scene.voice`): on a cloning engine that IS the intonation. "" follows
             # the run, which is what every line does until one is pinned.
             "voice": scene.voice,
+            # …and whether the WRITER pinned it rather than the operator, which is worth
+            # showing because it is the one pin a later re-run may take back on its own
+            # (see `Scene.voice_auto` and `llm/delivery.py`)
+            "voice_auto": scene.voice_auto,
             "part": scene.part,
             "words": [
                 {"t": w.text, "start": m["at"],

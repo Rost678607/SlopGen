@@ -428,8 +428,11 @@ function lineHTML(sc) {
       rateOf(sc) !== (MONT.doc.rate || 0)
         ? ` · ${rateOf(sc) > 0 ? "+" : ""}${rateOf(sc)}%` : ""}${
       // …and the delivery, on the same terms: shown only where this line is pinned to
-      // a recording of its own, because that is the only case where it is news
-      sc.voice ? ` · ${esc(sc.voice)}` : ""}</div>
+      // a recording of its own, because that is the only case where it is news. A pin
+      // the WRITER made is marked, because it is the one a re-voicing of the video may
+      // take back on its own (see `Scene.voice_auto`) — and because an intonation you do
+      // not remember choosing should say where it came from.
+      sc.voice ? ` · ${esc(sc.voice)}${sc.voice_auto ? " ∿" : ""}` : ""}</div>
     <div class="words">${words}</div>
   </div>`;
 }
@@ -1357,9 +1360,14 @@ const rateOf = (sc) =>
 function deliveryPicker(sc) {
   const groups = voiceGroups(MONT.doc.voices);
   if (!groups.length) return "";
+  // …and, where the writer chose it, one line saying so: the picker looks identical
+  // either way, and the difference matters — this pin is the only one that moves by
+  // itself when the stage is entered again.
+  const note = sc.voice && sc.voice_auto
+    ? `<p class="dim">∿ ${lab("js.mont.byai")}</p>` : "";
   return `<label class="inline">${lab("js.mont.delivery")}
       <select id="i-voice">${
-        optgroupsHTML(groups, sc.voice || "", lab("js.mont.asrun"))}</select></label>`;
+        optgroupsHTML(groups, sc.voice || "", lab("js.mont.asrun"))}</select></label>${note}`;
 }
 
 function lineInspector() {
@@ -2032,6 +2040,8 @@ const SETTINGS = [
       { f: "tts_engine", kind: "select", opts: "tts_engines", l: "web.f.engine" },
       { f: "voice_override", kind: "select", groups: "voice_cards", l: "web.f.clone" },
       { f: "tts_rate", kind: "range", min: -50, max: 50, step: 5, l: "web.f.rate" },
+      { f: "tts_deliveries", kind: "check", l: "web.f.deliveries",
+        note: "web.deliveries.note" },
       { f: "tts_source", kind: "flag", on: "manual", off: "engine",
         l: "web.f.ttsmanual", note: "web.ttsmanual.note" },
     ],

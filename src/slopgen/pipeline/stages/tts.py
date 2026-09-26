@@ -33,6 +33,14 @@ names nothing is voiced by the run's voice, which is the whole video's delivery,
 which follows the card's default rather than being a copy of it: move the default in
 the editor and every unpinned line is re-voiced with the new one.
 
+**Who chooses the delivery can be the writer.** With `tts_deliveries` on, one pass
+over the finished script (`llm/delivery.py`) pins the lines that are shouted or
+whispered to the recording that is, before anything is voiced — the card's deliveries
+are the only vocabulary it may use, the share of lines it may recast is capped, and
+everything it leaves alone keeps the empty spec and therefore the card's default. A pin
+the operator made by hand is never overwritten by it (`Scene.voice_auto`), and an
+automatic pin on a line whose text has since changed is taken back.
+
 **What is spoken is not always what is written.** A few words come out wrong no
 matter how they are spelled in the script — a Cyrillic acronym whose letters form
 a pronounceable syllable gets read as that syllable, so «НЛО» is said "нло"
@@ -564,6 +572,10 @@ def resynth_one(job: VideoJob, ctx: AppContext, index: int, rate: int | None = N
         scene.tts_rate = int(rate)
     if voice is not None:
         scene.voice = str(voice)
+        # by hand, so the casting pass may not take it back on the next entry to the
+        # stage — including the empty spec, which is the operator saying "back to the
+        # card's own delivery" and not the absence of a decision
+        scene.voice_auto = False
     rate_pct = _scene_rate(scene, ctx)
     path = audio_path(job, index, speaker.suffix)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -636,6 +648,69 @@ def _finish_scene(scene, path: Path, src: float, raw_words: list[dict],
         ]
 
 
+def _voice_card(ctx: AppContext, engine: str):
+    """The card the run's voice IS, or None when it is a catalogue voice (or a name
+    nothing answers to). Asked before the casting pass, which has nothing to do on a
+    voice that is not a card with several recordings in it."""
+    name = _voice_name(ctx, engine)
+    try:
+        found = ctx.store.voice_sample(name) if name else None
+    except Exception:  # noqa: BLE001 — a broken card is the speaker's complaint, not ours
+        return None
+    return found[0] if found is not None else None
+
+
+def _cast_deliveries(job: VideoJob, ctx: AppContext, engine: str) -> None:
+    """Let the writer choose which lines are shouted, before anything is voiced.
+
+    Only ever the EXCEPTIONS, and only into `Scene.voice`: a line it leaves alone keeps
+    the empty spec, which means "the card's default" and goes on meaning that after the
+    card's default has moved. So this pass never freezes a video onto the recordings it
+    happened to pick — it says which lines are the departures from whatever the voice is
+    (see `llm/delivery.py` for what the model is and is not allowed to answer).
+
+    It runs on every entry to the stage rather than once, because the thing it reads is
+    the script, and the script is what the breakpoint before this lets the operator
+    rewrite. An automatic pin on a line that no longer calls for it is therefore taken
+    back, while a pin the OPERATOR made is left alone in both directions: not recast, and
+    not cleared (`Scene.voice_auto`).
+
+    Silent about everything it cannot do. No card, one recording in it, a catalogue
+    engine, no writer available — all of them mean the video is voiced in one delivery,
+    which is what it would have been anyway."""
+    if not ctx.params.tts_deliveries:
+        return
+    info = ENGINES.get(engine)
+    if info is not None and not info.clones:
+        return
+    card = _voice_card(ctx, engine)
+    if card is None or len(card.sample_names) < 2:
+        return
+    from ...llm import delivery
+
+    fixed = {i for i, sc in enumerate(job.scenes) if sc.voice and not sc.voice_auto}
+    cast = delivery.cast(
+        ctx.llm,
+        [sc.text for sc in job.scenes],
+        card.sample_names,
+        card.default_name,
+        lambda which: card.samples[which].description,
+        fixed=fixed,
+        lang=ctx.params.lang,
+    )
+    changed = 0
+    for i, scene in enumerate(job.scenes):
+        if i in fixed:
+            continue
+        want = f"{card.name}:{cast[i]}" if i in cast else ""
+        if want != scene.voice:
+            changed += 1
+        scene.voice = want
+        scene.voice_auto = bool(want)
+    log.info("delivery: %d line(s) cast away from '%s' (%d changed since last time)",
+             len(cast), card.default_name, changed)
+
+
 def run(job: VideoJob, ctx: AppContext) -> None:
     audio_dir = job.workdir / "tts"
     audio_dir.mkdir(parents=True, exist_ok=True)
@@ -645,6 +720,10 @@ def run(job: VideoJob, ctx: AppContext) -> None:
 
     speaker = _speaker_for(ctx)
     log.info("TTS: %s · %s", speaker.id, speaker.voice)
+    # before the first line is spoken, because the answer decides what is spoken with:
+    # a line the writer recasts is voiced with that recording on the first attempt and
+    # not re-voiced afterwards
+    _cast_deliveries(job, ctx, speaker.id)
     table = _pronounce(ctx)
     offset = 0.0
     total = len(job.scenes)
