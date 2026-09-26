@@ -611,10 +611,22 @@ def apply_to_scenes(job, cards: list[FrameCard]) -> None:
             continue
         t0, t1 = at, at + scene.duration
         parts: list[BgAsset] = []
+        # `cursor` is what makes this a SEQUENCE rather than a set of spans: no second
+        # of the scene is written twice, whatever the track says. The shots are meant
+        # to tile the video end to end and normally do — `reanchor` gives each one the
+        # distance to the next — but two of them landing on the same moment is a thing
+        # that happens (a line dropped, an opening shot meeting the cut on its own
+        # first word: see `montage._dedupe`), and without this the pieces simply got
+        # longer than the scene. Nothing failed and nothing said anything: the last
+        # piece absorbed the negative residue below, so the picture ran a shot late for
+        # the rest of the scene and the final card was cut short by however much the
+        # doubled one had taken.
+        cursor = t0
         for s in sorted(job.frame_shots, key=lambda x: x.start):
-            a, b = max(t0, s.start), min(t1, s.start + s.duration)
+            a, b = max(cursor, s.start), min(t1, s.start + s.duration)
             if b - a <= 1e-6:
                 continue
+            cursor = b
             card = by.get(s.card)
             path = card.path if card else None
             if path is None:

@@ -390,13 +390,21 @@ def reopen(job: VideoJob) -> int:
     is to overrule the matcher, and it may as well be overruled after watching it as
     before.
 
-    What comes off is the render and nothing else: each part's subtitle file and each
-    part's cut. Those two are the only things on the job that describe the timeline as
-    it WAS rather than as it is — the words were burned in at the timings of the
-    moment, the picture was encoded against the cuts of the moment — so they are the
-    two that a re-edit makes untrue. Everything the video is made of (the lines, the
-    takes, the cards, the moves, the effects, the look) is exactly what the operator
-    came back to change, and is left where it is.
+    What comes off is the render and nothing else. Three things describe the timeline
+    as it WAS rather than as it is, and all three are made again from what survives:
+    each scene's background pieces (the picture track compiled onto the scenes, cut
+    where they end — `framebase.apply_to_scenes`), each part's subtitle file (the words
+    burned in at the timings of the moment) and each part's cut. Everything the video
+    is made of — the lines, the takes, the cards, the moves, the effects, the look — is
+    exactly what the operator came back to change, and is left where it is.
+
+    The pieces are the half that is easy to forget and the half that matters most,
+    because they are what `assemble` actually renders: leave them on and a re-cut track
+    changes nothing at all, since nothing downstream ever looks at the shots again. Only
+    where the picture comes out of the frame base, mind — there the pieces cost one
+    walk of the track to rebuild and the stage that does it asks no model anything. A
+    run whose shots were fetched or generated keeps them: re-laying those means fetching
+    and generating them again, which is not what taking a render off should mean.
 
     Nothing is deleted from disk. `assemble` writes each part to the same path it used
     before (`final.mp4`, `part_03.mp4`), so the old cut is overwritten by the new one
@@ -417,6 +425,9 @@ def reopen(job: VideoJob) -> int:
 
     Returns how many parts were un-rendered, which is how the caller says what it did.
     """
+    if framebase.active(job, None):
+        for scene in job.scenes:
+            scene.bg_assets = []
     n = 0
     for part in job.parts:
         if part.ass is None and part.file is None:
@@ -703,8 +714,10 @@ def drop_line(job: VideoJob, index: int) -> None:
         if a.anchor_scene > last:
             a.anchor_scene, a.anchor_word = last, max(len(job.scenes[last].words) - 1, 0)
     _settle_takes(job)
+    # the re-measure collapses whatever this deletion piled onto one moment: it is one
+    # of the ways two starts converge, and it is no longer this function's to remember
+    # (see `_dedupe`, called from `retime`)
     retime(job)
-    _dedupe(job)
 
 
 # --------------------------------------------------------------------------
@@ -745,12 +758,26 @@ def retime(job: VideoJob) -> None:
     Both tracks, because there are two of them: the cuts hang off words, and so do the
     effects (see `pipeline/effects`). A line re-voiced at the top of the video moves
     every cut after it AND every arrow, and an arrow left behind is not a late accent,
-    it is one pointing at the wrong word."""
-    # …against a track that OPENS, which is the one thing about it nobody placed and
-    # nothing may take away (see `open_heads`). First, so a shot put back here is
-    # measured by the same pass as the rest of them.
-    open_heads(job)
+    it is one pointing at the wrong word.
+
+    The order below is the whole of it, and it is the order that was wrong. Where the
+    shots STAND is the answer to the anchors, so that has to be settled before anything
+    may ask a question about the shape of the track — whether a region is missing its
+    opening shot, whether two shots have landed on the same moment. Asked first, both
+    questions are asked of last pass's seconds: `open_heads` looked at a first shot
+    still sitting on the breath before the first word, saw no shot at 0.000, laid one
+    there — and then the re-measure moved the other one onto 0.000 as well, because the
+    line had been re-voiced without that breath. Two shots over one stretch, and
+    nothing downstream could tell: they are drawn exactly on top of each other here and
+    the render wrote a piece for each (see `framebase.apply_to_scenes`)."""
     framebase.reanchor(job.scenes, job.frame_shots)
+    # …and now the shape, against seconds that are current: one shot per moment, and a
+    # shot at the top of every region (`_dedupe`, `open_heads`). Either may change the
+    # list, and a shot put back by the second arrives with no length at all, so the
+    # measure runs again over whatever they left.
+    changed = _dedupe(job) + open_heads(job)
+    if changed:
+        framebase.reanchor(job.scenes, job.frame_shots)
     effects_mod.reanchor(job)
     # a firing that sits on a picture is inside that picture's shot, and the shot's
     # length is exactly what a cut or a re-voicing changes (see `effects.clip_to_shots`)
@@ -769,17 +796,51 @@ def _retell(job: VideoJob) -> None:
         s.referents = framebase.referents_at(job.scenes, s.start, s.start + s.duration)
 
 
-def _dedupe(job: VideoJob) -> None:
-    """Two shots at the same moment are one shot. It happens after a line is dropped
-    and after a cut is placed where a re-measure had already put one; the later of the
-    two loses, because the earlier one is the one that was there first."""
+def _dedupe(job: VideoJob) -> int:
+    """Two shots at the same moment are one shot. Collapse them; say how many went.
+
+    Starts converge for several ordinary reasons: a line dropped and the picture that
+    was up re-anchored onto the word after it, a cut placed where a re-measure had
+    already put one, and — the one that was missed — a region's opening shot meeting
+    the cut on its own first word. Those two are ordinarily distinct, because the
+    opening shot sits at 0.000 and the first word is a breath later; re-voice the line
+    without that breath and the word lands on 0.000 too.
+
+    Nothing downstream could tell. `framebase.reanchor` gives BOTH of them the seconds
+    up to the next start (a twin's start is not GREATER than its twin's, so each reads
+    the other as absent), the room draws them exactly on top of each other so the
+    operator sees one shot and clicks the one on top, and `framebase.apply_to_scenes`
+    writes a background piece per shot — so the render showed that picture twice and
+    every cut after it in the scene ran a shot late. Measured on a live run: the first
+    line's three pictures came out as four, 1.4s adrift, with the last one chopped from
+    2.6s to 1.3s, and the animation the operator had just changed did not appear at all
+    because the twin underneath it was still holding the same card.
+
+    Which one survives is decided by what is ON it rather than by where it sits in the
+    list. A shot with a picture beats an empty one, because an empty twin is a
+    placeholder — an opening shot nobody has cast yet — and letting it win would blank
+    a stretch that was covered. Between two that both have one, the LAST wins: the lane
+    is drawn in list order, so the later of two coincident blocks is the one on top,
+    the one that takes the clicks, and therefore the one carrying whatever was last
+    done to that stretch.
+
+    The survivor keeps everything of its own and takes only the earliest start of the
+    pile. It does not inherit an anchor: a shot standing at a region's start IS that
+    region's opening shot (see :func:`open_heads`), and handing it a word to follow
+    would let the next re-voicing walk it off the opening seconds again."""
     kept: list[FrameShot] = []
+    gone = 0
     for s in _ordered(job):
-        if kept and s.start - kept[-1].start < SAME_CUT_S:
+        if not kept or s.start - kept[-1].start >= SAME_CUT_S:
+            kept.append(s)
             continue
-        kept.append(s)
+        prev = kept[-1]
+        win = s if (s.card or not prev.card) else prev
+        win.start = min(prev.start, s.start)
+        kept[-1] = win
+        gone += 1
     job.frame_shots = kept
-    retime(job)
+    return gone
 
 
 def open_track(job: VideoJob) -> int:
@@ -984,16 +1045,31 @@ def cast(job: VideoJob, shot: int, card: FrameCard | None, *, move: str = "",
     if card is None:
         s.card, s.move, s.target, s.fit, s.pinned = "", None, "", "", False
         return
+    was, had = s.move, s.card
     s.card, s.pinned, s.target = card.name, True, target.strip()
     s.fit = s.fit or "exact"  # the operator looked at it; that is the strongest verdict
     # `move_for` builds the two-key form, which replaces any keys placed by hand —
     # pressing a preset is asking for the preset, and a run of keys silently surviving
     # under one would make the chips look broken.
+    want = move.strip()
     s.move = framebase.move_for(
         card, s.referents, max(s.duration, 0.1), "",
         random.Random(f"{job.index}|{shot}|{card.name}|{move}|{target}"),
-        min_scale=min_scale, target=target.strip(), want=move.strip(),
+        min_scale=min_scale, target=target.strip(), want=want,
     )
+    # A card cannot make every move — a zoom needs a region marked on it, a pan needs
+    # two — and `move_for` answers a kind it cannot make by rolling the die among the
+    # kinds it can. That is right where the CALLER is the matcher and wrong where it is
+    # a person: they pressed one chip, and the shot came back doing something neither
+    # they nor anybody else had chosen. The room even says so — «этой карточке такое
+    # движение не сделать; осталось …» — and the second half of that sentence was not
+    # true. It is now: an unmakeable request leaves the move exactly where it was.
+    #
+    # Only for a kind named by hand, and only while the card is the same one. Choosing
+    # a card (or the same card again) sends no kind at all and means "roll me one",
+    # which is the die's job and still is.
+    if want and s.move.kind != want and was is not None and had == card.name:
+        s.move = was
     if lead is not None or span is not None:
         retime_move(s, lead, span)
 

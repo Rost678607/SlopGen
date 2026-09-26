@@ -197,13 +197,18 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404, card_json,
         job = cp.load_job(video)
         if job is None:
             raise HTTPException(status_code=404, detail=f"no video {video} in this run")
-        # A region opens with a shot (`montage.open_heads`), and a job written before
-        # that was true can be short one — leaving the first seconds of the video owned
-        # by nothing and unreachable from a screen whose only gesture is to cut the shot
-        # that is up. It is put back here, at the door, so reading the track and editing
-        # it see the same one; the write happens with whatever edit comes next.
-        if montage.open_heads(job):
-            montage.retime(job)
+        # Re-measured at the door, every time, so that reading the track and editing it
+        # see the same one; the write happens with whatever edit comes next.
+        #
+        # It is the whole of `montage.retime` and not just the opening-shot repair it
+        # used to be, because a track can be saved wrong in more than one way and the
+        # room is where that gets noticed. A job written before a region was made to
+        # open with a shot is short one (`open_heads`); a job written while `retime`
+        # asked its questions in the wrong order can carry two shots on one moment
+        # (`_dedupe`) — which draws as one block here and renders as two, so the room
+        # is the last place it would ever be seen. Both are repaired by the same pass,
+        # and it costs one walk of the timeline on a screen that is about to draw it.
+        montage.retime(job)
         return cp, video, job
 
     def save(cp: Checkpoint, i: int, job, done: list[str] | None = None) -> None:
@@ -993,13 +998,13 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404, card_json,
         and the reason to come back is usually the automatic one: the matcher put the
         wrong card under a line, and you can only see that once you have watched it.
 
-        The video is left needing two stages — its subtitles and its cut — and it is
-        honest about needing them: the rail draws both un-done, the run's row says so
-        under it, and whichever way the operator finishes (pressing the two buttons
-        here, or «собрать и продолжить», which hands the run back to the chain) ends
-        with the file rewritten in place. Walking away instead leaves a run that is
-        genuinely unfinished and looks it, rather than a finished run whose file
-        disagrees with its own timeline.
+        The video is left needing three stages — the shots laid onto the scenes, the
+        subtitles, the cut — and it is honest about needing them: the rail draws all
+        three un-done, the run's row says so under it, and whichever way the operator
+        finishes (pressing them here, or «собрать и продолжить», which hands the run
+        back to the chain) ends with the file rewritten in place. Walking away instead
+        leaves a run that is genuinely unfinished and looks it, rather than a finished
+        run whose file disagrees with its own timeline.
         """
         guard(slopgen)
         run = run_or_404(run_id)

@@ -552,8 +552,9 @@ where you were. Nothing is held in the tab: every edit is already on the checkpo
 the time the screen redraws, so closing the browser mid-montage costs nothing.
 
 **Getting back in after it is cut.** A finished video is not a dead end. Its row carries
-**🎬 cut it again**, and pressing it takes the *render* off — each part's subtitle file
-and each part's cut — and parks the video, which is what makes it editable again: every
+**🎬 cut it again**, and pressing it takes the *render* off — the picture track as it was
+compiled onto the scenes, each part's subtitle file, each part's cut — and parks the
+video, which is what makes it editable again: every
 editing route in the room refuses a video that has already been cut, because otherwise
 the file on disk would go on being the answer while the timeline under it said something
 else. Nothing else comes off: the lines, the takes, the cards, the moves, the effects
@@ -564,9 +565,14 @@ which is most of why anybody reopens a finished video. The room's watch button s
 **watch the previous montage** while that is what it is playing. **Who cut it does not
 matter**, and the unattended case is the ordinary one: that the matcher put the wrong
 card under a line is usually only visible in the finished video, which is exactly when
-the room used to be shut. What is left needing doing is two stages — subtitles and
-assemble, both drawn un-done on the rail — and either way of finishing rewrites the file
-in place: press them here, or press **build it and go on** and let the chain do it.
+the room used to be shut. What is left needing doing is three stages — footage,
+subtitles and assemble, all three drawn un-done on the rail — and either way of
+finishing rewrites the file in place: press them here, or press **build it and go on**
+and let the chain do it. Footage is on that list for the reason the others are not
+obviously missing it: it is the stage that lays the shots onto the scenes, and what
+`assemble` renders is what it left there — leave those pieces in place and a re-cut
+track changes nothing at all. Where the picture comes out of the frame base that costs
+one walk of the track and asks no model anything.
 Walk away instead and the run is honestly unfinished and looks it, rather than a finished
 run whose file disagrees with its own timeline. The title and the upload are deliberately
 left alone: a re-cut is a new *file*, not a new publication, so the metadata is not
@@ -1687,8 +1693,9 @@ cp deploy.env.example deploy.env        # SSH_HOST и SSH_USER, больше н�
 как экран перерисовался, — закрыть браузер посреди монтажа не стоит ничего.
 
 **Как вернуться, когда ролик уже смонтирован.** Готовое видео — не тупик. В его строке
-стоит **🎬 перемонтировать**, и нажатие снимает с работы *рендер* — файл субтитров каждой
-части и сам смонтированный кусок — и паркует видео, а именно это и делает его снова
+стоит **🎬 перемонтировать**, и нажатие снимает с работы *рендер* — дорожку картинки в
+том виде, в каком она разложена по сценам, файл субтитров каждой части и сам
+смонтированный кусок — и паркует видео, а именно это и делает его снова
 правкопригодным: все правящие маршруты монтажной отказывают уже смонтированному видео,
 потому что иначе файл на диске остался бы ответом, пока дорожка под ним говорит другое.
 Больше не снимается ничего: строки, дубли, карточки, движения, эффекты и вид — это ровно
@@ -1698,10 +1705,13 @@ cp deploy.env.example deploy.env        # SSH_HOST и SSH_USER, больше н�
 монтажной так и говорит — **посмотреть прошлый монтаж**, — пока играет именно он.
 **Кем он был смонтирован, неважно**, и случай «его делала нейронка» тут основной: что
 подборщик поставил под строку не ту карточку, обычно видно только в готовом ролике —
-то есть ровно тогда, когда монтажная раньше была уже закрыта. Недоделанными остаются две
-стадии — субтитры и сборка, обе нарисованы на рейке непройденными, — и любой способ
-закончить перепишет файл на месте: нажать их здесь либо нажать **собрать и продолжить** и
-отдать это цепочке. Уйти не дожав — прогон останется честно недоделанным и будет так
+то есть ровно тогда, когда монтажная раньше была уже закрыта. Недоделанными остаются три
+стадии — видеоряд, субтитры и сборка, все три нарисованы на рейке непройденными, — и
+любой способ закончить перепишет файл на месте: нажать их здесь либо нажать **собрать и
+продолжить** и отдать это цепочке. Видеоряд в этом списке по той причине, по которой его
+отсутствие незаметно: именно он раскладывает кадры по сценам, а сборка рендерит то, что
+он там оставил, — не снять эти куски значит перемонтировать дорожку впустую. Там, где
+картинка берётся из базы кадров, это один проход по дорожке и ни одного вызова модели. Уйти не дожав — прогон останется честно недоделанным и будет так
 выглядеть, а не готовым прогоном, чей файл спорит с собственной дорожкой. Заголовок и
 публикация не трогаются намеренно: перемонтаж — это новый *файл*, а не новая публикация,
 поэтому описание не переписывается, а уже ушедшая серия не уходит второй раз.
