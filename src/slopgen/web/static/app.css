@@ -1218,3 +1218,30 @@ button.danger{border-color:var(--bad);color:var(--bad)}
 @media (max-width:820px){
   .ad-screen{width:min(150px,34vw)}
 }
+
+/* The line inspector's two questions — who says it, and how. Side by side because they
+   are read together, and wrapping rather than shrinking because a voice name is as long
+   as the person's name is. */
+.voicepair { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.voicepair select { max-width: 13rem; }
+
+/* ---- the voices room: a card, and its recordings one per row ---------------
+   A row is a line of text you scan, not a panel you read: star, name, length, and
+   what the take is. The editor lives inside the row and is shut until asked for,
+   because a card with five intonations is otherwise five identical boxes. */
+.rec { border-top: 1px solid var(--line); }
+.rec:first-of-type { border-top: 0; }
+.rec-head { display: flex; align-items: center; gap: 8px; }
+.rec-head.open { background: var(--panel2, rgba(255, 255, 255, 0.03)); }
+.rec-name {
+  flex: 1; display: flex; align-items: center; gap: 8px;
+  background: none; border: 0; padding: 6px 4px; text-align: left;
+  color: inherit; font: inherit; cursor: pointer; min-width: 0;
+}
+.rec-name:hover { background: rgba(255, 255, 255, 0.04); }
+.rec-name > .dim { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.caret { width: 1em; opacity: 0.6; }
+/* keeps the names in a column when only some rows carry the star */
+.pill-gap { display: inline-block; width: 1.4em; }
+.rec-body { padding: 4px 4px 10px 2em; }
+.card-fields { margin-bottom: 10px; }

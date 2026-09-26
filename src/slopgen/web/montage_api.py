@@ -48,6 +48,7 @@ from ..pipeline.stages import metadata as metadata_stage
 from ..pipeline.stages import assemble
 from ..pipeline.stages.assemble import tracks_in
 from ..pipeline.stages import picture
+from ..pipeline.stages import tts as tts_stage
 from ..tts import ENGINES as TTS_ENGINES
 
 log = logging.getLogger(__name__)
@@ -282,6 +283,12 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404, card_json,
         engine = cp.params.tts_engine or store.global_cfg.tts.engine or "edge"
         info = TTS_ENGINES.get(engine)
         out["voices"] = store.voice_catalogue() if (info is None or info.clones) else []
+        # …and WHICH of them this run speaks with, which is what the picker on a line
+        # opens on. A line that has never been pinned is voiced with this, so showing it
+        # as the current choice is showing the truth — the alternative, an entry saying
+        # "as the whole video", made the operator hold the run's voice in their head to
+        # know what they were about to change.
+        out["voice"] = tts_stage.run_voice_spec(store, cp.params, engine)
         out["world"] = run.params.fandom if world is not None else ""
         out["cards"] = [card_json(run.params.fandom, c)
                         for c in (world.frames if world else []) if c.usable]

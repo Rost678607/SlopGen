@@ -1357,7 +1357,10 @@ WEB_RU: dict[str, str] = {
     "web.cfg.tts": 'чем озвучивать',
     "web.cfg.tts.check": 'проверять референс перед клонированием',
     "web.cfg.voices": 'клонированные голоса',
-    "web.cfg.voices.note": 'сэмпл и что в нём сказано — вместе это и есть голос',
+    "web.cfg.voices.note": 'сэмпл и что в нём сказано — вместе это и есть голос. '
+                           'Карточка — человек, под ней все его записи: модель копирует '
+                           'подачу образца, и другой интонации, кроме записанной, взять '
+                           'негде. Звёздочка — та, которой говорит весь ролик',
     "web.f.title": 'имя',
     "web.f.transcript": 'что сказано в сэмпле — слово в слово',
     "web.f.sample": 'сэмпл',
@@ -1486,7 +1489,11 @@ WEB_EN: dict[str, str] = {
     "web.cfg.tts": 'what speaks it',
     "web.cfg.tts.check": 'check the reference before cloning',
     "web.cfg.voices": 'cloned voices',
-    "web.cfg.voices.note": 'the sample and its words — together they are the voice',
+    "web.cfg.voices.note": 'the sample and its words — together they are the voice. '
+                           'A card is a person and under it every recording of them: the '
+                           'model copies that sample\u2019s reading, and there is no '
+                           'intonation to be had that nobody recorded. The star is the '
+                           'one the whole video speaks with',
     "web.f.title": 'name',
     "web.f.transcript": 'what the sample says — word for word',
     "web.f.sample": 'sample',
@@ -3126,12 +3133,13 @@ RU.update({
                     "образца, и другой подачи, кроме записанной, взять негде. "
                     "Звёздочка — та, которой говорит весь ролик",
     "js.v.none": "пока ни одной — карточке нечем говорить",
-    "js.v.recname": "как называется: зло, шёпот",
+    "js.v.recname": "как называется",
     "js.v.firstname": "как называется эта запись (по умолчанию «обычная»)",
     "js.v.renamednote": "переименовано. Строки, уже приколотые к старому имени внутри "
                         "прогона, не переписаны — такой прогон скажет об этом на озвучке",
     "js.v.rectext": "что сказано в ЭТОЙ записи — слово в слово",
-    "js.v.recdescr": "что это за подача: кричит, шепчет, устал",
+    "js.v.recdescr": "что за подача",
+    "js.v.recdescr.ph": "кричит, шепчет, устал",
     "js.v.who": "кто это",
     "js.v.main": "основная",
     "js.v.makemain": "сделать основной",
@@ -3142,7 +3150,7 @@ RU.update({
     "js.v.addrec": "добавить интонацию",
     "js.v.recadded": "интонация добавлена",
     "js.mont.delivery": "интонация",
-    "js.mont.asrun": "как во всём ролике",
+    "js.mont.voice": "голос",
     "js.mont.pinned": "приколото вручную",
     "js.mont.byai": "интонацию выбрала нейронка — выбери сам, и она останется за тобой",
 })
@@ -3152,12 +3160,13 @@ EN.update({
                     "sample's reading, and there is no delivery to be had that nobody "
                     "recorded. The star is the one the whole video speaks with",
     "js.v.none": "none yet — this card has nothing to speak with",
-    "js.v.recname": "what it is called: angry, whisper",
+    "js.v.recname": "what it is called",
     "js.v.firstname": "what this recording is called (\u00abобычная\u00bb by default)",
     "js.v.renamednote": "renamed. Lines already pinned to the old name inside a run are "
                         "not rewritten — such a run will say so at the voicing stage",
     "js.v.rectext": "what THIS recording says — word for word",
-    "js.v.recdescr": "what this delivery is: shouting, whispering, worn out",
+    "js.v.recdescr": "what this delivery is",
+    "js.v.recdescr.ph": "shouting, whispering, worn out",
     "js.v.who": "who this is",
     "js.v.main": "default",
     "js.v.makemain": "make it the default",
@@ -3168,7 +3177,7 @@ EN.update({
     "js.v.addrec": "add a delivery",
     "js.v.recadded": "delivery added",
     "js.mont.delivery": "delivery",
-    "js.mont.asrun": "as the whole video",
+    "js.mont.voice": "voice",
     "js.mont.pinned": "pinned by hand",
     "js.mont.byai": "the writer chose this intonation — choose one yourself and it stays yours",
 })

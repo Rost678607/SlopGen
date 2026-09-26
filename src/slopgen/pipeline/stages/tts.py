@@ -98,15 +98,27 @@ def resolve_engine(ctx: AppContext) -> str:
     return ctx.params.tts_engine or ctx.g.tts.engine or "edge"
 
 
-def _voice_name(ctx: AppContext, engine: str) -> str:
-    if ctx.params.voice_override:
-        return ctx.params.voice_override
-    ct = ctx.params.content_type
-    if ct and ct in ctx.store.content_types:
-        v = ctx.content.voices.get(ctx.params.lang)
+def run_voice_spec(store, params, engine: str = "") -> str:
+    """The voice spec a line that names none is voiced with: the run's override, else
+    the content type's voice for this language, else the engine's own default.
+
+    Takes the store and the params rather than a context, because the montage screen
+    asks it too — to show which voice a line is currently speaking with — and building
+    a context there would open an LLM client for a question that has nothing to do with
+    one (see `web/montage_api.context`)."""
+    if params.voice_override:
+        return params.voice_override
+    engine = engine or params.tts_engine or store.global_cfg.tts.engine or "edge"
+    ct = store.content_types.get(params.content_type) if params.content_type else None
+    if ct is not None:
+        v = ct.voices.get(params.lang)
         if v:
             return v
-    return _DEFAULT_VOICES.get(engine, {}).get(ctx.params.lang, "")
+    return _DEFAULT_VOICES.get(engine, {}).get(params.lang, "")
+
+
+def _voice_name(ctx: AppContext, engine: str) -> str:
+    return run_voice_spec(ctx.store, ctx.params, engine)
 
 
 def _resolve_voice(ctx: AppContext, engine: str, spec: str = "") -> Voice:

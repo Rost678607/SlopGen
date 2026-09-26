@@ -1347,27 +1347,64 @@ function bindShotInspector() {
 const rateOf = (sc) =>
   (sc.rate === null || sc.rate === undefined ? (MONT.doc.rate || 0) : sc.rate);
 
-// Which recording of the voice says this line. Blank is "whatever the run says with",
-// and it is the honest default: a line is not pinned until somebody pins it, and the
-// picker must not make the whole video's delivery look like a per-line choice.
+// WHO says this line, and HOW — two questions, two lists, because they are two
+// different decisions and one list of `карточка:подача` made the operator read every
+// entry to find the person they wanted.
 //
-// Grouped by CARD (`ConfigStore.voice_catalogue`), with a star on the delivery each card
-// speaks with by default — so a line can be moved to another take of the same person,
-// which is what this is for, and to another person entirely, which drama will eventually
-// want. Picking a starred row pins the line to that CARD rather than to the recording,
-// which means it keeps following the card if the star moves later; picking any other row
-// pins the take itself. Both are what `--voice` accepts, one namespace either way.
-function deliveryPicker(sc) {
-  const groups = voiceGroups(MONT.doc.voices);
-  if (!groups.length) return "";
-  // …and, where the writer chose it, one line saying so: the picker looks identical
-  // either way, and the difference matters — this pin is the only one that moves by
-  // itself when the stage is entered again.
-  const note = sc.voice && sc.voice_auto
-    ? `<p class="dim">∿ ${lab("js.mont.byai")}</p>` : "";
-  return `<label class="inline">${lab("js.mont.delivery")}
-      <select id="i-voice">${
-        optgroupsHTML(groups, sc.voice || "", lab("js.mont.asrun"))}</select></label>${note}`;
+// The voice list opens on the run's own voice (`MONT.doc.voice`), which is what a line
+// that has never been pinned is voiced with — so what the picker shows is the truth
+// about this line rather than an entry saying "whatever the video says" that the
+// operator then had to look up. The intonation list appears only where there is a
+// choice to make: a card holding one recording has nothing to ask about.
+//
+// Pressing «озвучить заново» is what pins it (see `bindLineInspector`). Reading the
+// picker changes nothing, which is why it can afford to show inherited values.
+function splitVoice(spec, cards) {
+  // a card whose own name contains a colon wins over the split, exactly as the
+  // resolver reads it (see `ConfigStore.voice_sample`)
+  let card = cards.find((c) => c.name === spec);
+  if (card) return [card.name, card.default];
+  const cut = spec.lastIndexOf(":");
+  if (cut > 0) {
+    card = cards.find((c) => c.name === spec.slice(0, cut));
+    if (card) {
+      const which = spec.slice(cut + 1);
+      return [card.name, card.deliveries.some((d) => d.which === which) ? which : card.default];
+    }
+  }
+  return ["", ""];  // a catalogue voice, or a card that has since been deleted
+}
+
+function voicePair(sc) {
+  const cards = MONT.doc.voices || [];
+  if (!cards.length) return "";
+  const spec = sc.voice || MONT.doc.voice || "";
+  const [name, which] = splitVoice(spec, cards);
+  const opt = (v, t, on, title) =>
+    `<option value="${esc(v)}"${on ? " selected" : ""}${title ? ` title="${esc(title)}"` : ""}>${esc(t)}</option>`;
+  // A voice the card list does not hold is still what this line says — a catalogue id
+  // on a run whose engine was switched, a card since deleted — so it is kept as an
+  // entry of its own rather than silently replaced by whatever sorts first.
+  const stray = !name && spec ? opt(spec, spec, true) : "";
+  const voices = stray + cards.map((c) => opt(c.name, c.name, c.name === name, c.description)).join("");
+  const card = cards.find((c) => c.name === name);
+  const list = (card && card.deliveries) || [];
+  const deliveries = list.length > 1
+    ? `<label class="inline">${lab("js.mont.delivery")}
+         <select id="i-delivery">${list.map((d) =>
+           opt(d.which, d.which, d.which === which, d.description)).join("")}</select></label>`
+    : "";
+  return `<label class="inline">${lab("js.mont.voice")}
+      <select id="i-voice">${voices}</select></label>${deliveries}`;
+}
+
+// What the two lists currently say, as the spec a re-voicing is pinned to. A card with
+// one recording is pinned by its NAME and not by that recording: nothing was asked
+// about the intonation there, so the line keeps following the card the way the run does.
+function pickedVoice() {
+  const pick = mq("#i-voice"), which = mq("#i-delivery");
+  if (!pick) return null;
+  return which ? `${pick.value}:${which.value}` : pick.value;
 }
 
 function lineInspector() {
@@ -1390,9 +1427,10 @@ function lineInspector() {
     <label class="inline">${lab("web.f.rate")}
       <input type="range" id="i-rate" min="-50" max="50" step="5" value="${rateOf(sc)}">
       <span class="dose" id="i-rate-v">${rateOf(sc)}</span></label>
-    ${deliveryPicker(sc)}
+    <div id="i-voicepair" class="voicepair">${voicePair(sc)}</div>
     <button class="primary" id="i-say">${lab("js.mont.revoice")}</button>
   </div>
+  ${sc.voice && sc.voice_auto ? `<p class="dim">∿ ${lab("js.mont.byai")}</p>` : ""}
   <div class="take" id="i-take-voice"><span class="say">${lab("js.mont.ownvoice")}</span>
     <input type="file" hidden accept="audio/*"></div>`;
 }
@@ -1409,10 +1447,24 @@ async function commitText(i) {
              () => montDrafts.delete(i));
 }
 
+// Choosing another person re-asks the second question: the intonations on offer are
+// that card's, and the one it speaks with by default is where the list opens. Redrawn
+// rather than re-rendered whole, so the text box below keeps its caret and its draft.
+function bindVoicePair() {
+  const pick = mq("#i-voice");
+  if (!pick) return;
+  pick.onchange = () => {
+    const box = mq("#i-voicepair");
+    box.innerHTML = voicePair({ voice: pick.value });
+    bindVoicePair();
+  };
+}
+
 function bindLineInspector() {
   const i = montSel.i;
   const rate = mq("#i-rate"), out = mq("#i-rate-v");
   rate.oninput = () => (out.textContent = rate.value);
+  bindVoicePair();
   const box = mq("#i-text");
   box.oninput = () => {
     montDrafts.set(i, box.value);
@@ -1438,9 +1490,9 @@ function bindLineInspector() {
     say(lab("js.mont.voicing"));
     // the delivery travels with the request and is PINNED by it, exactly as the speed
     // is: both are properties of the take being made (see `stages.tts.resynth_one`)
-    const pick = mq("#i-voice");
     const body = { scene: i, rate: +rate.value };
-    if (pick) body.voice = pick.value;
+    const picked = pickedVoice();
+    if (picked !== null) body.voice = picked;
     await send("/voice", { method: "POST", body: J(body) },
                () => { reloadVoice(); say(lab("js.mont.voiced")); });
     const back = mq("#i-say");

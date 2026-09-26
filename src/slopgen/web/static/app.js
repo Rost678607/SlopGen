@@ -549,23 +549,52 @@ function reportHTML(d) {
   return `<div class="report">${rows.join("")}</div>`;
 }
 
-// One delivery, drawn: its head of buttons, and its body of fields. Every recording in
-// a card goes through these — there is no longer a privileged one that is drawn by the
-// card itself, which is the whole point of the shape (see `config.models.VoiceConfig`).
-// Only `lang` is missing here and lives on the card: a person does not speak one
-// language angrily and another calmly.
-const sampleHead = (s) => `
-      <div class="row">
-        ${s.is_default
-          ? `<span class="pill-on" title="${esc(lab("js.v.mainnote"))}">★ ${lab("js.v.main")}</span>`
-          : `<button data-main class="ghost">${lab("js.v.makemain")}</button>`}
-        <b>${esc(s.which)}</b>
-        <span class="dim">${s.has_sample ? `${s.seconds} c` : lab("js.the-sample-is-gone")}</span>
-        <span class="grow"></span>
-        <button data-check class="ghost">${lab("js.check")}</button>
-        <button data-clean class="ghost">${lab("js.denoise")}</button>
-        <button data-save class="primary">${lab("js.save")}</button>
-        <button data-del class="ghost">${lab("js.delete")}</button></div>`;
+// The voices room: a card is a person, and under it every recording of them, one per
+// ROW. It used to be one full panel per recording — player, transcript box, three
+// fields and five buttons, repeated — and a card with five intonations in it was a
+// screen and a half of identical boxes you had to read to tell apart. A row says the
+// three things you actually scan for (which one the video speaks with, what it is
+// called, what it sounds like), and opens into the editor only when you ask it to.
+let voicesData = [];    // what /api/voices last said, so a toggle costs no request
+let voiceOpen = "";     // which delivery's editor is open, as `card  which`
+
+const recKey = (card, which) => `${card}${which}`;
+const clip = (t, n) => (t.length > n ? t.slice(0, n - 1) + "…" : t);
+
+// What a row says about a recording while it is shut: how long it is, and — in the
+// operator's own words, falling back to the transcript — what it is. The description is
+// the interesting half and the one the writer reads too (see `llm/delivery.py`), which
+// is a reason to have it in front of you while you cut the next take.
+function recNote(s) {
+  if (!s.has_sample) return `<span class="bad">${lab("js.the-sample-is-gone")}</span>`;
+  const what = s.description || s.text;
+  return `<span class="dim">${esc(s.seconds)} c${what ? " · " + esc(clip(what, 70)) : ""}</span>`;
+}
+
+const recRow = (card, s, open) => `
+        <div class="rec" data-rec="${esc(s.which)}">
+          <div class="rec-head${open ? " open" : ""}">
+            <button data-toggle class="rec-name" aria-expanded="${open}">
+              <span class="caret">${open ? "▾" : "▸"}</span>
+              ${s.is_default
+                ? `<span class="pill-on" title="${esc(lab("js.v.mainnote"))}">★</span>`
+                : `<span class="pill-gap"></span>`}
+              <b>${esc(s.which)}</b> ${recNote(s)}
+            </button>
+            ${s.is_default ? ""
+              : `<button data-main class="ghost">${lab("js.v.makemain")}</button>`}
+          </div>
+          <div class="rec-body"${open ? "" : " hidden"}>
+            ${sampleBody(s)}
+            <div class="row">
+              <button data-check class="ghost">${lab("js.check")}</button>
+              <button data-clean class="ghost">${lab("js.denoise")}</button>
+              <span class="grow"></span>
+              <button data-save class="primary">${lab("js.save")}</button>
+              <button data-del class="ghost danger">${lab("js.delete")}</button>
+            </div>
+          </div>
+        </div>`;
 
 const sampleBody = (s) => `
       <div data-report></div>
@@ -574,21 +603,22 @@ const sampleBody = (s) => `
         <textarea data-f="text" rows="2">${esc(s.text)}</textarea></label>
       <div class="grid">
         <label>${lab("js.v.recname")}<input data-rename value="${esc(s.which)}"></label>
-        <label>${lab("js.v.recdescr")}<input data-f="description" value="${esc(s.description)}"></label>
+        <label>${lab("js.v.recdescr")}<input data-f="description" value="${esc(s.description)}"
+          placeholder="${esc(lab("js.v.recdescr.ph"))}"></label>
         <label class="wide">${lab("js.sample-url-for-cloud-engines")}<input data-f="ref_url" value="${esc(s.ref_url)}"></label>
       </div>`;
 
 // The card: the person, and what belongs to them rather than to any one take of them.
-// Its own controls are two fields and a delete — everything else in the room is a
-// delivery.
+// Its own line says the two things that are true of the whole card — the language, and
+// which delivery it speaks with — and everything under it is a recording.
 const cardHead = (v) => `
-      <div class="row"><b>${esc(v.name)}</b>
+      <div class="row card-head"><b>${esc(v.name)}</b>
         <span class="dim">${esc(v.lang)} · ${v.samples.length
-          ? `${lab("js.v.main")}: ${esc(v.default)}` : lab("js.v.none")}</span>
+          ? `★ ${esc(v.default)}` : lab("js.v.none")}</span>
         <span class="grow"></span>
         <button data-cardsave class="primary">${lab("js.save")}</button>
-        <button data-carddel class="ghost">${lab("js.delete")}</button></div>
-      <div class="grid">
+        <button data-carddel class="ghost danger">${lab("js.delete")}</button></div>
+      <div class="grid card-fields">
         <label>${lab("web.f.title")}<input data-rename value="${esc(v.name)}"></label>
         <label>${lab("js.language")}<input data-cf="lang" value="${esc(v.lang)}"></label>
         <label class="wide">${lab("js.v.who")}<input data-cf="description" value="${esc(v.description)}"></label>
@@ -599,17 +629,21 @@ const cardHead = (v) => `
 // an angry TAKE of the same person and not a parameter. They sit on one level and the
 // card points at one of them; `марта:зло` pins a run or a line to a delivery by name,
 // while a bare `марта` is "whatever this card's default is" and follows the star.
-const deliveries = (v) => `
+//
+// The import form is behind a button for the same reason the editors are shut: it is
+// four fields and a file box, and a card is read far more often than it is added to.
+const deliveries = (v, adding) => `
       <div class="recs">
-        <div class="row"><b>${lab("js.v.deliveries")}</b>
-          <span class="dim">${lab("js.v.recnote")}</span></div>
-        ${v.samples.map((s) => `
-          <div class="panel sub" data-rec="${esc(s.which)}">
-            ${sampleHead(s)}
-            ${sampleBody(s)}
-          </div>`).join("") || `<p class="dim">${lab("js.v.none")}</p>`}
-        <form data-recnew class="grid">
+        <div class="row"><b>${lab("js.v.deliveries")}</b></div>
+        ${v.samples.map((s) => recRow(v.name, s, voiceOpen === recKey(v.name, s.which))).join("")
+          || `<p class="dim">${lab("js.v.none")}</p>`}
+        <div class="row">
+          <button data-addrec class="ghost">${adding ? "−" : "+"} ${lab("js.v.addrec")}</button>
+        </div>
+        <form data-recnew class="grid"${adding ? "" : " hidden"}>
           <label>${lab("js.v.recname")}<input name="as" required placeholder="зло"></label>
+          <label>${lab("js.v.recdescr")}<input name="description"
+            placeholder="${esc(lab("js.v.recdescr.ph"))}"></label>
           <label class="wide">${lab("js.v.rectext")}
             <textarea name="text" rows="2"></textarea></label>
           <label class="wide">${lab("web.f.sample")}
@@ -623,54 +657,32 @@ const deliveries = (v) => `
         </form>
       </div>`;
 
-// ---------------------------------------------------------- picking a voice
-//
-// Every place that offers cloned voices draws them the same way: one group per CARD,
-// its deliveries on one level inside it, and a star on the one the card speaks with.
-// A flat list of specs cannot say which of two entries is one person read two ways —
-// and it cannot show which delivery a bare `марта` currently means, which is the one
-// thing an operator needs to know before pressing anything (see
-// `ConfigStore.voice_catalogue`).
-//
-// The default delivery's VALUE is the bare card name, and that is not a shortcut: it
-// is a different instruction. `марта` keeps meaning "whatever this card's default is"
-// and follows the star when the editor moves it, while `марта:зло` is pinned to that
-// recording for good. So choosing the starred row is how a run says "this voice", and
-// choosing another is how it says "this take of it".
-function voiceGroups(cards) {
-  return (cards || []).map((c) => [c.name, (c.deliveries || []).map((d) => ({
-    v: d.is_default ? c.name : d.spec,
-    l: d.is_default ? `${d.which} ★` : d.which,
-    t: d.description || "",
-  }))]).filter(([, rows]) => rows.length);
-}
-
-// `groups` is [[label, rows]]; a row is a name or `{v, l, t}`. `blank` is the text of
-// the empty first option, or undefined for no such option.
-function optgroupsHTML(groups, chosen, blank) {
-  const opt = (o) => {
-    const v = o && o.v !== undefined ? o.v : o;
-    const l = o && o.l !== undefined ? o.l : o;
-    const t = o && o.t ? ` title="${esc(o.t)}"` : "";
-    return `<option value="${esc(v)}"${v === chosen ? " selected" : ""}${t}>${esc(l)}</option>`;
-  };
-  const head = blank === undefined ? ""
-    : `<option value=""${chosen ? "" : " selected"}>${esc(blank)}</option>`;
-  return head + groups.map(([g, rows]) =>
-    `<optgroup label="${esc(g)}">${rows.map(opt).join("")}</optgroup>`).join("");
-}
-
 async function loadVoices() {
-  const vs = await api("/api/voices");
-  $("#voices").innerHTML = vs.map((v) => `
+  voicesData = await api("/api/voices");
+  drawVoices();
+}
+
+// Drawn from what the last request said, so opening a row, shutting one or reaching for
+// the import form costs nothing and cannot race with anything.
+function drawVoices(adding = "") {
+  $("#voices").innerHTML = voicesData.map((v) => `
     <div class="panel cfg-item" data-voice="${esc(v.name)}">
       ${cardHead(v)}
-      ${deliveries(v)}
+      ${deliveries(v, adding === v.name)}
     </div>`).join("") || `<p class="empty">${lab("js.no-voices-yet")}</p>`;
   $("#voices").querySelectorAll("[data-voice]").forEach((el) => {
     const name = el.dataset.voice;
     bindCard(el, name);
-    el.querySelectorAll("[data-rec]").forEach((r) => bindSample(r, name, r.dataset.rec));
+    el.querySelectorAll("[data-rec]").forEach((r) => {
+      bindSample(r, name, r.dataset.rec);
+      r.querySelector("[data-toggle]").onclick = () => {
+        const key = recKey(name, r.dataset.rec);
+        voiceOpen = voiceOpen === key ? "" : key;
+        drawVoices(adding);
+      };
+    });
+    el.querySelector("[data-addrec]").onclick = () =>
+      drawVoices(adding === name ? "" : name);
     el.querySelector("[data-recnew]").onsubmit = async (e) => {
       e.preventDefault();
       const btn = e.target.querySelector("button");
@@ -681,6 +693,9 @@ async function loadVoices() {
         fd.append("name", name);
         const r = await api("/api/voices", { method: "POST", body: fd });
         say(lab("js.v.recadded"));
+        // …and the new recording opens, because the next thing anybody does with a take
+        // just imported is listen to it and read what the check says about it
+        voiceOpen = recKey(name, r.added);
         await loadVoices();
         showReport(name, r.added, r);
       } catch (err) { say(err.message, true); }
@@ -689,9 +704,8 @@ async function loadVoices() {
   });
 }
 
-// The card's own two fields and its delete. Scoped with `data-cf` rather than `data-f`
-// so that saving the person never picks up a delivery's transcript out of the panel
-// below it.
+// The card's own fields and its delete. Scoped with `data-cf` rather than `data-f` so
+// that saving the person never picks up a delivery's transcript out of a row below it.
 function bindCard(el, name) {
   const url = `/api/voices/${encodeURIComponent(name)}`;
   el.querySelector("[data-cardsave]").onclick = async () => {
@@ -700,7 +714,7 @@ function bindCard(el, name) {
     // the name is a field like any other, and Save is what commits it: a rename moves
     // the card's file, the recordings named after it and the content types pointing at
     // it, and says so (see `ConfigStore.rename_voice`)
-    body.rename = el.querySelector("[data-rename]").value;
+    body.rename = el.querySelector(".card-fields [data-rename]").value;
     const r = await api(url, { method: "PUT", headers: { "content-type": "application/json" },
       body: JSON.stringify(body) });
     sayRename(name, body.rename, r, lab("js.saved"));
