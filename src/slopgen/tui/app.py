@@ -56,6 +56,7 @@ from ..config import ConfigError, ConfigStore, RunParams, VisualsConfig
 from ..config.envfile import set_env_var
 from ..config.loader import fandom_docs, lore_sha, read_lore, write_fandom
 from ..config.models import (
+    DEFAULT_DELIVERY,
     AdConfig,
     AdDescriptionConfig,
     AdNativeConfig,
@@ -65,6 +66,8 @@ from ..config.models import (
     LLMProfile,
     OrchestrationConfig,
     OrchestrationStage,
+    VoiceConfig,
+    VoiceSample,
     VisualsBackground,
     VisualsForeground,
 )
@@ -6490,13 +6493,17 @@ def _entity_values(store: ConfigStore, kind: str, name: str | None) -> dict[str,
             "appearance": c.appearance if c else "",
         }
     if kind == "voices":
+        # This screen edits the card and the ONE delivery it speaks with; the others
+        # are the web room's (see `VoicePane._write`). A card holds no recording of its
+        # own any more — `sample()` is the delivery it points at.
         v = store.voices.get(name) if name else None
+        smp = v.sample() if v else None
         return {
             "name": v.name if v else "",
-            "ref": v.ref if v else "",
-            "text": v.text if v else "",
+            "ref": smp.ref if smp else "",
+            "text": smp.text if smp else "",
             "lang": v.lang if v else "ru",
-            "url": v.ref_url if v else "",
+            "url": smp.ref_url if smp else "",
             "description": v.description if v else "",
         }
     if kind == "fandoms":
@@ -7267,7 +7274,8 @@ class VoicePane(_DemoMixin, EntityPane):
     async def _fill_form(self, name: str | None) -> None:
         await super()._fill_form(name)
         card = self.app.store.voices.get(name) if name else None
-        self._ref = card.ref if card else ""
+        smp = card.sample() if card else None
+        self._ref = smp.ref if smp else ""
         self._show_sample()
         self.query_one("#voice-report", Static).update("")
 
@@ -7377,7 +7385,12 @@ class VoicePane(_DemoMixin, EntityPane):
             except ModelMissing as e:
                 self.notify(str(e), severity="error", timeout=12)
                 return
-        dest = self._config_dir() / f"{name}.wav"
+        # `марта.обычная.wav`: the filename says which card the recording belongs to
+        # and which of its deliveries this is. This screen imports into the delivery the
+        # card speaks with — the others are the web room's (see `_write`).
+        old = self.app.store.voices.get(name)
+        which = (old.default_name if old else "") or DEFAULT_DELIVERY
+        dest = self._config_dir() / f"{name}.{which}.wav"
         dest.parent.mkdir(parents=True, exist_ok=True)
         # Convert via a temporary file, then move. The source may BE the destination —
         # re-importing a card's own sample to denoise it is a reasonable thing to do,
@@ -7437,12 +7450,17 @@ class VoicePane(_DemoMixin, EntityPane):
     # -- listen ------------------------------------------------------------
 
     async def _delete(self, name: str) -> None:
-        """Take the sample with the card — the base class only knows about the TOML."""
+        """Take the recordings with the card — the base class only knows about the TOML.
+
+        Every delivery in it, not merely the one this screen shows: they are separate
+        files of one person, and none of them is worth anything once the card naming
+        them is gone."""
         card = self.app.store.voices.get(name)
-        ref = card.ref_path if card else None
+        refs_ = [s.ref_path for s in card.samples.values()] if card else []
         await super()._delete(name)
-        if ref and Path(ref).exists():
-            Path(ref).unlink()
+        for ref in refs_:
+            if ref and Path(ref).exists():
+                Path(ref).unlink()
 
     @on(Button.Pressed, "#demo-voices")
     def _demo(self) -> None:
@@ -7486,42 +7504,52 @@ class VoicePane(_DemoMixin, EntityPane):
             return active
         return next((eid for eid in TTS_ENGINES if ready(eid)), "")
 
-    def _rename_sample(self, name: str) -> None:
-        """Carry the sample along when the card is renamed.
+    def _rename_sample(self, name: str, which: str) -> None:
+        """Carry the recording along when the card is renamed.
 
         `EntityPane._save` drops the old `.toml` on a rename, which is right for every
-        other config kind because a card is the whole entity. A voice is two files, and
-        without this the sample was left behind under the old name — an orphan wav that
-        nothing points at, next to a card whose `ref` still named it."""
+        other config kind because a card is the whole entity. A voice is a card and its
+        audio, and without this the recording was left behind under the old name — an
+        orphan wav that nothing points at, next to a card whose `ref` still named it.
+
+        Only the delivery this screen edits is moved: the others are named literally in
+        the card and keep pointing at their own files, under whatever name they were
+        imported with."""
         old_ref = self._ref
         if not old_ref:
             return
         old_path = self._config_dir() / old_ref
-        new_path = old_path.with_name(f"{name}{old_path.suffix}")
+        new_path = old_path.with_name(f"{name}.{which}{old_path.suffix}")
         if old_path == new_path or not old_path.exists():
             return
         old_path.replace(new_path)
         self._ref = new_path.name
 
     def _write(self, name: str, vals: dict) -> Path:
-        self._rename_sample(name)
-        data = {"name": name, "ref": self._ref, "text": vals["text"],
-                "lang": vals["lang"] or "ru", "ref_url": vals["url"],
-                "description": vals["description"]}
-        # A card's other recordings — the deliveries a line can be pinned to — are the
-        # web room's to edit, and this form has no field for them. But it rebuilds the
-        # whole file from the fields it does have, so without carrying them across, a
-        # save made here would delete every intonation the card had
-        # (`config.models.VoiceConfig.samples`). Their `ref` names a file literally, so
-        # they keep pointing at their own recordings even when the card is renamed.
+        """The card back to its file: the person's fields, and the one delivery this
+        screen edits written into the table under the name it already has.
+
+        A card is a catalogue of deliveries with one of them named as its default
+        (`config.models.VoiceConfig`), and this form shows exactly that one — adding
+        deliveries and moving the pointer are the web room's. But it rebuilds the whole
+        file from the fields it does have, so the rest of the table is carried across
+        unchanged; without that, a save made here would delete every intonation the card
+        had."""
         old = self.app.store.voices.get(name)
-        if old is not None and old.samples:
-            data["samples"] = {k: s.model_dump(mode="json", exclude={"root"})
-                               for k, s in old.samples.items()}
+        which = (old.default_name if old else "") or DEFAULT_DELIVERY
+        self._rename_sample(name, which)
+        v = VoiceConfig(name=name, lang=vals["lang"] or "ru",
+                        description=vals["description"],
+                        default=old.default if old else which,
+                        samples=dict(old.samples) if old else {})
+        v.samples[which] = VoiceSample(ref=self._ref, text=vals["text"],
+                                       ref_url=vals["url"],
+                                       description=(old.samples[which].description
+                                                    if old and which in old.samples else ""))
         path = self._config_dir() / f"{name}.toml"
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "wb") as f:
-            tomli_w.dump(data, f)
+            tomli_w.dump(v.as_config(), f)
         return path
 
 

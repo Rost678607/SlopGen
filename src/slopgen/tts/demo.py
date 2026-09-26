@@ -40,14 +40,16 @@ ATTEMPTS = 3
 def voice_for(store, name: str, lang: str) -> Voice:
     """A menu entry turned into something an engine can speak with, by the SAME rule
     the pipeline uses (`pipeline/stages/tts._resolve_voice`) — which includes
-    `марта:зло`, one of the card's other deliveries. Auditioning those is most of what
-    the demo is for once a card holds more than one recording."""
+    `марта:зло`, one of the card's deliveries, and a bare `марта`, which is whichever
+    delivery that card calls its default. Auditioning those is most of what the demo is
+    for once a card holds more than one, and hearing the default is how you find out
+    what a run with that card will sound like."""
     found = store.voice_sample(name)
     if found is None:
         return Voice(name=name, lang=lang)
-    card, sample, _which = found
+    card, sample, which = found
     ref = sample.ref_path
-    return Voice(name=name, lang=card.lang or lang,
+    return Voice(name=f"{card.name}:{which}", lang=card.lang or lang,
                  ref_audio=Path(ref) if ref else None,
                  ref_text=sample.text, ref_url=sample.ref_url)
 

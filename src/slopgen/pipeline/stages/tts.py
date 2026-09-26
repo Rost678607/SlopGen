@@ -25,11 +25,13 @@ a drama's voice.
 
 **The delivery is per line too, and for the same reason the speed is.** No cloning
 engine here has a parameter for intonation; what it has is the sample, whose reading
-it imitates. So a card holds several recordings of one person
-(`config.models.VoiceConfig.samples`) and a line can name the one it wants —
-``Scene.voice = "марта:зло"``, resolved at synthesis time and part of the cache key,
-so re-pinning one line re-voices that line and no other. A line that names nothing
-is voiced by the run's voice, which is the whole video's delivery.
+it imitates. So a card holds every recording of one person on one level
+(`config.models.VoiceConfig.samples`) and names one of them its default; a line can
+name another — ``Scene.voice = "марта:зло"``, resolved at synthesis time and part of
+the cache key, so re-pinning one line re-voices that line and no other. A line that
+names nothing is voiced by the run's voice, which is the whole video's delivery, and
+which follows the card's default rather than being a copy of it: move the default in
+the editor and every unpinned line is re-voiced with the new one.
 
 **What is spoken is not always what is written.** A few words come out wrong no
 matter how they are spelled in the script — a Cyrillic acronym whose letters form
@@ -107,10 +109,17 @@ def _resolve_voice(ctx: AppContext, engine: str, spec: str = "") -> Voice:
     exists under `configs/voices/`. That keeps the cloned voices usable everywhere a
     voice name is accepted today, without a second flag to remember.
 
-    `марта:зло` is the same namespace one level down: one of the card's other
-    recordings, which is how a delivery is chosen (see `config.models.VoiceConfig`).
-    The whole spec travels into `Voice.name`, so the voiced-line cache tells two
-    deliveries of one person apart as readily as it tells two people apart.
+    `марта:зло` is the same namespace one level down: one of the card's deliveries,
+    which is how an intonation is chosen (see `config.models.VoiceConfig`). A bare
+    `марта` is the delivery that card calls its default, and the difference between
+    the two is worth stating: the first is pinned to a recording, the second follows
+    the card and moves when the editor moves it.
+
+    What comes back is named after the RESOLVED recording (`марта:зло`) whichever way
+    it was asked for, because that name is what the voiced-line cache is keyed on. So
+    two specs meaning the same recording share their cached takes, and moving a card's
+    default re-voices every line that was following it — which is the whole point of
+    the flag.
 
     `spec` overrides the run's voice, and is how ONE line comes out in another
     delivery: it is the spec `Scene.voice` holds. Empty means the run's own."""
@@ -121,13 +130,14 @@ def _resolve_voice(ctx: AppContext, engine: str, spec: str = "") -> Voice:
         card, sample, which = found
         ref = sample.ref_path
         if ref is None or not Path(ref).exists():
-            what = f"recording '{which}'" if which else "sample"
             raise RuntimeError(
-                f"voice '{name}' points at a {what} that is not there "
-                f"({sample.ref or '<no ref>'}) — fix configs/voices/{card.name}.toml"
+                f"voice '{name}' points at a recording that is not there "
+                f"('{which}' → {sample.ref or '<no ref>'}) — fix "
+                f"configs/voices/{card.name}.toml"
             )
-        return Voice(name=name, lang=card.lang or lang, ref_audio=Path(ref),
-                     ref_text=sample.text, ref_url=sample.ref_url)
+        return Voice(name=f"{card.name}:{which}", lang=card.lang or lang,
+                     ref_audio=Path(ref), ref_text=sample.text,
+                     ref_url=sample.ref_url)
     info = ENGINES.get(engine)
     if not name or (info is not None and not info.catalogue):
         # Reached with a NAME only when the engine cannot read one: everything it could

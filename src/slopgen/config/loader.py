@@ -364,9 +364,7 @@ class ConfigStore:
         # same folder, and a sample that cannot find its file clones nothing.
         self.voices: dict[str, VoiceConfig] = _load_dir("voices", VoiceConfig)
         for v in self.voices.values():
-            v.root = CONFIGS_DIR / "voices"
-            for s in v.samples.values():
-                s.root = v.root
+            v.set_root(CONFIGS_DIR / "voices")
         self.orchestrations: dict[str, OrchestrationConfig] = _load_dir("orchestration", OrchestrationConfig)
         self.shapes: dict[str, ShapesConfig] = _load_dir("shapes", ShapesConfig)
         # the effects base: arrows, circles, stings. Like a cloned voice, each entry
@@ -402,49 +400,131 @@ class ConfigStore:
     # -- cloned voices: cards and their recordings, in one namespace -------
 
     def voice_sample(self, spec: str) -> tuple[VoiceConfig, VoiceSample, str] | None:
-        """Resolve a voice name into (card, recording, recording's name), or None when
-        no card of that name exists — which is what makes a name a catalogue voice.
+        """Resolve a voice name into (card, delivery, the delivery's name), or None
+        when no card of that name exists — which is what makes a name a catalogue voice.
 
-        `марта` is the card's default recording; `марта:зло` is one of its others. The
-        colon is read as a separator only when what stands before it IS a card, because
-        a catalogue name can contain one of its own —
-        `ru-RU-Svetlana:DragonHDOmniLatestNeural` is a single voice and not a recording
+        `марта` is whichever delivery the card names as its default; `марта:зло` is
+        that one by name. Both come back with the delivery RESOLVED, so the caller
+        never has to ask a second time and the name it gets back is the recording it
+        will actually be spoken with — which is what the voiced-line cache is keyed on
+        (see `tts.base.Voice.cache_key`). The consequence is the intended one: move a
+        card's default and every line that was following it is re-voiced, while the
+        lines pinned to a delivery by name do not move.
+
+        The colon is read as a separator only when what stands before it IS a card,
+        because a catalogue name can contain one of its own —
+        `ru-RU-Svetlana:DragonHDOmniLatestNeural` is a single voice and not a delivery
         of a card called `ru-RU-Svetlana`. A card whose own name contains a colon
         therefore wins over the split, which is the same rule said once more.
 
-        Raises when the card exists and the recording does not. Falling back to the
-        default delivery there would be worse than failing: the run would finish, the
-        operator would have asked forty lines to be whispered, and every one of them
-        would come out announced."""
+        Raises when the card exists and the delivery does not. Falling back to another
+        delivery there would be worse than failing: the run would finish, the operator
+        would have asked forty lines to be whispered, and every one of them would come
+        out announced."""
         if not spec:
             return None
         card = self.voices.get(spec)
-        if card is not None:
-            return card, card, ""
-        base, _, which = spec.rpartition(":")
-        card = self.voices.get(base) if which else None
+        which = ""
         if card is None:
-            return None
-        sample = card.sample(which)
+            base, _, which = spec.rpartition(":")
+            card = self.voices.get(base) if which else None
+            if card is None:
+                return None
+            sample = card.sample(which)
+            if sample is None:
+                known = ", ".join(card.sample_names) or "nothing at all"
+                raise ConfigError(
+                    f"voice '{base}' has no delivery called '{which}' — it has {known}. "
+                    f"Add one: `slopgen voices record {base} <sample.wav> --as {which} "
+                    "--text \u2026`"
+                )
+            return card, sample, which
+        # a bare card name: whichever delivery it calls its default
+        sample = card.sample()
         if sample is None:
-            known = ", ".join(card.sample_names) or "none but the default one"
             raise ConfigError(
-                f"voice '{base}' has no recording called '{which}' — it has {known}. "
-                f"Add one: `slopgen voices record {base} <sample.wav> --as {which} "
-                "--text \u2026`"
+                f"voice '{card.name}' holds no recording at all — the card is there and "
+                f"there is nothing in it to clone from. Add one: "
+                f"`slopgen voices record {card.name} <sample.wav> --as \u2026 --text \u2026`"
             )
-        return card, sample, which
+        return card, sample, card.default_name
 
     def voice_specs(self) -> list[str]:
-        """Every cloned voice a run can be pointed at: each card, and `card:recording`
-        for each of its other deliveries. One flat list on purpose — a picker offering
-        these offers exactly what `--voice` accepts, and the two kinds are resolved
-        from the one namespace."""
+        """Every cloned voice a run can be pointed at: each card, and `card:delivery`
+        for each delivery in it. One flat list on purpose — a picker offering these
+        offers exactly what `--voice` accepts, and the two kinds are resolved from the
+        one namespace.
+
+        The bare card name is in there because it is not a synonym for its default
+        delivery but a different instruction: "whatever this card's default is", which
+        keeps following the card after the editor moves it (see `voice_catalogue` for
+        the shape a picker wants instead of this)."""
         out: list[str] = []
         for name in sorted(self.voices):
             out.append(name)
             out.extend(f"{name}:{s}" for s in self.voices[name].sample_names)
         return out
+
+    def voice_catalogue(self) -> list[dict]:
+        """The same voices, grouped the way they are meant to be READ: one entry per
+        card, holding its deliveries on one level with the default marked.
+
+        A flat list of specs says nothing about which of two names is one person's two
+        readings and which is two people, and it cannot show which delivery a bare
+        `марта` currently means. Both interfaces draw from this — the card is a folder,
+        its deliveries are its contents, and the one marked `default` is what the whole
+        video speaks with until somebody moves it."""
+        return [
+            {"name": name,
+             "lang": v.lang,
+             "description": v.description,
+             "default": v.default_name,
+             "deliveries": [
+                 {"which": which,
+                  "spec": f"{name}:{which}",
+                  "description": v.samples[which].description,
+                  "is_default": which == v.default_name}
+                 for which in v.sample_names
+             ]}
+            for name, v in sorted(self.voices.items())
+        ]
+
+    def names_recording(self, path: Path, *, except_: tuple[str, str] | None = None) -> bool:
+        """Does any voice card still name this audio file — ignoring one (card, delivery)?
+
+        Asked before a recording is deleted. Two deliveries CAN point at one file, and
+        nothing stops two cards from doing it either: a `ref` is a filename typed into a
+        config, so the same wav is reachable from as many cards as name it. Deleting one
+        of them used to take the file with it unconditionally, which is a silent way to
+        empty out a card nobody was editing — measured the hard way, on a card that
+        borrowed another's sample.
+
+        `except_` is the entry being removed, which must not count as a reason to keep
+        the file."""
+        want = Path(path)
+        for name, card in self.voices.items():
+            for which, smp in card.samples.items():
+                if except_ is not None and (name, which) == except_:
+                    continue
+                ref = smp.ref_path
+                if ref and Path(ref) == want:
+                    return True
+        return False
+
+    def set_default_delivery(self, name: str, which: str) -> VoiceConfig:
+        """Point a card at another of its deliveries, and hand the card back to be
+        written. The one operation this whole shape exists for, so it lives next to the
+        resolution rule rather than in whichever interface asked for it — the browser,
+        the terminal and an agent editing configs all mean the same thing by it."""
+        card = self.voices.get(name)
+        if card is None:
+            raise ConfigError(f"no voice named '{name}'")
+        if which not in card.samples:
+            known = ", ".join(card.sample_names) or "nothing at all"
+            raise ConfigError(
+                f"voice '{name}' has no delivery called '{which}' — it has {known}")
+        card.default = which
+        return card
 
     # -- parameter resolution: CLI > preset > account defaults > global ----
 

@@ -7,10 +7,13 @@ one. Its name goes wherever a voice name goes — `--voice марта` is the sa
 `--voice ru-RU-SvetlanaNeural`, and which kind it is depends only on whether a card of
 that name exists.
 
-`record` adds another recording of the same person to an existing card — `--as зло` —
-which is how a cloned voice is given an intonation, and the only way there is: the
-model imitates the reading of the sample it was shown, and no engine here has a
-parameter for anger or for a whisper. `--voice марта:зло` then addresses it.
+A card is a CATALOGUE of recordings, not a recording that owns others: `[samples.зло]`,
+`[samples.шёпот]` and `[samples.обычная]` sit on one level and `default` names the one a
+bare `--voice марта` speaks with. `record` adds another — `--as зло` — which is how a
+cloned voice is given an intonation, and the only way there is: the model imitates the
+reading of the sample it was shown, and no engine here has a parameter for anger or for
+a whisper. `default` moves the pointer, and moving it is what changes what a whole video
+sounds like; `--voice марта:зло` pins a run (or one line) to a delivery instead.
 
 `add` exists mostly to say no. A clipped or hissy sample does not fail loudly; it
 quietly degrades every line of every video made with it, and in the measured worst
@@ -29,7 +32,7 @@ from rich import print as rprint
 
 from ..config import ConfigStore
 from ..config.loader import CONFIGS_DIR
-from ..config.models import VoiceConfig, VoiceSample
+from ..config.models import DEFAULT_DELIVERY, VoiceConfig, VoiceSample
 from ..tts import refs
 
 app = typer.Typer(add_completion=False, help="manage cloned voices (configs/voices/)")
@@ -50,14 +53,16 @@ def list_voices(ctx: typer.Context) -> None:
     for name, v in store.voices.items():
         rprint(f"[bold]{name}[/bold]  [dim]{v.lang}[/dim]"
                + (f" — {v.description}" if v.description else ""))
-        _show_sample(v)
-        # the card's other deliveries, each addressed as `card:recording` wherever a
-        # voice name goes — which is what makes them worth listing here at all
+        if not v.sample_names:
+            rprint("  [red]no recordings in this card — it can clone nothing[/red]")
+        # every delivery on one level, with the default marked: `марта` speaks with
+        # the starred one, `марта:зло` addresses any of them by name
         for which in v.sample_names:
-            rprint(f"  [bold]{name}:{which}[/bold]"
+            star = "[green]★[/green] " if which == v.default_name else "  "
+            rprint(f"  {star}[bold]{name}:{which}[/bold]"
                    + (f" — {v.samples[which].description}"
                       if v.samples[which].description else ""))
-            _show_sample(v.samples[which], indent="    ")
+            _show_sample(v.samples[which], indent="      ")
         rprint("")
 
 
@@ -187,16 +192,27 @@ def _ingest(store: ConfigStore, sample: Path, text: str, lang: str,
     rprint(f"[dim]written:[/dim] {wav} — {refs.inspect(wav).summary()}")
 
 
+def _delivery_name(which: str) -> str:
+    """A delivery's name, or an exit. One word, and never with a colon in it: the
+    colon is what separates a card from a delivery everywhere a voice is named, so a
+    delivery carrying one would be unaddressable."""
+    which = (which or "").strip()
+    if not which or "/" in which or ":" in which:
+        typer.secho("error: a delivery's name cannot be empty or contain / or : — it is "
+                    "one word naming how the line is read, and the colon already "
+                    "separates it from the card", fg="red")
+        raise typer.Exit(1)
+    return which
+
+
 def _write_card(v: VoiceConfig) -> Path:
-    """The card back to its TOML, samples and all. Written from the model rather than
-    from a dict, so a field added to `VoiceConfig` lands here without being remembered."""
+    """The card back to its TOML, every delivery and the pointer at the default one.
+    Written from the model rather than from a dict, so a field added to `VoiceConfig`
+    lands here without being remembered (see `VoiceConfig.as_config`)."""
     path = _dir() / f"{v.name}.toml"
     path.parent.mkdir(parents=True, exist_ok=True)
-    # a card with no other recordings is written without the table rather than with an
-    # empty one — the model fills it back in, and the file stays a file a person reads
-    drop = {"name", "root"} | (set() if v.samples else {"samples"})
     with open(path, "wb") as f:
-        tomli_w.dump(v.model_dump(mode="json", exclude=drop), f)
+        tomli_w.dump(v.as_config(), f)
     return path
 
 
@@ -207,28 +223,45 @@ def add(
     name: str = typer.Option(..., "--name", help="what to call this voice; used as --voice <name>"),
     text: str = typer.Option(..., "--text", help="EXACTLY what is said in the sample, typed by hand"),
     lang: str = typer.Option("ru", "--lang", help="the sample's language"),
+    as_: str = typer.Option(DEFAULT_DELIVERY, "--as", help=f"what this delivery is called ('{DEFAULT_DELIVERY}' unless you say otherwise); it becomes the card's default"),
     description: Optional[str] = typer.Option(None, "--description"),
     url: Optional[str] = typer.Option(None, "--url", help="a public URL of the same sample; only the cloud engine needs it"),
     clean: bool = typer.Option(False, "--clean", help="run RNNoise over the sample (needs the rnnoise-sh model)"),
     force: bool = typer.Option(False, "--force", help="add it even if the sample fails a check"),
 ) -> None:
-    """Add a voice card, refusing samples that would spoil the cloning."""
+    """Start a voice card, refusing samples that would spoil the cloning.
+
+    The recording it takes in is a DELIVERY like any other — named, sitting in the
+    card's table, and pointed at by `default` because it is the first one there. Which
+    is why `--as` exists here at all: a card whose first take is a shout is a perfectly
+    good card, and `--as зло` says so on the card rather than leaving the shout filed
+    under a name meaning "the plain one"."""
     store: ConfigStore = ctx.obj
     if "/" in name or ":" in name:
         typer.secho("error: a voice name cannot contain / or : — the colon is what "
                     "separates a card from one of its recordings", fg="red")
         raise typer.Exit(1)
-    wav = _dir() / f"{name}.wav"
-    _ingest(store, sample, text, lang, wav, clean, force)
-    # Re-importing over an existing card replaces its default recording and keeps the
-    # others: they are separate files of the same person, and nothing about replacing
-    # this one says anything about them.
     old = store.voices.get(name)
-    v = VoiceConfig(name=name, ref=wav.name, text=text, lang=lang,
-                    description=description or "", ref_url=url or "",
-                    samples=old.samples if old else {})
+    which = _delivery_name(as_ or (old.default_name if old else "") or DEFAULT_DELIVERY)
+    wav = _dir() / f"{name}.{which}.wav"
+    _ingest(store, sample, text, lang, wav, clean, force)
+    # Re-importing over an existing card replaces the delivery of that name and keeps
+    # the others: they are separate files of the same person, and nothing about
+    # replacing one says anything about the rest.
+    v = old or VoiceConfig(name=name, lang=lang, root=_dir())
+    v.lang = lang
+    if description is not None:
+        v.description = description
+    v.samples[which] = VoiceSample(ref=wav.name, text=text, ref_url=url or "",
+                                   root=_dir())
+    v.default = which if old is None else v.default_name
     card = _write_card(v)
-    rprint(f"[green]✔ voice '{name}'[/green] → {card}")
+    rprint(f"[green]✔ voice '{name}:{which}'[/green] → {card}")
+    if v.default_name == which:
+        rprint(f"[dim]it is this card's default — `--voice {name}` speaks with it[/dim]")
+    else:
+        rprint(f"[dim]this card still speaks with '{v.default_name}' by default — "
+               f"`slopgen voices default {name} {which}` moves it[/dim]")
     rprint(f"[dim]use it:[/dim] slopgen drama {lang} --voice {name} --tts-engine qwen-local")
 
 
@@ -239,6 +272,7 @@ def record(
     sample: Path = typer.Argument(..., help="another recording of the SAME person (10-20s)"),
     as_: str = typer.Option(..., "--as", help="what this delivery is called: зло, шёпот, устало — used as --voice <card>:<name>"),
     text: str = typer.Option(..., "--text", help="EXACTLY what is said in THIS recording, typed by hand"),
+    make_default: bool = typer.Option(False, "--default", help="and make it the card's default, so the whole video speaks with it"),
     description: Optional[str] = typer.Option(None, "--description"),
     url: Optional[str] = typer.Option(None, "--url", help="a public URL of the same recording; only the cloud engine needs it"),
     clean: bool = typer.Option(False, "--clean", help="run RNNoise over it (needs the rnnoise-sh model)"),
@@ -252,6 +286,11 @@ def record(
     shouting, `марта:зло` addresses it wherever a voice is named, and a line pinned to
     it at the voiceover breakpoint comes out shouted.
 
+    It lands beside the card's other deliveries and not under them: nothing here is a
+    lesser take than the first one cut. `--default` says so outright and points the
+    card at it, which is how a whole video comes out shouted without a single line
+    being pinned.
+
     Cut the takes out of ONE recording session if you can. Timbre travels with the
     delivery — a sample recorded on another day, or closer to the microphone, clones as
     a slightly different person, and a video that switches between two of those changes
@@ -262,24 +301,53 @@ def record(
         known = ", ".join(sorted(store.voices)) or "none yet"
         typer.secho(f"error: no voice '{name}' — there is {known}", fg="red")
         raise typer.Exit(1)
-    which = as_.strip()
-    if not which or "/" in which or ":" in which:
-        typer.secho("error: --as cannot be empty or contain / or : — it is one word "
-                    "naming the delivery, and the colon already separates it from the "
-                    "card", fg="red")
-        raise typer.Exit(1)
-    # `марта.зло.wav`, beside `марта.wav`: one folder, and a filename that says which
-    # card a recording belongs to
+    which = _delivery_name(as_)
+    # `марта.зло.wav`, beside the card's other takes: one folder, and a filename that
+    # says which card a recording belongs to and which delivery of it this is
     wav = _dir() / f"{name}.{which}.wav"
     _ingest(store, sample, text, v.lang or "ru", wav, clean, force)
     v.samples[which] = VoiceSample(ref=wav.name, text=text,
                                    description=description or "", ref_url=url or "",
                                    root=_dir())
+    if make_default:
+        v.default = which
     card = _write_card(v)
     rprint(f"[green]✔ '{name}:{which}'[/green] → {card}")
+    if v.default_name == which:
+        rprint(f"[dim]…and it is now this card's default: `--voice {name}` speaks with "
+               "it, and so does every line of a run that names no other[/dim]")
     rprint(f"[dim]use it:[/dim] slopgen drama {v.lang or 'ru'} --voice {name}:{which}")
     rprint("[dim]…or pin one line to it at the voiceover breakpoint, which is what it "
            "is for[/dim]")
+
+
+@app.command("default")
+def set_default(
+    ctx: typer.Context,
+    name: str = typer.Argument(..., help="the voice card"),
+    which: str = typer.Argument(..., help="which of its deliveries the whole video should speak with"),
+) -> None:
+    """Point a card at another of its deliveries.
+
+    The one operation the flat shape exists for. Every recording in a card is a
+    delivery of one person and none of them is the important one by birth; this names
+    the one a bare `--voice марта` means, which is what an unpinned line — that is,
+    almost every line — is voiced with.
+
+    It re-voices: the recording is part of the voiced-line cache key, so a resumed run
+    speaks its unpinned lines again in the new delivery, while the lines pinned to a
+    delivery BY NAME (`марта:зло`) do not move. That asymmetry is the point of having
+    both spellings."""
+    store: ConfigStore = ctx.obj
+    try:
+        card = store.set_default_delivery(name, which)
+    except Exception as e:  # noqa: BLE001 — no such card, or no such delivery in it
+        typer.secho(f"error: {e}", fg="red")
+        raise typer.Exit(1) from e
+    _write_card(card)
+    rprint(f"[green]✔ '{name}' now speaks with '{which}'[/green]")
+    rprint(f"[dim]…in every run that says `--voice {name}`, and on every line that "
+           "names no delivery of its own[/dim]")
 
 
 @app.command()
@@ -288,30 +356,47 @@ def remove(
     name: str = typer.Argument(..., help="a voice card name, or `card:recording` for one delivery"),
     yes: bool = typer.Option(False, "--yes", "-y"),
 ) -> None:
-    """Delete a voice card and every recording in it — or just one of its deliveries."""
+    """Delete a voice card and every delivery in it — or just one of its deliveries.
+
+    Deleting the delivery a card points at is allowed and leaves the card standing: the
+    pointer falls back to the first delivery still there, and the command says which
+    one that now is. A card emptied of every delivery is also allowed and says so —
+    it is a name reserved for a person whose recordings you are about to re-cut."""
     store: ConfigStore = ctx.obj
     found = store.voice_sample(name)
     if found is None:
         typer.secho(f"error: no voice '{name}'", fg="red")
         raise typer.Exit(1)
     v, rec, which = found
-    if which:
-        if not yes and not typer.confirm(f"delete the '{which}' recording of "
+    # `марта:зло` names one delivery; a bare `марта` is the whole card, deliveries and
+    # all — NOT its default recording, which would leave a card behind that no longer
+    # holds the voice it is named after
+    if ":" in name and which:
+        if not yes and not typer.confirm(f"delete the '{which}' delivery of "
                                          f"'{v.name}'?", default=False):
             raise typer.Exit(1)
-        if rec.ref_path and Path(rec.ref_path).exists():
+        # the file goes only if nothing else names it: a `ref` is a filename in a
+        # config, so two deliveries — or two cards — can point at one recording
+        if (rec.ref_path and Path(rec.ref_path).exists()
+                and not store.names_recording(rec.ref_path, except_=(v.name, which))):
             Path(rec.ref_path).unlink()
         v.samples.pop(which, None)
         _write_card(v)
         rprint(f"[green]removed[/green] '{v.name}:{which}'")
+        if v.sample_names:
+            rprint(f"[dim]'{v.name}' now speaks with '{v.default_name}'[/dim]")
+        else:
+            rprint(f"[yellow]'{v.name}' is now a card with nothing in it[/yellow]")
         return
     card = _dir() / f"{v.name}.toml"
-    files = [s.ref_path for s in (v, *v.samples.values()) if s.ref_path]
+    files = [(which, smp.ref_path) for which, smp in v.samples.items()
+             if smp.ref_path
+             and not store.names_recording(smp.ref_path, except_=(v.name, which))]
     if not yes and not typer.confirm(
             f"delete {card} and {len(files)} recording(s)?", default=False):
         raise typer.Exit(1)
     card.unlink(missing_ok=True)
-    for ref in files:
+    for _which, ref in files:
         if Path(ref).exists():
             Path(ref).unlink()
     rprint(f"[green]removed[/green] voice '{v.name}'")

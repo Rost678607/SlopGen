@@ -3103,30 +3103,54 @@ EN.update({
 
 
 # Intonation on a cloned voice, which is not a parameter but another recording: a card
-# holds several takes of one person, and a line is pinned to the one it should be read
-# with (see `config.models.VoiceConfig.samples`). The UI word is «интонация» rather than
-# "recording", because that is the question an operator is actually asking.
+# is a CATALOGUE of takes of one person, all on one level, with one of them named as the
+# one the whole video speaks with (see `config.models.VoiceConfig`). The UI word is
+# «интонация» rather than "recording", because that is the question an operator is
+# actually asking, and «основная» rather than "default", because what it decides is not
+# a fallback — it is what the video sounds like.
 RU.update({
     "js.v.deliveries": "интонации",
-    "js.v.recnote": "ещё записи того же человека: модель копирует подачу образца, "
-                    "и другой подачи, кроме записанной, взять негде",
-    "js.v.none": "пока ни одной — карточка говорит одной подачей",
+    "js.v.recnote": "записи одного человека, все в одном ряду: модель копирует подачу "
+                    "образца, и другой подачи, кроме записанной, взять негде. "
+                    "Звёздочка — та, которой говорит весь ролик",
+    "js.v.none": "пока ни одной — карточке нечем говорить",
     "js.v.recname": "как называется: зло, шёпот",
+    "js.v.firstname": "как называется эта запись (по умолчанию «обычная»)",
     "js.v.rectext": "что сказано в ЭТОЙ записи — слово в слово",
+    "js.v.recdescr": "что это за подача: кричит, шепчет, устал",
+    "js.v.who": "кто это",
+    "js.v.main": "основная",
+    "js.v.makemain": "сделать основной",
+    "js.v.mainnote": "ею говорит весь ролик — каждая строка, которая не приколота "
+                     "к другой интонации",
+    "js.v.newmain": "и сразу сделать основной",
+    "js.v.moved": "— теперь основная",
     "js.v.addrec": "добавить интонацию",
     "js.v.recadded": "интонация добавлена",
     "js.mont.delivery": "интонация",
     "js.mont.asrun": "как во всём ролике",
+    "js.mont.pinned": "приколото вручную",
 })
 EN.update({
     "js.v.deliveries": "deliveries",
-    "js.v.recnote": "more recordings of the same person: the model copies the sample's "
-                    "reading, and there is no delivery to be had that nobody recorded",
-    "js.v.none": "none yet — this card speaks one way",
+    "js.v.recnote": "recordings of one person, all on one level: the model copies the "
+                    "sample's reading, and there is no delivery to be had that nobody "
+                    "recorded. The star is the one the whole video speaks with",
+    "js.v.none": "none yet — this card has nothing to speak with",
     "js.v.recname": "what it is called: angry, whisper",
+    "js.v.firstname": "what this recording is called (\u00abобычная\u00bb by default)",
     "js.v.rectext": "what THIS recording says — word for word",
+    "js.v.recdescr": "what this delivery is: shouting, whispering, worn out",
+    "js.v.who": "who this is",
+    "js.v.main": "default",
+    "js.v.makemain": "make it the default",
+    "js.v.mainnote": "the whole video speaks with this one — every line that is not "
+                     "pinned to another delivery",
+    "js.v.newmain": "and make it the default",
+    "js.v.moved": "is now the default",
     "js.v.addrec": "add a delivery",
     "js.v.recadded": "delivery added",
     "js.mont.delivery": "delivery",
     "js.mont.asrun": "as the whole video",
+    "js.mont.pinned": "pinned by hand",
 })

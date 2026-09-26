@@ -463,18 +463,17 @@ function drawTakes() {
 function fillDemoVoices(d) {
   const eng = d.engines.find((e) => e.id === d.engine) || {};
   const lang = $("#demo-lang").value || "ru";
+  // the engine's own catalogue as one group, then a group per voice CARD — the clones
+  // are grouped by the person they are, because hearing one card's deliveries next to
+  // each other is most of what the demo is for once there is more than one
   const groups = [
     [lab("js.demo-catalogue"), (eng.catalogue && eng.presets && eng.presets[lang]) || []],
-    [lab("js.demo-clones"), eng.clones ? (d.cloned || []) : []],
-  ].filter(([, names]) => names.length);
+  ].concat(eng.clones ? voiceGroups(d.cloned_cards) : [])
+   .filter(([, names]) => names.length);
   const keep = $("#demo-voice").value;
-  const opt = (n) => `<option${n === keep ? " selected" : ""}>${esc(n)}</option>`;
   $("#demo-voice").innerHTML = groups.length === 0
     ? `<option value="">${lab("js.no-voices-yet")}</option>`
-    : groups.length === 1
-      ? groups[0][1].map(opt).join("")
-      : groups.map(([head, names]) =>
-          `<optgroup label="${esc(head)}">${names.map(opt).join("")}</optgroup>`).join("");
+    : optgroupsHTML(groups, keep);
 }
 
 function wireDemo(d) {
@@ -550,42 +549,62 @@ function reportHTML(d) {
   return `<div class="report">${rows.join("")}</div>`;
 }
 
-// One recording, drawn: its head of buttons, and its body of fields. The card's own
-// sample and each of the card's other deliveries go through the same two functions,
-// because they are the same kind of thing — measured, denoised and transcribed alike
-// (see `config.models.VoiceSample`). Only two fields differ: `lang` belongs to the
-// card, because a person does not speak one language angrily and another calmly.
-const sampleHead = (title, s, extra = "") => `
-      <div class="row"><b>${esc(title)}</b>
-        <span class="dim">${s.has_sample ? `${s.seconds} c` : lab("js.the-sample-is-gone")}${extra}</span>
+// One delivery, drawn: its head of buttons, and its body of fields. Every recording in
+// a card goes through these — there is no longer a privileged one that is drawn by the
+// card itself, which is the whole point of the shape (see `config.models.VoiceConfig`).
+// Only `lang` is missing here and lives on the card: a person does not speak one
+// language angrily and another calmly.
+const sampleHead = (s) => `
+      <div class="row">
+        ${s.is_default
+          ? `<span class="pill on" title="${esc(lab("js.v.mainnote"))}">★ ${lab("js.v.main")}</span>`
+          : `<button data-main class="ghost">${lab("js.v.makemain")}</button>`}
+        <b>${esc(s.which)}</b>
+        <span class="dim">${s.has_sample ? `${s.seconds} c` : lab("js.the-sample-is-gone")}</span>
         <span class="grow"></span>
         <button data-check class="ghost">${lab("js.check")}</button>
         <button data-clean class="ghost">${lab("js.denoise")}</button>
         <button data-save class="primary">${lab("js.save")}</button>
         <button data-del class="ghost">${lab("js.delete")}</button></div>`;
 
-const sampleBody = (v, s) => `
+const sampleBody = (s) => `
       <div data-report></div>
       ${s.has_sample ? `<audio controls preload="none" src="${tokd(s.url)}"></audio>` : ""}
-      <label>${lab(s.which ? "js.v.rectext" : "js.what-the-sample-says-word-for-word")}
+      <label>${lab("js.v.rectext")}
         <textarea data-f="text" rows="2">${esc(s.text)}</textarea></label>
       <div class="grid">
-        ${s.which ? "" : `<label>${lab("js.language")}<input data-f="lang" value="${esc(v.lang)}"></label>`}
+        <label>${lab("js.v.recdescr")}<input data-f="description" value="${esc(s.description)}"></label>
         <label>${lab("js.sample-url-for-cloud-engines")}<input data-f="ref_url" value="${esc(s.ref_url)}"></label>
       </div>`;
 
-// …and the card's other recordings, which are the only intonation control a cloning
+// The card: the person, and what belongs to them rather than to any one take of them.
+// Its own controls are two fields and a delete — everything else in the room is a
+// delivery.
+const cardHead = (v) => `
+      <div class="row"><b>${esc(v.name)}</b>
+        <span class="dim">${esc(v.lang)} · ${v.samples.length
+          ? `${lab("js.v.main")}: ${esc(v.default)}` : lab("js.v.none")}</span>
+        <span class="grow"></span>
+        <button data-cardsave class="primary">${lab("js.save")}</button>
+        <button data-carddel class="ghost">${lab("js.delete")}</button></div>
+      <div class="grid">
+        <label>${lab("js.language")}<input data-cf="lang" value="${esc(v.lang)}"></label>
+        <label>${lab("js.v.who")}<input data-cf="description" value="${esc(v.description)}"></label>
+      </div>`;
+
+// …and the deliveries themselves, which are the only intonation control a cloning
 // engine has: it imitates the reading of the sample it was shown, so an angry line is
-// an angry TAKE of the same person and not a parameter. `марта:зло` is what a run or a
-// single line is then pinned to.
+// an angry TAKE of the same person and not a parameter. They sit on one level and the
+// card points at one of them; `марта:зло` pins a run or a line to a delivery by name,
+// while a bare `марта` is "whatever this card's default is" and follows the star.
 const deliveries = (v) => `
       <div class="recs">
         <div class="row"><b>${lab("js.v.deliveries")}</b>
           <span class="dim">${lab("js.v.recnote")}</span></div>
         ${v.samples.map((s) => `
           <div class="panel sub" data-rec="${esc(s.which)}">
-            ${sampleHead(s.spec, s)}
-            ${sampleBody(v, s)}
+            ${sampleHead(s)}
+            ${sampleBody(s)}
           </div>`).join("") || `<p class="dim">${lab("js.v.none")}</p>`}
         <form data-recnew class="grid">
           <label>${lab("js.v.recname")}<input name="as" required placeholder="зло"></label>
@@ -593,24 +612,62 @@ const deliveries = (v) => `
             <textarea name="text" rows="2"></textarea></label>
           <label class="wide">${lab("web.f.sample")}
             <input type="file" name="file" accept="audio/*" required></label>
-          <label class="inline wide"><input type="checkbox" name="clean" value="true">
+          <label class="inline"><input type="checkbox" name="clean" value="true">
             <span>${lab("web.f.denoise")}</span></label>
+          <label class="inline"><input type="checkbox" name="default" value="true">
+            <span>${lab("js.v.newmain")}</span></label>
           <div class="row"><span class="grow"></span>
             <button class="primary">${lab("js.v.addrec")}</button></div>
         </form>
       </div>`;
 
+// ---------------------------------------------------------- picking a voice
+//
+// Every place that offers cloned voices draws them the same way: one group per CARD,
+// its deliveries on one level inside it, and a star on the one the card speaks with.
+// A flat list of specs cannot say which of two entries is one person read two ways —
+// and it cannot show which delivery a bare `марта` currently means, which is the one
+// thing an operator needs to know before pressing anything (see
+// `ConfigStore.voice_catalogue`).
+//
+// The default delivery's VALUE is the bare card name, and that is not a shortcut: it
+// is a different instruction. `марта` keeps meaning "whatever this card's default is"
+// and follows the star when the editor moves it, while `марта:зло` is pinned to that
+// recording for good. So choosing the starred row is how a run says "this voice", and
+// choosing another is how it says "this take of it".
+function voiceGroups(cards) {
+  return (cards || []).map((c) => [c.name, (c.deliveries || []).map((d) => ({
+    v: d.is_default ? c.name : d.spec,
+    l: d.is_default ? `${d.which} ★` : d.which,
+    t: d.description || "",
+  }))]).filter(([, rows]) => rows.length);
+}
+
+// `groups` is [[label, rows]]; a row is a name or `{v, l, t}`. `blank` is the text of
+// the empty first option, or undefined for no such option.
+function optgroupsHTML(groups, chosen, blank) {
+  const opt = (o) => {
+    const v = o && o.v !== undefined ? o.v : o;
+    const l = o && o.l !== undefined ? o.l : o;
+    const t = o && o.t ? ` title="${esc(o.t)}"` : "";
+    return `<option value="${esc(v)}"${v === chosen ? " selected" : ""}${t}>${esc(l)}</option>`;
+  };
+  const head = blank === undefined ? ""
+    : `<option value=""${chosen ? "" : " selected"}>${esc(blank)}</option>`;
+  return head + groups.map(([g, rows]) =>
+    `<optgroup label="${esc(g)}">${rows.map(opt).join("")}</optgroup>`).join("");
+}
+
 async function loadVoices() {
   const vs = await api("/api/voices");
   $("#voices").innerHTML = vs.map((v) => `
     <div class="panel cfg-item" data-voice="${esc(v.name)}">
-      ${sampleHead(v.name, v, ` · ${esc(v.lang)}`)}
-      ${sampleBody(v, v)}
+      ${cardHead(v)}
       ${deliveries(v)}
     </div>`).join("") || `<p class="empty">${lab("js.no-voices-yet")}</p>`;
   $("#voices").querySelectorAll("[data-voice]").forEach((el) => {
     const name = el.dataset.voice;
-    bindSample(el, name, "");
+    bindCard(el, name);
     el.querySelectorAll("[data-rec]").forEach((r) => bindSample(r, name, r.dataset.rec));
     el.querySelector("[data-recnew]").onsubmit = async (e) => {
       e.preventDefault();
@@ -630,44 +687,70 @@ async function loadVoices() {
   });
 }
 
+// The card's own two fields and its delete. Scoped with `data-cf` rather than `data-f`
+// so that saving the person never picks up a delivery's transcript out of the panel
+// below it.
+function bindCard(el, name) {
+  const url = `/api/voices/${encodeURIComponent(name)}`;
+  el.querySelector("[data-cardsave]").onclick = async () => {
+    const body = {};
+    el.querySelectorAll("[data-cf]").forEach((i) => (body[i.dataset.cf] = i.value));
+    await api(url, { method: "PUT", headers: { "content-type": "application/json" },
+      body: JSON.stringify(body) });
+    say(`${name} ${lab("js.saved")}`);
+    loadVoices();
+  };
+  el.querySelector("[data-carddel]").onclick = async () => {
+    await api(url, { method: "DELETE" });
+    say(`${name} ${lab("js.deleted")}`);
+    loadVoices();
+  };
+}
+
 // Where a freshly imported recording's measurement goes, once the list has been drawn
 // again: onto its own row, and not into a box that is about to be replaced.
 function showReport(name, which, r) {
   const card = document.querySelector(`#voices [data-voice="${CSS.escape(name)}"]`);
   if (!card) return;
-  const holder = which
-    ? card.querySelector(`[data-rec="${CSS.escape(which)}"]`)
-    : card;
-  const box = holder && [...holder.querySelectorAll("[data-report]")]
-    .find((b) => b.closest("[data-rec]") === (which ? holder : null));
+  const holder = card.querySelector(`[data-rec="${CSS.escape(which)}"]`) || card;
+  const box = holder && holder.querySelector("[data-report]");
   if (box) box.innerHTML = reportHTML(r);
 }
 
-// Bind one recording's four buttons. `el` is the card's panel for its own sample and the
-// nested block for a delivery, and everything is scoped to it: a card's Save must send
-// the card's transcript and not the whispered take's, and both live in the same panel.
+// Bind one delivery's buttons. `el` is that delivery's own panel — nothing is nested
+// inside anything else now, so every field this reads belongs to this recording.
 function bindSample(el, name, which) {
-  const q = which ? `?which=${encodeURIComponent(which)}` : "";
+  const q = `?which=${encodeURIComponent(which)}`;
   const at = (verb) => `/api/voices/${encodeURIComponent(name)}/${verb}${q}`;
-  const mine = (sel) => [...el.querySelectorAll(sel)]
-    .filter((i) => i.closest("[data-rec]") === (which ? el : null));
-  const title = which ? `${name}:${which}` : name;
-  mine("[data-save]")[0].onclick = async () => {
+  const title = `${name}:${which}`;
+  el.querySelector("[data-save]").onclick = async () => {
     const body = {};
-    mine("[data-f]").forEach((i) => (body[i.dataset.f] = i.value));
+    el.querySelectorAll("[data-f]").forEach((i) => (body[i.dataset.f] = i.value));
     await api(`/api/voices/${encodeURIComponent(name)}${q}`, { method: "PUT",
       headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
     say(`${title} ${lab("js.saved")}`);
   };
-  mine("[data-del]")[0].onclick = async () => {
+  el.querySelector("[data-del]").onclick = async () => {
     await api(`/api/voices/${encodeURIComponent(name)}${q}`, { method: "DELETE" });
     say(`${title} ${lab("js.deleted")}`);
+    loadVoices();
+  };
+  // Point the card at this delivery. One button and not a form field, because it is not
+  // a property of the recording being edited — it is the card's answer to "what does
+  // this voice sound like", and pressing it changes what every unpinned line in every
+  // run with this voice comes out as.
+  const main = el.querySelector("[data-main]");
+  if (main) main.onclick = async () => {
+    await api(`/api/voices/${encodeURIComponent(name)}`, { method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ default: which }) });
+    say(`${name} → ${which} ${lab("js.v.moved")}`);
     loadVoices();
   };
   // Measuring and denoising are two buttons rather than one, and denoising is not
   // something the card does to itself: it CHANGES the recording, in place, and
   // RNNoise is not idempotent — pressing it twice keeps eating at what is left.
-  const box = mine("[data-report]")[0];
+  const box = el.querySelector("[data-report]");
   const work = async (btn, what, url) => {
     btn.disabled = true;
     box.innerHTML = `<div class="dim">${what}</div>`;
@@ -678,8 +761,8 @@ function bindSample(el, name, which) {
     } catch (err) { box.innerHTML = ""; say(err.message, true); }
     finally { btn.disabled = false; }
   };
-  mine("[data-check]")[0].onclick = (e) => work(e.target, lab("js.measuring"), at("check"));
-  mine("[data-clean]")[0].onclick = (e) => work(e.target, lab("js.cleaning"), at("clean"));
+  el.querySelector("[data-check]").onclick = (e) => work(e.target, lab("js.measuring"), at("check"));
+  el.querySelector("[data-clean]").onclick = (e) => work(e.target, lab("js.cleaning"), at("clean"));
 }
 
 $("#voice-new").onsubmit = async (e) => {
@@ -691,7 +774,7 @@ $("#voice-new").onsubmit = async (e) => {
     e.target.reset();
     say(lab("js.voice-added"));
     await loadVoices();
-    showReport(r.name, "", r);
+    showReport(r.name, r.added, r);
   } catch (err) { say(err.message, true); }
   finally { btn.disabled = false; }
 };
@@ -3606,7 +3689,11 @@ async function loadOptions() {
   document.querySelectorAll(".f-loopsrc").forEach((el) => fill(el, ["ai", "me"]));
   document.querySelectorAll(".f-looppark").forEach((el) => fill(el, ["hold", "go_on"]));
   // the shared block: same controls in every mode, filled once
-  document.querySelectorAll(".f-voice-pick").forEach((el) => fill(el, opts.cloned_voices, true));
+  // the clone picker, in every mode's form: grouped by card, not a flat list of specs
+  document.querySelectorAll(".f-voice-pick").forEach((el) => {
+    el.innerHTML = optgroupsHTML(voiceGroups(opts.voice_cards), el.value,
+                                 lab("w.none", "— нет —"));
+  });
   document.querySelectorAll(".f-tts").forEach((el) => fill(el, opts.tts_engines, true));
   document.querySelectorAll(".f-subs").forEach((el) => fill(el, opts.subtitle_styles, true));
   // what plays under the voice. Blank is the ordinary answer and the interesting one:

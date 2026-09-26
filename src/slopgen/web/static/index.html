@@ -268,6 +268,12 @@
         <form id="voice-new" class="grid">
           <label data-l="web.f.title">имя<input name="name" required></label>
           <label data-l="web.f.lang">язык<input name="lang" value="ru"></label>
+          <!-- The first delivery's name. A card is a catalogue of takes of one person
+               and every one of them is named, so the first is too — and it is not
+               necessarily the plain reading: a card whose first take is a shout is a
+               perfectly good card, and this is where it says so. -->
+          <label data-l="js.v.firstname">как называется эта запись
+            <input name="as" placeholder="обычная"></label>
           <label class="wide" data-l="web.f.transcript">что сказано в сэмпле — слово в слово
             <textarea name="text" rows="2"></textarea></label>
           <label class="wide" data-l="web.f.sample">сэмпл<input type="file" name="file" accept="audio/*" required></label>

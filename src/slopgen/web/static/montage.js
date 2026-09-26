@@ -1348,18 +1348,18 @@ const rateOf = (sc) =>
 // and it is the honest default: a line is not pinned until somebody pins it, and the
 // picker must not make the whole video's delivery look like a per-line choice.
 //
-// The list is every cloned voice there is, cards and their deliveries alike
-// (`ConfigStore.voice_specs`), because that is one namespace — so a line can be moved
-// to another recording of the same person, which is what this is for, and to another
-// person entirely, which drama will eventually want.
+// Grouped by CARD (`ConfigStore.voice_catalogue`), with a star on the delivery each card
+// speaks with by default — so a line can be moved to another take of the same person,
+// which is what this is for, and to another person entirely, which drama will eventually
+// want. Picking a starred row pins the line to that CARD rather than to the recording,
+// which means it keeps following the card if the star moves later; picking any other row
+// pins the take itself. Both are what `--voice` accepts, one namespace either way.
 function deliveryPicker(sc) {
-  const specs = MONT.doc.voices || [];
-  if (!specs.length) return "";
-  const opt = (v, t) =>
-    `<option value="${esc(v)}"${v === (sc.voice || "") ? " selected" : ""}>${esc(t)}</option>`;
+  const groups = voiceGroups(MONT.doc.voices);
+  if (!groups.length) return "";
   return `<label class="inline">${lab("js.mont.delivery")}
-      <select id="i-voice">${opt("", lab("js.mont.asrun"))}${
-        specs.map((v) => opt(v, v)).join("")}</select></label>`;
+      <select id="i-voice">${
+        optgroupsHTML(groups, sc.voice || "", lab("js.mont.asrun"))}</select></label>`;
 }
 
 function lineInspector() {
@@ -2030,7 +2030,7 @@ const SETTINGS = [
     title: "web.card.voice",
     rows: [
       { f: "tts_engine", kind: "select", opts: "tts_engines", l: "web.f.engine" },
-      { f: "voice_override", kind: "select", opts: "cloned_voices", l: "web.f.clone" },
+      { f: "voice_override", kind: "select", groups: "voice_cards", l: "web.f.clone" },
       { f: "tts_rate", kind: "range", min: -50, max: 50, step: 5, l: "web.f.rate" },
       { f: "tts_source", kind: "flag", on: "manual", off: "engine",
         l: "web.f.ttsmanual", note: "web.ttsmanual.note" },
@@ -2071,6 +2071,19 @@ function settingRow(row, cur) {
   const v = cur[row.f];
   const l = esc(lab(row.l));
   const note = row.note ? `<p class="dim">${esc(lab(row.note))}</p>` : "";
+  if (row.kind === "select" && row.groups) {
+    // the cloned voices, grouped by the person they belong to (see `voiceGroups`). A
+    // value the groups do not offer is still the run's answer — a catalogue voice named
+    // on the command line, a card since deleted — so it is kept as a row of its own
+    // rather than silently rewritten the moment anything else here is saved.
+    const groups = voiceGroups((opts && opts[row.groups]) || []);
+    const known = groups.some(([, rows]) => rows.some((o) => o.v === v));
+    const extra = v && !known ? [[lab("js.mont.pinned"), [v]]] : [];
+    return `<label class="setrow"><span>${l}</span>
+      <select data-set="${esc(row.f)}">${
+        optgroupsHTML(groups.concat(extra), v || "",
+                      lab(row.blank || "w.none", "— нет —"))}</select></label>${note}`;
+  }
   if (row.kind === "select") {
     const list = ((opts && opts[row.opts]) || [])
       .map((x) => (x && x.v !== undefined ? x.v : x));

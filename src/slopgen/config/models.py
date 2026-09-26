@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 AdMode = Literal["overlay", "native", "both"]
 SubtitleStyle = Literal["word_pop", "phrases", "karaoke"]
@@ -527,6 +527,11 @@ class CharacterConfig(BaseModel):
 
 # --- configs/voices/*.toml ------------------------------------------------
 
+# What a card's unnamed recording is called once every delivery has to have a name.
+# Only reached by a card written before they were one level (see
+# `VoiceConfig._fold_own_sample`) — nothing creates one under this name today.
+DEFAULT_DELIVERY = "обычная"
+
 
 class VoiceSample(BaseModel):
     """One recording to clone from, and exactly what is said in it.
@@ -537,7 +542,8 @@ class VoiceSample(BaseModel):
     the model imitates the reading it was shown. Show it somebody speaking evenly
     and every line comes out even; show it the same person pressing, and the lines
     press. There is no parameter for that on any cloning engine here, and that is
-    why a card holds several of these (see :class:`VoiceConfig`).
+    why a card holds several of these, on one level, with one of them named as its
+    default (see :class:`VoiceConfig`).
 
     `text` is typed by a human on purpose. Lifting it off the sample with a
     recognizer was tried and the errors do not stay put — the model reconciles a
@@ -565,19 +571,26 @@ class VoiceSample(BaseModel):
         return (self.root / self.ref) if self.root else Path(self.ref)
 
 
-class VoiceConfig(VoiceSample):
+class VoiceConfig(BaseModel):
     """A cloned voice: one person, and every recording of them there is.
 
     The card IS the voice — it is a config and not an artifact, portable, and the
-    same card works on any engine that clones. Its own `ref`/`text` are the default
-    recording, the one a bare ``--voice марта`` speaks with.
+    same card works on any engine that clones. What it is NOT is a recording: it
+    holds them, all of them on one level, and names one of them
+    :attr:`default` — the one a bare ``--voice марта`` speaks with.
 
-    `samples` are the OTHER recordings of the same person, kept for the way they are
-    read rather than for the voice: `марта:зло` is Марта shouting, `марта:шёпот` is
-    Марта barely audible, and both are addressed wherever a voice name is accepted.
-    That is this pipeline's only answer to intonation on a cloning engine, and it is
-    an honest one — an emotion nobody recorded cannot be asked for. Two things are
-    worth knowing before cutting them:
+    That flatness is the whole shape. A card used to be a recording that also held
+    other recordings: its own `ref`/`text` were the default delivery and `samples`
+    were "the others", which made the first take somebody cut permanently the
+    important one. It is not — an even reading is the usual default and a shouted one
+    is occasionally the right default for a whole video, and neither should require
+    re-recording anything to become one. So `[samples.<name>]` is every delivery
+    there is, `default` is a pointer, and moving the pointer is the whole operation.
+
+    `марта` is the card, `марта:зло` is one delivery of it, and both go wherever a
+    voice name is accepted. That is this pipeline's only answer to intonation on a
+    cloning engine, and it is an honest one — an emotion nobody recorded cannot be
+    asked for. Two things are worth knowing before cutting the takes:
 
     * They should come out of ONE session, ideally one continuous recording. Timbre
       travels with the delivery, so a sample recorded closer to the microphone or on
@@ -590,20 +603,86 @@ class VoiceConfig(VoiceSample):
 
     name: str
     lang: str = "ru"
+    description: str = ""  # the PERSON; each delivery describes itself
+    # which delivery a bare `марта` speaks with. Empty = the first one in the table,
+    # which is what a card holding exactly one delivery means by it.
+    default: str = ""
     samples: dict[str, VoiceSample] = {}
+    root: Path | None = Field(default=None, exclude=True)  # set by the loader
+
+    @model_validator(mode="before")
+    @classmethod
+    def _fold_own_sample(cls, data):
+        """Read a card written before the deliveries were one level: its own
+        `ref`/`text` become the delivery :data:`DEFAULT_DELIVERY`.
+
+        Kept rather than migrated on disk because a config file is the operator's,
+        not ours to rewrite behind their back — the new shape is written the next
+        time anything saves the card. It also catches the other legacy writer, code
+        that still builds a `VoiceConfig(ref=…, text=…)`, so both arrive in the
+        same shape as a card typed by hand today."""
+        if not isinstance(data, dict):
+            return data
+        ref, text = data.get("ref"), data.get("text")
+        url = data.get("ref_url")
+        if not (ref or text):
+            return data
+        data = dict(data)
+        samples = dict(data.get("samples") or {})
+        # the legacy pair IS that card's default recording, so it takes the slot even
+        # when a table entry of the same name is already there (a card written by the
+        # frozen TUI carries both, and they are the same recording said twice)
+        samples[DEFAULT_DELIVERY] = {"ref": ref or "", "text": text or "",
+                                     "ref_url": url or ""}
+        data["samples"] = samples
+        data.setdefault("default", DEFAULT_DELIVERY)
+        for key in ("ref", "text", "ref_url"):
+            data.pop(key, None)
+        return data
+
+    def set_root(self, root: Path) -> None:
+        """Where this card's recordings live, told to the card and to every delivery
+        in it. One call rather than an assignment, because a sample left without a
+        root reads its `ref` as a path relative to the working directory — which is
+        not where it is, and the failure is a missing file at synthesis time."""
+        self.root = root
+        for s in self.samples.values():
+            s.root = root
+
+    @property
+    def default_name(self) -> str:
+        """The delivery a bare card name speaks with. `default` when it names one of
+        the table's entries, else the first entry — a card with one delivery needs no
+        pointer, and a pointer left behind by a deleted delivery must not take the
+        card down with it (`ConfigStore.voice_sample` is where that is complained
+        about, once, when the voice is actually used)."""
+        if self.default and self.default in self.samples:
+            return self.default
+        return next(iter(self.samples), "")
 
     def sample(self, which: str = "") -> VoiceSample | None:
-        """The recording named `which`, the default one when nothing is named, and
-        None when this card has no such sample — the caller says what that means."""
-        if not which:
-            return self
-        return self.samples.get(which)
+        """The delivery named `which`, the default one when nothing is named, and
+        None when this card has no such delivery — the caller says what that means."""
+        return self.samples.get(which or self.default_name)
+
+    def as_config(self) -> dict:
+        """The card as its TOML file, for whoever is saving it — the browser, the
+        terminal or the frozen TUI, so all three write the same shape.
+
+        `default` is written out even when it was only implied, because the file is
+        read by people: a card holding three deliveries should say on its face which
+        one the video speaks with, rather than leaving it to be worked out from the
+        order the table happens to be in."""
+        data = self.model_dump(mode="json", exclude={"name", "root"})
+        data["default"] = self.default_name
+        return data
 
     @property
     def sample_names(self) -> list[str]:
-        """The extra recordings, in the order they were written into the card. Not
-        sorted: the operator's own order is information — the first one they cut is
-        usually the one the rest are variations on."""
+        """Every delivery, in the order they were written into the card. Not sorted:
+        the operator's own order is information — the first one they cut is usually
+        the one the rest are variations on, and it is also what `default` falls back
+        to."""
         return list(self.samples)
 
 

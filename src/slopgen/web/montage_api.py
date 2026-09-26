@@ -267,9 +267,12 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404, card_json,
         out["stages"] = montage.stages(job, cp.params,
                                        montage.completed(job, cp.completed(i)))
         out["cut"] = bool(job.final_paths)
-        # Every cloned voice a LINE can be pinned to: each card, and `card:recording`
-        # for its other deliveries (see `ConfigStore.voice_specs`). The picker on a line
-        # offers these, so what it offers is exactly what `--voice` accepts.
+        # Every cloned voice a LINE can be pinned to, grouped by the person it belongs
+        # to: a card, its deliveries on one level, and the one it speaks with by default
+        # marked (see `ConfigStore.voice_catalogue`). The picker on a line draws from
+        # this, so what it offers is exactly what `--voice` accepts — and it can say
+        # which of two entries is one person read two ways, which a flat list of specs
+        # cannot.
         #
         # Empty on an engine that cannot clone, which takes the picker off the line
         # entirely — and that is the honest answer rather than a hidden control. A
@@ -278,7 +281,7 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404, card_json,
         # picking a recording is the intonation control of cloning specifically.
         engine = cp.params.tts_engine or store.global_cfg.tts.engine or "edge"
         info = TTS_ENGINES.get(engine)
-        out["voices"] = store.voice_specs() if (info is None or info.clones) else []
+        out["voices"] = store.voice_catalogue() if (info is None or info.clones) else []
         out["world"] = run.params.fandom if world is not None else ""
         out["cards"] = [card_json(run.params.fandom, c)
                         for c in (world.frames if world else []) if c.usable]
