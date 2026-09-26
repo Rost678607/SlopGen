@@ -3183,3 +3183,37 @@ EN.update({
     "js.mont.pinned": "pinned by hand",
     "js.mont.byai": "the writer chose this intonation — choose one yourself and it stays yours",
 })
+
+
+# Re-cutting a video that has already been cut. The montage room used to end at the
+# render — get in at the `picture` breakpoint, cut, cast, press «собрать и продолжить»
+# — and a finished run was the one thing it could not touch, which is backwards: the
+# cards worth overruling are the ones you only notice in the finished video. So a done
+# run gets a button of its own, with a word that says what pressing it does: it takes
+# the render off and the video is unfinished again until the subtitles and the cut have
+# been made a second time (see `pipeline/montage.reopen`).
+RU.update({
+    "js.recut": "🎬 перемонтировать",
+    "js.recut-why": "открыть готовый ролик в монтажной и собрать заново. Монтаж, голоса "
+                    "и карточки остаются на месте; файл перепишется, когда снова "
+                    "пройдут субтитры и сборка",
+    # The note the run's row carries from then on. Deliberately says only what stays
+    # true: the two stages it is short of are drawn un-done on the room's own rail, and
+    # a note naming them would go on demanding them after they had been pressed.
+    "js.recut-by-hand": "перемонтируется вручную",
+    "js.recut-opened": "открыт на перемонтаж: субтитры и сборку надо прогнать заново — "
+                       "старый файл лежит на месте, пока не пройдёт сборка",
+    "js.mont.stale": "на диске прошлый монтаж",
+    "js.mont.watch-the-old": "посмотреть прошлый монтаж",
+})
+EN.update({
+    "js.recut": "🎬 cut it again",
+    "js.recut-why": "open a finished video in the montage room and put it together "
+                    "again. The cuts, the takes and the cards all stay; the file is "
+                    "rewritten once subtitles and assemble have run a second time",
+    "js.recut-by-hand": "being cut again by hand",
+    "js.recut-opened": "opened for re-cutting: subtitles and assemble have to run again "
+                       "— the old file stays where it is until they do",
+    "js.mont.stale": "the file on disk is the previous montage",
+    "js.mont.watch-the-old": "watch the previous montage",
+})

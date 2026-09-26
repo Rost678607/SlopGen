@@ -551,6 +551,27 @@ parked run in the list, with that button on it, and pressing it puts you back ex
 where you were. Nothing is held in the tab: every edit is already on the checkpoint by
 the time the screen redraws, so closing the browser mid-montage costs nothing.
 
+**Getting back in after it is cut.** A finished video is not a dead end. Its row carries
+**🎬 cut it again**, and pressing it takes the *render* off — each part's subtitle file
+and each part's cut — and parks the video, which is what makes it editable again: every
+editing route in the room refuses a video that has already been cut, because otherwise
+the file on disk would go on being the answer while the timeline under it said something
+else. Nothing else comes off: the lines, the takes, the cards, the moves, the effects
+and the look are exactly what you came back to change. Nothing is deleted either —
+`assemble` writes each part to the same path it used before, so the old cut is
+overwritten when the new one is made, and until then it is still there to be watched,
+which is most of why anybody reopens a finished video. The room's watch button says
+**watch the previous montage** while that is what it is playing. **Who cut it does not
+matter**, and the unattended case is the ordinary one: that the matcher put the wrong
+card under a line is usually only visible in the finished video, which is exactly when
+the room used to be shut. What is left needing doing is two stages — subtitles and
+assemble, both drawn un-done on the rail — and either way of finishing rewrites the file
+in place: press them here, or press **build it and go on** and let the chain do it.
+Walk away instead and the run is honestly unfinished and looks it, rather than a finished
+run whose file disagrees with its own timeline. The title and the upload are deliberately
+left alone: a re-cut is a new *file*, not a new publication, so the metadata is not
+rewritten and an episode that has already gone out is not sent again.
+
 **The pipeline, à la carte.** Across the top is every stage of the chain as a button:
 canon, script, entities, voice, picture track, footage, subtitles, assemble, metadata.
 Press one and it runs — the same callable the orchestrator would have called, on the
@@ -1664,6 +1685,26 @@ cp deploy.env.example deploy.env        # SSH_HOST и SSH_USER, больше н�
 списке обычным запаркованным прогоном, с той же кнопкой, и она возвращает ровно туда,
 где ты был. В вкладке ничего не держится: каждая правка лежит в чекпойнте ещё до того,
 как экран перерисовался, — закрыть браузер посреди монтажа не стоит ничего.
+
+**Как вернуться, когда ролик уже смонтирован.** Готовое видео — не тупик. В его строке
+стоит **🎬 перемонтировать**, и нажатие снимает с работы *рендер* — файл субтитров каждой
+части и сам смонтированный кусок — и паркует видео, а именно это и делает его снова
+правкопригодным: все правящие маршруты монтажной отказывают уже смонтированному видео,
+потому что иначе файл на диске остался бы ответом, пока дорожка под ним говорит другое.
+Больше не снимается ничего: строки, дубли, карточки, движения, эффекты и вид — это ровно
+то, ради чего ты вернулся. И ничего не удаляется: `сборка` пишет каждую часть по тому же
+пути, что и раньше, так что старый монтаж перепишется новым, когда тот будет собран, а до
+тех пор его можно смотреть — за этим в готовое видео и возвращаются. Кнопка просмотра в
+монтажной так и говорит — **посмотреть прошлый монтаж**, — пока играет именно он.
+**Кем он был смонтирован, неважно**, и случай «его делала нейронка» тут основной: что
+подборщик поставил под строку не ту карточку, обычно видно только в готовом ролике —
+то есть ровно тогда, когда монтажная раньше была уже закрыта. Недоделанными остаются две
+стадии — субтитры и сборка, обе нарисованы на рейке непройденными, — и любой способ
+закончить перепишет файл на месте: нажать их здесь либо нажать **собрать и продолжить** и
+отдать это цепочке. Уйти не дожав — прогон останется честно недоделанным и будет так
+выглядеть, а не готовым прогоном, чей файл спорит с собственной дорожкой. Заголовок и
+публикация не трогаются намеренно: перемонтаж — это новый *файл*, а не новая публикация,
+поэтому описание не переписывается, а уже ушедшая серия не уходит второй раз.
 
 **Конвейер вразбивку.** Сверху — каждая стадия цепочки кнопкой: канон мира, сценарий,
 реестр вещей, озвучка, дорожка картинки, видеоряд, субтитры, сборка, описание. Нажал —

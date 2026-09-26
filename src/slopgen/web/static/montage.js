@@ -143,7 +143,13 @@ function renderStages() {
     + (frozen ? `<button id="mont-unfreeze" class="ghost warn-btn"
          title="${esc(lab("js.mont.frozen-why"))}">${
          lab("js.mont.unfreeze")} ${frozen}</button>` : "")
-    + (d.cut ? `<button id="mont-watch" class="ghost">${lab("js.watch-the-video")}</button>` : "");
+    // The cut, when there is one on disk — and it is not always THIS timeline's: a
+    // video reopened for re-cutting keeps its old file until the new one overwrites it,
+    // which is precisely what makes the button worth pressing while you work. So it
+    // says which it is playing rather than quietly playing the wrong one.
+    + (d.cut ? `<button id="mont-watch" class="ghost${d.stale ? " warn-btn" : ""}"
+         title="${esc(d.stale ? lab("js.mont.stale") : lab("js.watch-the-video"))}">${
+         lab(d.stale ? "js.mont.watch-the-old" : "js.watch-the-video")}</button>` : "");
   mq("#mont-stages").querySelectorAll("[data-stage]").forEach((b) => {
     b.onclick = () => press(b.dataset.stage);
   });
@@ -319,6 +325,11 @@ function stateLine(d) {
   const bits = [`${d.shots.length} ${lab("js.mont.shots")}`, clock(d.total)];
   if ((d.effects || []).length)
     bits.push(`${lab("js.mont.left.effects")} ${d.effects.length}`);
+  // Reopened and not yet put back together: the file on disk is the previous montage.
+  // It belongs in the line that says what this video IS, because it is the one fact
+  // here that the room's own preview cannot show — the rail's two un-done chips say
+  // what to press, and this says why.
+  if (d.stale) bits.push(lab("js.mont.stale"));
   for (const b of d.blocking || []) bits.push(`${lab("js.mont.left." + b.what)} ${b.n}`);
   return bits.join(" · ");
 }

@@ -235,19 +235,21 @@ def parked(run: Run) -> dict:
     It lives here rather than in the browser's routes because the chat asks the same
     question: a bot that says "parked" and nothing else is exactly the broken page
     again, in fewer pixels."""
+    blank = {"review_stage": "", "asks": 0, "video": False, "montage": False,
+             "recut": False}
     if run.run_dir is None:
-        return {"review_stage": "", "asks": 0, "video": False}
+        return dict(blank)
     cp_file = run.run_dir / "checkpoint.json"
     try:
         works = sorted(p for p in run.run_dir.iterdir() if p.is_dir())
     except OSError:
-        return {"review_stage": "", "asks": 0, "video": False}
+        return dict(blank)
     stamp = tuple(_mtime(f) for f in
                   [cp_file, *(manual.manifest_path(w) for w in works)])
     cached = getattr(run, "_parked", None)
     if cached and cached[0] == stamp:
         return cached[1]
-    info = {"review_stage": "", "asks": 0, "video": False, "montage": False}
+    info = dict(blank)
     try:
         cp = Checkpoint.load(run.run_dir)
         for i in range(run.params.count):
@@ -260,6 +262,14 @@ def parked(run: Run) -> dict:
             # still walking has none: the job it would show is being written underneath.
             if not info["montage"] and cp.status(i) in ("review", "paused"):
                 info["montage"] = montage.available(run.params, cp.load_job(i))
+            # A video that has been CUT has the same room and one more step in front of
+            # it: the render has to come off before anything may be edited, because
+            # until it does the finished file is the answer and an edit would quietly
+            # contradict it. So it is a different button (see `montage_api.reopen`) with
+            # a different word on it — pressing it un-finishes a video, and that is not
+            # something to discover after the fact.
+            if not info["recut"] and cp.status(i) == "done":
+                info["recut"] = montage.available(run.params, cp.load_job(i))
     except Exception:
         pass
     for work in works:

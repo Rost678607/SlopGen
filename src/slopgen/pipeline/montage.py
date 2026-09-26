@@ -95,9 +95,11 @@ def available(params, job: VideoJob | None) -> bool:
 
     So the question is about the RUN, not about how far it has got. A fandom video
     whose picture comes out of the frame base belongs in this room from the moment it
-    exists to the moment it is cut. One whose picture comes from a generator does not:
-    there is no second clock there to edit, and the track lane would be a row of words
-    that cannot be cut on."""
+    exists — and it does not stop belonging when it is cut: a finished video is
+    reopened by taking the render off it (:func:`reopen`), because the mistakes worth
+    fixing are the ones you can only see in the finished thing. One whose picture comes
+    from a generator never belongs here: there is no second clock to edit, and the track
+    lane would be a row of words that cannot be cut on."""
     from ..media.generate import is_frame_model
 
     if params.mode != "fandom" or job is None:
@@ -374,6 +376,55 @@ def blocking(job: VideoJob) -> list[dict]:
     if empty:
         out.append({"what": "uncovered", "n": empty})
     return out
+
+
+def reopen(job: VideoJob) -> int:
+    """Take the RENDER off an already-cut video, so it can be edited and cut again.
+
+    A finished video used to be the one thing this room could not touch. The room was
+    written as the last stop before the render — get in at the `picture` breakpoint,
+    cut, cast, press «собрать и продолжить» — and once the chain had walked past it
+    there was no way back in at all. But the mistakes you actually want to fix are the
+    ones you can only see in the finished thing: a card that is wrong for what is said
+    over it, a cut a beat late, a line the voice mangled. The whole point of the room
+    is to overrule the matcher, and it may as well be overruled after watching it as
+    before.
+
+    What comes off is the render and nothing else: each part's subtitle file and each
+    part's cut. Those two are the only things on the job that describe the timeline as
+    it WAS rather than as it is — the words were burned in at the timings of the
+    moment, the picture was encoded against the cuts of the moment — so they are the
+    two that a re-edit makes untrue. Everything the video is made of (the lines, the
+    takes, the cards, the moves, the effects, the look) is exactly what the operator
+    came back to change, and is left where it is.
+
+    Nothing is deleted from disk. `assemble` writes each part to the same path it used
+    before (`final.mp4`, `part_03.mp4`), so the old cut is overwritten by the new one
+    when it is made — and until then it is still there to be watched, which is most of
+    why anybody reopens a finished video: to see what they are about to replace.
+
+    The completed list is not touched here, because it does not have to be. `completed`
+    re-reads every stage it can off the job, so a part with no subtitles and no cut puts
+    `subtitles` and `assemble` back on the table by itself — both in this room's rail
+    and for a resume, which is what then re-renders it.
+
+    The title and the upload are deliberately left alone. A re-cut is a new FILE, not a
+    new publication: rewriting the metadata would rename something the world has
+    already seen, and `publish` staying done is what keeps a resume from sending the
+    same episode out twice. Publishing the new cut is a decision, and it is made where
+    every other publishing decision is made — the run's settings — rather than
+    implicitly by a re-edit.
+
+    Returns how many parts were un-rendered, which is how the caller says what it did.
+    """
+    n = 0
+    for part in job.parts:
+        if part.ass is None and part.file is None:
+            continue
+        part.ass = None
+        part.file = None
+        n += 1
+    return n
 
 
 # --------------------------------------------------------------------------

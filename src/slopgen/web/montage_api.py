@@ -13,6 +13,12 @@ it while it is not, and `save` is the door between the two — it refuses a run 
 neither paused nor waiting on a breakpoint, and it puts back exactly the state it
 found rather than stamping one of its own.
 
+`reopen` is the one route that changes which state a video is in, and it is the way IN
+rather than an exception to the above: a video that has already been cut is finished,
+and nothing here may edit it until it has been un-finished. It takes the render off
+(see `montage.reopen`) and parks the video, and every other route then works on it
+exactly as on one that never got that far.
+
 The two rendering routes are the odd ones out and both exist because a browser cannot
 answer the question by itself. `/audio` builds the whole voice track as one file so
 the preview has a clock that does not drift; `/still` renders one frame through the
@@ -212,7 +218,8 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404, card_json,
         run sitting on a breakpoint is `review` and carries WHICH breakpoint, and
         stamping that one `paused` would lose the thing it is parked on. Anything else
         — running, finished, failed — is refused: a job rewritten under a finished run
-        describes a video that has already been cut."""
+        describes a video that has already been cut. A finished one is not a dead end
+        though, and says so: it is `reopen` away from being editable again."""
         status = cp.status(i)
         # Read off the JOB, not merely carried: work the operator did by hand IS a
         # stage's output, and a stage whose output is there must not be run again by a
@@ -223,6 +230,13 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404, card_json,
             cp.awaiting_review(job, done, cp.review_stage(i))
         elif status == "paused":
             cp.paused(job, done, "", cp.manual_msg(i))
+        elif status == "done":
+            # It has been cut, and a cut video is finished. Editing the job under it
+            # would describe a video that does not exist: the file on disk carries the
+            # old cuts and nothing would ever say so. `reopen` is the way back in.
+            raise HTTPException(
+                status_code=409,
+                detail="this video is already cut — re-cut it to edit it again")
         else:
             raise HTTPException(
                 status_code=409,
@@ -267,7 +281,15 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404, card_json,
         out["stage"] = cp.review_stage(i)
         out["stages"] = montage.stages(job, cp.params,
                                        montage.completed(job, cp.completed(i)))
-        out["cut"] = bool(job.final_paths)
+        # Whether there is a cut to WATCH, and whether it is this timeline's. The first
+        # is asked of the folder rather than of the job, and the difference is the whole
+        # of re-cutting a finished video: reopening one takes the render off the job
+        # (`montage.reopen`) so the chain will make it again, while the file itself
+        # stays on disk until it is overwritten — and watching what you are about to
+        # replace is most of why anybody came back in. The second is what keeps that
+        # from being a lie: the button plays a video of the cuts as they were.
+        out["cut"] = bool(job.final_paths) or any(Path(job.workdir).glob("*.mp4"))
+        out["stale"] = out["cut"] and not job.final_paths
         # Every cloned voice a LINE can be pinned to, grouped by the person it belongs
         # to: a card, its deliveries on one level, and the one it speaks with by default
         # marked (see `ConfigStore.voice_catalogue`). The picker on a line draws from
@@ -949,6 +971,61 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404, card_json,
         save(cp, i, job, done)
         out = doc(run, cp, i, job)
         out["ran"] = stage
+        return out
+
+    # -- getting back in after it is cut ------------------------------------
+
+    @app.post("/api/runs/{run_id}/montage/reopen")
+    async def reopen(run_id: str, request: Request,
+                     slopgen: str | None = Cookie(default=None)) -> dict:
+        """Un-finish a video that has already been cut, so this room may edit it again.
+
+        The one door that changes a video's state instead of putting it back. A cut
+        video is finished — the file on disk IS the answer — so every editing route
+        here refuses it, and it has to stop being finished before anything else in this
+        module will touch it. That is this, and it is two moves: the render comes off
+        the job (`montage.reopen`, which says at length what does and does not), and the
+        video is parked, which is the state the whole room already understands as
+        "waiting for you".
+
+        It does not matter who cut it. A video the chain made unattended and one the
+        operator cut by hand in this very room are the same job in the same checkpoint,
+        and the reason to come back is usually the automatic one: the matcher put the
+        wrong card under a line, and you can only see that once you have watched it.
+
+        The video is left needing two stages — its subtitles and its cut — and it is
+        honest about needing them: the rail draws both un-done, the run's row says so
+        under it, and whichever way the operator finishes (pressing the two buttons
+        here, or «собрать и продолжить», which hands the run back to the chain) ends
+        with the file rewritten in place. Walking away instead leaves a run that is
+        genuinely unfinished and looks it, rather than a finished run whose file
+        disagrees with its own timeline.
+        """
+        guard(slopgen)
+        run = run_or_404(run_id)
+        b = await body_of(request)
+        cp, i, job = open_job(run, int(b.get("video", 0)))
+        status = cp.status(i)
+        if status != "done":
+            # `paused` and `review` are not an error worth a word about: the room is
+            # already open on those, and pressing this twice is what a double click is.
+            raise HTTPException(
+                status_code=409,
+                detail=("this video is already open for editing"
+                        if status in ("paused", "review")
+                        else f"a {status} video has no cut to take off"))
+        n = montage.reopen(job)
+        # `save` cannot write this one — it refuses a finished video, which is the point
+        # of it — so the park is written here, and with the completed list re-read off
+        # the job so the two stages whose output has just gone stop counting as done.
+        cp.paused(job, montage.completed(job, cp.completed(i)), "", "js.recut-by-hand")
+        # On the run's own stream, which is also what moves the row out of «готово»:
+        # `paused` is the one status an announcement carries back onto the Run object
+        # (see `runs.Supervisor._emit`), and a row still saying the video is finished is
+        # a row whose «продолжить» button is missing.
+        sup.announce(run, i, "run", "paused", "js.recut-by-hand")
+        out = doc(run, cp, i, job)
+        out["reopened"] = n
         return out
 
     # -- letting it go ------------------------------------------------------

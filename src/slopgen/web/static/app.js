@@ -5327,6 +5327,7 @@ async function loadRuns() {
         <span class="grow"></span>
         ${actions(r).map((a) =>
           `<button data-act="${a.act}" data-id="${r.id}"${a.sure ? ` data-sure="${esc(a.sure)}"` : ""
+           }${a.title ? ` title="${esc(a.title)}"` : ""
            } class="${a.primary ? "primary" : "ghost"}">${esc(a.label)}</button>`).join("")}
       </div>
       ${progressBar(r)}
@@ -5374,6 +5375,13 @@ function actions(r) {
   // most of what makes the asking answerable.
   if (p.montage) out.push({ act: "montage", label: lab("js.montage"),
                             primary: !p.asks && !p.review_stage });
+  // …and the same room on a video that is already CUT, which is a different gesture
+  // and therefore a different word: pressing it takes the render off so the timeline
+  // can be edited again (see `montage_api.reopen`), which un-finishes the run. The one
+  // that made it does not matter — the cards a matcher chose are exactly what you come
+  // back to overrule, and you can only see that it chose badly in the finished video.
+  if (p.recut) out.push({ act: "recut", label: lab("js.recut"), title: lab("js.recut-why"),
+                          primary: !p.asks && !p.review_stage && !p.montage });
   if (p.asks || p.review_stage) out.push({ act: "resume", label: lab("js.go-on") });
   else if (r.status === "failed") out.push({ act: "resume", label: lab("js.try-again") });
   else if (r.status !== "done") out.push({ act: "resume", label: lab("js.resume") });
@@ -5484,6 +5492,18 @@ async function act(what, r, btn, sure) {
     }
     else if (what === "asks") await openAsks(r.id, r.title);
     else if (what === "montage") await openMontage(r.id, r.title);
+    else if (what === "recut") {
+      // Un-finish it first, then walk straight into the room: two requests, because
+      // taking the render off a cut video is a change to the run and opening a screen
+      // is not. The old file stays on disk until the new cut overwrites it, which is
+      // what makes «посмотреть ролик» still worth pressing while you work.
+      await api(`/api/runs/${r.id}/montage/reopen`, { method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ video: 0 }) });
+      say(lab("js.recut-opened"));
+      await openMontage(r.id, r.title);
+      loadRuns();
+    }
     else if (what === "review") await openReview(r.id, r.title);
     else if (what === "video") window.open(tokd(`/api/runs/${r.id}/video`), "_blank");
     else if (what === "resume") {
