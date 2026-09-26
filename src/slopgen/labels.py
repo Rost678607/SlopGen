@@ -3135,8 +3135,9 @@ RU.update({
     "js.v.none": "пока ни одной — карточке нечем говорить",
     "js.v.recname": "как называется",
     "js.v.firstname": "как называется эта запись (по умолчанию «обычная»)",
-    "js.v.renamednote": "переименовано. Строки, уже приколотые к старому имени внутри "
-                        "прогона, не переписаны — такой прогон скажет об этом на озвучке",
+    "js.v.renamednote": "переименовано. Прогоны, сделанные со старым именем, не переписаны: "
+                        "это записи о конкретных роликах, а не настройки — приколотая "
+                        "строка скажет об этом на озвучке, когда прогон возобновят",
     "js.v.rectext": "что сказано в ЭТОЙ записи — слово в слово",
     "js.v.recdescr": "что за подача",
     "js.v.recdescr.ph": "кричит, шепчет, устал",
@@ -3162,8 +3163,9 @@ EN.update({
     "js.v.none": "none yet — this card has nothing to speak with",
     "js.v.recname": "what it is called",
     "js.v.firstname": "what this recording is called (\u00abобычная\u00bb by default)",
-    "js.v.renamednote": "renamed. Lines already pinned to the old name inside a run are "
-                        "not rewritten — such a run will say so at the voicing stage",
+    "js.v.renamednote": "renamed. Runs made under the old name are not rewritten: they "
+                        "record particular videos rather than settings — a line pinned to "
+                        "it will say so at the voicing stage when the run is resumed",
     "js.v.rectext": "what THIS recording says — word for word",
     "js.v.recdescr": "what this delivery is",
     "js.v.recdescr.ph": "shouting, whispering, worn out",

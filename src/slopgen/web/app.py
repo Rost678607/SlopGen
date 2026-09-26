@@ -751,23 +751,43 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
     async def save_config(kind: str, name: str, request: Request,
                           slopgen: str | None = Cookie(default=None)) -> dict:
         """Create or replace one config. Validated through its own model first, so a
-        form cannot write a file the loader will refuse to read back."""
+        form cannot write a file the loader will refuse to read back.
+
+        `rename` in the body renames it first and then saves the rest under the new
+        name, which is what a form whose name is a field means by Save. The store does
+        the renaming, because it is the half that reaches outside this config: a preset
+        naming a content type, an ad, a visuals profile or an account follows it, and so
+        does `[llm]` when a profile is renamed (see `ConfigStore.rename_config`). What
+        does not follow is a run — a checkpoint records which video was made with what,
+        and that is history rather than a setting."""
         guard(slopgen)
         if kind not in KINDS:
             raise HTTPException(status_code=404, detail=f"no config kind {kind!r}")
         model, subdir = KINDS[kind]
         body = await request.json()
-        body["name"] = name
+        notes: list[str] = []
+        rename = str(body.pop("rename", "")).strip()
+        body = _blanks_away(model, body)
+        body["name"] = rename or name
         try:
             cfg = model.model_validate(body)
         except Exception as e:
             raise HTTPException(status_code=422, detail=str(e))
+        # …and only then the rename, which touches the disk: a body the model refuses
+        # must not leave the file moved and the entry half-saved under a name nothing
+        # holds any more.
+        if rename and rename != name and name in _store_of(kind):
+            try:
+                notes = store.rename_config(kind, name, rename)
+            except Exception as e:  # noqa: BLE001 — a taken name, or an unusable one
+                raise HTTPException(status_code=422, detail=str(e)) from e
+            name = rename
         if kind == "characters":
             write_character(Path("configs/characters") / f"{name}.toml", cfg)
         else:
             write_config(subdir, name, cfg.model_dump(mode="json"))
         _store_of(kind)[name] = cfg
-        return cfg.model_dump(mode="json")
+        return {**cfg.model_dump(mode="json"), "notes": notes}
 
     @app.delete("/api/configs/{kind}/{name}")
     async def remove_config(kind: str, name: str,
@@ -2646,6 +2666,23 @@ def _audio_seconds(path: Path) -> float:
         return round(duration_of(path), 1)
     except Exception:
         return 0.0
+
+
+def _blanks_away(model, body: dict) -> dict:
+    """Drop the fields a form left empty that are not TEXT fields.
+
+    Every control in the generic editor submits a string, so an untouched optional
+    number arrives as `""` — which pydantic refuses, and refused the whole entry: a
+    preset with no `count` and no `duration_s` could not be saved at all, whatever else
+    was edited. An empty box means "unset" for those, and unset is what the model's own
+    default says, so the key is left out rather than argued with."""
+    out = {}
+    for key, value in body.items():
+        field = model.model_fields.get(key)
+        if value == "" and field is not None and field.annotation is not str:
+            continue
+        out[key] = value
+    return out
 
 
 def _fields(model) -> list[dict]:

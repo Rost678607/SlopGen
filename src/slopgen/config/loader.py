@@ -397,6 +397,106 @@ class ConfigStore:
             langs.update(ct.voices.keys())
         return sorted(langs)
 
+    # Which store each config kind lives in, by the folder it is loaded from. The folder
+    # name IS the kind everywhere else (`_load_dir`, `write_config`, the browser's
+    # `/api/configs/<kind>`), so this table is the only place the two have to be paired.
+    RENAMEABLE = {
+        "llm": "llm_profiles",
+        "presets": "presets",
+        "ads": "ads",
+        "accounts": "accounts",
+        "visuals": "visuals",
+        "characters": "characters",
+        "content": "content_types",
+        "orchestration": "orchestrations",
+    }
+
+    # Where a name of one kind is written down in ANOTHER config: the preset is the one
+    # config that is mostly references, so it is most of this table. A name also appears
+    # in runs — `RunParams`, a checkpoint, a command someone typed — and those are
+    # records of a particular video rather than settings, so a rename deliberately does
+    # not chase them (see `rename_voice`, which says the same thing at more length).
+    _PRESET_FIELDS = {"content": "content_type", "ads": "ad", "visuals": "visuals",
+                      "accounts": "push"}
+
+    def _repoint_presets(self, kind: str, old: str, new: str) -> list[str]:
+        field = self._PRESET_FIELDS.get(kind)
+        if not field:
+            return []
+        notes = []
+        for name, preset in self.presets.items():
+            if getattr(preset, field, "") != old:
+                continue
+            setattr(preset, field, new)
+            write_config("presets", name, preset.model_dump(mode="json"))
+            notes.append(f"preset '{name}' now points at '{new}'")
+        return notes
+
+    def _repoint_llm(self, old: str, new: str) -> list[str]:
+        """The active profile and the per-kind routes, both in `[llm]` of the global
+        file. A profile renamed without this keeps working by accident — an unroutable
+        kind falls back to the active profile — which is the worst of the three possible
+        outcomes: the run is fine, the routing is silently gone, and nothing says so."""
+        cfg, notes, values = self.global_cfg.llm, [], {}
+        if cfg.profile == old:
+            cfg.profile = new
+            values["profile"] = new
+            notes.append(f"the active profile is now '{new}'")
+        routes = {k: (new if v == old else v) for k, v in (cfg.stage_profiles or {}).items()}
+        if routes != (cfg.stage_profiles or {}):
+            moved = [k for k, v in (cfg.stage_profiles or {}).items() if v == old]
+            cfg.stage_profiles = routes
+            values["stage_profiles"] = routes
+            notes.append(f"{', '.join(moved)} now go to '{new}'")
+        if values:
+            update_global("llm", values)
+        return notes
+
+    def rename_config(self, kind: str, name: str, new: str) -> list[str]:
+        """Rename one config of any list-shaped kind, and repoint what named it.
+
+        The file is MOVED rather than rewritten. A config's name is its filename and
+        never appears in the body, so moving it is both lossless — comments somebody
+        wrote in the file survive — and the only operation that cannot half-succeed.
+
+        What is repointed is the other CONFIGS: presets naming a content type, an ad, a
+        visuals profile or an account, and `[llm]` when a profile is renamed. What is
+        not is a run: `RunParams` inside a checkpoint records which video was made with
+        what, and rewriting that would be editing history rather than a setting."""
+        store = getattr(self, self.RENAMEABLE[kind], None) if kind in self.RENAMEABLE else None
+        if store is None:
+            raise ConfigError(f"configs of kind '{kind}' cannot be renamed")
+        new = (new or "").strip()
+        if not new or "/" in new or "\\" in new or new.startswith("."):
+            raise ConfigError(f"unusable name: {new!r}")
+        cfg = store.get(name)
+        if cfg is None:
+            raise ConfigError(f"there is no '{name}' among the {kind}")
+        if new == name:
+            return []
+        if new in store:
+            raise ConfigError(f"there is already a {kind} entry called '{new}'")
+        path = CONFIGS_DIR / kind / f"{name}.toml"
+        dest = path.with_name(f"{new}.toml")
+        if dest.exists():
+            raise ConfigError(f"{dest} is already there")
+        if path.is_file():
+            path.replace(dest)
+            # A body that spells its own name out loud wins over the filename when the
+            # file is read back (`_load_dir` keys on `data["name"]`), so a moved file
+            # would come back under the old name and the rename would have done nothing
+            # visible. Rewritten only in that case: `write_config` drops the key, which
+            # is where every writer here already leaves it — the filename IS the name,
+            # and a file that does not repeat it keeps its comments through a rename.
+            body = _read_toml(dest)
+            if body.get("name") and body["name"] != new:
+                write_config(kind, new, body)
+        cfg.name = new
+        store.pop(name, None)
+        store[new] = cfg
+        return self._repoint_presets(kind, name, new) + (
+            self._repoint_llm(name, new) if kind == "llm" else [])
+
     # -- cloned voices: cards and their recordings, in one namespace -------
 
     def voice_sample(self, spec: str) -> tuple[VoiceConfig, VoiceSample, str] | None:

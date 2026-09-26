@@ -1953,6 +1953,10 @@ async function loadConfigs(kind, label) {
 
 function cfgCard(kind, name, item) {
   const active = kind === "llm" && cfgData.active === name;
+  // The name is a field, first, like everything else about the entry — Save commits a
+  // change to it, and the server moves the file and repoints whatever named it (see
+  // `ConfigStore.rename_config`). It used to be a heading you could only read, which
+  // made a typo in a name permanent short of deleting the entry and typing it again.
   return `<div class="panel cfg-item${active ? " active" : ""}" data-name="${esc(name)}">
     <div class="row"><b>${esc(name)}</b>
       ${active ? `<span class="pill-on">${lab("js.in-use")}</span>` : ""}
@@ -1960,7 +1964,9 @@ function cfgCard(kind, name, item) {
       <span class="grow"></span>
       <button data-save class="primary">${lab("js.save")}</button>
       <button data-del class="ghost">${lab("js.delete")}</button></div>
-    <div class="grid">${cfgData.schema.map((f) => cfgField(f, item[f.name])).join("")}</div>
+    <div class="grid">
+      <label>${lab("js.name")}<input data-rename value="${esc(name)}"></label>
+      ${cfgData.schema.map((f) => cfgField(f, item[f.name])).join("")}</div>
   </div>`;
 }
 
@@ -2026,11 +2032,13 @@ function bindConfigs(kind) {
         } else body[f] = inp.value;
       });
       if (bad) { say(`${bad}${lab("js.not-json")}`, true); return; }
+      body.rename = el.querySelector("[data-rename]").value;
       try {
-        await api(`/api/configs/${kind}/${encodeURIComponent(name)}`,
+        const r = await api(`/api/configs/${kind}/${encodeURIComponent(name)}`,
           { method: "PUT", headers: { "content-type": "application/json" },
             body: JSON.stringify(body) });
-        say(`${name} ${lab("js.saved")}`);
+        sayRename(name, body.rename, r, lab("js.saved"));
+        if (body.rename !== name) loadConfigs(kind, $("#cl-title").textContent);
       } catch (e) { say(e.message, true); }
     };
     el.querySelector("[data-del]").onclick = async () => {
