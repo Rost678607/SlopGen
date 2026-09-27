@@ -657,6 +657,51 @@ const deliveries = (v, adding) => `
         </form>
       </div>`;
 
+// ---------------------------------------------------------- picking a voice
+//
+// Every place that offers cloned voices draws them the same way: one group per CARD,
+// its deliveries on one level inside it, and a star on the one the card speaks with.
+// A flat list of specs cannot say which of two entries is one person read two ways —
+// and it cannot show which delivery a bare `марта` currently means, which is the one
+// thing an operator needs to know before pressing anything (see
+// `ConfigStore.voice_catalogue`).
+//
+// The default delivery's VALUE is the bare card name, and that is not a shortcut: it
+// is a different instruction. `марта` keeps meaning "whatever this card's default is"
+// and follows the star when the editor moves it, while `марта:зло` is pinned to that
+// recording for good. So choosing the starred row is how a run says "this voice", and
+// choosing another is how it says "this take of it".
+//
+// Both live here and are called from three screens — the voice demo above, every mode's
+// form (`loadOptions`) and the montage room's settings sheet (`montage.js`,
+// `settingRow`) — which is why losing them was silent and total: nothing in this file
+// mentions them near their callers. The voices room was rewritten in one hunk that
+// happened to reach the two functions below it, and from then on the FIRST thing the
+// page did on boot threw `optgroupsHTML is not defined` out of `loadOptions`, taking
+// every select after the clone picker with it.
+function voiceGroups(cards) {
+  return (cards || []).map((c) => [c.name, (c.deliveries || []).map((d) => ({
+    v: d.is_default ? c.name : d.spec,
+    l: d.is_default ? `${d.which} ★` : d.which,
+    t: d.description || "",
+  }))]).filter(([, rows]) => rows.length);
+}
+
+// `groups` is [[label, rows]]; a row is a name or `{v, l, t}`. `blank` is the text of
+// the empty first option, or undefined for no such option.
+function optgroupsHTML(groups, chosen, blank) {
+  const opt = (o) => {
+    const v = o && o.v !== undefined ? o.v : o;
+    const l = o && o.l !== undefined ? o.l : o;
+    const t = o && o.t ? ` title="${esc(o.t)}"` : "";
+    return `<option value="${esc(v)}"${v === chosen ? " selected" : ""}${t}>${esc(l)}</option>`;
+  };
+  const head = blank === undefined ? ""
+    : `<option value=""${chosen ? "" : " selected"}>${esc(blank)}</option>`;
+  return head + groups.map(([g, rows]) =>
+    `<optgroup label="${esc(g)}">${rows.map(opt).join("")}</optgroup>`).join("");
+}
+
 async function loadVoices() {
   voicesData = await api("/api/voices");
   drawVoices();
