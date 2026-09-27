@@ -579,6 +579,8 @@ def resynth_one(job: VideoJob, ctx: AppContext, index: int, rate: int | None = N
     The sidecar cache is refreshed too, so the stage's own re-run on resume picks
     this take up instead of paying for the same synthesis twice."""
     scene = job.scenes[index]
+    if scene.hush:
+        raise ValueError("this is a pause — there is nothing in it to say")
     speaker = _speaker_for(ctx)
     if rate is not None:
         scene.tts_rate = int(rate)
@@ -617,12 +619,20 @@ def _run_manual(job: VideoJob, ctx: AppContext) -> None:
     # BEFORE the wait, not after: an operator who records forty lines and only then
     # learns the recognizer is missing has been made to wait for nothing.
     align_dir = _require_aligner(ctx)
+    # …and a pause is not asked for: it is silence the operator already decided the
+    # length of, so it is neither in the manifest nor waited for (see `Scene.hush`).
     delivered = manual_tts.collect_or_pause(
-        job.workdir, [scene.text for scene in job.scenes]
+        job.workdir, [scene.text for scene in job.scenes],
+        skip={i for i, scene in enumerate(job.scenes) if scene.hush},
     )
     offset = 0.0
     total = len(job.scenes)
     for i, scene in enumerate(job.scenes):
+        if scene.hush:
+            if not ctx.is_beats:
+                offset += scene.duration
+            ctx.progress("tts", i + 1, total)
+            continue
         path = delivered[i]
         spoken = _spoken(scene.text, table)
         src = duration_of(path)
@@ -700,7 +710,10 @@ def _cast_deliveries(job: VideoJob, ctx: AppContext, engine: str) -> None:
         return
     from ...llm import delivery
 
-    fixed = {i for i, sc in enumerate(job.scenes) if sc.voice and not sc.voice_auto}
+    # a pause says nothing, so it is nothing to cast — and it is `fixed` rather than
+    # filtered out so the indices the model answers on stay the scenes' own
+    fixed = {i for i, sc in enumerate(job.scenes)
+             if sc.hush or (sc.voice and not sc.voice_auto)}
     cast = delivery.cast(
         ctx.llm,
         [sc.text for sc in job.scenes],
@@ -740,6 +753,15 @@ def run(job: VideoJob, ctx: AppContext) -> None:
     offset = 0.0
     total = len(job.scenes)
     for i, scene in enumerate(job.scenes):
+        # A pause has nothing to say and a length of its own already (see `Scene.hush`).
+        # Sent to a synthesizer it would come back as either an error or a file of
+        # nothing, and either way the length the operator set would be overwritten by
+        # whatever the engine made of an empty string.
+        if scene.hush:
+            if not ctx.is_beats:
+                offset += scene.duration
+            ctx.progress("tts", i + 1, total)
+            continue
         path = audio_dir / f"scene_{i:02d}{speaker.suffix}"
         raw_words = _synth_scene(scene, i, path, speaker,
                                  rate_str(_scene_rate(scene, ctx)), table=table)

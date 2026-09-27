@@ -134,14 +134,23 @@ def _write_line_files(manifest: ManualVoiceManifest, workdir: Path) -> None:
     )
 
 
-def build_or_update(workdir: Path, texts: list[str]) -> ManualVoiceManifest:
+def build_or_update(workdir: Path, texts: list[str],
+                    skip: set[int] | frozenset[int] = frozenset()) -> ManualVoiceManifest:
     """Refresh the manifest against the script as it now stands. A line whose text
     was edited at a breakpoint loses its delivery — the recording no longer says what
-    the script says — while every untouched line keeps the audio already supplied."""
+    the script says — while every untouched line keeps the audio already supplied.
+
+    `skip` names the lines that are not lines and need no recording — a pause the
+    operator put on the track (`job.Scene.hush`). They are left OUT of the manifest
+    rather than marked in it, which costs nothing: a line carries its own index
+    (:attr:`ManualLine.index`), so the numbering of everything else is unaffected and
+    `scene_04.wav` still means what it says."""
     manifest = ManualVoiceManifest.load(workdir)
     by_index = {ln.index: ln for ln in manifest.lines}
     lines: list[ManualLine] = []
     for i, text in enumerate(texts):
+        if i in skip:
+            continue
         old = by_index.get(i)
         if old is not None and old.text == text:
             lines.append(old)
@@ -175,20 +184,22 @@ def scan_inbox(manifest: ManualVoiceManifest, workdir: Path) -> int:
     return got
 
 
-def collect(workdir: Path, texts: list[str]) -> ManualVoiceManifest:
-    manifest = build_or_update(workdir, texts)
+def collect(workdir: Path, texts: list[str],
+            skip: set[int] | frozenset[int] = frozenset()) -> ManualVoiceManifest:
+    manifest = build_or_update(workdir, texts, skip)
     if scan_inbox(manifest, workdir):
         manifest.save(workdir)
     return manifest
 
 
-def collect_or_pause(workdir: Path, texts: list[str]) -> dict[int, Path]:
+def collect_or_pause(workdir: Path, texts: list[str],
+                     skip: set[int] | frozenset[int] = frozenset()) -> dict[int, Path]:
     """{scene index: audio} once every line is in, else :class:`ManualVoicePending`.
 
     All-or-nothing even in drama mode, unlike footage: the voice comes before the
     picture, and an episode cannot be cut from lines that have not been said."""
     inbox_dir(workdir).mkdir(parents=True, exist_ok=True)
-    manifest = collect(workdir, texts)
+    manifest = collect(workdir, texts, skip)
     if not manifest.all_delivered():
         raise ManualVoicePending(workdir, len(manifest.pending()), len(manifest.lines))
     return manifest.delivered_map()

@@ -156,6 +156,11 @@ def _segment(i: int, scene, tmp, ctx: AppContext):
         bg_parts.append(part)
     # in drama mode the clip length is the master, so the voice is time-stretched to it
     voice = scene.audio
+    if not voice:
+        # A pause has no voice and is not supposed to have one (`Scene.hush`); an
+        # unvoiced line has none and is supposed to. Both render as the seconds they
+        # hold rather than as an ffmpeg error about a path spelled `None`.
+        voice = ffmpeg.silence(scene.duration, tmp / f"s{i:02d}_hush.m4a")
     if scene.audio and abs(scene.audio_tempo - 1.0) > 0.02:
         voice = tmp / f"s{i:02d}_voice.m4a"
         ffmpeg.stretch_audio(scene.audio, voice, scene.audio_tempo)

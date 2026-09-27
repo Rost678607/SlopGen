@@ -469,6 +469,23 @@ def poster_frame(src: Path, out: Path, seconds: float = 0.0, width: int = 320) -
     ])
 
 
+def silence(seconds: float, out: Path) -> Path:
+    """A file of nothing, that long — the voice of a scene that has none.
+
+    A pause the operator put on the track is a scene with a length and no audio
+    (`pipeline.job.Scene.hush`), and `make_scene_segment` takes a voice FILE: it maps a
+    second input and pads it, and there is no shape of that command that means "no
+    audio" without changing what every other scene is built by. So the silence is made
+    rather than special-cased, which also gives an unvoiced line something to render as
+    instead of an ffmpeg error about a path that reads `None`."""
+    out.parent.mkdir(parents=True, exist_ok=True)
+    _run([
+        "ffmpeg", "-y", "-f", "lavfi", "-t", f"{max(seconds, 0.01):.3f}",
+        "-i", "anullsrc=r=44100:cl=stereo", *AENC, str(out),
+    ])
+    return out
+
+
 def make_scene_segment(
     bg_parts: list[Path],
     audio: Path,

@@ -31,7 +31,9 @@ a typo fixed in the caption should not cost a re-synthesis and a re-cut.
 since it was written (``anchor_scene``/``anchor_word``) precisely so this screen
 could exist: the operator points at the word a shot starts on, the previous shot ends
 there, and the seconds are derived — and re-derived whenever the clock moves
-underneath. :func:`place_cut` and :func:`drop_cut` are the whole of it.
+underneath. :func:`place_cut`, :func:`move_cut` and :func:`drop_cut` are the whole of
+it — and the middle one is the same word question asked by dragging the shot instead of
+pointing at the word, which is why it snaps: there is nowhere else for a cut to land.
 
 **Beats are added and dropped here too**, which is not true of the beat modes and is
 worth saying why. In a drama a beat IS a clip: add one and there is a shot to generate,
@@ -194,6 +196,10 @@ def read(job: VideoJob, params) -> dict:
             # showing because it is the one pin a later re-run may take back on its own
             # (see `Scene.voice_auto` and `llm/delivery.py`)
             "voice_auto": scene.voice_auto,
+            # a stretch of silence the operator put there rather than a line (see
+            # `Scene.hush`): it has a length and nothing else, and the room draws it as
+            # a block you take by the edge instead of a line you write in
+            "hush": scene.hush,
             "part": scene.part,
             "words": [
                 {"t": w.text, "start": m["at"],
@@ -368,7 +374,9 @@ def blocking(job: VideoJob) -> list[dict]:
     to its neighbour — so they are counted here, while the operator is looking at the
     thing that has them."""
     out: list[dict] = []
-    beats = [s for s in job.scenes if not s.is_ad]
+    # A pause is not an unvoiced line: it has a length, it renders as the silence it is,
+    # and nothing about it is waiting to be done (see `Scene.hush`).
+    beats = [s for s in job.scenes if not s.is_ad and not s.hush]
     silent = sum(1 for s in beats if not (s.audio and s.words))
     if silent:
         out.append({"what": "unvoiced", "n": silent})
@@ -527,6 +535,8 @@ def voice(job: VideoJob, ctx: AppContext, index: int, rate: int | None = None,
     still the same words — they are re-measured (see `framebase.reanchor`)."""
     from .stages import tts as tts_stage
 
+    if job.scenes[index].hush:
+        raise ValueError("this is a pause — there is nothing in it to say")
     if not job.scenes[index].text.strip():
         raise ValueError("there is nothing written on this line to say")
     before = _anchor_fractions(job, index)
@@ -548,6 +558,8 @@ def take_voice(job: VideoJob, ctx: AppContext, index: int, src: Path) -> float:
     from .stages import tts as tts_stage
 
     scene = job.scenes[index]
+    if scene.hush:
+        raise ValueError("this is a pause — there is nothing in it to say")
     align_dir = tts_stage._require_aligner(ctx)
     dest = tts_stage.audio_path(job, index, Path(src).suffix.lower() or ".wav")
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -662,6 +674,98 @@ def add_line(job: VideoJob, after: int, text: str = "", slot=None) -> int:
     return at
 
 
+# How long a pause is when nobody has said, and the narrowest one there is. The floor is
+# not taste, it is hit area: a pause is dragged by its own right edge, and a block a
+# hair wide has no edge to take hold of. The ceiling is taste, and generous — a silence
+# longer than this is a different video.
+HUSH_S = 0.6
+HUSH_FLOOR_S = 0.15
+HUSH_CEIL_S = 20.0
+
+
+def add_hush(job: VideoJob, after: int, seconds: float = HUSH_S) -> int:
+    """Put a stretch of SILENCE into the video after `after` (-1 = at the very front).
+
+    Unlike a line, it arrives with a length: the whole of it is a length, so a pause
+    with none would be a thing on the timeline that is not on the timeline. Everything
+    after it moves back by that much, and the cuts move with the words the way they do
+    for any other change to the clock (:func:`retime`).
+
+    **Two in a row is refused.** Two pauses touching are one pause said twice — there is
+    no edit you can make to either that you could not make to one of twice the length —
+    and a track carrying them is a track where dragging the first one longer looks like
+    it did nothing, because the number the operator is reading is the other one. So the
+    second is not made, and the caller says so.
+
+    It is not counted among the things :func:`blocking` holds the render for, because
+    nothing about it is unfinished: silence is what it is for."""
+    from . import review
+
+    # A video of nothing but silence is not a video, and it is also the one case where a
+    # pause has no neighbour to take a generator slot from — which is what decides
+    # whether the picture track is the frame base at all (see :func:`add_line`).
+    if not job.scenes:
+        raise ValueError("there is nothing here yet to put a pause in — write a line first")
+    at = min(max(after + 1, 0), len(job.scenes))
+    if (at and job.scenes[at - 1].hush) or (at < len(job.scenes) and job.scenes[at].hush):
+        raise ValueError("there is already a pause here — drag that one longer instead")
+    prev = job.scenes[at - 1] if at else (job.scenes[0] if job.scenes else None)
+    # the neighbour's slot, exactly as a new line takes it: a beat with no `gen_model` is
+    # one `framebase.active` does not recognise, and one of those takes the whole picture
+    # track out of the frame base (see `review.blank_scene` and :func:`add_line`)
+    scene = review.blank_scene(prev)
+    scene.hush = True
+    scene.duration = min(max(float(seconds), HUSH_FLOOR_S), HUSH_CEIL_S)
+    for a in anchored(job):
+        if a.anchor_scene >= at:
+            a.anchor_scene += 1
+    job.scenes.insert(at, scene)
+    _settle_takes(job)
+    retime(job)
+    return at
+
+
+def _fuse_hush(job: VideoJob) -> int:
+    """Two pauses that have ended up touching are one pause. Join them; say how many went.
+
+    :func:`add_hush` refuses to MAKE the second, and that is not enough on its own: drop
+    the line between two pauses and they meet without anybody having asked for it. So
+    the rule is restored where it can be broken rather than only where it is set, and it
+    is restored by ADDING the lengths — the silence the operator is looking at is the
+    silence they keep, which is the only join that changes nothing about the video."""
+    gone = 0
+    i = len(job.scenes) - 1
+    while i > 0:
+        if job.scenes[i].hush and job.scenes[i - 1].hush:
+            job.scenes[i - 1].duration = min(
+                job.scenes[i - 1].duration + job.scenes[i].duration, HUSH_CEIL_S)
+            del job.scenes[i]
+            # a pause holds no words, so nothing was anchored INSIDE the one that went —
+            # only the numbering after it moves up
+            for a in anchored(job):
+                if a.anchor_scene > i:
+                    a.anchor_scene -= 1
+            gone += 1
+        i -= 1
+    return gone
+
+
+def set_hush(job: VideoJob, index: int, seconds: float) -> float:
+    """How long one pause runs — the room's drag on its right edge, in seconds.
+
+    The clock moves under everything after it, which is the whole point of the control
+    and the reason `retime` follows: the cuts are not re-decided, they are re-measured
+    against a video that is now longer or shorter (see `framebase.reanchor`)."""
+    if not 0 <= index < len(job.scenes):
+        raise ValueError("there is no such line")
+    scene = job.scenes[index]
+    if not scene.hush:
+        raise ValueError("this is a line, not a pause — its length is its voice")
+    scene.duration = min(max(float(seconds), HUSH_FLOOR_S), HUSH_CEIL_S)
+    retime(job)
+    return scene.duration
+
+
 def drop_line(job: VideoJob, index: int) -> None:
     """Take one line out of the video entirely.
 
@@ -713,6 +817,7 @@ def drop_line(job: VideoJob, index: int) -> None:
     for a in anchored(job):
         if a.anchor_scene > last:
             a.anchor_scene, a.anchor_word = last, max(len(job.scenes[last].words) - 1, 0)
+    _fuse_hush(job)
     _settle_takes(job)
     # the re-measure collapses whatever this deletion piled onto one moment: it is one
     # of the ways two starts converge, and it is no longer this function's to remember
@@ -946,6 +1051,53 @@ def place_cut(job: VideoJob, scene: int, word: int) -> int:
     # by identity, not by `.index`: a pydantic model compares by VALUE, and looking a
     # shot up by what it holds would find whichever one happens to match
     return next(i for i, s in enumerate(_ordered(job)) if s is fresh)
+
+
+def move_cut(job: VideoJob, shot: int, scene: int, word: int) -> int:
+    """Move one cut to another word: this shot starts there now instead.
+
+    The same edit as taking the cut off and placing it again, and it exists as one
+    operation because that is what the gesture is — a shot dragged along the track — and
+    because the two-press version loses the shot in between: :func:`drop_cut` folds the
+    stretch into its neighbour, which takes the card, the move and the pin with it.
+    Dragging keeps all three and changes only WHEN.
+
+    Every refusal below is a case where the drag would quietly destroy something:
+
+    * the shot a region OPENS with has no cut to move — it is where the video (or the
+      stretch after an ad) begins, and it is an invariant (see :func:`open_heads`);
+    * a word already held by another shot would collapse the two into one
+      (:func:`_dedupe`), and the one that loses is the one being dragged;
+    * the region's own first word has the opening shot immediately in front of it, so a
+      cut there is the sliver :func:`place_cut` declines to make for the same reason;
+    * a word inside an ad is not on a stretch whose picture is ours.
+
+    Returns where the shot ended up, which is not where it was: the track is ordered by
+    time, so a shot dragged past its neighbour changes its index."""
+    ordered = _ordered(job)
+    if not 0 <= shot < len(ordered):
+        raise ValueError("there is no such shot")
+    s = ordered[shot]
+    cues, regions, _total = framebase.timeline(job.scenes)
+    if any(abs(r.start - s.start) < SAME_CUT_S for r in regions):
+        raise ValueError("this shot is where the video begins — there is no cut to move")
+    cue = next((c for c in cues if c.scene == scene and c.word == word), None)
+    if cue is None:
+        raise ValueError("there is no such word")
+    if not any(r.start <= cue.at < r.end for r in regions):
+        raise ValueError("that word is inside an ad — the picture there is not ours")
+    if any(abs(o.start - cue.at) < SAME_CUT_S for k, o in enumerate(ordered) if k != shot):
+        raise ValueError("the picture already changes on that word")
+    home = next((r for r in regions if r.start <= cue.at < r.end), None)
+    if home is not None and not any(home.start - SAME_CUT_S <= c.at < cue.at for c in cues):
+        raise ValueError("that is the first word of the video — the shot in front of it "
+                         "is the one it opens with")
+    s.anchor_scene, s.anchor_word = scene, word
+    s.start = cue.at
+    retime(job)
+    # by identity: a pydantic model compares by VALUE, so `.index` would find whichever
+    # shot happens to hold the same numbers
+    return next(i for i, o in enumerate(_ordered(job)) if o is s)
 
 
 def drop_cut(job: VideoJob, shot: int) -> None:

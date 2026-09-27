@@ -628,6 +628,19 @@ and the two things you actually want to do to it cannot be typed into a row at a
   the track was written), so a cut placed by hand survives everything that moves the
   clock afterwards: re-voice a line at half speed and every cut after it slides with the
   words it was placed on, rather than landing half a second off the word you meant.
+- **A cut is dragged, and it snaps to words.** Take a shot's block and pull it along the
+  track: it does not go where the pointer stopped, it goes from one word start to the
+  next, and a dashed line runs from the block down to the word it would land on with
+  that word lit. Free dragging would be a second, worse answer to a question this
+  screen has already answered — and it would answer it in *seconds*, which is the unit
+  that does not survive a re-voicing. Dragging is one operation rather than *take the
+  cut off and place it again*, because the two-press version loses the shot in between:
+  ✕ folds the stretch into its neighbour and the card, the camera move and the pin go
+  with it. Words a cut may not land on are simply not offered, so the drag never stops
+  somewhere that answers with a red line — a word another shot already starts on (two
+  shots on one moment is one shot), the first word of a region (the shot it opens with
+  is right in front of it), anything inside an ad. The shot a region opens with has no
+  cut to move and does not take the grab cursor at all.
 - **The video opens with a shot, always.** The first one on the track is not a cut
   anybody placed — it sits at 00:00.000 and it is simply where the video begins — so it
   cannot be taken off the track: **✕** on it takes the *picture* off and leaves the shot
@@ -666,6 +679,25 @@ and the two things you actually want to do to it cannot be typed into a row at a
   **reordering** — moving a beat is not the same edit
   at all, because every card after it was chosen against what is said over it, and a
   reordered script is a track to be cast from scratch rather than one to be nudged.
+- **A pause is a thing on the track.** **＋ a pause** puts a stretch of silence after the
+  line that is selected (at the end when nothing is), and the whole of it is a length:
+  no text, no voice, nothing anchored inside it. It is drawn on the lines lane, hatched,
+  because it is *in* that sequence — it sits between two lines the way a line does, and
+  everything after it moves back by as much — and it is stretched by **its own right
+  edge**, which is the only control it has. The number in the block counts up as you
+  drag and the rest of the video follows on release. Only the right edge: moving the left
+  one would mean *start the silence earlier*, and that is the length of the line in front
+  of it. **Two in a row is refused**, and the button greys out rather than waiting to say
+  so: two pauses touching are one pause said twice — there is nothing you could do to
+  either that you could not do to one of twice the length — and a track carrying them is
+  one where dragging the first looks like it did nothing, because the number you are
+  reading is the other one. Drop the line *between* two pauses and they are joined by
+  adding their lengths, so the rule is restored where it can be broken and not only
+  where it is set. A pause is not one of the things that hold the render back either:
+  silence is what it is for, it renders as the seconds it holds, and the voice track the
+  preview plays is exactly that much longer. It survives every breakpoint list as a
+  read-only row — those lists rebuild the script from what they were shown, so a pause
+  with no row would be a pause nobody could keep.
 - **Casting is looking at pictures.** Selecting a shot puts the world's whole base in
   front of you as thumbnails, with the number of marked regions on each. Click one and
   it goes on the shot and is **pinned** — a later pass of the matcher may plan around
@@ -915,8 +947,24 @@ same reason: the seconds move, the word does not.
   outside any block. Where two of the same kind overlap in time the later one drops to
   the next row and the lane (or the block) grows by a row, so the one that starts
   earliest is always the one on top and nothing is ever drawn over anything.
-- **Moved for one video, on the preview itself.** Select a firing in the montage room
-  and the preview takes the pointer: drag it and it goes where you drop it — worked back
+- **Moved in TIME, freely — and that is the difference from a cut.** Take a firing's
+  block on the lane (or inside the picture it belongs to) and pull it along the track. It
+  goes wherever you drop it: a cut is a word because the picture changes on a syllable or
+  it changes wrong, while an accent is aimed at the speech rather than fastened to it — it
+  leads a word by a fifth of a second, it covers the breath between two, it runs across
+  three — and snapping it to word starts would put half the placements you can see out of
+  reach. What is *stored* is still an anchor, which is the part that is not obvious: the
+  second you dropped it on is written down as the nearest word plus the remainder, so a
+  later re-voicing carries the firing with the speech it was aimed at instead of leaving
+  it on a second that now belongs to another line. Dragging pins it, like anything else
+  placed by hand. A firing the PICTURE carries stops at the edges of its own still — its
+  coordinates are a fact about that one card and the render ends it where the shot changes,
+  so a drag past the cut would not move it, it would delete it — while one you dropped in
+  from the base is re-hung on whatever picture it lands on, and its own placement goes
+  with the old card, because those coordinates were measured on a picture that is no
+  longer under it.
+- **Moved in SPACE for one video, on the preview itself.** Select a firing in the montage
+  room and the preview takes the pointer: drag it and it goes where you drop it — worked back
   through the crop window that is up at that instant, so what is stored is a point on
   the CARD and the effect goes on travelling with the picture. It is stored on the
   **cue**, not on the card, so the arrow keeps pointing where it always did in every
@@ -1765,6 +1813,18 @@ cp deploy.env.example deploy.env        # SSH_HOST и SSH_USER, больше н�
   написали), поэтому поставленный руками стык переживает всё, что двигает часы:
   переозвучь строку вдвое медленнее — и каждый стык после неё уедет вместе со словом, на
   котором стоял, а не окажется за полсекунды от него.
+- **Стык перетаскивают, и он липнет к словам.** Возьми блок кадра и тяни его по дорожке:
+  он встанет не туда, где остановился курсор, а на начало слова — с одного на следующее,
+  — и от блока вниз к этому слову побежит пунктир, а само слово подсветится. Свободное
+  перетаскивание было бы вторым, худшим ответом на вопрос, на который этот экран уже
+  ответил, — и отвечало бы *секундами*, то есть той единицей, которая не переживает
+  переозвучку. Перетаскивание — одна операция, а не «убрать стык и поставить заново»,
+  потому что в два нажатия кадр между ними теряется: ✕ сливает его с соседним, и карточка,
+  движение камеры и закреп уходят вместе с ним. Слова, на которые стык встать не может,
+  просто не предлагаются, поэтому тянуть некуда, где ответят красной строкой: слово, на
+  котором уже начинается другой кадр (два кадра на одном мгновении — это один кадр),
+  первое слово куска (перед ним стоит тот самый начальный кадр) и всё, что внутри рекламы.
+  У кадра, которым кусок начинается, стыка нет вовсе — он и курсор-ладонь не берёт.
 - **Ролик всегда начинается кадром.** Первый кадр дорожки — не чей-то стык: он стоит на
   00:00.000 и означает просто «здесь начинается видео», поэтому убрать его с дорожки
   нельзя — **✕** на нём снимает с него *картинку* и оставляет сам кадр стоять пустым над
@@ -1802,6 +1862,24 @@ cp deploy.env.example deploy.env        # SSH_HOST и SSH_USER, больше н�
   двинуть бит — правка совсем другого рода, потому что каждая карточка после него
   выбиралась под то, что над ней говорится, и переставленный сценарий — это дорожка,
   которую набирают заново, а не подправляют.
+- **Пауза — это вещь на дорожке.** **＋ пауза** ставит кусок тишины после выбранной
+  строки (а если ничего не выбрано — в конец), и вся она целиком — это длина: ни текста,
+  ни голоса, ничего внутри к ней не прибито. Рисуется она на полосе строк, штриховкой,
+  потому что она *в* этой последовательности: стоит между двумя строками так же, как
+  стоит строка, и всё, что после, отъезжает на её длину. Тянут её за **правый край** —
+  единственное, что у неё есть; число в блоке растёт за рукой, а остальное видео
+  подтягивается на отпускании. Именно за правый: двинуть левый значило бы «начать тишину
+  раньше», а это длина строки перед ней. **Две подряд не делаются**, и кнопка при этом
+  гаснет, а не ждёт, чтобы отказать: две паузы вплотную — это одна пауза, сказанная
+  дважды (с любой из них нельзя сделать ничего, чего нельзя сделать с одной вдвое длиннее),
+  а на дорожке с такими двумя попытка растянуть первую выглядит как кнопка, которая
+  ничего не делает, — потому что число, которое ты читаешь, стоит на второй. Выброси
+  строку *между* двумя паузами — и они срастутся, сложив длины: правило восстанавливается
+  там, где его можно нарушить, а не только там, где его задают. Рендер пауза не держит:
+  тишина — это то, для чего она есть, она собирается как те секунды, которые занимает, и
+  звуковая дорожка превью ровно на столько же длиннее. Во всех списках брейкпоинтов она
+  живёт строкой только на чтение — эти списки пересобирают сценарий из того, что им
+  показали, поэтому пауза без строки была бы паузой, которую невозможно сохранить.
 - **Выбор кадра — это разглядывание картинок.** Выбери кадр, и вся база мира ляжет
   перед тобой миниатюрами, с числом размеченных областей на каждой. Клик — и карточка
   встаёт на кадр и **прибивается**: следующий проход подборщика волен планировать вокруг
@@ -2026,7 +2104,22 @@ cp deploy.env.example deploy.env        # SSH_HOST и SSH_USER, больше н�
   значит навести стрелку, значит заставить её раскрутиться до угла и обратно, что и
   читается как сломанная анимация. Поворот на лету делается нарочно — с **Alt** (только
   этот момент) или числом в поле **поворот°** у самого момента.
-- **Сдвинуть для одного ролика — прямо на превью.** Выбери срабатывание в монтажной, и
+- **Сдвинуть по ВРЕМЕНИ — свободно, и этим эффект отличается от стыка.** Возьми блок
+  срабатывания на полосе (или внутри картинки, которой он принадлежит) и тяни по дорожке.
+  Он встанет туда, куда бросил: стык — это слово, потому что картинка меняется на слоге
+  или меняется неправильно, а акцент нацелен на речь, а не прибит к ней — он опережает
+  слово на пятую долю секунды, он закрывает вдох между двумя, он идёт поперёк трёх, — и
+  привязка к началам слов сделала бы половину видимых глазу положений недостижимой.
+  *Хранится* при этом всё равно привязка, и это та часть, которая не очевидна: секунда,
+  куда бросили, записывается как ближайшее слово плюс остаток, поэтому переозвучка уносит
+  срабатывание вместе с речью, на которую его нацелили, а не оставляет его на секунде,
+  которая теперь принадлежит другой строке. Перетаскивание прибивает его, как и всё,
+  поставленное руками. Срабатывание, которое несёт сама КАРТИНКА, останавливается на
+  границах своего кадра — его координаты это факт про одну карточку, и рендер кончает его
+  там, где меняется кадр, так что тяга за стык не сдвинула бы его, а удалила, — а то, что
+  ты сам уронил из базы, перевешивается на ту картинку, куда попало, и своё место теряет:
+  те координаты мерили по картинке, которой под ним больше нет.
+- **Сдвинуть в ПРОСТРАНСТВЕ для одного ролика — прямо на превью.** Выбери срабатывание в монтажной, и
   превью берёт курсор: тащи — эффект окажется там, куда бросил. Точка считается обратно
   через кроп-окно, которое стоит в этот момент, поэтому хранится координата на
   **карточке** и эффект по-прежнему едет вместе с картинкой. Лежит она при этом на

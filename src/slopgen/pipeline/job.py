@@ -145,6 +145,18 @@ class Scene(BaseModel):
     # re-decided whenever the casting runs again, and dropped when the line no longer
     # calls for it. It is also what the montage screen shows the difference by.
     voice_auto: bool = False
+    # A line that is not a line: a stretch of SILENCE the operator put on the track
+    # from the montage room. It has a `duration` and nothing else — no text, no voice,
+    # no words — so nothing can be anchored inside it, nothing is synthesized for it,
+    # and it is not one of the things `montage.blocking` counts as unfinished.
+    #
+    # A scene and not a field on its neighbour, because a pause is a thing on the
+    # timeline: it is dragged longer by its own edge, it sits between two lines rather
+    # than belonging to either, and every piece of machinery that already walks the
+    # scenes in order — the clock, the regions, the picture track compiled onto them —
+    # then carries it for free. The one rule about it is that two in a row is one
+    # pause said twice, which is why `montage.add_hush` refuses to make the second.
+    hush: bool = False
     audio_tempo: float = 1.0  # atempo factor applied so the voice fits the clip
     video_tempo: float = 1.0  # setpts factor applied to the clip for the same reason
     part: int = 1  # drama: output part number; cuts happen after the last scene in a part
@@ -226,6 +238,17 @@ class EffectCue(BaseModel):
     # card's own aim. The same override one step further in: the card says which way
     # the arrow points on that picture, and this says which way it points this once.
     turn: float = 0.0
+    # How far this firing sits from the word it hangs on, in seconds — what a free drag
+    # along the lane leaves behind (see `pipeline.effects.nudge`).
+    #
+    # An effect is anchored to a word for the reason a cut is: re-voicing a line moves
+    # every second after it, and the word is what survives that. But an accent is not
+    # always ON a word — it lands a beat after one, it covers the breath between two —
+    # and a drag that dropped the anchor to say so would buy free placement at the cost
+    # of the one property that makes the placement last. So the drag re-anchors to the
+    # NEAREST word and records the remainder here: the firing keeps its distance from a
+    # word that moves, which is the honest reading of "here".
+    drift: float = 0.0
     word: str = ""  # the word it fires on, for the screen to show back
     pinned: bool = False  # the operator placed it; nothing automatic may take it back
     # How many times the effect's repeating middle runs in THIS firing (see

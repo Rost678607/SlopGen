@@ -506,6 +506,12 @@
           <div class="lane cues" id="lane-cues"></div>
           <div class="lane lines" id="lane-lines"></div>
           <div class="head" id="mont-head" hidden></div>
+          <!-- Where a dragged shot would land. A cut is a WORD and nothing else, so a
+               shot being dragged snaps from one word start to the next — and this is
+               the line that says which one: it runs from the block down through the
+               words and the word itself lights up under it, so the thing being placed
+               and the thing it is being placed on are visibly one. -->
+          <div class="snapline" id="mont-snap" hidden></div>
         </div>
       </div>
       <!-- Lines with no voice yet, which is to say lines with no LENGTH yet. A clock

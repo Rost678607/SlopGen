@@ -4443,8 +4443,13 @@ let dragGroup = null;
 
 // The row field that opens a new item — the same set as `review.HEAD_FIELDS`, and it
 // has to stay the same: `apply` groups the rows it gets back by exactly this rule.
-const HEAD_FIELDS = new Set(["text", "name", "part", "plan_subject"]);
+const HEAD_FIELDS = new Set(["text", "name", "part", "plan_subject", "hush"]);
 const PART_FIELD = "part";
+// A PAUSE (`review.HUSH_FIELD`): a stretch of silence on the track, which is an item of
+// its own and not a row of the line above it. Read-only here — the only thing it has is
+// a length, and the place to set that is the edge you drag it by in the montage room —
+// so what these lists owe it is to show it and hand it back unchanged.
+const HUSH_FIELD = "hush";
 // The head of the fandom plan block (`review.PLAN_HEAD`). Its presence in a document
 // is what says this script was written from a plan, and therefore can be written from
 // one again — which is the whole of how the rewrite button decides to show itself.
@@ -4622,7 +4627,8 @@ function bindReview() {
       // items have — a script's five rows, a registry's three. On a document cleared to
       // nothing there is none left to copy, and the shape of the last one dropped is
       // what stands in for it.
-      const model = [...gs].reverse().find((g) => !isPart(g));
+      const model = [...gs].reverse().find((g) =>
+        !isPart(g) && (g.head.field || "") !== HUSH_FIELD);
       const fresh = model ? blankGroup(model) : reviewState.shape;
       if (!fresh) return;
       gs.push(blankGroup(fresh));

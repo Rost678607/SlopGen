@@ -541,6 +541,9 @@ EN: dict[str, str] = {
         "bp.field.model": "generator",
         "bp.field.clip_s": "clip length, sec",
         "bp.field.card": "picture",
+        # a pause on the track (`review.HUSH_FIELD`): read-only here, its
+        # length is set by the edge you drag it by in the montage room
+        "bp.field.hush": "pause",
         "bp.chip_pick": "Add to this shot:",
         "bp.chip_none": "the whole cast is already in this shot",
         "bp.cast_known": "Cast of this run",
@@ -1164,6 +1167,7 @@ RU: dict[str, str] = {
         "bp.field.model": "нейронка",
         "bp.field.clip_s": "длина клипа, сек",
         "bp.field.card": "картинка",
+        "bp.field.hush": "пауза",
         "bp.chip_pick": "Добавить в кадр:",
         "bp.chip_none": "весь каст уже в этом кадре",
         "bp.cast_known": "Каст этого прогона",
@@ -2519,7 +2523,7 @@ RU.update({
     "web.mont.blank": "на этом месте картинки ещё нет — выбери кадр слева в дорожке и назначь ему карточку",
     "web.mont.frame": "точный кадр",
     "web.mont.zoom": "масштаб",
-    "web.mont.hint": "клик по слову — с него начинается новый кадр; ✕ на левом краю кадра — убрать этот стык. Самый первый кадр убрать нельзя: ✕ на нём просто снимает картинку",
+    "web.mont.hint": "клик по слову — с него начинается новый кадр; кадр можно тянуть — он липнет к словам; ✕ на левом краю кадра — убрать этот стык. Самый первый кадр убрать нельзя: ✕ на нём просто снимает картинку. Эффекты тянутся свободно, пауза — за правый край",
     "web.mont.fx.note": "ползунки меняют вид всего ролика. В окошке — набросок: зерно, трубку и разрывы на самом деле считает ffmpeg, поэтому рядом кнопка «точный кадр».",
     "js.mont.shots": "кадров",
     "js.mont.left.unvoiced": "не озвучено строк:",
@@ -2626,7 +2630,7 @@ EN.update({
     "web.mont.blank": "nothing is up here yet — pick a shot in the track and give it a card",
     "web.mont.frame": "the true frame",
     "web.mont.zoom": "zoom",
-    "web.mont.hint": "click a word and a shot starts there; ✕ on a shot's left edge takes that cut back. The opening shot cannot be taken off the track: ✕ there just empties it",
+    "web.mont.hint": "click a word and a shot starts there; drag a shot and it snaps from word to word; ✕ on a shot's left edge takes that cut back. The opening shot cannot be taken off the track: ✕ there just empties it. Effects drag freely, a pause by its right edge",
     "web.mont.fx.note": "these change how the whole video looks. What you see here is a sketch: grain, the tube and the tearing are ffmpeg's arithmetic, which is what the true-frame button beside it is for.",
     "js.mont.shots": "shots",
     "js.mont.left.unvoiced": "lines with no voice:",
@@ -3216,4 +3220,28 @@ EN.update({
                        "run again — the old file stays where it is until they do",
     "js.mont.stale": "the file on disk is the previous montage",
     "js.mont.watch-the-old": "watch the previous montage",
+})
+
+
+# Dragging things on the montage track: a shot along the words, an effect along the clock
+# — and the pause, which is a thing you make and then stretch.
+RU.update({
+    "js.mont.hush": "пауза",
+    "js.mont.addhush": "＋ пауза",
+    "js.mont.hush.note": "тишина на дорожке: ни текста, ни голоса — только длина. "
+                         "Всё, что после неё, отъезжает на столько же",
+    "js.mont.hush.long": "длина, с",
+    "js.mont.hush.drag": "тяни за правый край",
+    "js.mont.hush.drop": "убрать паузу",
+    "js.mont.hush.already": "пауза здесь уже есть — тяни её за край, две подряд не нужны",
+})
+EN.update({
+    "js.mont.hush": "pause",
+    "js.mont.addhush": "＋ a pause",
+    "js.mont.hush.note": "silence on the track: no text and no voice, only a length. "
+                         "Everything after it moves back by as much",
+    "js.mont.hush.long": "how long, s",
+    "js.mont.hush.drag": "drag its right edge",
+    "js.mont.hush.drop": "take the pause out",
+    "js.mont.hush.already": "there is already a pause here — drag that one longer; two in a row is one pause said twice",
 })

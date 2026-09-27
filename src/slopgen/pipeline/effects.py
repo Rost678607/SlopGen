@@ -436,7 +436,10 @@ def reanchor(job: VideoJob) -> None:
     for q in job.effect_cues:
         at = where.get((q.anchor_scene, q.anchor_word))
         if at is not None:
-            q.start = at
+            # …plus however far the operator dragged it off that word (`EffectCue.drift`).
+            # Zero for everything the passes place, which is the ordinary case: an
+            # automatic cue lands ON its word or it lands wrong.
+            q.start = at + q.drift
         # …and the word it SAYS it is on is read off the anchor too, every time. It is
         # shown to the operator and used for nothing else, which is exactly why it goes
         # stale unnoticed: a line rewritten under a cue, or a cue pushed onto the next
@@ -744,6 +747,84 @@ def hold_for(job: VideoJob, i: int, seconds: float) -> None:
     if not 0 <= i < len(cues):
         raise ValueError("there is no such effect")
     _fit(job, cues[i], max(float(seconds), 0.1))
+
+
+def nudge(job: VideoJob, i: int, at: float, cards: list[FrameCard] | None = None,
+          specs: dict[str, EffectSpec] | None = None) -> None:
+    """Move one firing along the clock, to wherever it was dropped.
+
+    FREE, unlike a cut. A cut is a word and nothing else — the picture changes on a
+    syllable or it changes wrong — but an accent is aimed at the speech rather than
+    fastened to it: it leads a word by a fifth of a second, it covers the pause between
+    two, it runs across three of them. Snapping that to word starts would make half the
+    placements the operator can see unreachable.
+
+    What it is NOT is unanchored. The dropped second is written down as the nearest word
+    plus the remainder (:attr:`~.job.EffectCue.drift`), so a later re-voicing carries the
+    firing with the speech it was aimed at instead of leaving it on a second that now
+    belongs to another line — the same bargain :func:`reanchor` has always made, with
+    room in it for an answer between two words.
+
+    Placing it by hand PINS it, for the reason :func:`place` does: the effects pass
+    re-decides everything it did not pin, and a dragged cue would otherwise last
+    exactly until the next press of `picture`.
+
+    `cards` and `specs` are the base, and they are here to answer one question: whether
+    this firing is one the PICTURE carries or one dropped in over whatever happens to be
+    there (:func:`hook_of`). The two may not be dragged the same distance, and the cue
+    alone cannot tell them apart — it records a hook either way, and whether that hook
+    resolves is a fact about the card.
+    """
+    cues = ordered(job)
+    if not 0 <= i < len(cues):
+        raise ValueError("there is no such effect")
+    q = cues[i]
+    marks, _regions, total = framebase.timeline(job.scenes)
+    if not marks:
+        raise ValueError("this video has no words to hang an effect near")
+    # …and the far end is where the firing FITS, not where it starts: clamped to
+    # `total` the drag would park a one-second effect on the last frame and `_fit` would
+    # crush it to nothing, which a drag back would not undo. Against its own length it
+    # simply comes to rest flush with the end of the video.
+    room = max(total - max(q.duration, 0.05), 0.0)
+    at = min(max(float(at), 0.0), room)
+    # A firing the PICTURE carries — one of that card's own ready effects (`hook`) — may
+    # move inside its still and nowhere else. Its coordinates are a fact about that one
+    # card, so the moment the shot changes there is nothing left under it and the render
+    # simply cuts it off (see :func:`draw_for`): a drag past the cut would not move the
+    # effect, it would delete it and leave the block sitting where nothing happens. So it
+    # is clamped to its host rather than refused — a drag that stops at the edge of the
+    # picture says what the rule is without a sentence.
+    by_name = {c.name: c for c in (cards or [])}
+    hung = hook_of(by_name.get(q.card), (specs or {}).get(q.effect), q.hook)
+    host = next((sh for sh in job.frame_shots
+                 if hung is not None and sh.card == q.card
+                 and sh.start - 1e-6 <= q.start < sh.start + sh.duration), None)
+    if host is not None:
+        at = min(max(at, host.start),
+                 max(host.start + host.duration - max(q.duration, 0.05), host.start))
+    near = min(marks, key=lambda c: abs(c.at - at))
+    q.anchor_scene, q.anchor_word, q.drift = near.scene, near.word, round(at - near.at, 3)
+    q.start = at
+    scene = job.scenes[near.scene] if 0 <= near.scene < len(job.scenes) else None
+    if scene is not None and 0 <= near.word < len(scene.words):
+        q.word = scene.words[near.word].text
+    q.pinned = True
+    # An effect dropped in from the BASE by hand — one whose hook no card answers to —
+    # is not that card's effect,
+    # it merely sits on whatever picture is there — so dragged onto another one it is
+    # re-hung, because the alternative is a firing the render draws for a twentieth of a
+    # second (`draw_for` ends a point cue where its picture does). Its own placement goes
+    # with the old card: those coordinates were measured on a picture that is no longer
+    # under it, and keeping them would put the arrow somewhere nobody aimed. Back to the
+    # middle of the frame, which is where one arrives before it is dragged.
+    if q.card and hung is None:
+        landed = shot_at(job.frame_shots, q.start)
+        card = landed.card if landed is not None else ""
+        if card != q.card:
+            q.card, q.points = card, []
+    _fit(job, q, q.duration)
+    job.effect_cues.sort(key=lambda x: x.start)
 
 
 def repeat(job: VideoJob, i: int, times: int, specs: dict[str, EffectSpec]) -> None:

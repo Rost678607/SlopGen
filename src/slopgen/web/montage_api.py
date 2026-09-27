@@ -500,6 +500,43 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404, card_json,
         save(cp, i, job)
         return doc(run, cp, i, job)
 
+    @app.post("/api/runs/{run_id}/montage/hush")
+    async def add_hush(run_id: str, request: Request,
+                       slopgen: str | None = Cookie(default=None)) -> dict:
+        """Put a stretch of silence into the video, after the line given (-1 = front).
+
+        Unlike a line it arrives with a length, because a length is all it is. Two of
+        them touching is refused (see `montage.add_hush`): it is one pause said twice,
+        and dragging either of them reads as a control that does nothing."""
+        guard(slopgen)
+        run = run_or_404(run_id)
+        b = await body_of(request)
+        cp, i, job = open_job(run, int(b.get("video", 0)))
+        try:
+            at = montage.add_hush(job, int(b.get("after", -1)),
+                                  float(b.get("seconds", montage.HUSH_S)))
+        except (TypeError, ValueError) as e:
+            raise HTTPException(status_code=409, detail=str(e)) from None
+        save(cp, i, job)
+        out = doc(run, cp, i, job)
+        out["at"] = at
+        return out
+
+    @app.put("/api/runs/{run_id}/montage/hush")
+    async def set_hush(run_id: str, request: Request,
+                       slopgen: str | None = Cookie(default=None)) -> dict:
+        """How long one pause runs — the drag on its right edge, in seconds."""
+        guard(slopgen)
+        run = run_or_404(run_id)
+        b = await body_of(request)
+        cp, i, job = open_job(run, int(b.get("video", 0)))
+        try:
+            montage.set_hush(job, int(b.get("scene", -1)), float(b.get("seconds", 0.0)))
+        except (TypeError, ValueError) as e:
+            raise HTTPException(status_code=409, detail=str(e)) from None
+        save(cp, i, job)
+        return doc(run, cp, i, job)
+
     # -- where the picture changes ------------------------------------------
 
     @app.post("/api/runs/{run_id}/montage/cut")
@@ -512,6 +549,28 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404, card_json,
         cp, i, job = open_job(run, int(b.get("video", 0)))
         try:
             at = montage.place_cut(job, int(b.get("scene", -1)), int(b.get("word", -1)))
+        except ValueError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from None
+        save(cp, i, job)
+        out = doc(run, cp, i, job)
+        out["at"] = at
+        return out
+
+    @app.put("/api/runs/{run_id}/montage/cut")
+    async def move_cut(run_id: str, request: Request,
+                       slopgen: str | None = Cookie(default=None)) -> dict:
+        """Move one cut to another word: the shot dragged along the track.
+
+        One operation rather than a delete and a place, because the two-press version
+        loses the shot in between — dropping a cut folds its stretch into the neighbour
+        and the card, the move and the pin go with it (see `montage.move_cut`)."""
+        guard(slopgen)
+        run = run_or_404(run_id)
+        b = await body_of(request)
+        cp, i, job = open_job(run, int(b.get("video", 0)))
+        try:
+            at = montage.move_cut(job, int(b.get("shot", -1)),
+                                  int(b.get("scene", -1)), int(b.get("word", -1)))
         except ValueError as e:
             raise HTTPException(status_code=409, detail=str(e)) from None
         save(cp, i, job)
@@ -618,6 +677,9 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404, card_json,
                           slopgen: str | None = Cookie(default=None)) -> dict:
         """Everything about one firing that is not WHEN it goes off.
 
+        `at` moves it along the CLOCK, freely — the room's drag on the lane, in absolute
+        seconds; unlike a cut it is not snapped to a word, because an accent is aimed at
+        the speech and not fastened to it (see `effects.nudge`).
         `points` moves it on the picture, for this video only — the room's drag, given
         as coordinates on the card; `turn` aims it, in degrees on top of the card's own
         aim. `loops` is how many times its middle repeats, and
@@ -630,7 +692,10 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404, card_json,
         world = store.fandoms.get(run.params.fandom) if run.params.mode == "fandom" else None
         cards = list(world.frames) if world else []
         try:
-            if b.get("points") is not None:
+            if b.get("at") is not None:
+                fxeff.nudge(job, int(b.get("cue", -1)), float(b["at"]),
+                            cards, store.effects)
+            elif b.get("points") is not None:
                 fxeff.put(job, int(b.get("cue", -1)), list(b["points"]), cards, store.effects)
             elif b.get("turn") is not None:
                 fxeff.turn_to(job, int(b.get("cue", -1)), float(b["turn"]), store.effects)

@@ -144,7 +144,7 @@ class Group:
 # item actually IS — a scene is its spoken "text", a registry entry is its "name" —
 # because the TUI labels each row from its field, and a registry entry headed "text"
 # would be captioned "voiceover".
-HEAD_FIELDS = frozenset({"text", "name", "part", "plan_subject"})
+HEAD_FIELDS = frozenset({"text", "name", "part", "plan_subject", "hush"})
 
 # The fandom plan (`pipeline.job.ScriptPlan`) shown above the scenes at the `script`
 # breakpoint. Its head is the subject, so the whole plan is ONE item; the rest hang
@@ -160,6 +160,22 @@ PLAN_FIELDS = frozenset({
 # begins. It is a head field, so a separator is an item of its own — which is what
 # makes the existing move/add/drop machinery re-cut the drama for free.
 PART_FIELD = "part"
+
+# The field of a PAUSE: a stretch of silence the operator put on the track from the
+# montage room (`job.Scene.hush`). It is a head field, so a pause is an item of its own
+# and the existing move/drop machinery works on it — but it is never edited here,
+# because the only thing a pause has is a length and the place to set that is the edge
+# you drag it by. What it is doing in these lists at all is surviving them: every
+# applier below rebuilds `job.scenes` from the rows it was shown, so a scene with no row
+# is a scene deleted, and a pause that vanished the first time somebody opened the
+# script breakpoint would be a pause nobody could keep.
+HUSH_FIELD = "hush"
+
+
+def hush_row(i: int, scene: Scene) -> Row:
+    """One pause, as it appears in a document of lines."""
+    return Row(label=f"#{i + 1}", value=f"{scene.duration:.1f}s", src=i,
+               field=HUSH_FIELD, readonly=True)
 
 
 def part_row(number: int) -> Row:
@@ -288,7 +304,8 @@ def _scene_label(i: int, scene: Scene) -> str:
 
 def _scene_rows(job: VideoJob, info) -> list[Row]:
     return [
-        Row(label=_scene_label(i, s), value=s.text, src=i, info=info(s))
+        hush_row(i, s) if s.hush
+        else Row(label=_scene_label(i, s), value=s.text, src=i, info=info(s))
         for i, s in enumerate(job.scenes)
     ]
 
@@ -379,6 +396,11 @@ def _script_doc(job: VideoJob, mode: str, shapes: list[str] | None = None) -> Do
     rows: list[Row] = []
     for i, s in enumerate(job.scenes):
         label = _scene_label(i, s)
+        # a pause has no narration and no picture of its own to ask about: one read-only
+        # row, so it is visible, movable and above all still here afterwards
+        if s.hush:
+            rows.append(hush_row(i, s))
+            continue
         rows.append(Row(
             label=label, value=s.text, src=i, field="text",
             info=", ".join(s.characters) if _beats(mode) else "",
@@ -486,8 +508,9 @@ def _footage_doc(job: VideoJob, mode: str) -> Doc:
         stage="footage",
         rows=with_part_rows(
             [
-                Row(label=_scene_label(i, s), value=_footage_query(s, mode), src=i,
-                    field="prompt" if _beats(mode) else "keywords", info=info(s))
+                hush_row(i, s) if s.hush
+                else Row(label=_scene_label(i, s), value=_footage_query(s, mode), src=i,
+                         field="prompt" if _beats(mode) else "keywords", info=info(s))
                 for i, s in enumerate(job.scenes)
             ],
             job.scenes, always=False,
@@ -510,7 +533,8 @@ def _cut_doc(job: VideoJob, mode: str) -> Doc:
         return f"{secs:.1f}s" if secs else "—"
 
     rows = [
-        Row(label=_scene_label(i, s), value=s.text, src=i, info=info(s), readonly=True)
+        hush_row(i, s) if s.hush
+        else Row(label=_scene_label(i, s), value=s.text, src=i, info=info(s), readonly=True)
         for i, s in enumerate(job.scenes)
     ]
     return Doc(
@@ -697,6 +721,13 @@ def _apply_scene_texts(job: VideoJob, rows: list[Row], *, resync: bool) -> bool:
     rows = [r for r in rows if r.field != PART_FIELD]  # separators are read-only here
     changed = [r.src for r in rows] != list(range(len(old)))
     for row in rows:
+        # a pause is carried through exactly as it was: its value is a readout, not
+        # something typed, and reading it as narration would turn 1.2s into a line
+        if row.field == HUSH_FIELD:
+            src = old[row.src] if row.src is not None and row.src < len(old) else None
+            if src is not None:
+                out.append(src.model_copy(deep=True))
+            continue
         text = row.value.strip()
         if not text:  # an emptied line means "drop this scene"
             changed = True
@@ -792,6 +823,13 @@ def _apply_script(job: VideoJob, rows: list[Row], mode: str) -> bool:
     for n, group in enumerate(g for g in group_rows(rows) if g.head.field != PART_FIELD):
         head = group.head
         extras = {r.field: r for r in group.extras}
+        if head.field == HUSH_FIELD:  # a pause, carried through untouched (see above)
+            src = old[head.src] if head.src is not None and head.src < len(old) else None
+            if src is not None:
+                keep = src.model_copy(deep=True)
+                keep.part = labels[n] if n < len(labels) else 1
+                out.append(keep)
+            continue
         text = head.value.strip()
         if not text:  # emptied narration drops the whole scene, visuals included
             continue
@@ -865,7 +903,7 @@ def _apply_tts(job: VideoJob, rows: list[Row], mode: str) -> bool:
 def _apply_footage(job: VideoJob, rows: list[Row], mode: str) -> bool:
     changed = False
     for row in rows:
-        if row.src is None or row.src >= len(job.scenes):
+        if row.src is None or row.src >= len(job.scenes) or row.field == HUSH_FIELD:
             continue
         scene = job.scenes[row.src]
         value = row.value.strip()

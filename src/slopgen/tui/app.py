@@ -5757,12 +5757,16 @@ class BreakpointScreen(Screen):
     def _proto(self) -> review.Group | None:
         """The card a NEW item is shaped like: the first real item of the document.
 
-        Never a part separator. A separator is not an item of the stage's own kind —
+        Never a part separator, and never a PAUSE (`review.HUSH_FIELD`), which is a
+        marker of the same sort — one read-only row saying how long the silence is.
+
+        A separator is not an item of the stage's own kind —
         it is one read-only marker row — so a new scene cut from it comes out as
         another part break instead of a scene, which is what the drama script
         document (it always opens with the marker of part 1) used to do to every
         scene the AI invented."""
-        return next((g for g in self._groups() if not self._is_sep(g)), None)
+        return next((g for g in self._groups()
+                     if not self._is_sep(g) and g.head.field != review.HUSH_FIELD), None)
 
     def _blank_group(self, label: str) -> list[review.Row]:
         """The rows one empty item is made of, shaped like the items already there.

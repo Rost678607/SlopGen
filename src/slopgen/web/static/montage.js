@@ -422,6 +422,7 @@ function shotHTML(s, i, mine = [], rows = null) {
 }
 
 function lineHTML(sc) {
+  if (sc.hush) return hushHTML(sc);
   const sel = montSel && montSel.kind === "line" && montSel.i === sc.i;
   const words = sc.words.map((w, i) =>
     `<span class="wd" data-s="${sc.i}" data-w="${i}"
@@ -445,6 +446,26 @@ function lineHTML(sc) {
       // not remember choosing should say where it came from.
       sc.voice ? ` · ${esc(sc.voice)}${sc.voice_auto ? " ∿" : ""}` : ""}</div>
     <div class="words">${words}</div>
+  </div>`;
+}
+
+// A PAUSE: the one thing on the lines lane that is not a line. It has no words in it
+// and nothing to write, so what a block has to show is the two facts it does have —
+// how long it is, and that it is silence — and what it has to offer is the one edit:
+// its right edge, which is where its length is.
+//
+// Drawn on the lines lane and not on a lane of its own, because it is IN that sequence:
+// a pause sits between two lines the way a line sits between two lines, it pushes
+// everything after it back, and a lane below would say it was laid over the speech
+// rather than part of it.
+function hushHTML(sc) {
+  const sel = montSel && montSel.kind === "line" && montSel.i === sc.i;
+  return `<div class="line hush${sel ? " sel" : ""}" data-line="${sc.i}" data-hush="${sc.i}"
+      style="left:${X(sc.start)}px;width:${Math.max(X(sc.duration) - 2, 16)}px"
+      title="${esc(lab("js.mont.hush.drag"))}">
+    <div class="lhead">#${sc.i + 1} · ${lab("js.mont.hush")}</div>
+    <div class="hbody"><b>${sc.duration.toFixed(1)}${lab("js.s")}</b></div>
+    <i class="grip" title="${esc(lab("js.mont.hush.drag"))}"></i>
   </div>`;
 }
 
@@ -473,12 +494,31 @@ async function pick(next) {
   renderMont();
 }
 
+// Where a new pause would go: after the line that is selected, because a pause is put
+// somewhere in particular — and at the end when nothing is, which is where one goes when
+// you are not looking at a place.
+const hushAfter = () => (montSel && montSel.kind === "line"
+  ? montSel.i : MONT.doc.scenes.length - 1);
+
+/** Whether there is room for one there at all. Two pauses touching is one pause said
+ *  twice, and the server declines to make the second (`montage.add_hush`) — so the
+ *  button goes grey and says why, rather than standing there as an invitation to press
+ *  something that answers with a red line. */
+function hushRoom() {
+  const sc = MONT.doc.scenes || [];
+  const at = hushAfter() + 1;
+  return !((at > 0 && sc[at - 1] && sc[at - 1].hush) || (sc[at] && sc[at].hush));
+}
+
 // A line with no voice has no length, and a lane laid out in seconds has nowhere to
 // draw it: a dozen of them share one x and collapse into a sliver nobody can hit. So
-// they are listed here instead, as chips, until they have a length of their own.
+// they are listed here instead, as chips, until they have a length of their own. The two
+// buttons that MAKE something live at the far end of the same strip.
 function renderSilent() {
   const box = mq("#mont-silent");
-  const mute = (MONT.doc.scenes || []).filter((sc) => !sc.voiced && !sc.is_ad);
+  // a pause has no voice and is not waiting for one — it is silence on purpose, it has
+  // a length of its own, and the clock draws it where it is (see `hushHTML`)
+  const mute = (MONT.doc.scenes || []).filter((sc) => !sc.voiced && !sc.is_ad && !sc.hush);
   box.innerHTML =
     (mute.length ? `<b>${lab("js.mont.silentlines")}</b>` + mute.map((sc) => {
       const sel = montSel && montSel.kind === "line" && montSel.i === sc.i;
@@ -488,6 +528,9 @@ function renderSilent() {
         text ? " " + esc(text.slice(0, 22)) + (text.length > 22 ? "…" : "") : ""}</button>`;
     }).join("") : "")
     + `<span class="grow"></span>
+       <button class="ghost" id="mont-addhush"${hushRoom() ? "" : " disabled"}
+         title="${esc(lab(hushRoom() ? "js.mont.hush.note" : "js.mont.hush.already"))}">${
+         lab("js.mont.addhush")}</button>
        <button class="ghost" id="mont-addline">${lab("js.mont.addline")}</button>`;
   box.querySelectorAll("[data-mute]").forEach((b) => {
     b.onclick = () => pick({ kind: "line", i: +b.dataset.mute });
@@ -495,6 +538,11 @@ function renderSilent() {
   mq("#mont-addline").onclick = async () => {
     await flush();
     send("/line", { method: "POST", body: J({ after: MONT.doc.scenes.length - 1 }) },
+         (d) => { montDrafts.clear(); montSel = { kind: "line", i: d.at }; });
+  };
+  mq("#mont-addhush").onclick = async () => {
+    await flush();
+    send("/hush", { method: "POST", body: J({ after: hushAfter() }) },
          (d) => { montDrafts.clear(); montSel = { kind: "line", i: d.at }; });
   };
 }
@@ -525,17 +573,27 @@ function bindLanes() {
     el.onclick = () => pick({ kind: "line", i: +el.dataset.line });
   });
   mq("#lane-shots").querySelectorAll(".fxm").forEach((el) => {
-    el.onclick = (e) => { e.stopPropagation(); pick({ kind: "fx", i: +el.dataset.fx }); };
+    // A firing the PICTURE carries cannot leave it: its coordinates are a fact about
+    // that one card, the render cuts it off where the shot changes (`effects.draw_for`),
+    // so a drag past the cut would not move it — it would delete it and leave the block
+    // sitting over nothing. It stops at the edge of its own still instead, which says
+    // the rule by doing it. The server holds to the same bound (`effects.nudge`).
+    const q = (MONT.doc.effects || [])[+el.dataset.fx];
+    const host = el.closest(".shot");
+    const sh = host ? MONT.doc.shots[+host.dataset.shot] : null;
+    bindFxBlock(el, q && q.bound && sh
+      ? { lo: sh.start, hi: sh.start + sh.duration } : null);
   });
   mq("#lane-shots").querySelectorAll(".shot").forEach((el) => {
     const i = +el.dataset.shot;
-    el.onclick = () => pick({ kind: "shot", i });
     el.querySelector(".uncut").onclick = (e) => {
       e.stopPropagation();
       send(`/cut?video=${MONT.video}&shot=${i}`, { method: "DELETE" },
            () => { montSel = null; });
     };
+    bindShotDrag(el, i);
   });
+  bindHushBlocks();
   bindKeyMarkers();
   bindFxLane();
   // `offsetX` is measured against whatever was under the pointer — a tick, a label —
@@ -557,6 +615,198 @@ function bindLanes() {
 // threshold is the same few pixels the switches in `app.js` use, for the same reason:
 // a finger never presses perfectly still.
 const KF_SLOP = 3;
+
+// Two cuts closer together than this are the same cut — `montage.SAME_CUT_S`, to the
+// same tolerance, because the snap targets this screen offers have to be exactly the
+// ones the server will accept.
+const SAME_CUT_S = 0.02;
+
+// The line whose text box is holding something not written back yet, or -1.
+//
+// It is the reason every drag below opens with a question about the TEXT. A drag calls
+// `preventDefault`, which stops the browser moving the focus — and moving the focus is
+// what would otherwise have blurred the box and saved what was in it (see `flush`). So
+// a press that would leave an unsaved line writes it back and selects the thing pressed,
+// and the drag is the press after that: one gesture asked for twice, never a sentence
+// somebody typed.
+function pendingLine() {
+  if (!montSel || montSel.kind !== "line") return -1;
+  const sc = MONT.doc.scenes[montSel.i];
+  return sc && dirty(sc) ? montSel.i : -1;
+}
+
+// Light something in place, without rebuilding the lane it is on.
+//
+// The whole of why this exists is that a full redraw replaces the very node the pointer
+// is holding, and the gesture then dies with it — capture and all. The panel is fair
+// game: it is not under the finger. (The keyframe drag learned this the hard way; see
+// `lightKey`.)
+function lightSel(next) {
+  montSel = next;
+  if (!(next.kind === "shot" && montKeySel && montKeySel.shot === next.i)) montKeySel = null;
+  mq("#lane-shots").querySelectorAll(".shot").forEach((el) =>
+    el.classList.toggle("sel", next.kind === "shot" && +el.dataset.shot === next.i));
+  mq("#mont-lanes").querySelectorAll(".fxm").forEach((el) =>
+    el.classList.toggle("on", next.kind === "fx" && +el.dataset.fx === next.i));
+  mq("#lane-lines").querySelectorAll(".line").forEach((el) =>
+    el.classList.toggle("sel", next.kind === "line" && +el.dataset.line === next.i));
+  renderInspector();
+}
+
+// ------------------------------------------------------- dragging a shot along the track
+//
+// A cut is a WORD. That is the one fact the picture track is built on — it is why a cut
+// placed by hand survives a re-voicing — so a shot dragged along the timeline does not
+// land wherever the pointer stopped: it snaps from one word start to the next, and the
+// word it would land on lights up with a line drawn to it. Free dragging would be a
+// second, worse answer to a question this screen has already answered, and it would
+// answer it in seconds, which is the unit that does not last.
+//
+// Not every word is a place a cut may go, and the ones that are not are simply not
+// offered: a word another shot already starts on (two shots on one moment is one shot —
+// see `montage._dedupe`), the first word of a region (the shot it opens with is right in
+// front of it), and anything inside an ad. Filtered here as well as refused there, so
+// the drag never lands somewhere that answers with a red line.
+function cutTargets(shot) {
+  const d = MONT.doc;
+  const taken = d.shots.filter((_, k) => k !== shot).map((s) => s.start);
+  const all = [];
+  (d.scenes || []).forEach((sc) => (sc.words || []).forEach((w, i) =>
+    all.push({ at: w.start, scene: sc.i, word: i })));
+  all.sort((a, b) => a.at - b.at);
+  return all.filter((c) => {
+    const home = (d.regions || []).find((r) => r.start <= c.at && c.at < r.end);
+    if (!home) return false;
+    if (!all.some((o) => o.at >= home.start - SAME_CUT_S && o.at < c.at)) return false;
+    return !taken.some((t) => Math.abs(t - c.at) < SAME_CUT_S);
+  });
+}
+
+// The snap guide: a hairline at the word the drag would land on, from the shots down
+// through the words, with the word itself lit. Two halves of one statement — this
+// picture, that word — which is the whole of what the gesture means.
+function showSnap(target) {
+  const line = mq("#mont-snap");
+  mq("#lane-lines").querySelectorAll(".wd.snap").forEach((w) => w.classList.remove("snap"));
+  if (!target) { line.hidden = true; return; }
+  line.hidden = false;
+  line.style.left = X(target.at) + "px";
+  const w = mq(`#lane-lines .wd[data-s="${target.scene}"][data-w="${target.word}"]`);
+  if (w) w.classList.add("snap");
+}
+
+function bindShotDrag(el, i) {
+  const s = MONT.doc.shots[i];
+  // The shot a region OPENS with has no cut to move: it is where the video (or the
+  // stretch after an ad) begins, and it is an invariant (`montage.open_heads`). So it
+  // keeps the plain click and says as much by not offering a grab cursor.
+  const fixed = !s || opensRegion(s);
+  el.classList.toggle("movable", !fixed);
+  let from = 0, at0 = 0, left0 = 0, moved = false, holding = false, target = null;
+  let snaps = [];
+  el.onpointerdown = (e) => {
+    if (e.target.closest(".uncut") || e.target.closest(".fxm")) return;
+    if (pendingLine() >= 0) { pick({ kind: "shot", i }); return; }
+    e.preventDefault();
+    const sh = MONT.doc.shots[i];
+    if (!sh) return;
+    from = e.clientX;
+    at0 = sh.start;
+    left0 = parseFloat(el.style.left) || 0;
+    moved = false;
+    target = null;
+    holding = !fixed;
+    snaps = fixed ? [] : cutTargets(i);
+    // pointing at it selects it, and that happens whether it can be dragged or not
+    lightSel({ kind: "shot", i });
+    if (!fixed) { try { el.setPointerCapture(e.pointerId); } catch { /* moves stay here */ } }
+  };
+  el.onpointermove = (e) => {
+    if (!holding) return;
+    const dx = e.clientX - from;
+    if (!moved && Math.abs(dx) < KF_SLOP) return;
+    moved = true;
+    el.classList.add("dragging");
+    const want = at0 + dx / montPPS;
+    if (!snaps.length) return;
+    target = snaps.reduce((a, b) =>
+      (Math.abs(b.at - want) < Math.abs(a.at - want) ? b : a));
+    el.style.left = left0 + (target.at - at0) * montPPS + "px";
+    showSnap(target);
+    seekSilently(target.at);   // and the picture shows what is on screen at that cut
+  };
+  const drop = (e) => {
+    if (!holding) return;
+    holding = false;
+    try { el.releasePointerCapture(e.pointerId); } catch { /* never had it */ }
+    el.classList.remove("dragging");
+    showSnap(null);
+    if (!moved || !target) return;   // a press, already handled
+    if (Math.abs(target.at - at0) < SAME_CUT_S) { el.style.left = left0 + "px"; return; }
+    // the track is ordered by time, so a shot dragged past its neighbour changes its
+    // index — the reply says where it ended up (see `montage.move_cut`)
+    send("/cut", { method: "PUT",
+      body: J({ shot: i, scene: target.scene, word: target.word }) },
+      (d) => { montSel = { kind: "shot", i: d.at }; });
+  };
+  el.onpointerup = drop;
+  el.onpointercancel = drop;
+}
+
+// -------------------------------------------------------------- stretching a pause
+//
+// A pause is a length and nothing else, so the control is its right edge. Dragging that
+// is the whole gesture: the block follows the hand and the number in it counts up, and
+// the rest of the video moves back on release — one request rather than one per pixel,
+// which is the same bargain every slider in this room makes.
+//
+// Only the RIGHT edge, and not the left. A pause has no content to slide under a window:
+// moving its left edge would mean "start the silence earlier", which is the length of the
+// line in front of it, and that is not this control's to change.
+function bindHushBlocks() {
+  mq("#lane-lines").querySelectorAll("[data-hush]").forEach((el) => {
+    const i = +el.dataset.hush;
+    const grip = el.querySelector(".grip");
+    const out = el.querySelector(".hbody b");
+    let from = 0, was = 0, moved = false, holding = false, now = 0;
+    grip.onpointerdown = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const sc = MONT.doc.scenes[i];
+      if (!sc) return;
+      from = e.clientX;
+      was = sc.duration;
+      now = was;
+      moved = false;
+      holding = true;
+      try { grip.setPointerCapture(e.pointerId); } catch { /* moves stay on the grip */ }
+      lightSel({ kind: "line", i });
+    };
+    grip.onpointermove = (e) => {
+      if (!holding) return;
+      const dx = e.clientX - from;
+      if (!moved && Math.abs(dx) < KF_SLOP) return;
+      moved = true;
+      el.classList.add("dragging");
+      // the same floor and ceiling the server holds to (`montage.HUSH_FLOOR_S`), so the
+      // number under the hand is the number that will be saved
+      now = Math.min(Math.max(was + dx / montPPS, 0.15), 20);
+      el.style.width = Math.max(X(now) - 2, 16) + "px";
+      if (out) out.textContent = now.toFixed(1) + lab("js.s");
+    };
+    const drop = (e) => {
+      if (!holding) return;
+      holding = false;
+      try { grip.releasePointerCapture(e.pointerId); } catch { /* never had it */ }
+      el.classList.remove("dragging");
+      if (!moved || Math.abs(now - was) < 0.01) return;
+      send("/hush", { method: "PUT", body: J({ scene: i, seconds: +now.toFixed(2) }) },
+           () => { montSel = { kind: "line", i }; });
+    };
+    grip.onpointerup = drop;
+    grip.onpointercancel = drop;
+  });
+}
 
 function bindKeyMarkers() {
   mq("#lane-keys").querySelectorAll(".kf").forEach((el) => {
@@ -687,12 +937,85 @@ async function send(path, opts, after) {
 // stops being obvious. The lane is where effects are drawn, so it is where they are
 // placed.
 
+// Dragging a firing along the clock — FREE, and that is the difference from a shot.
+//
+// A cut is a word: the picture changes on a syllable or it changes wrong. An accent is
+// aimed at the speech rather than fastened to it — it leads a word by a fifth of a
+// second, it covers the breath between two, it runs across three — and snapping it to
+// word starts would put half the placements the operator can see out of reach. So the
+// block goes wherever it is dropped.
+//
+// What is stored is still an anchor, which is the part that is not obvious: the dropped
+// second is written down as the nearest word plus the remainder (`effects.nudge`), so a
+// later re-voicing carries the firing with the speech it was aimed at instead of leaving
+// it on a second that now belongs to another line.
+//
+// One binder for both homes a firing can have — the lane below everything, and the strip
+// inside the picture it belongs to — because the gesture is the same and the block is the
+// same block; only what its `left` is measured from differs, which is why the drag moves
+// it by a DELTA rather than by setting an absolute position.
+function bindFxBlock(el, bounds = null) {
+  const i = +el.dataset.fx;
+  // How far it may go is measured against the firing's own LENGTH and not its start, so
+  // it comes to rest flush with the end of whatever contains it instead of hanging off
+  // the edge — the same bound the server holds to (see `effects.nudge`).
+  const q0 = (MONT.doc.effects || [])[i] || { duration: 0.05 };
+  const room = Math.max(q0.duration, 0.05);
+  const lo = bounds ? bounds.lo : 0;
+  const hi = Math.max((bounds ? bounds.hi : MONT.doc.total) - room, lo);
+  let from = 0, at0 = 0, left0 = 0, at = 0, moved = false, holding = false;
+  el.onpointerdown = (e) => {
+    e.stopPropagation();
+    if (pendingLine() >= 0) { pick({ kind: "fx", i }); return; }
+    const q = (MONT.doc.effects || [])[i];
+    if (!q) return;
+    e.preventDefault();
+    from = e.clientX;
+    at0 = q.start;
+    at = at0;
+    left0 = parseFloat(el.style.left) || 0;
+    moved = false;
+    holding = true;
+    lightSel({ kind: "fx", i });
+    try { el.setPointerCapture(e.pointerId); } catch { /* moves stay on the block */ }
+  };
+  el.onpointermove = (e) => {
+    if (!holding) return;
+    const dx = e.clientX - from;
+    if (!moved && Math.abs(dx) < KF_SLOP) return;
+    moved = true;
+    el.classList.add("dragging");
+    at = Math.min(Math.max(at0 + dx / montPPS, lo), hi);
+    el.style.left = left0 + (at - at0) * montPPS + "px";
+    seekSilently(at);   // the preview shows the firing where it is being put
+  };
+  const drop = (e) => {
+    if (!holding) return;
+    holding = false;
+    try { el.releasePointerCapture(e.pointerId); } catch { /* never had it */ }
+    el.classList.remove("dragging");
+    if (!moved || Math.abs(at - at0) < 0.01) return;  // a press, which selected it
+    // the track is kept in time order, so this firing may change its index — it is
+    // followed by WHERE IT LANDED, the way a dragged keyframe is
+    send("/effect", { method: "PUT", body: J({ cue: i, at: +at.toFixed(3) }) }, (d) => {
+      const list = d.effects || [];
+      let best = -1;
+      list.forEach((q, n) => {
+        if (best < 0 || Math.abs(q.start - at) < Math.abs(list[best].start - at)) best = n;
+      });
+      montSel = best >= 0 ? { kind: "fx", i: best } : null;
+    });
+  };
+  el.onpointerup = drop;
+  el.onpointercancel = drop;
+}
+
 function bindFxLane() {
   const lane = mq("#lane-fx");
-  lane.querySelectorAll(".fxm").forEach((el) => {
-    el.onclick = (e) => { e.stopPropagation(); pick({ kind: "fx", i: +el.dataset.fx }); };
-  });
+  lane.querySelectorAll(".fxm").forEach((el) => bindFxBlock(el));
   lane.onclick = async (e) => {
+    // a press that landed on a block is that block's, and it has already been answered
+    if (e.target.closest(".fxm")) return;
     const x = e.clientX - e.currentTarget.getBoundingClientRect().left;
     // the lane is for the ones that belong to no picture: laid over whatever is there,
     // free to be dragged anywhere. What the picture itself can do is fired from the
@@ -1418,9 +1741,36 @@ function pickedVoice() {
   return which ? `${pick.value}:${which.value}` : pick.value;
 }
 
+// A pause, in the panel. Everything a line's block offers is about words — the text,
+// the voice, the speed, who says it — and a pause has none of those: it has a length,
+// and the two structural things any item on this track has, a neighbour to add and
+// itself to drop. So the panel says exactly that and nothing else, rather than showing
+// six dead controls with a note explaining why.
+//
+// The number and the edge are one control shown twice, deliberately: the edge is how you
+// find a length by looking at it, the box is how you say 1.5 when 1.5 is what you meant.
+function hushInspector(sc) {
+  return `
+  <div class="insp-head"><b>${lab("js.mont.hush")} ${sc.i + 1}</b>
+    <span class="dim">${sc.start.toFixed(1)}–${(sc.start + sc.duration).toFixed(1)}${lab("js.s")}</span>
+    <span class="grow"></span>
+    <button class="ghost" id="i-before">${lab("js.mont.addbefore")}</button>
+    <button class="ghost" id="i-after">${lab("js.mont.addafter")}</button>
+    <button class="ghost danger" id="i-drop">${lab("js.mont.hush.drop")}</button>
+  </div>
+  <p class="dim">${lab("js.mont.hush.note")}</p>
+  <div class="block">
+    <label class="inline">${lab("js.mont.hush.long")}
+      <input type="number" id="i-hush" step="0.1" min="0.15" max="20"
+             value="${sc.duration.toFixed(1)}"></label>
+    <span class="dim">${lab("js.mont.hush.drag")}</span>
+  </div>`;
+}
+
 function lineInspector() {
   const sc = MONT.doc.scenes[montSel.i];
   if (!sc) return `<p class="dim">${lab("js.mont.pickone")}</p>`;
+  if (sc.hush) return hushInspector(sc);
   return `
   <div class="insp-head"><b>${lab("js.mont.line")} ${sc.i + 1}</b>
     <span class="dim">${sc.start.toFixed(1)}–${(sc.start + sc.duration).toFixed(1)}${lab("js.s")}</span>
@@ -1473,6 +1823,8 @@ function bindVoicePair() {
 
 function bindLineInspector() {
   const i = montSel.i;
+  const sc = MONT.doc.scenes[i];
+  if (sc && sc.hush) return bindHushInspector(i);
   const rate = mq("#i-rate"), out = mq("#i-rate-v");
   rate.oninput = () => (out.textContent = rate.value);
   bindVoicePair();
@@ -1537,6 +1889,32 @@ function bindLineInspector() {
     await send(`/voice/file?video=${MONT.video}&scene=${i}`, { method: "POST", body },
                () => { reloadVoice(); say(lab("js.mont.voiced")); });
   });
+}
+
+function bindHushInspector(i) {
+  const box = mq("#i-hush");
+  box.onchange = () =>
+    send("/hush", { method: "PUT", body: J({ scene: i, seconds: +box.value }) },
+         () => { montSel = { kind: "line", i }; });
+  // The three structural buttons are a line's own, and they mean here what they mean
+  // there — except that what is added beside a pause is a LINE: a second pause touching
+  // the first is one pause said twice, and the server declines to make it
+  // (`montage.add_hush`), so it is not offered either.
+  const add = async (after) => {
+    await flush();
+    send("/line", { method: "POST", body: J({ after }) },
+         (d) => { montDrafts.clear(); montSel = { kind: "line", i: d.at }; });
+  };
+  mq("#i-before").onclick = () => add(i - 1);
+  mq("#i-after").onclick = () => add(i);
+  mq("#i-drop").onclick = () =>
+    send(`/line?video=${MONT.video}&scene=${i}`, { method: "DELETE" },
+         (d) => {
+           montDrafts.clear();
+           montSel = d.scenes.length
+             ? { kind: "line", i: Math.min(i, d.scenes.length - 1) } : null;
+           reloadVoice();
+         });
 }
 
 // One helper for both file wells: click to choose, drag to drop, the same words while
