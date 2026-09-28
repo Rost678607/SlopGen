@@ -433,7 +433,7 @@ function lineHTML(sc) {
   const w = sc.voiced ? Math.max(X(sc.duration) - 2, 8) : 110;
   return `<div class="line${sel ? " sel" : ""}${sc.voiced ? "" : " silent"}${sc.is_ad ? " ad" : ""}"
       data-line="${sc.i}" style="left:${X(sc.start)}px;width:${w}px">
-    <div class="lhead">#${sc.i + 1}${sc.voiced ? "" : " · " + lab("js.mont.silent")}${
+    <div class="lhead" title="${esc(lab("js.mont.line.drag"))}">#${sc.i + 1}${sc.voiced ? "" : " · " + lab("js.mont.silent")}${
       // the speed, but only where this line differs from the run — a line voiced at
       // the run's own rate is pinned to it all the same, and "· 0%" on every line is
       // a column of noise saying nothing
@@ -463,7 +463,8 @@ function hushHTML(sc) {
   return `<div class="line hush${sel ? " sel" : ""}" data-line="${sc.i}" data-hush="${sc.i}"
       style="left:${X(sc.start)}px;width:${Math.max(X(sc.duration) - 2, 16)}px"
       title="${esc(lab("js.mont.hush.drag"))}">
-    <div class="lhead">#${sc.i + 1} · ${lab("js.mont.hush")}</div>
+    <div class="lhead" title="${esc(lab("js.mont.line.drag"))}">#${
+      sc.i + 1} · ${lab("js.mont.hush")}</div>
     <div class="hbody"><b>${sc.duration.toFixed(1)}${lab("js.s")}</b></div>
     <i class="grip" title="${esc(lab("js.mont.hush.drag"))}"></i>
   </div>`;
@@ -570,7 +571,7 @@ function bindLanes() {
     };
   });
   mq("#lane-lines").querySelectorAll(".line").forEach((el) => {
-    el.onclick = () => pick({ kind: "line", i: +el.dataset.line });
+    bindLineDrag(el, +el.dataset.line);
   });
   mq("#lane-shots").querySelectorAll(".fxm").forEach((el) => {
     // A firing the PICTURE carries cannot leave it: its coordinates are a fact about
@@ -635,6 +636,21 @@ function pendingLine() {
   return sc && dirty(sc) ? montSel.i : -1;
 }
 
+/** Write that line back, and let this press do no more than that. True when it did, so
+ *  a caller reads `if (settleFirst(next)) return;` — the drag is then the press after.
+ *
+ *  Pressing the unsaved line ITSELF is the case worth spelling out: `pick` only commits
+ *  on the way OUT of a line, so selecting the one already selected would leave the
+ *  draft sitting there and every press after it would bail the same way. `flush` is the
+ *  one that writes back whatever is open regardless. */
+function settleFirst(next) {
+  const held = pendingLine();
+  if (held < 0) return false;
+  if (next.kind === "line" && next.i === held) flush();
+  else pick(next);
+  return true;
+}
+
 // Light something in place, without rebuilding the lane it is on.
 //
 // The whole of why this exists is that a full redraw replaces the very node the pointer
@@ -650,6 +666,10 @@ function lightSel(next) {
     el.classList.toggle("on", next.kind === "fx" && +el.dataset.fx === next.i));
   mq("#lane-lines").querySelectorAll(".line").forEach((el) =>
     el.classList.toggle("sel", next.kind === "line" && +el.dataset.line === next.i));
+  // …and the strip under the track, which reads the selection too: which silent line is
+  // lit, and whether there is room for a pause after the one selected (`hushRoom`). It
+  // is not on the lanes, so rebuilding it cannot take the node out from under the finger.
+  renderSilent();
   renderInspector();
 }
 
@@ -682,16 +702,21 @@ function cutTargets(shot) {
   });
 }
 
-// The snap guide: a hairline at the word the drag would land on, from the shots down
-// through the words, with the word itself lit. Two halves of one statement — this
-// picture, that word — which is the whole of what the gesture means.
-function showSnap(target) {
+// The guide a drag leaves under it: a hairline at the moment the thing would land on.
+//
+// Two drags use it and they mean different things by "where". A cut means a WORD, and
+// lights that word as well, because the pair is the whole statement — this picture, that
+// word. A line means a SEAM between two lines, which has nothing to light, so the line
+// itself is heavier and is the whole of what it says. `null` puts it away.
+function showGuide(at, word = null) {
   const line = mq("#mont-snap");
   mq("#lane-lines").querySelectorAll(".wd.snap").forEach((w) => w.classList.remove("snap"));
-  if (!target) { line.hidden = true; return; }
+  line.classList.toggle("seam", at !== null && !word);
+  if (at === null) { line.hidden = true; return; }
   line.hidden = false;
-  line.style.left = X(target.at) + "px";
-  const w = mq(`#lane-lines .wd[data-s="${target.scene}"][data-w="${target.word}"]`);
+  line.style.left = X(at) + "px";
+  if (!word) return;
+  const w = mq(`#lane-lines .wd[data-s="${word.scene}"][data-w="${word.word}"]`);
   if (w) w.classList.add("snap");
 }
 
@@ -706,7 +731,7 @@ function bindShotDrag(el, i) {
   let snaps = [];
   el.onpointerdown = (e) => {
     if (e.target.closest(".uncut") || e.target.closest(".fxm")) return;
-    if (pendingLine() >= 0) { pick({ kind: "shot", i }); return; }
+    if (settleFirst({ kind: "shot", i })) return;
     e.preventDefault();
     const sh = MONT.doc.shots[i];
     if (!sh) return;
@@ -732,7 +757,7 @@ function bindShotDrag(el, i) {
     target = snaps.reduce((a, b) =>
       (Math.abs(b.at - want) < Math.abs(a.at - want) ? b : a));
     el.style.left = left0 + (target.at - at0) * montPPS + "px";
-    showSnap(target);
+    showGuide(target.at, target);
     seekSilently(target.at);   // and the picture shows what is on screen at that cut
   };
   const drop = (e) => {
@@ -740,7 +765,7 @@ function bindShotDrag(el, i) {
     holding = false;
     try { el.releasePointerCapture(e.pointerId); } catch { /* never had it */ }
     el.classList.remove("dragging");
-    showSnap(null);
+    showGuide(null);
     if (!moved || !target) return;   // a press, already handled
     if (Math.abs(target.at - at0) < SAME_CUT_S) { el.style.left = left0 + "px"; return; }
     // the track is ordered by time, so a shot dragged past its neighbour changes its
@@ -748,6 +773,92 @@ function bindShotDrag(el, i) {
     send("/cut", { method: "PUT",
       body: J({ shot: i, scene: target.scene, word: target.word }) },
       (d) => { montSel = { kind: "shot", i: d.at }; });
+  };
+  el.onpointerup = drop;
+  el.onpointercancel = drop;
+}
+
+// ------------------------------------------------------- reordering the lines
+//
+// Dragging a line to another place in the order, which is the one structural edit this
+// room used to refuse. The reason it gave was that a reordered script is a track to be
+// cast from scratch — and that was the wrong reading of the room's own design. A cut is
+// a WORD and so is an effect, and the words travel with the line they are in, so the
+// anchors are re-numbered through the move and every cut comes out on the syllable it
+// was placed on, carrying the card somebody chose for those words. Nothing is re-cast.
+//
+// What a reorder really costs is the LENGTH of the pictures either side of the seam: a
+// shot runs to the next cut, and moving a line moves cuts past each other. That is worth
+// looking at afterwards and it is not worth refusing the edit over.
+//
+// It snaps, like the cut does and for the same kind of reason: the lines are a sequence,
+// so the only thing a drop can mean is which two lines it lands between. A pause is
+// dragged the same way — it is a scene like any other — and its right edge stays what it
+// always was, the length; the body moves it, the grip stretches it.
+
+/** Where the block's left edge would put it in the order, as the index it would occupy.
+ *
+ *  Measured against the MIDPOINTS of the other lines, which is what makes the swap feel
+ *  like a swap: drag past half of your neighbour and you are past it. The clock it reads
+ *  is the one before the move — nothing has been taken out of the list yet — and that is
+ *  fine, because all it is deciding is an ordinal. */
+function lineDropAt(i, want) {
+  const others = (MONT.doc.scenes || []).filter((_, k) => k !== i);
+  let to = 0;
+  while (to < others.length && want >= others[to].start + others[to].duration / 2) to++;
+  return to;
+}
+
+/** The seam that index sits at, in the clock as it stands, so the guide can be drawn. */
+function lineSeamAt(i, to) {
+  const others = (MONT.doc.scenes || []).filter((_, k) => k !== i);
+  return to < others.length ? others[to].start : MONT.doc.total;
+}
+
+function bindLineDrag(el, i) {
+  let from = 0, at0 = 0, left0 = 0, to = i, moved = false, holding = false;
+  el.onpointerdown = (e) => {
+    // A word is the cut gesture and the grip is the pause's length: both are older
+    // claims on this block than the drag, and both keep it.
+    if (e.target.closest(".wd") || e.target.closest(".grip")) return;
+    if (settleFirst({ kind: "line", i })) return;
+    const sc = MONT.doc.scenes[i];
+    if (!sc) return;
+    e.preventDefault();
+    from = e.clientX;
+    at0 = sc.start;
+    left0 = parseFloat(el.style.left) || 0;
+    to = i;
+    moved = false;
+    holding = true;
+    lightSel({ kind: "line", i });
+    try { el.setPointerCapture(e.pointerId); } catch { /* moves stay on the block */ }
+  };
+  el.onpointermove = (e) => {
+    if (!holding) return;
+    const dx = e.clientX - from;
+    if (!moved && Math.abs(dx) < KF_SLOP) return;
+    moved = true;
+    el.classList.add("dragging");
+    // the block follows the hand freely; where it will LAND is the seam, and that is
+    // what the guide says — the two disagreeing is the point, because the sequence has
+    // no room between two lines for the block to be dropped into
+    el.style.left = left0 + dx + "px";
+    to = lineDropAt(i, at0 + dx / montPPS);
+    showGuide(to === i ? null : lineSeamAt(i, to));
+  };
+  const drop = (e) => {
+    if (!holding) return;
+    holding = false;
+    try { el.releasePointerCapture(e.pointerId); } catch { /* never had it */ }
+    el.classList.remove("dragging");
+    showGuide(null);
+    if (!moved) return;             // a press, which selected it — already done
+    if (to === i) { el.style.left = left0 + "px"; return; }
+    // a draft is held BY INDEX and every index below the move has just changed, so
+    // nothing may be left in the box — `settleFirst` has already written it back
+    send("/line", { method: "PUT", body: J({ scene: i, to }) },
+         (d) => { montDrafts.clear(); montSel = { kind: "line", i: d.at }; });
   };
   el.onpointerup = drop;
   el.onpointercancel = drop;
@@ -966,7 +1077,7 @@ function bindFxBlock(el, bounds = null) {
   let from = 0, at0 = 0, left0 = 0, at = 0, moved = false, holding = false;
   el.onpointerdown = (e) => {
     e.stopPropagation();
-    if (pendingLine() >= 0) { pick({ kind: "fx", i }); return; }
+    if (settleFirst({ kind: "fx", i })) return;
     const q = (MONT.doc.effects || [])[i];
     if (!q) return;
     e.preventDefault();

@@ -675,10 +675,25 @@ and the two things you actually want to do to it cannot be typed into a row at a
   redraw, a caret, and selecting another line and coming back; **leaving the box saves
   it**, and so does anything that moves the lines underneath it — pressing ＋, voicing,
   running a stage — because a draft is held by line number, and losing what somebody
-  typed to an index shift is not a trade worth making. What is *not* offered here is
-  **reordering** — moving a beat is not the same edit
-  at all, because every card after it was chosen against what is said over it, and a
-  reordered script is a track to be cast from scratch rather than one to be nudged.
+  typed to an index shift is not a trade worth making.
+- **Lines are reordered by dragging them**, by the head strip of the block — the body
+  below it is full of word chips and a word is the cut gesture, so the one strip that
+  belongs to nothing else is the handle. The block follows the hand and a heavy line
+  marks the seam it would land at; it snaps, because the lines are a sequence and the
+  only thing a drop can mean is which two it lands between. This was refused for a long
+  time, on the grounds that a reordered script is a track to be cast from scratch, and
+  that was a misreading of the room's own design: a cut is a WORD and so is an effect,
+  and the words travel with the line they are in — so the anchors are re-numbered through
+  the move and every cut comes out on the syllable it was placed on, still carrying the
+  card that was chosen for those words, with the arrow still on the thing it pointed at.
+  Nothing is cast again. What a reorder really costs is the **length of the pictures
+  either side of the seam**: a shot runs to the next cut, and moving a line moves cuts
+  past each other, so a shot whose neighbour has just travelled to the far end grows to
+  meet whatever is now in front of it. That is honest arithmetic — the seconds have to
+  belong to somebody — and it is the thing to look at afterwards. The takes are renamed
+  to their new positions as part of the move, which is the half that would otherwise
+  corrupt audio: `tts` names a take by its line's index, so a permutation left alone
+  leaves every one of those names pointing at somebody else's voice.
 - **A pause is a thing on the track.** **＋ a pause** puts a stretch of silence after the
   line that is selected (at the end when nothing is), and the whole of it is a length:
   no text, no voice, nothing anchored inside it. It is drawn on the lines lane, hatched,
@@ -1857,11 +1872,25 @@ cp deploy.env.example deploy.env        # SSH_HOST и SSH_USER, больше н�
   черновик, который переживает перерисовку, каретку и уход на другую строку и обратно;
   **уход из поля его сохраняет**, и всё, что двигает строки под ним, — ＋, озвучка,
   запуск стадии — тоже: черновик хранится по номеру строки, а терять из-за сдвига
-  номеров то, что человек набрал, — так себе размен. Чего здесь **нет** — это
-  **перестановки**:
-  двинуть бит — правка совсем другого рода, потому что каждая карточка после него
-  выбиралась под то, что над ней говорится, и переставленный сценарий — это дорожка,
-  которую набирают заново, а не подправляют.
+  номеров то, что человек набрал, — так себе размен.
+- **Строки переставляют перетаскиванием** — за шапку блока: ниже неё сплошные слова, а
+  слово — это жест разреза, поэтому ручкой служит та единственная полоска, которая больше
+  ни за что не отвечает. Блок едет за рукой, а жирная черта показывает шов, на который он
+  встанет; он именно прилипает к швам, потому что строки — это последовательность, и
+  бросок может значить только одно: между какими двумя. Долгое время этого не было — на том
+  основании, что переставленный сценарий это дорожка, которую набирают заново, — и это было
+  неверным прочтением собственного устройства комнаты: стык это СЛОВО, и эффект тоже, а
+  слова едут вместе со строкой, в которой стоят. Привязки перенумеровываются вместе с
+  перестановкой, и каждый стык выходит из неё на том же слоге, на котором его поставили, с
+  той же карточкой, которую под эти слова выбрали, и со стрелкой, по-прежнему указывающей
+  на то, на что указывала. Заново не набирается ничего. Чего перестановка действительно
+  стоит — это **длины картинок по обе стороны шва**: кадр идёт до следующего стыка, а
+  перестановка строки двигает стыки друг мимо друга, поэтому кадр, у которого сосед только
+  что уехал в конец ролика, дорастает до того, что теперь перед ним. Это честная
+  арифметика — секунды обязаны кому-то принадлежать, — и именно на неё стоит посмотреть
+  после. Дубли при этом переименовываются по новым местам, и это та половина, которая иначе
+  портит звук: `tts` называет дубль по номеру строки, и оставленная без присмотра
+  перестановка оставляет все эти имена указывающими на чужой голос.
 - **Пауза — это вещь на дорожке.** **＋ пауза** ставит кусок тишины после выбранной
   строки (а если ничего не выбрано — в конец), и вся она целиком — это длина: ни текста,
   ни голоса, ничего внутри к ней не прибито. Рисуется она на полосе строк, штриховкой,

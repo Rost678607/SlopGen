@@ -2523,7 +2523,7 @@ RU.update({
     "web.mont.blank": "на этом месте картинки ещё нет — выбери кадр слева в дорожке и назначь ему карточку",
     "web.mont.frame": "точный кадр",
     "web.mont.zoom": "масштаб",
-    "web.mont.hint": "клик по слову — с него начинается новый кадр; кадр можно тянуть — он липнет к словам; ✕ на левом краю кадра — убрать этот стык. Самый первый кадр убрать нельзя: ✕ на нём просто снимает картинку. Эффекты тянутся свободно, пауза — за правый край",
+    "web.mont.hint": "клик по слову — с него начинается новый кадр; кадр можно тянуть — он липнет к словам; ✕ на левом краю кадра — убрать этот стык. Самый первый кадр убрать нельзя: ✕ на нём просто снимает картинку. Эффекты тянутся свободно, строка — за шапку, пауза — за правый край",
     "web.mont.fx.note": "ползунки меняют вид всего ролика. В окошке — набросок: зерно, трубку и разрывы на самом деле считает ffmpeg, поэтому рядом кнопка «точный кадр».",
     "js.mont.shots": "кадров",
     "js.mont.left.unvoiced": "не озвучено строк:",
@@ -2630,7 +2630,7 @@ EN.update({
     "web.mont.blank": "nothing is up here yet — pick a shot in the track and give it a card",
     "web.mont.frame": "the true frame",
     "web.mont.zoom": "zoom",
-    "web.mont.hint": "click a word and a shot starts there; drag a shot and it snaps from word to word; ✕ on a shot's left edge takes that cut back. The opening shot cannot be taken off the track: ✕ there just empties it. Effects drag freely, a pause by its right edge",
+    "web.mont.hint": "click a word and a shot starts there; drag a shot and it snaps from word to word; ✕ on a shot's left edge takes that cut back. The opening shot cannot be taken off the track: ✕ there just empties it. Effects drag freely, a line by its head strip, a pause by its right edge",
     "web.mont.fx.note": "these change how the whole video looks. What you see here is a sketch: grain, the tube and the tearing are ffmpeg's arithmetic, which is what the true-frame button beside it is for.",
     "js.mont.shots": "shots",
     "js.mont.left.unvoiced": "lines with no voice:",
@@ -3234,6 +3234,7 @@ RU.update({
     "js.mont.hush.drag": "тяни за правый край",
     "js.mont.hush.drop": "убрать паузу",
     "js.mont.hush.already": "пауза здесь уже есть — тяни её за край, две подряд не нужны",
+    "js.mont.line.drag": "тяни за шапку — переставить строку в другое место",
 })
 EN.update({
     "js.mont.hush": "pause",
@@ -3244,4 +3245,5 @@ EN.update({
     "js.mont.hush.drag": "drag its right edge",
     "js.mont.hush.drop": "take the pause out",
     "js.mont.hush.already": "there is already a pause here — drag that one longer; two in a row is one pause said twice",
+    "js.mont.line.drag": "drag by the head strip to move this line somewhere else",
 })

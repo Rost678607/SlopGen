@@ -725,6 +725,54 @@ def add_hush(job: VideoJob, after: int, seconds: float = HUSH_S) -> int:
     return at
 
 
+def move_line(job: VideoJob, index: int, to: int) -> int:
+    """Move one line (or one pause) to another place in the order. Returns where it sits.
+
+    This used to be the one structural edit the room refused, on the grounds that a
+    reordered script is a track to be cast from scratch. That was the wrong reading of
+    its own design. A cut is a WORD and so is an effect (:func:`anchored`), and the
+    words travel with the line they are in — so the anchors are re-numbered through the
+    move and every cut comes out still on the syllable it was placed on, still carrying
+    the card somebody chose for those words, still with the arrow pointing at the thing
+    it was pointing at. Nothing has to be cast again.
+
+    What DOES change is how long each picture stays up, and it can change a great deal.
+    A shot runs to the next cut (`framebase.reanchor`), and moving a line moves cuts
+    past each other: a shot whose neighbour has just travelled to the far end of the
+    video grows to meet whatever is now in front of it. That is honest arithmetic and
+    not damage — the seconds have to belong to somebody — but it is the thing to look at
+    afterwards, and it is why the room says so rather than pretending a reorder is free.
+
+    Two pauses that meet across the gap the line left are joined (:func:`_fuse_hush`),
+    and the takes are renamed to their new positions (:func:`_settle_takes`), which is
+    the half that would otherwise corrupt audio: the `tts` stage names a take by its
+    line's INDEX, so a permutation leaves every one of those names pointing at somebody
+    else's voice."""
+    n = len(job.scenes)
+    if not 0 <= index < n:
+        raise ValueError("there is no such line")
+    to = min(max(int(to), 0), n - 1)
+    if to == index:
+        return index
+    moved = job.scenes[index]
+    order = list(range(n))
+    order.insert(to, order.pop(index))
+    # old position -> new position, which is what every anchor is re-numbered through
+    where = {old: new for new, old in enumerate(order)}
+    job.scenes = [job.scenes[old] for old in order]
+    for a in anchored(job):
+        if a.anchor_scene in where:
+            a.anchor_scene = where[a.anchor_scene]
+    _fuse_hush(job)
+    _settle_takes(job)
+    retime(job)
+    # by identity, and not by `to`: a pause dropped beside another pause is joined into
+    # it, so the thing that was dragged may no longer be on the list at all — and what
+    # the operator should then be looking at is the silence it became part of
+    at = next((i for i, s in enumerate(job.scenes) if s is moved), -1)
+    return at if at >= 0 else min(max(to - 1, 0), len(job.scenes) - 1)
+
+
 def _fuse_hush(job: VideoJob) -> int:
     """Two pauses that have ended up touching are one pause. Join them; say how many went.
 

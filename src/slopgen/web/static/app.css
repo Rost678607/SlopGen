@@ -978,7 +978,7 @@ button.danger{border-color:var(--bad);color:var(--bad)}
   box-shadow:0 0 0 1px var(--accent),0 6px 18px #000a}
 /* `touch-action` on the blocks that are dragged, or a finger scrolls the timeline
    instead of moving the thing it is holding */
-.shot,.fxm,.line.hush .grip{touch-action:none}
+.shot,.fxm,.line,.line.hush .grip{touch-action:none}
 
 /* Where a dragged shot would land, drawn from the pictures down through the words. A cut
    is a word, so the guide reaches the word: the line and the lit chip under it are one
@@ -987,6 +987,10 @@ button.danger{border-color:var(--bad);color:var(--bad)}
 .snapline{position:absolute;top:20px;bottom:0;width:0;border-left:1px dashed var(--accent);
   pointer-events:none;z-index:4}
 .wd.snap{background:var(--accent);color:#20101c;box-shadow:0 0 0 2px var(--accent)}
+/* the same guide saying the other thing it says: where a dragged LINE would land. There
+   is no word to light at a seam between two lines, so the line itself carries the whole
+   statement and is drawn heavier for it. */
+.snapline.seam{border-left-width:3px;border-left-style:solid}
 
 /* The keyframes, on the same clock as everything else — a small flag hanging from
    the top of the track, pointing down at the shot it belongs to. A flag and not a
@@ -1066,8 +1070,14 @@ button.danger{border-color:var(--bad);color:var(--bad)}
 .lane.lines{--h:56px}
 .line{position:absolute;top:0;height:52px;border:1px solid var(--line);border-radius:6px;
   background:var(--bg);overflow:hidden;cursor:pointer}
+/* the head strip is the handle: the body below it is full of word chips, and a word is
+   the cut gesture, so the one strip of the block that belongs to nothing else is where
+   a reorder is taken hold of */
 .line .lhead{font:10px/1.6 var(--mono);color:var(--dim);padding:0 5px;
-  border-bottom:1px solid var(--line);white-space:nowrap}
+  border-bottom:1px solid var(--line);white-space:nowrap;cursor:grab}
+.line.dragging{cursor:grabbing;z-index:5;border-color:var(--accent);opacity:.85;
+  box-shadow:0 0 0 1px var(--accent),0 6px 18px #000a}
+.line.dragging .lhead{cursor:grabbing}
 .line .words{position:relative;height:30px}
 .line.sel{border-color:var(--accent)}
 .line.silent{border-style:dashed;border-color:var(--warn);z-index:2;

@@ -485,6 +485,27 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404, card_json,
         out["at"] = at
         return out
 
+    @app.put("/api/runs/{run_id}/montage/line")
+    async def move_line(run_id: str, request: Request,
+                        slopgen: str | None = Cookie(default=None)) -> dict:
+        """Move one line (or one pause) to another place in the order.
+
+        The cuts and the effects come with it: both are anchored to WORDS and the words
+        travel with their line, so what a re-order costs is the LENGTH of the pictures
+        either side of the seam and never the casting (see `montage.move_line`)."""
+        guard(slopgen)
+        run = run_or_404(run_id)
+        b = await body_of(request)
+        cp, i, job = open_job(run, int(b.get("video", 0)))
+        try:
+            at = montage.move_line(job, int(b.get("scene", -1)), int(b.get("to", -1)))
+        except (TypeError, ValueError) as e:
+            raise HTTPException(status_code=409, detail=str(e)) from None
+        save(cp, i, job)
+        out = doc(run, cp, i, job)
+        out["at"] = at
+        return out
+
     @app.delete("/api/runs/{run_id}/montage/line")
     async def drop_line(run_id: str, video: int = 0, scene: int = -1,
                         slopgen: str | None = Cookie(default=None)) -> dict:
