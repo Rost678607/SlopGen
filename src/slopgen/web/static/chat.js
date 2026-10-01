@@ -699,51 +699,34 @@ cq("#chat-invent-go").onclick = async () => {
   }
 };
 
-// The sign-in, drawn from where it has got to. One field at a time, because that is
-// what the thing IS: a number, then a code Telegram sends to it, then a password for
-// the accounts that have one.
+// Whether this machine can read Telegram at all. The signing in itself is NOT here:
+// it belongs to the machine and not to one video, so it lives in the configuration
+// beside the keys, and this only reports what it finds and says where to go.
 async function renderTg() {
   let s;
   try { s = await api("/api/chat/telegram"); } catch (e) { return say(e.message, true); }
   const state = cq("#chat-tg-state");
   const step = cq("#chat-tg-step");
   cq("#chat-src-where").hidden = !s.signed_in;
-  if (!s.keys) {
-    state.textContent = lab("web.chat.tg.nokeys", "");
-    step.innerHTML = "";
-    return;
-  }
   if (s.signed_in) {
     state.textContent = `${lab("web.chat.tg.as", "вошли как")} ${s.who}`;
-    step.innerHTML = `<button class="ghost" id="chat-tg-out">${
-      esc(lab("web.chat.tg.out", "выйти"))}</button>
-      <button class="primary" id="chat-tg-dialogs">${
+    step.innerHTML = `<button class="primary" id="chat-tg-dialogs">${
       esc(lab("web.chat.src.look", "посмотреть"))}</button>`;
-    cq("#chat-tg-out").onclick = async () => {
-      try { await api("/api/chat/telegram/logout", { method: "POST" }); }
-      catch (e) { say(e.message, true); }
-      await renderTg();
-    };
     cq("#chat-tg-dialogs").onclick = () => browseSource("");
     return;
   }
-  const waiting = s.step === "code" ? "code" : s.step === "password" ? "password" : "phone";
-  state.textContent = lab(`web.chat.tg.${waiting}`, "");
-  step.innerHTML = `<input id="chat-tg-in" ${waiting === "password" ? 'type="password"' : ""}>
-    <button class="primary" id="chat-tg-go">${esc(lab("web.chat.tg.go", "дальше"))}</button>`;
-  cq("#chat-tg-go").onclick = async () => {
-    const value = cq("#chat-tg-in").value.trim();
-    if (!value) return;
-    const at = { phone: "/login", code: "/code", password: "/password" }[waiting];
-    const key = waiting;
-    try {
-      await api(`/api/chat/telegram${at}`, { method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ [key]: value }) });
-    } catch (e) { say(e.message, true); }
-    await renderTg();
+  state.textContent = lab("web.chat.tg.notin", "");
+  step.innerHTML = `<button class="ghost" id="chat-tg-cfg">${
+    esc(lab("web.cfg.tg", "аккаунт Telegram"))}</button>`;
+  cq("#chat-tg-cfg").onclick = () => {
+    // out of the room and into the configuration, which is where the account is:
+    // the tab first, then the section, because opening a section of a hidden tab
+    // leaves the operator looking at the page they were already on
+    cq("#chat-src-box").hidden = true;
+    closeChat();
+    openTab("cfg");
+    openCfg("telegram");
   };
-  cq("#chat-tg-in").focus();
 }
 
 cq("#chat-src-go").onclick = () => browseSource(cq("#chat-src-q").value.trim());

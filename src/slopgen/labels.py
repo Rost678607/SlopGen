@@ -3606,3 +3606,32 @@ EN.update({
     "web.chat.invent.ph": "what about (may be empty)",
     "web.chat.invent.go": "write it",
 })
+RU.update({
+    "js.tg-account": "аккаунт Telegram",
+    "web.cfg.tg": "аккаунт Telegram",
+    "web.cfg.tg.note": "чтобы читать чаты как человек, а не как бот; вход один раз, "
+                       "сессия лежит в state/ и равносильна входу в аккаунт",
+    "web.cfg.tg.live": "Сессия живёт, пока её не завершишь — здесь или с телефона, в "
+                       "списке устройств. Выход тут гасит её и у телеграма, и на диске.",
+    "web.chat.tg.in": "вошли",
+    "web.chat.tg.notin": "Аккаунт не подключён. Это делается один раз, в конфигурации.",
+    "web.chat.tg.again": "заново",
+    "web.chat.tg.ph.phone": "+7…",
+    "web.chat.tg.ph.code": "код из телеграма",
+    "web.chat.tg.ph.password": "пароль двухэтапной проверки",
+})
+EN.update({
+    "js.tg-account": "Telegram account",
+    "web.cfg.tg": "Telegram account",
+    "web.cfg.tg.note": "to read chats as a person rather than as a bot; signed in once, "
+                       "and the session in state/ is as good as being logged in",
+    "web.cfg.tg.live": "The session lives until it is ended — here, or from the phone in "
+                       "the list of devices. Signing out here ends it on Telegram's side "
+                       "and deletes the file.",
+    "web.chat.tg.in": "signed in",
+    "web.chat.tg.notin": "No account connected. That is done once, in the configuration.",
+    "web.chat.tg.again": "start over",
+    "web.chat.tg.ph.phone": "+1…",
+    "web.chat.tg.ph.code": "the code from Telegram",
+    "web.chat.tg.ph.password": "the two-step password",
+})

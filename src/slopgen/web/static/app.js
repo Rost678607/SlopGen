@@ -197,6 +197,7 @@ const CFG = [
   ["tts", "js.voice-engine", "tts"],
   ["voices", "js.cloned-voices", "voices"],
   ["keys", "js.api-keys", "keys"],
+  ["telegram", "js.tg-account", "telegram"],
   ["characters", "js.characters", "list"],
   ["visuals", "js.footage-profiles", "list"],
   ["ads", "js.ad-contracts", "ads"],
@@ -225,6 +226,7 @@ function openCfg(key) {
     b.classList.toggle("on", b.dataset.cfg === key));
   $("#cfg-fandoms").hidden = how !== "world";
   $("#cfg-keys").hidden = how !== "keys";
+  $("#cfg-telegram").hidden = how !== "telegram";
   $("#cfg-list").hidden = how !== "list";
   $("#cfg-tts").hidden = how !== "tts";
   $("#cfg-voices").hidden = how !== "voices";
@@ -235,6 +237,7 @@ function openCfg(key) {
   $("#cfg-todo").hidden = !!how;
   if (how === "world") openSub(sub);
   else if (how === "keys") loadKeys();
+  else if (how === "telegram") loadTgAccount();
   else if (how === "tts") loadTts();
   else if (how === "voices") loadVoices();
   else if (how === "orch") loadOrch();
@@ -350,6 +353,77 @@ async function loadKeys() {
       loadKeys();
     };
   });
+}
+
+// ------------------------------------------------------- the Telegram account
+//
+// Not a key and not a form: the sign-in is a dialogue with Telegram's servers, because
+// one of the three values does not exist until it is asked for — Telegram sends the
+// code to the phone at that moment and it expires in minutes. So there is nothing to
+// paste in advance, and this walks the three steps instead. It is once and for all all
+// the same: what it leaves behind is a session file, and from then on everything just
+// uses it.
+//
+// It lives in the configuration because that is what it IS — something this machine
+// holds, once, for every run that will ever need it. The chat room only reports it.
+async function loadTgAccount() {
+  let s;
+  try { s = await api("/api/chat/telegram"); } catch (e) { return say(e.message, true); }
+  const box = $("#tg-account");
+  if (!s.keys) {
+    box.innerHTML = `<p class="dim">${esc(lab("web.chat.tg.nokeys", ""))}</p>
+      <button class="ghost" id="tg-to-keys">${esc(lab("js.api-keys"))}</button>`;
+    $("#tg-to-keys").onclick = () => openCfg("keys");
+    return;
+  }
+  if (s.signed_in) {
+    box.innerHTML = `
+      <div class="who">
+        <div class="row"><b>${esc(s.who)}</b>
+          <span class="dim">${esc(lab("web.chat.tg.in", "вошли"))}</span>
+          <span class="grow"></span>
+          <button class="ghost" id="tg-out">${esc(lab("web.chat.tg.out", "выйти"))}</button></div>
+        <div class="dim">${esc(lab("web.cfg.tg.live", ""))}</div>
+      </div>`;
+    $("#tg-out").onclick = async () => {
+      try { await api("/api/chat/telegram/logout", { method: "POST" }); }
+      catch (e) { say(e.message, true); }
+      loadTgAccount();
+    };
+    return;
+  }
+  // which of the three it is waiting for; `phone` is where a fresh one starts
+  const step = s.step === "code" ? "code" : s.step === "password" ? "password" : "phone";
+  box.innerHTML = `
+    <div class="who">
+      <div class="dim">${esc(lab(`web.chat.tg.${step}`, ""))}</div>
+      <div class="row">
+        <input id="tg-in" ${step === "password" ? 'type="password"' : ""}
+               placeholder="${esc(lab(`web.chat.tg.ph.${step}`, ""))}">
+        <button class="ghost" id="tg-go">${esc(lab("web.chat.tg.go", "дальше"))}</button>
+        ${step === "phone" ? "" :
+          `<button class="ghost" id="tg-restart">${esc(lab("web.chat.tg.again", "заново"))}</button>`}
+      </div>
+    </div>`;
+  const send = async () => {
+    const value = $("#tg-in").value.trim();
+    if (!value) return;
+    const at = { phone: "/login", code: "/code", password: "/password" }[step];
+    try {
+      await api(`/api/chat/telegram${at}`, { method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ [step]: value }) });
+    } catch (e) { say(e.message, true); }
+    loadTgAccount();
+  };
+  $("#tg-go").onclick = send;
+  $("#tg-in").onkeydown = (e) => { if (e.key === "Enter") send(); };
+  if ($("#tg-restart")) $("#tg-restart").onclick = async () => {
+    try { await api("/api/chat/telegram/logout", { method: "POST" }); }
+    catch (e) { say(e.message, true); }
+    loadTgAccount();
+  };
+  $("#tg-in").focus();
 }
 
 // ------------------------------------------------------------------ the voice
