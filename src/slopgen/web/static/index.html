@@ -41,12 +41,16 @@
       <button data-mode="fandom" class="on" data-l="web.mode.fandom">фандом</button>
       <button data-mode="info" data-l="web.mode.info">инфо-ролик</button>
       <button data-mode="drama" data-l="web.mode.drama">драма</button>
+      <button data-mode="chat" data-l="web.mode.chat">переписка</button>
     </div>
 
     <form id="startform" class="cards" data-mode="fandom">
     </form>
 
     <form id="infoform" class="cards" data-mode="info" hidden>
+    </form>
+
+    <form id="chatform" class="cards" data-mode="chat" hidden>
     </form>
 
     <form id="dramaform" class="cards" data-mode="drama" hidden>
@@ -390,6 +394,46 @@
   <div id="panel-body"></div>
 </div>
 
+<!-- The chat room: one conversation, built and argued with by hand.
+     Sits beside the montage room and is reached the same way, from a run row — the
+     difference being that a chat run made by hand is EMPTY, so this is the screen
+     where the video first comes into existence rather than one where it is adjusted. -->
+<div id="chat" hidden>
+  <header>
+    <button id="chat-close" data-l="web.back">← назад</button>
+    <b id="chat-title"></b>
+    <span class="dim" id="chat-state"></span>
+    <span class="grow"></span>
+    <button id="chat-paste" class="ghost" data-l="web.chat.paste">вставить текстом</button>
+    <button id="chat-shot" class="ghost" data-l="web.chat.shot">обновить кадр</button>
+  </header>
+
+  <!-- The pipeline as a row of buttons, exactly as the montage room draws it and
+       pressing the same endpoint: the chain is an order and this screen is not. -->
+  <div class="mont-stages" id="chat-stages"></div>
+
+  <div id="chat-body">
+    <div id="chat-list"></div>
+    <aside id="chat-side">
+      <div id="chat-frame"><img id="chat-shot-img" alt=""></div>
+      <div id="chat-cast"></div>
+    </aside>
+  </div>
+
+  <!-- the paste box, over the room: a block of `Ник: текст` lines in one go -->
+  <div id="chat-paste-box" hidden>
+    <div class="sheet">
+      <h3 data-l="web.chat.paste"></h3>
+      <p class="dim" data-l="web.chat.paste.note"></p>
+      <textarea id="chat-paste-text" rows="14"></textarea>
+      <div class="row">
+        <button id="chat-paste-go" class="primary" data-l="web.chat.paste.go">добавить</button>
+        <button id="chat-paste-cancel" class="ghost" data-l="web.cancel">отмена</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- The montage room: one video's timeline, cut and cast by hand.
 
      Above `#panel` and below `#editor`, which is the order they are opened in — the
@@ -532,5 +576,6 @@
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <script src="/static/forms.js"></script>
 <script src="/static/app.js"></script>
+<script src="/static/chat.js"></script>
 <script src="/static/montage.js"></script>
 </body>

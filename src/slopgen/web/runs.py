@@ -236,7 +236,7 @@ def parked(run: Run) -> dict:
     question: a bot that says "parked" and nothing else is exactly the broken page
     again, in fewer pixels."""
     blank = {"review_stage": "", "asks": 0, "video": False, "montage": False,
-             "recut": False}
+             "recut": False, "chat": False}
     if run.run_dir is None:
         return dict(blank)
     cp_file = run.run_dir / "checkpoint.json"
@@ -270,6 +270,14 @@ def parked(run: Run) -> dict:
             # something to discover after the fact.
             if not info["recut"] and cp.status(i) == "done":
                 info["recut"] = montage.available(run.params, cp.load_job(i))
+            # …and the chat room, on any parked conversation. Unlike the montage it
+            # asks nothing about what is on the job: a chat run made by hand is EMPTY
+            # by definition and the room is where it stops being empty, so a condition
+            # on its contents would lock the operator out of the only screen that
+            # could fill it.
+            if not info["chat"] and run.params.mode == "chat" \
+                    and cp.status(i) in ("review", "paused"):
+                info["chat"] = True
     except Exception:
         pass
     for work in works:

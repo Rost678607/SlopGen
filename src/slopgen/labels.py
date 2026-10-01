@@ -1548,6 +1548,8 @@ RU.update({
     "mv.keys": 'по ключам',
     "w.canon": 'канон мира',
     "w.idea": 'идея',
+    "w.source": 'переписка',
+    "w.render": 'рисование',
     "w.script": 'сценарий',
     "w.entities": 'реестр вещей',
     "w.tts": 'озвучка',
@@ -1601,6 +1603,8 @@ EN.update({
     "mv.keys": 'by keyframes',
     "w.canon": 'world canon',
     "w.idea": 'idea',
+    "w.source": 'the conversation',
+    "w.render": 'drawing',
     "w.script": 'script',
     "w.entities": 'registry of things',
     "w.tts": 'voicing',
@@ -3260,3 +3264,175 @@ EN.update({
                             "speed is a new take",
 })
 
+# --- the chat mode --------------------------------------------------------
+# A conversation read aloud and drawn in a messenger's own interface. Its settings are
+# mostly a saved preset (`config.models.ChatConfig`), so what is named here is the
+# handful a single video changes plus the words for the three scroll answers.
+RU.update({
+    "web.mode.chat": "переписка",
+    "web.card.chat": "переписка",
+    "web.card.chatlook": "как это нарисовано",
+    "web.card.chatclock": "как это появляется",
+    "web.f.chatpreset": "набор настроек",
+    "web.f.chatvoice": "кто читает",
+    "web.f.chatfrom": "откуда брать",
+    "web.f.skin": "интерфейс",
+    "web.f.scroll": "когда экран кончился",
+    "web.f.rolls": "проезд, с",
+    "web.f.gaps": "пауза между сообщениями, с",
+    "web.f.chunk": "кусок показа, символов",
+    "web.f.chunkmin": "показывать кусками от, символов",
+    "web.f.chathead": "шапка чата",
+    "web.f.chatreact": "реакции",
+    "web.f.chattr": "переводить",
+    "scr.roll": "еду следом",
+    "scr.jump": "перескок",
+    "scr.clear": "чищу экран",
+    "scr.note.roll": "Лента едет вверх за новым сообщением, как в настоящем клиенте. "
+                     "Скорость проезда — соседним полем.",
+    "scr.note.jump": "Лента встаёт на новое место за один кадр. Читается легче на "
+                     "мелком экране и подходит коротким быстрым репликам.",
+    "scr.note.clear": "Экран заполняется и начинается заново сверху. В двух других "
+                      "режимах то же самое можно пометить на любом отдельном "
+                      "сообщении.",
+    "web.chatvoice.none": "никто (сообщения не читаются)",
+    "web.chat.note": "Голос берётся с карточки каждого участника; здесь — один на всех "
+                     "или никто. Сообщение, которое никто не читает, висит ровно паузу.",
+})
+EN.update({
+    "web.mode.chat": "chat",
+    "web.card.chat": "the conversation",
+    "web.card.chatlook": "how it is drawn",
+    "web.card.chatclock": "how it arrives",
+    "web.f.chatpreset": "settings preset",
+    "web.f.chatvoice": "who reads it",
+    "web.f.chatfrom": "where from",
+    "web.f.skin": "interface",
+    "web.f.scroll": "when the screen fills",
+    "web.f.rolls": "travel, s",
+    "web.f.gaps": "pause between messages, s",
+    "web.f.chunk": "reveal piece, characters",
+    "web.f.chunkmin": "reveal in pieces from, characters",
+    "web.f.chathead": "chat header",
+    "web.f.chatreact": "reactions",
+    "web.f.chattr": "translate",
+    "scr.roll": "follow it",
+    "scr.jump": "jump",
+    "scr.clear": "clear it",
+    "scr.note.roll": "The view travels up after the newest message, the way a real "
+                     "client scrolls. How long the travel takes is the field beside.",
+    "scr.note.jump": "The view moves in one frame. Easier to read on a small screen "
+                     "and the right answer for short, fast lines.",
+    "scr.note.clear": "The screen fills and starts again at the top. In the other two "
+                      "the same thing can be marked on any single message.",
+    "web.chatvoice.none": "nobody (the messages are not read)",
+    "web.chat.note": "The voice comes off each person's card; here is one voice for all "
+                     "of them, or none. A message nobody reads holds for exactly the "
+                     "pause.",
+})
+RU.update({
+    "w.cards.own": "— как на карточках —",
+    "w.chatbg.plain": "— без обоев —",
+    "web.f.chatavatar": "картинка чата",
+    "web.f.chatme": "чей это аккаунт",
+    "web.f.chatbg": "обои",
+    "web.f.reacts": "вся пачка реакций, с",
+    "web.f.title": "название",
+    "web.a.chatfrom": "сабреддит, канал или путь к экспорту",
+    "web.chat.len.note": "Длину не задают: ролик идёт ровно столько, сколько идёт "
+                         "переписка.",
+    "web.mode.chat.sub": "переписка, прочитанная вслух и нарисованная "
+                         "интерфейсом мессенджера",
+})
+EN.update({
+    "w.cards.own": "— as the cards say —",
+    "w.chatbg.plain": "— no wallpaper —",
+    "web.f.chatavatar": "chat picture",
+    "web.f.chatme": "whose account this is",
+    "web.f.chatbg": "wallpaper",
+    "web.f.reacts": "the whole flurry of reactions, s",
+    "web.f.title": "name",
+    "web.a.chatfrom": "a subreddit, a channel, or a path to an export",
+    "web.chat.len.note": "No length to set: the video runs exactly as long as the "
+                         "conversation does.",
+    "web.mode.chat.sub": "a conversation read aloud and drawn in a messenger's own "
+                         "interface",
+})
+RU.update({
+    "js.chatroom": "🗨 переписка",
+    "web.chat.paste": "вставить текстом",
+    "web.chat.paste.note": "строка «Ник: текст» начинает сообщение, всё остальное "
+                           "продолжает предыдущее. Авторов, время и реакции потом "
+                           "проставишь руками.",
+    "web.chat.paste.go": "добавить",
+    "web.chat.shot": "обновить кадр",
+    "web.chat.add": "＋ сообщение",
+    "web.chat.after": "＋ ниже",
+    "web.chat.drop": "убрать",
+    "web.chat.split": "новый кусок отсюда",
+    "web.chat.who": "от кого",
+    "web.chat.answers": "отвечает на",
+    "web.chat.noreply": "— никому —",
+    "web.chat.stamp": "время",
+    "web.chat.react": "реакции",
+    "web.chat.score": "карма",
+    "web.chat.nick": "ник в этом сообщении",
+    "web.chat.asthecard": "— как на карточке —",
+    "web.chat.clearhere": "чистить экран здесь",
+    "web.chat.excerpt": "кусок",
+    "web.chat.cleared": "экран чистится",
+    "web.chat.lines": "сообщений",
+    "web.chat.excerpts": "куска",
+    "web.chat.nobody": "—",
+    "web.chat.cast": "кто в переписке",
+    "web.chat.silent": "не читается",
+    "web.chat.makecard": "завести карточку",
+    "web.chat.editcard": "карточка",
+    "web.chat.nocast": "Пока никого: добавь сообщение или вставь переписку текстом.",
+    "web.chat.empty": "Пусто. «Вставить текстом» — если переписка уже есть где-то "
+                      "скопированной, иначе «＋ сообщение».",
+    "web.chat.ask.voice": "голос (пусто — этого человека не читают вслух)",
+    "web.chat.ask.avatar": "аватарка из assets/avatars, без расширения (пусто — кружок с инициалами)",
+    "web.chat.block.empty": "переписки ещё нет",
+    "web.chat.block.blank_line": "есть пустое сообщение",
+    "web.chat.block.reactions_in_a_thread": "в реддите нет реакций — будут потеряны",
+})
+EN.update({
+    "js.chatroom": "🗨 conversation",
+    "web.chat.paste": "paste it in",
+    "web.chat.paste.note": "a line reading `name: text` starts a message and anything "
+                           "else continues the one before. Authors, times and "
+                           "reactions are yours to set afterwards.",
+    "web.chat.paste.go": "add them",
+    "web.chat.shot": "redraw the frame",
+    "web.chat.add": "＋ a message",
+    "web.chat.after": "＋ below",
+    "web.chat.drop": "take it out",
+    "web.chat.split": "a new excerpt from here",
+    "web.chat.who": "from",
+    "web.chat.answers": "answers",
+    "web.chat.noreply": "— nobody —",
+    "web.chat.stamp": "time",
+    "web.chat.react": "reactions",
+    "web.chat.score": "karma",
+    "web.chat.nick": "name on this one message",
+    "web.chat.asthecard": "— as the card says —",
+    "web.chat.clearhere": "clear the screen here",
+    "web.chat.excerpt": "excerpt",
+    "web.chat.cleared": "the screen clears",
+    "web.chat.lines": "messages",
+    "web.chat.excerpts": "excerpts",
+    "web.chat.nobody": "—",
+    "web.chat.cast": "who is in it",
+    "web.chat.silent": "not read aloud",
+    "web.chat.makecard": "give them a card",
+    "web.chat.editcard": "card",
+    "web.chat.nocast": "Nobody yet: add a message, or paste a conversation in.",
+    "web.chat.empty": "Empty. Press “paste it in” if the conversation is already "
+                      "copied somewhere, otherwise “＋ a message”.",
+    "web.chat.ask.voice": "voice (empty — this person is not read aloud)",
+    "web.chat.ask.avatar": "an avatar from assets/avatars, without the extension (empty — the initials disc)",
+    "web.chat.block.empty": "there is no conversation yet",
+    "web.chat.block.blank_line": "a message with nothing in it",
+    "web.chat.block.reactions_in_a_thread": "reddit has no reactions — these will be lost",
+})

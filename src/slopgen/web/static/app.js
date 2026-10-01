@@ -3621,7 +3621,7 @@ function applyLabels(root = document) {
 // one set of chosen breakpoints per mode: they are different lists (a drama has `cut`,
 // a fandom has `picture`), so one shared set would carry a stage across to a mode that
 // does not run it
-const chosenBps = { fandom: new Set(), info: new Set(), drama: new Set() };
+const chosenBps = { fandom: new Set(), info: new Set(), drama: new Set(), chat: new Set() };
 let genMode = "fandom";
 
 function setMode(mode) {
@@ -3693,6 +3693,32 @@ async function loadOptions() {
   // inserts.
   const fillAll = (cls, list) =>
     document.querySelectorAll(cls).forEach((el) => fill(el, list || []));
+  // The chat mode's own lists. `word` is what turns `roll`/`jump`/`clear` into words,
+  // so the scroll select gets its note the way the invent slider does: a line under
+  // the control that says what the chosen answer actually does.
+  fillAll(".f-chatpreset", opts.chats);
+  document.querySelectorAll(".f-chatpreset").forEach((el) => fill(el, opts.chats, true));
+  document.querySelectorAll(".f-chatvoice").forEach(
+    (el) => fill(el, opts.chat_voices || [], true, "w.cards.own"));
+  fillAll(".f-skin", opts.chat_skins);
+  // `fill` words an option as `w.<value>`, and these three are too generic to own a
+  // name in that namespace — `clear` and `jump` mean other things elsewhere. So they
+  // are drawn from their own prefix, the one the queue's override row already uses
+  // (`params._FIELDS`, opt_l "scr.").
+  document.querySelectorAll(".f-scroll").forEach((el) => {
+    el.innerHTML = (opts.scroll_modes || []).map((v) =>
+      `<option value="${esc(v)}">${esc(lab("scr." + v, v))}</option>`).join("");
+  });
+  document.querySelectorAll(".f-persona").forEach((el) => fill(el, opts.personas || [], true));
+  document.querySelectorAll(".f-avatar").forEach((el) => fill(el, opts.avatars || [], true));
+  document.querySelectorAll(".f-chatbg").forEach(
+    (el) => fill(el, opts.chat_backgrounds || [], true, "w.chatbg.plain"));
+  document.querySelectorAll(".f-scroll").forEach((el) => {
+    const note = (el.closest(".card") || document).querySelector(".scr-note");
+    const show = () => { if (note) note.textContent = lab("scr.note." + el.value, ""); };
+    el.addEventListener("change", show);
+    show();
+  });
   fillAll(".f-bgsrc", opts.bg_sources);
   fillAll(".f-fgsrc", opts.fg_sources);
   fillAll(".f-aivid", opts.ai_video_models);
@@ -3957,6 +3983,26 @@ $("#infoform").onsubmit = (e) => submitRun(e, "info", (f) => ({
   duration_s: +f.get("duration_s"), count: +f.get("count"),
   profanity: +f.get("profanity"), ad: f.get("ad"), push: f.get("push"),
   dry_run: f.get("dry_run") === "on", breakpoints: [...chosenBps.info],
+}));
+
+// The conversation is NOT in this body. It is built in the room, on a run that
+// already exists (see `/api/runs/chat/by-hand`), and the form only says what kind of
+// video a conversation becomes — which is why there is no field here for it.
+$("#chatform").onsubmit = (e) => submitRun(e, "chat", (f) => ({
+  lang: f.get("lang"), chat: f.get("chat") || "", title: f.get("title"),
+  chat_from: f.get("chat_from") || "", chat_voice: f.get("chat_voice") || "",
+  skin: f.get("skin"), scroll: f.get("scroll"),
+  roll_s: +(f.get("roll_s") || 0.45), gap_s: +(f.get("gap_s") || 1.2),
+  chunk: +(f.get("chunk") || 0), chunk_min: +(f.get("chunk_min") || 0),
+  react_s: +(f.get("react_s") || 0.5),
+  header: f.get("header") === "on",
+  reactions: f.get("reactions") === "on",
+  translate: f.get("translate") === "on",
+  header_avatar: f.get("header_avatar") || "", me: f.get("me") || "",
+  background: f.get("background") || "",
+  count: +f.get("count"), profanity: +f.get("profanity"),
+  ad: f.get("ad"), push: f.get("push"),
+  dry_run: f.get("dry_run") === "on", breakpoints: [...chosenBps.chat],
 }));
 
 $("#dramaform").onsubmit = (e) => submitRun(e, "drama", (f) => ({
@@ -5426,6 +5472,12 @@ function actions(r) {
   // most of what makes the asking answerable.
   if (p.montage) out.push({ act: "montage", label: lab("js.montage"),
                             primary: !p.asks && !p.review_stage });
+  // The chat room, on any parked conversation — and unconditionally, unlike the
+  // montage: a chat run made by hand is EMPTY by definition, and this is the screen
+  // where it stops being empty. A condition on what is already on the job would lock
+  // the operator out of the only door that could fill it.
+  if (p.chat) out.push({ act: "chat", label: lab("js.chatroom"),
+                         primary: !p.asks && !p.review_stage });
   // …and the same room on a video that is already CUT, which is a different gesture
   // and therefore a different word: pressing it takes the render off so the timeline
   // can be edited again (see `montage_api.reopen`), which un-finishes the run. The one
@@ -5543,6 +5595,7 @@ async function act(what, r, btn, sure) {
     }
     else if (what === "asks") await openAsks(r.id, r.title);
     else if (what === "montage") await openMontage(r.id, r.title);
+    else if (what === "chat") await openChat(r.id, r.title);
     else if (what === "recut") {
       // Un-finish it first, then walk straight into the room: two requests, because
       // taking the render off a cut video is a change to the run and opening a screen

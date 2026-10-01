@@ -61,7 +61,12 @@ from ..config.models import (DEFAULT_DELIVERY,
                              VoiceConfig, VoiceSample)
 from ..config.models import BgSource, FgSource, Motion
 from ..media.stock import IMAGE_EXTS, VIDEO_EXTS
+from ..chat.skins import SKINS as CHAT_SKINS
 from ..pipeline import manual, review
+from ..pipeline.stages.chat_render import (AVATARS_DIR as CHAT_AVATARS,
+                                           BACKGROUNDS_DIR as CHAT_BACKGROUNDS,
+                                           IMAGE_EXTS as CHAT_IMAGE_EXTS)
+from ..pipeline.stages.chat_script import VOICE_NONE
 from ..pipeline.stages.ads import OVERLAY_EXTS
 from ..pipeline.stages.assemble import (
     MUSIC_NONE,
@@ -74,9 +79,27 @@ from ..pipeline.loop import check_params
 from ..pipeline.stages import picture
 from ..pipeline.checkpoint import Checkpoint
 from ..models import CATALOG as MODEL_CATALOG
+
+# Every mode there is, in the order the start form shows them. Named once because
+# three separate tuples of the same four strings is how a mode ends up with a form and
+# no breakpoints, or breakpoints and no queue overrides.
+MODES = ("info", "drama", "fandom", "chat")
+
+
+def _pictures(store: ConfigStore, folder: str) -> list[str]:
+    """What is in one of the chat mode's picture folders, by the name a config stores.
+
+    The name is the file's stem, so a card keeps resolving when a PNG is replaced by a
+    JPEG of the same picture (see `stages.chat_render.asset`). Sorted, because the
+    order is what the operator reads down."""
+    root = store.global_cfg.paths.assets / folder
+    if not root.is_dir():
+        return []
+    return sorted({p.stem for p in root.iterdir()
+                   if p.is_file() and p.suffix.lower() in CHAT_IMAGE_EXTS})
 from ..models import ModelStore, human_size
-from . import montage_api
-from .params import (FILTER_HELP, drama_params, fandom_params, info_params,
+from . import chat_api, montage_api
+from .params import (FILTER_HELP, chat_params, drama_params, fandom_params, info_params,
                      loop_of, override_fields)
 from .runs import Supervisor, parked
 
@@ -242,7 +265,23 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
             # world's own, else the shipped default" (see fandom_script.catalogue).
             "shape_catalogues": sorted(store.shapes),
             "fits": ["exact", "close", "loose", "any"],
-            "breakpoints": {m: review.available(m) for m in ("info", "drama", "fandom")},
+            # the chat mode: its saved presets, the clients it can impersonate, and
+            # what the view does when the messages reach the bottom of the frame
+            "chats": sorted(store.chats),
+            "chat_skins": list(CHAT_SKINS),
+            # the two picture bases this mode offers by name: round pictures for the
+            # people, and wallpapers for the one client that has them. Plain folders
+            # rather than config kinds (see `stages.chat_render`), so they are listed
+            # off the disk and not off the store.
+            "avatars": _pictures(store, CHAT_AVATARS),
+            "chat_backgrounds": _pictures(store, CHAT_BACKGROUNDS),
+            "scroll_modes": ["roll", "jump", "clear"],
+            # Who reads the messages. A cloned voice for everybody, or the reserved
+            # `none` for nobody — the third answer, an empty one, leaves each persona
+            # reading with the voice on its own card.
+            "chat_voices": sorted(store.voices) + [VOICE_NONE],
+            "personas": sorted(store.personas),
+            "breakpoints": {m: review.available(m) for m in MODES},
             "languages": ["ru", "en"],
             # Config entries the operator wrote themselves: the NAME is what goes on
             # the wire, but on its own it says nothing — `ai_broll` and `classic` are
@@ -306,7 +345,7 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
         # What one QUEUED video may be given of its own, per mode — the controls the
         # loop's queue draws for a single entry. Built off the lists above rather than
         # beside them, so a world or an ad contract is named once (see params.override_fields).
-        out["overrides"] = {m: override_fields(out, m) for m in ("info", "drama", "fandom")}
+        out["overrides"] = {m: override_fields(out, m) for m in MODES}
         return out
 
     @app.put("/api/ui")
@@ -1739,6 +1778,32 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
         params = fandom_params(store, b)
         return sup.create(params, str(b.get("title", ""))).as_dict()
 
+    @app.post("/api/runs/chat")
+    async def start_chat(request: Request,
+                         slopgen: str | None = Cookie(default=None)) -> dict:
+        """Start a chat run, or a loop of them."""
+        guard(slopgen)
+        b = await request.json()
+        params = chat_params(store, b)
+        title = str(b.get("title", "")) or _t("web.mode.chat")
+        loop = loop_of(b)
+        return sup.start_loop(params, title, **loop).as_dict() if loop \
+            else sup.start(params, title=title).as_dict()
+
+    @app.post("/api/runs/chat/by-hand")
+    async def make_chat_by_hand(request: Request,
+                                slopgen: str | None = Cookie(default=None)) -> dict:
+        """Make a chat video by hand: the settings, and nothing run.
+
+        The same manoeuvre the fandom room makes above, and the chat mode needs it
+        more than any other: the conversation IS the video, and it is built by a
+        person looking at it. A run started down the chain would have fetched,
+        translated and cast before any screen appeared."""
+        guard(slopgen)
+        b = await request.json()
+        params = chat_params(store, b)
+        return sup.create(params, str(b.get("title", ""))).as_dict()
+
     @app.post("/api/runs/info")
     async def start_info(request: Request,
                          slopgen: str | None = Cookie(default=None)) -> dict:
@@ -1843,7 +1908,7 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
             raise HTTPException(status_code=404, detail="no such loop")
         b = await request.json()
         build = {"info": info_params, "drama": drama_params,
-                 "fandom": fandom_params}[loop.params.mode]
+                 "fandom": fandom_params, "chat": chat_params}[loop.params.mode]
         params = build(store, b)
         problems = check_params(store, params)
         if problems:  # a name no config has; the run would fail hours from now
@@ -2539,6 +2604,7 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
     # (see `web/montage_api`), mounted here so it shares this app's session guard and
     # its one way of finding a run — a second definition of either would be a second
     # place for them to disagree.
+    chat_api.mount(app, store=store, sup=sup, guard=guard, run_or_404=run_or_404)
     montage_api.mount(app, store=store, sup=sup, guard=guard, run_or_404=run_or_404,
                       card_json=_card_json, effect_json=_effect_json)
 

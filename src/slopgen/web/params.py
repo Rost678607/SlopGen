@@ -18,11 +18,13 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import HTTPException
+from pydantic import ValidationError
 
 from ..config import ConfigStore, RunParams
 from ..config.models import (AdConfig, AdDescriptionConfig, AdNativeConfig,
-                             AdOverlayConfig, OrchestrationConfig, OrchestrationStage,
-                             VisualsBackground, VisualsConfig, VisualsForeground)
+                             AdOverlayConfig, ChatConfig, OrchestrationConfig,
+                             OrchestrationStage, VisualsBackground, VisualsConfig,
+                             VisualsForeground)
 from ..media.filters import CATALOGUE as FILTER_CATALOGUE
 from ..media.generate import PHOTO_MODELS, VIDEO_MODELS, model_clip_seconds
 
@@ -390,12 +392,76 @@ _FIELDS: list[dict] = [
     {"f": "cut_sensitivity", "kind": "range", "l": "web.f.cutrate", "min": 0, "max": 1,
      "step": 0.05, "modes": ["fandom"]},
     {"f": "frame_by_hand", "kind": "check", "l": "web.f.byhand", "modes": ["fandom"]},
+    {"f": "chat", "kind": "select", "l": "web.f.chatpreset", "opts": "chats",
+     "blank": True, "modes": ["chat"]},
+    {"f": "chat_voice", "kind": "select", "l": "web.f.chatvoice", "opts": "chat_voices",
+     "blank": True, "modes": ["chat"]},
+    {"f": "skin", "kind": "select", "l": "web.f.skin", "opts": "chat_skins",
+     "modes": ["chat"]},
+    {"f": "scroll", "kind": "select", "l": "web.f.scroll", "opts": "scroll_modes",
+     "opt_l": "scr.", "modes": ["chat"]},
+    {"f": "roll_s", "kind": "number", "l": "web.f.rolls", "min": 0, "max": 3,
+     "step": 0.05, "modes": ["chat"]},
+    {"f": "gap_s", "kind": "number", "l": "web.f.gaps", "min": 0, "max": 10,
+     "step": 0.1, "modes": ["chat"]},
+    {"f": "chunk", "kind": "number", "l": "web.f.chunk", "min": 0, "max": 400,
+     "modes": ["chat"]},
+    {"f": "chunk_min", "kind": "number", "l": "web.f.chunkmin", "min": 0, "max": 800,
+     "modes": ["chat"]},
+    {"f": "header", "kind": "check", "l": "web.f.chathead", "modes": ["chat"]},
+    {"f": "reactions", "kind": "check", "l": "web.f.chatreact", "modes": ["chat"]},
+    {"f": "translate", "kind": "check", "l": "web.f.chattr", "modes": ["chat"]},
     {"f": "frame_effects", "kind": "check", "l": "web.f.fxauto", "modes": ["fandom"]},
     # blank here is not "no music": it is the roll the run makes for itself
     {"f": "music", "kind": "select", "l": "web.f.music", "opts": "music", "blank": True,
      "blank_l": "w.music.roll"},
     {"f": "keep_temp", "kind": "check", "l": "web.f.keeptmp"},
 ]
+
+
+def manual_chat(b: dict) -> ChatConfig | None:
+    """The chat settings typed into the form rather than picked by name.
+
+    The same arrangement `manual_ad` and `manual_visuals` are, and it exists for the
+    same reason: a series of alike videos names a saved preset, while a one-off is
+    typed in and belongs to nothing. A body that names a preset and changes nothing
+    returns None, so the run carries the NAME and keeps following that preset as it is
+    edited — which is most of the point of having presets."""
+    fields = set(ChatConfig.model_fields) - {"name"}
+    touched = {k: b[k] for k in fields if k in b}
+    if not touched:
+        return None
+    base = b.get("chat_base")
+    try:
+        return ChatConfig(name="", **{**(base if isinstance(base, dict) else {}), **touched})
+    except ValidationError as e:
+        raise HTTPException(status_code=422, detail=f"chat settings: {e.errors()[0]['msg']}")
+
+
+def chat_params(store: ConfigStore, b: dict) -> RunParams:
+    """A chat run, from the form's body.
+
+    Shorter than the other three because almost everything this mode can be told is a
+    property of the PRESET rather than of the run (see `ChatConfig`): what is left
+    here is where the conversation comes from, who reads it, and the settings every
+    mode shares."""
+    preset = str(b.get("chat", ""))
+    if preset and preset not in store.chats:
+        raise HTTPException(status_code=404, detail=f"no chat preset named {preset!r}")
+    return RunParams(
+        lang=str(b.get("lang", "ru")), content_type="", mode="chat",
+        chat=preset, manual_chat=manual_chat(b),
+        chat_from=str(b.get("chat_from", "")),
+        chat_voice=str(b.get("chat_voice", "")),
+        # A conversation is as long as it is: there is no length to buy, and a number
+        # here would be a promise the mode cannot keep. Zero is the honest value and
+        # the one `free_length` already means by it.
+        duration_s=0.0,
+        count=int(b.get("count", 1)),
+        dry_run=bool(b.get("dry_run", True)),
+        breakpoints=[x for x in b.get("breakpoints", []) if isinstance(x, str)],
+        **common(b),
+    )
 
 
 def override_fields(options: dict, mode: str) -> list[dict]:
