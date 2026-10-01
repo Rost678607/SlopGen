@@ -1396,3 +1396,28 @@ button.danger{border-color:var(--bad);color:var(--bad)}
 #chat-set input:not([type=checkbox]),#chat-set select{font:inherit;font-size:13px;
   color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:6px;
   padding:4px 7px}
+
+/* The exports base, over the room. A list of files, then the pieces of whichever is
+   open — a whole-account Telegram export is four hundred chats and two of them are
+   worth a video, so choosing is the point rather than a nicety. */
+#chat-exp-box{position:absolute;inset:0;z-index:6;display:grid;place-items:center;
+  background:#0008;backdrop-filter:blur(2px)}
+#chat-exp-box .sheet{background:var(--panel);border:1px solid var(--line);
+  border-radius:10px;padding:16px;width:min(720px,94vw);max-height:88vh;overflow:auto;
+  display:grid;gap:10px;box-shadow:0 12px 40px #000a}
+#chat-exp-box h3{margin:0;font-size:15px}
+#chat-exp-box .upload{display:inline-flex;align-items:center;gap:8px;cursor:pointer;
+  border:1px dashed var(--line);border-radius:7px;padding:8px 12px;font-size:13px;
+  color:var(--dim);justify-self:start}
+#chat-exp-box .upload:hover{border-color:var(--accent);color:var(--ink)}
+#chat-exp-list,#chat-exp-pieces{display:grid;gap:5px}
+.exp-file{display:flex;gap:8px;align-items:center;font-size:13px;cursor:pointer;
+  border:1px solid var(--line);border-radius:7px;padding:6px 9px}
+.exp-file.on{border-color:var(--accent)}
+.exp-file .fmt{font:11px/1 var(--mono);color:var(--dim)}
+.exp-file.bad{opacity:.55;cursor:default}
+.exp-piece{display:flex;gap:9px;align-items:flex-start;font-size:13px;
+  border:1px solid var(--line);border-radius:7px;padding:7px 9px}
+.exp-piece .what{min-width:0;display:grid;gap:2px}
+.exp-piece .what i{font-style:normal;color:var(--dim);font-size:12px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

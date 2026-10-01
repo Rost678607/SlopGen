@@ -20,8 +20,11 @@ from __future__ import annotations
 import logging
 from typing import Callable
 
+from pathlib import Path
+
+from ...chat import exports
 from ..context import AppContext
-from ..job import VideoJob
+from ..job import ChatMsg, Conversation, VideoJob
 
 log = logging.getLogger(__name__)
 
@@ -29,6 +32,72 @@ log = logging.getLogger(__name__)
 def _manual(job: VideoJob, ctx: AppContext) -> None:
     """Whatever is already on the job, which is the room's doing. Nothing to fetch."""
     return
+
+
+EXPORTS_DIR = "exports"
+
+
+def exports_root(ctx: AppContext) -> Path:
+    """Where the exports somebody has handed over live.
+
+    A plain folder under `assets/`, like the avatars and the send sounds: an export is
+    a file and has no properties to write down. What makes it a BASE rather than a
+    one-off import is that it stays — the same thread is cut three different ways over
+    a month, and re-uploading it each time is the operator's evening."""
+    return ctx.g.paths.assets / EXPORTS_DIR
+
+
+def pick(ctx: AppContext, name: str) -> Path:
+    """One export by the name a run stored, inside the base and nowhere else.
+
+    The name comes off a form, so it is resolved against the folder and checked to
+    still be under it: a run is not a place to read `../../.env` from."""
+    root = exports_root(ctx).resolve()
+    at = (root / name).resolve()
+    if not str(at).startswith(str(root)) or not at.is_file():
+        raise ValueError(f"there is no export called {name!r} in assets/{EXPORTS_DIR}/")
+    return at
+
+
+def take(job: VideoJob, pieces) -> int:
+    """Put parsed pieces onto the job as conversations. Returns how many landed.
+
+    The one place an export becomes the pipeline's own objects, which is why it is
+    here and not in `chat.exports`: that module is a reader and knows nothing about
+    jobs, and this is the seam."""
+    n = 0
+    for piece in pieces:
+        if not piece.lines:
+            continue
+        job.conversations.append(Conversation(
+            title=piece.title, source=piece.source,
+            messages=[ChatMsg(persona=ln.who, text=ln.text, stamp=ln.stamp,
+                              reply_to=ln.reply_to, reactions=list(ln.reactions),
+                              score=ln.score)
+                      for ln in piece.lines],
+        ))
+        n += 1
+    return n
+
+
+def _import(job: VideoJob, ctx: AppContext) -> None:
+    """Everything in one export file, as conversations.
+
+    `chat_from` names the file inside the base. Which pieces of a multi-chat export
+    are wanted is a judgement with the conversations in front of you, so a run that
+    takes them all is the blunt answer and the room is the sharp one."""
+    name = (ctx.params.chat_from or "").strip()
+    if not name:
+        raise ValueError(
+            f"this run imports an export but was not told which — put the file in "
+            f"assets/{EXPORTS_DIR}/ and name it"
+        )
+    try:
+        pieces = exports.read(pick(ctx, name))
+    except exports.ExportError as e:
+        raise ValueError(str(e))
+    if not take(job, pieces):
+        raise ValueError(f"{name} holds no messages this can read")
 
 
 def _unbuilt(what: str) -> Callable[[VideoJob, AppContext], None]:
@@ -48,9 +117,9 @@ def _unbuilt(what: str) -> Callable[[VideoJob, AppContext], None]:
 
 SOURCES: dict[str, Callable[[VideoJob, AppContext], None]] = {
     "manual": _manual,
+    "import": _import,
     "reddit": _unbuilt("reddit"),
     "telegram": _unbuilt("telegram"),
-    "import": _unbuilt("export-file"),
 }
 
 

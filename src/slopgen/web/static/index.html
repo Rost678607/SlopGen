@@ -405,6 +405,7 @@
     <span class="dim" id="chat-state"></span>
     <span class="grow"></span>
     <button id="chat-paste" class="ghost" data-l="web.chat.paste">вставить текстом</button>
+    <button id="chat-exports" class="ghost" data-l="web.chat.exports">экспорты</button>
     <button id="chat-settings" class="ghost" data-l="web.mont.settings">настройки</button>
     <button id="chat-shot" class="ghost" data-l="web.chat.shot">обновить кадр</button>
   </header>
@@ -426,6 +427,23 @@
       <div id="chat-set" hidden></div>
       <div id="chat-cast"></div>
     </aside>
+  </div>
+
+  <!-- the exports base, over the room: files somebody has handed over, and which
+       pieces of whichever is open should become conversations in this video -->
+  <div id="chat-exp-box" hidden>
+    <div class="sheet">
+      <h3 data-l="web.chat.exports"></h3>
+      <p class="dim" data-l="web.chat.exports.note"></p>
+      <label class="upload"><span data-l="web.chat.exports.add"></span>
+        <input type="file" id="chat-exp-file" hidden></label>
+      <div id="chat-exp-list"></div>
+      <div id="chat-exp-pieces"></div>
+      <div class="row">
+        <button id="chat-exp-go" class="primary" data-l="web.chat.exports.take" hidden></button>
+        <button id="chat-exp-cancel" class="ghost" data-l="web.cancel"></button>
+      </div>
+    </div>
   </div>
 
   <!-- the paste box, over the room: a block of `Ник: текст` lines in one go -->

@@ -90,6 +90,17 @@ assets/music/*
 !assets/music/.gitkeep
 assets/footage/*
 !assets/footage/.gitkeep
+# The chat mode's four, and all of them are somebody's own material: faces, a
+# wallpaper, a notification sound, and exports of real conversations — the last being
+# the most personal thing in the repository after a cloned voice.
+assets/avatars/*
+!assets/avatars/.gitkeep
+assets/chat_bg/*
+!assets/chat_bg/.gitkeep
+assets/chat_sfx/*
+!assets/chat_sfx/.gitkeep
+assets/exports/*
+!assets/exports/.gitkeep
 assets/ads/*
 !assets/ads/.gitkeep
 !assets/ads/example_vpn/

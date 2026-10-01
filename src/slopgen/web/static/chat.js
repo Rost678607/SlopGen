@@ -548,3 +548,94 @@ cq("#chat-paste-go").onclick = async () => {
   if (d) say(`${d.added} ${lab("web.chat.lines", "сообщений")}`);
   shootChat();
 };
+
+// -- the exports base ------------------------------------------------------
+//
+// Files somebody exported from a client, kept rather than read once: the same thread
+// is cut three different ways over a month. Picking a file shows what is IN it before
+// anything lands in the video, because a whole-account Telegram export is four hundred
+// chats and two of them are worth a video.
+
+let chatExpFile = "";     // which file of the base is open
+let chatExpPieces = [];   // and what it turned out to hold
+
+cq("#chat-exports").onclick = async () => {
+  chatExpFile = "";
+  chatExpPieces = [];
+  cq("#chat-exp-pieces").innerHTML = `<p class="dim">${esc(lab("web.chat.exports.pick", ""))}</p>`;
+  cq("#chat-exp-go").hidden = true;
+  cq("#chat-exp-box").hidden = false;
+  await loadExports();
+};
+cq("#chat-exp-cancel").onclick = () => { cq("#chat-exp-box").hidden = true; };
+
+async function loadExports() {
+  if (!CHAT) return;
+  let d;
+  try {
+    d = await api(`/api/runs/${CHAT.id}/chat/exports?video=${CHAT.video}`);
+  } catch (e) { return say(e.message, true); }
+  const box = cq("#chat-exp-list");
+  box.innerHTML = d.exports.length ? d.exports.map((f) => `
+    <div class="exp-file${f.format ? "" : " bad"}${f.name === chatExpFile ? " on" : ""}"${
+      f.format ? ` data-exp="${esc(f.name)}"` : ""}>
+      <b>${esc(f.name)}</b>
+      <span class="fmt">${esc(f.format || lab("web.chat.exports.unknown", "?"))}</span>
+      <span class="grow"></span>
+      <span class="dim">${Math.max(1, Math.round(f.size / 1024))} KB</span>
+    </div>`).join("")
+    : `<p class="dim">${esc(lab("web.chat.exports.none", ""))}</p>`;
+}
+
+cq("#chat-exp-file").onchange = async (e) => {
+  const file = e.target.files && e.target.files[0];
+  if (!file || !CHAT) return;
+  const body = new FormData();
+  body.append("file", file);
+  try {
+    const out = await api(`/api/runs/${CHAT.id}/chat/exports`, { method: "POST", body });
+    say(`${out.name} · ${out.format}`);
+  } catch (err) { say(err.message, true); }
+  e.target.value = "";
+  await loadExports();
+};
+
+cq("#chat-exp-list").addEventListener("click", async (e) => {
+  const row = e.target.closest("[data-exp]");
+  if (!row || !CHAT) return;
+  chatExpFile = row.dataset.exp;
+  let d;
+  try {
+    d = await api(`/api/runs/${CHAT.id}/chat/exports/read?video=${CHAT.video}` +
+                  `&name=${encodeURIComponent(chatExpFile)}`);
+  } catch (err) { return say(err.message, true); }
+  chatExpPieces = d.pieces;
+  await loadExports();
+  const box = cq("#chat-exp-pieces");
+  box.innerHTML = chatExpPieces.length ? chatExpPieces.map((p) => `
+    <label class="exp-piece">
+      <input type="checkbox" data-piece="${p.p}" checked>
+      <span class="what">
+        <b>${esc(p.title || lab("web.chat.untitled", "без названия"))} · ${p.lines}</b>
+        <i>${esc(p.who.join(", "))}</i>
+        <i>${esc(p.first)}</i>
+      </span>
+    </label>`).join("")
+    : `<p class="dim">${esc(lab("web.chat.exports.empty", ""))}</p>`;
+  cq("#chat-exp-go").hidden = !chatExpPieces.length;
+});
+
+cq("#chat-exp-go").onclick = async () => {
+  const want = [...cq("#chat-exp-pieces").querySelectorAll("[data-piece]")]
+    .filter((b) => b.checked).map((b) => +b.dataset.piece);
+  if (!want.length || !CHAT) return;
+  const d = await chatDo("/exports/take", { body: { name: chatExpFile, pieces: want } });
+  cq("#chat-exp-box").hidden = true;
+  if (d) {
+    chatConv = Math.max(0, d.conversations.length - want.length);
+    chatSel = -1;
+    renderChat();
+    say(`${d.added} ${lab("web.chat.exports.added", "")}`);
+    shootChat();
+  }
+};

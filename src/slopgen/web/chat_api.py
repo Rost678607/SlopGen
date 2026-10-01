@@ -24,7 +24,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from fastapi import Cookie, HTTPException, Request
+from fastapi import Cookie, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 from starlette.concurrency import run_in_threadpool
 
@@ -38,7 +38,8 @@ from ..config.loader import write_config
 from ..pipeline import chatroom
 from ..pipeline.checkpoint import Checkpoint
 from ..pipeline.context import AppContext
-from ..pipeline.stages import chat_render
+from ..chat import exports
+from ..pipeline.stages import chat_render, chat_source
 
 log = logging.getLogger(__name__)
 
@@ -342,6 +343,101 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
                                            int(b.get("at", -1)))
         out = answer(cp, i, job)
         out["added"] = n
+        return out
+
+    # -- the exports base ----------------------------------------------------
+
+    @app.get("/api/runs/{run_id}/chat/exports")
+    async def list_exports(run_id: str, video: int = 0,
+                           slopgen: str | None = Cookie(default=None)) -> dict:
+        """What is in the base, and what each file turns out to be.
+
+        The format is sniffed rather than taken from the name: `result.json` is what
+        three different programs call their export, and an operator who renamed one is
+        not wrong to expect it to still work. A file that is not an export at all is
+        listed with no format rather than hidden — it is in the folder, and being told
+        it cannot be read is more use than it quietly not appearing."""
+        guard(slopgen)
+        cp, i, job = open_job(run_or_404(run_id), video)
+        root = chat_source.exports_root(context(cp))
+        out = []
+        for at in sorted(root.rglob("*") if root.is_dir() else []):
+            if not at.is_file():
+                continue
+            try:
+                kind = exports.sniff(at.read_bytes()[:1 << 20])
+            except OSError:
+                continue
+            out.append({"name": at.relative_to(root).as_posix(),
+                        "format": kind or "", "size": at.stat().st_size})
+        return {"exports": out}
+
+    @app.post("/api/runs/{run_id}/chat/exports")
+    async def add_export(run_id: str, file: UploadFile,
+                         slopgen: str | None = Cookie(default=None)) -> dict:
+        """Put one export into the base.
+
+        It is kept rather than read and thrown away, because the same thread is cut
+        three different ways over a month and re-uploading it each time is the
+        operator's evening. Refused if nothing in it can be read: a base of files that
+        turn out not to be exports is a base you have to remember things about."""
+        guard(slopgen)
+        run = run_or_404(run_id)
+        cp, _i, _job = open_job(run, 0)
+        name = Path(str(file.filename or "export")).name
+        if not name or name.startswith("."):
+            raise HTTPException(status_code=422, detail="that file has no usable name")
+        root = chat_source.exports_root(context(cp))
+        root.mkdir(parents=True, exist_ok=True)
+        at = root / name
+        body = await file.read()
+        if exports.sniff(body[:1 << 20]) is None:
+            raise HTTPException(
+                status_code=422,
+                detail=f"{name} is not an export this reads: expected Telegram's JSON "
+                       "or HTML, a DiscordChatExporter JSON, or a reddit thread's .json")
+        at.write_bytes(body)
+        return {"name": name, "size": len(body),
+                "format": exports.sniff(body[:1 << 20]) or ""}
+
+    @app.get("/api/runs/{run_id}/chat/exports/read")
+    async def read_export(run_id: str, name: str, video: int = 0,
+                          slopgen: str | None = Cookie(default=None)) -> dict:
+        """What one export holds, without putting any of it into the video yet.
+
+        A whole-account Telegram export is four hundred chats and two of them are
+        worth a video, so what comes back is the list with a line of each — enough to
+        recognise one, and not the three megabytes of it."""
+        guard(slopgen)
+        cp, _i, _job = open_job(run_or_404(run_id), video)
+        try:
+            pieces = exports.read(chat_source.pick(context(cp), name))
+        except (exports.ExportError, ValueError) as e:
+            raise HTTPException(status_code=422, detail=str(e))
+        return {"name": name, "pieces": [
+            {"p": n, "title": p.title, "lines": len(p.lines),
+             "who": sorted({ln.who for ln in p.lines if ln.who})[:6],
+             "first": p.lines[0].text[:140] if p.lines else ""}
+            for n, p in enumerate(pieces)]}
+
+    @app.post("/api/runs/{run_id}/chat/exports/take")
+    async def take_export(run_id: str, request: Request,
+                          slopgen: str | None = Cookie(default=None)) -> dict:
+        """Put the chosen pieces of one export into the video, as conversations."""
+        guard(slopgen)
+        b = await body_of(request)
+        cp, i, job = edited(run_or_404(run_id), b)
+        try:
+            pieces = exports.read(chat_source.pick(context(cp), str(b.get("name", ""))))
+        except (exports.ExportError, ValueError) as e:
+            raise HTTPException(status_code=422, detail=str(e))
+        want = b.get("pieces")
+        if isinstance(want, list) and want:
+            keep = {int(x) for x in want if isinstance(x, (int, float))}
+            pieces = [p for n, p in enumerate(pieces) if n in keep]
+        added = chat_source.take(job, pieces)
+        out = answer(cp, i, job)
+        out["added"] = added
         return out
 
     # -- the people ---------------------------------------------------------

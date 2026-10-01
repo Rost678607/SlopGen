@@ -3498,3 +3498,30 @@ EN.update({
     "web.f.splitshare": "the chat's share, 0–1",
     "web.f.splitchange": "change the clip every, s",
 })
+RU.update({
+    "web.chat.exports": "экспорты",
+    "web.chat.exports.note": "Файлы, выгруженные из клиентов: Telegram (JSON или HTML), "
+                             "Discord (DiscordChatExporter), ветка реддита (.json). "
+                             "Остаются в базе — тот же тред пригодится ещё раз.",
+    "web.chat.exports.add": "＋ добавить файл в базу",
+    "web.chat.exports.take": "добавить выбранное",
+    "web.chat.exports.none": "База пуста. Положи сюда выгрузку из клиента.",
+    "web.chat.exports.unknown": "не распознан",
+    "web.chat.exports.pick": "Выбери файл, чтобы посмотреть, что в нём.",
+    "web.chat.exports.empty": "В этом файле нечего читать.",
+    "web.chat.exports.added": "переписок добавлено",
+})
+EN.update({
+    "web.chat.exports": "exports",
+    "web.chat.exports.note": "Files exported from the clients: Telegram (JSON or HTML), "
+                             "Discord (DiscordChatExporter), a reddit thread's .json. "
+                             "They stay in the base — the same thread comes in useful "
+                             "more than once.",
+    "web.chat.exports.add": "＋ put a file in the base",
+    "web.chat.exports.take": "add the chosen ones",
+    "web.chat.exports.none": "The base is empty. Drop an export from a client in here.",
+    "web.chat.exports.unknown": "not recognised",
+    "web.chat.exports.pick": "Pick a file to see what is in it.",
+    "web.chat.exports.empty": "There is nothing in this file to read.",
+    "web.chat.exports.added": "conversations added",
+})
