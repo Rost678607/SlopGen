@@ -26,7 +26,7 @@ import os
 from pathlib import Path
 
 from ..config.models import QwenLocalConfig
-from .base import TTSError, Voice, apply_rate, trim_silence
+from .base import TTSError, Voice, trim_silence
 
 log = logging.getLogger(__name__)
 
@@ -213,5 +213,6 @@ class QwenLocalEngine:
         # somebody else's words glued to it, and only the caller has the recogniser
         # that can tell which words those are — judging first would reject a line that
         # is about to be repaired. See `base.verify_length`, called after the clip.
-        apply_rate(out_path, rate)
+        # the rate is not ours to apply: `native_rate` is False, so what is written
+        # here is the model's own pace and the stage stretches it (see `native_rate`)
         return None  # no word boundaries — the aligner takes it from here

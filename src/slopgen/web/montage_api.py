@@ -56,6 +56,7 @@ from ..pipeline.stages.assemble import tracks_in
 from ..pipeline.stages import picture
 from ..pipeline.stages import tts as tts_stage
 from ..tts import ENGINES as TTS_ENGINES
+from ..tts import varies_rate
 
 log = logging.getLogger(__name__)
 
@@ -316,6 +317,12 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404, card_json,
         # "as the whole video", made the operator hold the run's voice in their head to
         # know what they were about to change.
         out["voice"] = tts_stage.run_voice_spec(store, cp.params, engine)
+        # …and whether a change of SPEED on this engine is a new reading or the same one
+        # re-stretched. It decides what the line's slider is promising: where the rate is
+        # part of the synthesis (`edge`, `azure`) moving it costs a fresh take, and where
+        # it is not, the pace is an `atempo` over the take already made — which on a
+        # sampled engine is the only way to keep the reading you just listened to.
+        out["restretch"] = not varies_rate(engine)
         out["world"] = run.params.fandom if world is not None else ""
         out["cards"] = [card_json(run.params.fandom, c)
                         for c in (world.frames if world else []) if c.usable]
@@ -424,7 +431,7 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404, card_json,
         # operator choosing «как во всём ролике», which is a change and not a no-op.
         spec = b.get("voice")
         try:
-            await run_in_threadpool(
+            _seconds, how = await run_in_threadpool(
                 montage.voice, job, context(cp), line,
                 int(rate) if rate is not None and str(rate) != "" else None,
                 None if spec is None else str(spec))
@@ -432,7 +439,11 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404, card_json,
             log.exception("re-voicing line %d failed", line)
             raise HTTPException(status_code=502, detail=f"{type(e).__name__}: {e}")
         save(cp, i, job)
-        return doc(run, cp, i, job)
+        out = doc(run, cp, i, job)
+        # which road it took, so the room can say "the same reading, faster" rather than
+        # leaving the operator to wonder whether the take they liked is still the take
+        out["how"] = how
+        return out
 
     @app.post("/api/runs/{run_id}/montage/voice/file")
     async def take_voice(run_id: str, video: int = 0, scene: int = -1,

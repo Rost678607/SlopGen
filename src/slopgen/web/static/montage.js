@@ -1896,13 +1896,15 @@ function lineInspector() {
     <button class="ghost${dirty(sc) ? " unsaved" : ""}" id="i-settext">${
       lab(dirty(sc) ? "js.mont.savetext-dirty" : "js.mont.savetext")}</button>
     <span class="grow"></span>
-    <label class="inline">${lab("web.f.rate")}
+    <label class="inline" title="${esc(lab(MONT.doc.restretch
+        ? "js.mont.rate.restretch" : "js.mont.rate.revoice"))}">${lab("web.f.rate")}
       <input type="range" id="i-rate" min="-50" max="50" step="5" value="${rateOf(sc)}">
       <span class="dose" id="i-rate-v">${rateOf(sc)}</span></label>
     <div id="i-voicepair" class="voicepair">${voicePair(sc)}</div>
     <button class="primary" id="i-say">${lab("js.mont.revoice")}</button>
   </div>
   ${sc.voice && sc.voice_auto ? `<p class="dim">∿ ${lab("js.mont.byai")}</p>` : ""}
+  ${MONT.doc.restretch ? `<p class="dim">${lab("js.mont.rate.restretch")}</p>` : ""}
   <div class="take" id="i-take-voice"><span class="say">${lab("js.mont.ownvoice")}</span>
     <input type="file" hidden accept="audio/*"></div>`;
 }
@@ -1968,7 +1970,13 @@ function bindLineInspector() {
     const picked = pickedVoice();
     if (picked !== null) body.voice = picked;
     await send("/voice", { method: "POST", body: J(body) },
-               () => { reloadVoice(); say(lab("js.mont.voiced")); });
+               (d) => {
+                 reloadVoice();
+                 // which road it took, said plainly: on a sampled engine the difference
+                 // between "the same reading, faster" and "a new reading" is the whole
+                 // question somebody pressing this button is asking about
+                 say(lab(d.how === "restretched" ? "js.mont.restretched" : "js.mont.voiced"));
+               });
     const back = mq("#i-say");
     if (back) back.disabled = false;
   };

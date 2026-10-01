@@ -522,8 +522,14 @@ def _rebind(job: VideoJob, index: int, fractions: dict[int, float]) -> None:
 
 
 def voice(job: VideoJob, ctx: AppContext, index: int, rate: int | None = None,
-          with_voice: str | None = None) -> float:
+          with_voice: str | None = None) -> tuple[float, str]:
     """Say this line again, now, at `rate` percent (None = whatever it already uses).
+
+    Returns the new length and WHICH road was taken — `"voiced"` for a fresh take,
+    `"restretched"` for the same take at another pace. The second is worth telling the
+    operator about rather than hiding, because the two differ in the thing they are
+    choosing between: one is a new reading of the line, the other is the reading they
+    already have, and on a sampled engine that is the whole question.
 
     `with_voice` says WHO says it — a voice spec, which on a cloning engine is the same
     question as HOW: `марта:зло` is another recording of the same person, and the model
@@ -535,15 +541,27 @@ def voice(job: VideoJob, ctx: AppContext, index: int, rate: int | None = None,
     still the same words — they are re-measured (see `framebase.reanchor`)."""
     from .stages import tts as tts_stage
 
-    if job.scenes[index].hush:
+    scene = job.scenes[index]
+    if scene.hush:
         raise ValueError("this is a pause — there is nothing in it to say")
-    if not job.scenes[index].text.strip():
+    if not scene.text.strip():
         raise ValueError("there is nothing written on this line to say")
     before = _anchor_fractions(job, index)
-    seconds = tts_stage.resynth_one(job, ctx, index, rate=rate, voice=with_voice)
-    job.scenes[index].duration = seconds
+    seconds = None
+    # The cheap road, where there is one: on an engine that cannot vary its own speed the
+    # pace was never part of the performance, so a change of pace is an `atempo` over the
+    # take that is already there (`tts.restretch_one`). It is not merely faster — it is
+    # the only way to get the SAME reading at another pace, because those engines are
+    # sampled and generating again rolls a different one. Only where nothing but the
+    # pace is being asked about: a new voice is a new take by definition.
+    if rate is not None and with_voice in (None, scene.voice):
+        seconds = tts_stage.restretch_one(job, ctx, index, int(rate))
+    how = "restretched" if seconds is not None else "voiced"
+    if seconds is None:
+        seconds = tts_stage.resynth_one(job, ctx, index, rate=rate, voice=with_voice)
+    scene.duration = seconds
     _rebind(job, index, before)
-    return seconds
+    return seconds, how
 
 
 def take_voice(job: VideoJob, ctx: AppContext, index: int, src: Path) -> float:
@@ -593,8 +611,20 @@ def _is_take(job: VideoJob, path: Path | None) -> bool:
 
 
 def _move_take(src: Path, dst: Path) -> None:
-    """Move one take and the word timings cached beside it (see `tts._cache_path`)."""
-    for a, b in ((src, dst), (src.with_suffix(".json"), dst.with_suffix(".json"))):
+    """Move one take and everything filed beside it under the same name.
+
+    Four files, not one: the take, the word timings cached next to it
+    (`tts._cache_path`), and the same pair again for the UNSTRETCHED take an engine
+    that cannot vary its own speed leaves behind (`tts.raw_path`). The raw one is the
+    half that would go wrong quietly — it is read only when somebody changes a line's
+    pace, so a raw take left under the old number would sit there until that moment and
+    then hand one line another line's voice."""
+    from .stages.tts import raw_path
+
+    pairs = [(src, dst), (src.with_suffix(".json"), dst.with_suffix(".json"))]
+    a_raw, b_raw = raw_path(src), raw_path(dst)
+    pairs += [(a_raw, b_raw), (a_raw.with_suffix(".json"), b_raw.with_suffix(".json"))]
+    for a, b in pairs:
         if a.is_file():
             a.replace(b)
 

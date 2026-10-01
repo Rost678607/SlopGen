@@ -66,13 +66,22 @@ import json
 import logging
 import random
 import re
+import shutil
 import time
 from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-from ...media.ffmpeg import duration_of
-from ...tts import ENGINES, TTSError, Voice, build as build_engine, verify_take
+from ...media.ffmpeg import duration_of, stretch_audio
+from ...tts import (
+    ENGINES,
+    TTSError,
+    Voice,
+    build as build_engine,
+    rate_factor,
+    varies_rate,
+    verify_take,
+)
 from ...tts import align as aligner
 from ..context import AppContext
 from ..job import VideoJob, Word
@@ -276,6 +285,44 @@ def _store_words(audio: Path, text: str, voice: str, rate: str, engine: str,
         pass
 
 
+# The rate a RAW take is recorded at in its sidecar: none at all. It is the model's own
+# pace by definition, and keying it on the rate that was asked for would make the one
+# file that is independent of the question look like an answer to it.
+RAW_RATE = "raw"
+
+
+def raw_path(take: Path) -> Path:
+    """Where a line's UNSTRETCHED take lives: `scene_03.raw.wav` beside `scene_03.wav`.
+
+    Only engines that cannot vary their own speed have one (`native_rate`), and it is
+    what makes a change of pace cost an `atempo` instead of a generation. A second file
+    per line and not a factor written on the scene, because `atempo` of an `atempo`
+    compounds: every pace has to be derived from the model's own reading, or the tenth
+    adjustment is audibly worse than the first for no reason the operator can see."""
+    return take.with_name(take.stem + ".raw" + take.suffix)
+
+
+def lay_rate(raw: Path, out: Path, factor: float) -> None:
+    """Put the raw take out at `factor` of its own speed. A factor of one is a copy,
+    because the invariant is worth more than the file: `out` is always derived from
+    `raw`, so there is one rule and no branch anywhere asking which file to read."""
+    if abs(factor - 1.0) < 0.005:
+        shutil.copy2(raw, out)
+        return
+    stretch_audio(raw, out, factor)
+
+
+def rescale(words: list[dict], factor: float) -> list[dict]:
+    """The same words, timed for a take played at `factor` of the speed it was said at.
+
+    `atempo` is a linear map of time and nothing else — no pitch shift, no resampling of
+    events — so every timing simply divides. This is why a change of pace needs no second
+    recogniser pass and why it cannot drift out of step with the audio."""
+    if abs(factor - 1.0) < 0.005:
+        return words
+    return [{**w, "start": w["start"] / factor, "end": w["end"] / factor} for w in words]
+
+
 def _pronounce(ctx: AppContext) -> dict[str, str]:
     """The run language's respelling table, or an empty one."""
     return ctx.g.tts.pronounce.get(ctx.params.lang, {})
@@ -458,20 +505,56 @@ class _Speaker:
         _check_reference(voice, self.engine, self.align_dir, self.ctx.g.tts.check_reference)
 
     def speak(self, spoken: str, path: Path, rate: str, voice: Voice | None = None) -> list[dict]:
+        """Voice one line into `path` at `rate`, and return its word timings.
+
+        Two shapes, decided by `native_rate`. An engine that has a rate parameter is
+        handed the rate and writes the finished take straight out. One that has not
+        speaks at its own pace into the RAW take beside it (:func:`raw_path`), and the
+        pace is applied here, afterwards, by stretching that file into `path`.
+
+        Both halves of the second shape matter. The raw take survives, so a later change
+        of speed is one `atempo` away and is the same reading at another pace rather than
+        a fresh roll of a sampled model (see :func:`restretch_one`). And the words are
+        RESCALED rather than recovered: `atempo` is a linear map of time, so a word at
+        `t` in the raw take is at `t / factor` in the stretched one — exact arithmetic,
+        where asking the recogniser again would be a second pass for an answer already
+        held.
+        """
         voice = voice or self.voice
-        words = self.engine.synthesize(spoken, voice, rate, path)
+        stretch = not self.engine.native_rate
+        factor = rate_factor(rate) if stretch else 1.0
+        # the model writes where it speaks: into the take itself when the rate was its
+        # to apply, and into the raw one when the pace is still to be put on
+        heard = raw_path(path) if stretch else path
+        # The sidecar is the CLAIM that the file beside it is this line, said this way.
+        # It is withdrawn before the file is overwritten and only made again once the
+        # take has been accepted — because a take this engine rolls can be rejected
+        # (`verify_take`), and a rejected roll left under a claim its predecessor earned
+        # is a file `restretch_one` would hand back later as the operator's good take.
+        _cache_path(heard).unlink(missing_ok=True)
+        words = self.engine.synthesize(spoken, voice, rate, heard)
         if words is None:
             # A cloning model is shown the reference transcript as an example and does
             # not always stop at the line it was asked for; the recogniser can tell
             # which heard words belong to the script, so the rest is cut away rather
             # than shipped as narration nobody wrote.
+            #
+            # Judged on the RAW take, which is the honest place for it: the length an
+            # expected-seconds estimate is about is the voice's own pace, not a pace
+            # somebody asked for afterwards.
             if self.engine.clones:
                 words, seconds, matched = aligner.clip_to_script(
-                    path, spoken, self.align_dir, duration_of(path))
+                    heard, spoken, self.align_dir, duration_of(heard))
                 verify_take(self.engine, spoken, voice, seconds, matched)
             else:
-                words = aligner.align(path, spoken, self.align_dir, duration_of(path))
-        return words
+                words = aligner.align(heard, spoken, self.align_dir, duration_of(heard))
+        if not stretch:
+            return words
+        # the raw take's own timings, cached beside it: they are what a later re-stretch
+        # rescales, and they are what this one rescales now
+        _store_words(heard, spoken, voice.cache_key, RAW_RATE, self.id, words)
+        lay_rate(heard, path, factor)
+        return rescale(words, factor)
 
 
 # ONE live speaker, kept between calls. The breakpoint's 🔊 re-voice button calls
@@ -604,6 +687,62 @@ def resynth_one(job: VideoJob, ctx: AppContext, index: int, rate: int | None = N
     if not ctx.is_beats:
         scene.duration = src
     return src
+
+
+def restretch_one(job: VideoJob, ctx: AppContext, index: int, rate: int) -> float | None:
+    """Give one line another pace WITHOUT voicing it again. Returns the new length, or
+    None when this take cannot be re-stretched and has to be spoken afresh.
+
+    This exists because on an engine that cannot vary its own speed, the pace was never
+    part of the performance: the model read the line once, and what the rate did was
+    stretch the result (see :meth:`_Speaker.speak`). Answering "the same, ten percent
+    faster" by generating again therefore spent minutes to produce the wrong thing —
+    generation is SAMPLED, so what came back was another reading, and the take the
+    operator had just listened to and liked was gone. Now the raw take is still on disk
+    and the answer is one `atempo` away: the same reading, at the pace asked for, in
+    about as long as it takes to write the file.
+
+    The word timings are rescaled rather than recovered (:func:`rescale`), so this costs
+    no recogniser pass either, and the audio and the captions cannot drift apart —
+    `atempo` is a linear map of time, and so is the division.
+
+    None is returned, rather than an error raised, for every reason this cannot be done:
+    an engine whose rate IS the synthesis (`edge`, `azure`), a take made before this
+    existed and so with no raw beside it, a line whose text or voice has changed since.
+    Each of those is a case where re-voicing is the right answer, and the caller's
+    fallback is exactly that (see `montage.voice`)."""
+    scene = job.scenes[index]
+    if scene.hush or not scene.audio:
+        return None
+    engine = resolve_engine(ctx)
+    if varies_rate(engine):
+        return None            # the pace is part of the synthesis there, not after it
+    take = Path(scene.audio)
+    raw = raw_path(take)
+    if not raw.is_file():
+        return None            # voiced before there was a raw take to keep
+    spoken = _spoken(scene.text, _pronounce(ctx))
+    try:
+        voice = _resolve_voice(ctx, engine, scene.voice)
+    except RuntimeError:
+        return None            # the voice this line names is no longer resolvable
+    words = _cached_words(raw, spoken, voice.cache_key, RAW_RATE, engine)
+    if not words:
+        return None            # the raw take is not of THIS line any more
+    factor = rate_factor(rate_str(int(rate)))
+    lay_rate(raw, take, factor)
+    scene.tts_rate = int(rate)
+    scene.audio = take
+    out = rescale(words, factor)
+    _store_words(take, spoken, voice.cache_key, rate_str(int(rate)), engine, out)
+    scene.words = [Word(text=w["text"], start=w["start"], end=w["end"]) for w in out]
+    seconds = duration_of(take)
+    scene.audio_src_duration = seconds
+    if not ctx.is_beats:
+        scene.duration = seconds
+    log.info("TTS scene %d: re-stretched to %s without voicing it again",
+             index, rate_str(int(rate)))
+    return seconds
 
 
 def _run_manual(job: VideoJob, ctx: AppContext) -> None:

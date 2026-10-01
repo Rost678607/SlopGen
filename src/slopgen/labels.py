@@ -3235,6 +3235,12 @@ RU.update({
     "js.mont.hush.drop": "убрать паузу",
     "js.mont.hush.already": "пауза здесь уже есть — тяни её за край, две подряд не нужны",
     "js.mont.line.drag": "тяни за шапку — переставить строку в другое место",
+    "js.mont.restretched": "скорость изменена — то же чтение, без переозвучки",
+    "js.mont.rate.restretch": "этот движок сам скоростью не управляет, поэтому смена "
+                              "скорости растягивает уже записанный дубль: чтение то же, "
+                              "модель не гоняется заново",
+    "js.mont.rate.revoice": "этот движок говорит в заданном темпе, поэтому смена "
+                            "скорости — это новый дубль",
 })
 EN.update({
     "js.mont.hush": "pause",
@@ -3246,4 +3252,11 @@ EN.update({
     "js.mont.hush.drop": "take the pause out",
     "js.mont.hush.already": "there is already a pause here — drag that one longer; two in a row is one pause said twice",
     "js.mont.line.drag": "drag by the head strip to move this line somewhere else",
+    "js.mont.restretched": "the speed changed — the same reading, not voiced again",
+    "js.mont.rate.restretch": "this engine has no speed of its own, so a change of pace "
+                              "re-stretches the take already made: the same reading, "
+                              "without running the model again",
+    "js.mont.rate.revoice": "this engine speaks at the pace it is given, so a change of "
+                            "speed is a new take",
 })
+

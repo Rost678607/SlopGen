@@ -27,7 +27,7 @@ from pathlib import Path
 import httpx
 
 from ..config.models import QwenTTSConfig
-from .base import TTSError, Voice, apply_rate, trim_silence
+from .base import TTSError, Voice, trim_silence
 
 log = logging.getLogger(__name__)
 
@@ -147,5 +147,6 @@ class QwenAPIEngine:
                 for chunk in resp.iter_bytes(1 << 16):
                     f.write(chunk)
         trim_silence(out_path)
-        apply_rate(out_path, rate)
+        # the rate is not ours to apply: `native_rate` is False, so what is written
+        # here is the model's own pace and the stage stretches it (see `native_rate`)
         return None  # no word boundaries — the aligner takes it from here

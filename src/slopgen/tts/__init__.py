@@ -12,9 +12,9 @@ from .base import (
     TTSEngine,
     TTSError,
     Voice,
-    apply_rate,
     build,
     gives_timings,
+    varies_rate,
     rate_factor,
     verify_take,
     voice_presets,
@@ -22,5 +22,5 @@ from .base import (
 
 __all__ = [
     "ENGINES", "VOICE_PRESETS", "EngineInfo", "TTSEngine", "TTSError", "Voice",
-    "apply_rate", "build", "gives_timings", "rate_factor", "verify_take", "voice_presets",
+    "build", "gives_timings", "rate_factor", "varies_rate", "verify_take", "voice_presets",
 ]

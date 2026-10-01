@@ -88,7 +88,17 @@ class TTSEngine(Protocol):
     id: str
     gives_timings: bool
     clones: bool
-    native_rate: bool  # can vary speech rate itself; if not, ffmpeg does it after
+    # Whether the engine can vary speech rate ITSELF. False means the rate it is handed
+    # is not a parameter it has — it speaks at its own pace and the stage stretches the
+    # result afterwards with `atempo` (see `pipeline.stages.tts._Speaker.speak`).
+    #
+    # The stretch used to be done here, by the engines that needed it, overwriting the
+    # take in place. That cost more than a line of code: with the model's own reading
+    # gone, "say this 10% faster" could only be answered by generating again — and
+    # generation is SAMPLED, so what came back was not the same reading faster, it was
+    # another reading. The engine's job is to speak; what pace the finished line is
+    # played at belongs to the stage that owns the file and its word timings.
+    native_rate: bool
     suffix: str  # container the engine writes (".mp3" / ".wav")
 
     def synthesize(self, text: str, voice: Voice, rate: str, out_path: Path) -> list[Timing] | None:
@@ -107,6 +117,12 @@ class EngineInfo:
     gives_timings: bool
     clones: bool
     catalogue: bool  # has named voices of its own, as opposed to cloning only
+    # Whether it can vary speech rate itself (:attr:`TTSEngine.native_rate`), answered
+    # here as well so the question can be asked WITHOUT importing the engine — which is
+    # the whole purpose of this record, and which the one caller that needs it most
+    # depends on: re-stretching a take at another pace must not be the thing that loads
+    # 2.3 GiB of weights (see `pipeline.stages.tts.restretch_one`).
+    native_rate: bool = True
     key_envs: tuple[str, ...] = ()
     models: tuple[str, ...] = ()  # ids in slopgen.models.registry it cannot run without
     packages: tuple[str, ...] = ()
@@ -121,7 +137,7 @@ ENGINES: dict[str, EngineInfo] = {
             "Microsoft's browser voices, no key, no cost, word timings included. "
             "Two Russian voices plus the twelve multilingual ones."
         ),
-        gives_timings=True, clones=False, catalogue=True,
+        gives_timings=True, clones=False, catalogue=True, native_rate=True,
     ),
     "azure": EngineInfo(
         id="azure",
@@ -131,7 +147,7 @@ ENGINES: dict[str, EngineInfo] = {
             "Omni line, and the same word boundaries — the only alternative that needs "
             "no aligner. ~$22 per million characters, free tier 500k/month."
         ),
-        gives_timings=True, clones=False, catalogue=True,
+        gives_timings=True, clones=False, catalogue=True, native_rate=True,
         key_envs=("AZURE_SPEECH_KEY", "AZURE_SPEECH_REGION"),
         packages=("azure-cognitiveservices-speech>=1.40",),
     ),
@@ -143,7 +159,7 @@ ENGINES: dict[str, EngineInfo] = {
             "you supply. ~$13 per million characters, and a free million for the "
             "first 90 days. No word timings — the aligner supplies them."
         ),
-        gives_timings=False, clones=True, catalogue=True,
+        gives_timings=False, native_rate=False, clones=True, catalogue=True,
         key_envs=("DASHSCOPE_API_KEY",),
     ),
     "qwen-local": EngineInfo(
@@ -154,7 +170,7 @@ ENGINES: dict[str, EngineInfo] = {
             "5.05 on this CPU, so a minute of speech takes about five. Needs the "
             "2.3 GiB weights and torch from the model manager."
         ),
-        gives_timings=False, clones=True, catalogue=False,
+        gives_timings=False, native_rate=False, clones=True, catalogue=False,
         models=("qwen3-tts-0.6b",),
         packages=("torch>=2.4", "qwen-tts", "soundfile>=0.12"),
     ),
@@ -206,6 +222,13 @@ def voice_presets(engine: str, lang: str) -> list[str]:
 def gives_timings(engine: str) -> bool:
     info = ENGINES.get(engine)
     return bool(info and info.gives_timings)
+
+
+def varies_rate(engine: str) -> bool:
+    """Whether this engine speaks at the pace it is asked for, or has to be stretched
+    afterwards — asked by id, so asking costs no import."""
+    info = ENGINES.get(engine)
+    return bool(info and info.native_rate)
 
 
 def build(engine: str, cfg, lang: str = "ru", models_root: Path | None = None) -> TTSEngine:
@@ -322,25 +345,12 @@ def verify_take(engine, text: str, voice: Voice, seconds: float,
         )
 
 
-def apply_rate(path: Path, rate: str) -> None:
-    """Speed a finished file up or down, for the engines that have no rate parameter.
-
-    Deliberately the same `atempo` the footage stage already stretches voice with, so
-    a line voiced at +20% by Qwen sounds like the same operation as a line voiced at
-    +20% by edge-tts — one of them just pays for it afterwards."""
-    factor = rate_factor(rate)
-    if abs(factor - 1.0) < 0.005:
-        return
-    from ..media.ffmpeg import stretch_audio
-
-    tmp = path.with_name(path.name + ".rate" + path.suffix)
-    stretch_audio(path, tmp, factor)
-    tmp.replace(path)
-
-
 def rate_factor(rate: str) -> float:
     """`"+20%"` as an atempo multiplier, for the engines that cannot vary speed
-    themselves and have to be stretched afterwards."""
+    themselves and whose takes are stretched afterwards instead.
+
+    Clamped to half and double speed, which is also what the sliders that produce it
+    offer: past those an `atempo` is no longer a pace, it is an effect."""
     try:
         return max(0.5, min(2.0, 1.0 + int(str(rate).strip().rstrip("%")) / 100.0))
     except ValueError:
