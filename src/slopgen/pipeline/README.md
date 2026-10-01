@@ -22,9 +22,26 @@ it will look like, so the preview is a real frame drawn by the real renderer
 (`Planner.lay_upto`) rather than the canvas approximation next door — there is nothing
 to place here, and the question being asked is what this will actually look like.
 
-**A reply is an index, and indices move.** `ChatMsg.reply_to` points into the message
-list, because what a reply answers is a fact about the conversation and has to survive
-the scenes being re-cut, re-voiced and re-laid. The price is that every operation that
+**The unit is a conversation, not a message.** A video is several pieces of
+conversation shown one after another with a swipe between them, so a piece is a
+`job.Conversation` with a list of its own and a name of its own. Writing the pieces as
+a number on every message was the first attempt and it was wrong in the way that
+matters: with them expressed as a field there was nothing to count, nothing to reorder
+and nothing for a source to fetch three OF — so neither the room nor the fetchers had
+an object to hold, and `ChatConfig.want` had nothing to be a number of. The seam is
+drawn rather than cut: `chat.scroll` marks the first state of each new conversation,
+`chat_render` draws that state as the old screen and the new one side by side, and the
+window travels across the join — a swipe, which is the same crop `make_chat_part`
+already does with a ramp on the other axis. The header bar goes INTO that picture
+rather than staying an overlay, because moving to another chat moves the whole screen
+and a bar that stayed put while everything under it slid would be the one thing that
+gave the screenshot away. Each conversation carries its own bar for the same reason:
+three threads in one video are three different chats.
+
+**A reply is an index, and indices move.** `ChatMsg.reply_to` points into its own
+conversation's list, because what a reply answers is a fact about the conversation it
+was had in — nothing in one piece can answer anything in another — and it has to
+survive the scenes being re-cut, re-voiced and re-laid. The price is that every operation that
 moves a message carries the pointers with it (`chatroom._remap`, one map from old
 position to new applied in one pass over a snapshot), and that a reply to a message
 that is GONE becomes no reply at all rather than a reply to whatever slid into that
@@ -86,7 +103,9 @@ Three ways a run can stop and be picked up again, all on the same checkpoint:
 
 **Комната переписки** (`chatroom.py`, `web/chat_api.py`) — второй экран в программе, который не форма, и существует он по причине, обратной монтажной. Та правит то, что произвела стадия; эта правит то, чем видео ЯВЛЯЕТСЯ: переписка — не вход прогона, а весь его материал, и сделанный руками чатовый прогон начинается пустым. Поэтому это список, а не таймлайн: вещь правят в той форме, которая у неё есть, и три жеста, которые тут важны (сказать иначе, это отвечает на то, поднять выше), переживают набор с клавиатуры — чего «начать кадр на ВОТ этом слове» не переживает. Чего набор не переживает — это как оно будет выглядеть, поэтому предпросмотр здесь настоящий кадр, нарисованный настоящим рендерером (`Planner.lay_upto`), а не канвасная прикидка, как по соседству: расставлять тут нечего, а вопрос задают ровно один — как это будет выглядеть.
 
-**Ответ — это индекс, а индексы ездят.** `ChatMsg.reply_to` указывает в сам список сообщений, потому что «на что отвечает эта реплика» — факт о переписке, и он обязан пережить и перенарезку сцен, и переозвучку, и перераскладку. Платой стало то, что каждая операция, двигающая сообщение, тащит указатели за собой (`chatroom._remap`: одна карта «старое место → новое», применённая за один проход по снимку), и то, что ответ на УДАЛЁННОЕ сообщение становится ответом в никуда, а не ответом на то, что въехало в освободившийся слот: первое видно, второе — тихая ложь, подкладывающая чей-то ответ под чужую реплику. Правка переписки намеренно НЕ перераскладывает сцены: `chat_script.lay` строит таймлайн заново и заодно назначает голоса, так что вызов на каждое нажатие клавиши выбрасывал бы звук всех реплик, которых никто не трогал. Сцены появляются, когда оператор жмёт `script`, — ровно как монтажная запускает `tts` руками.
+**Единица — переписка, а не сообщение.** Ролик — это несколько кусков переписки, показанных один за другим со свайпом между ними, поэтому кусок — это `job.Conversation` со своим списком и своим названием. Первой попыткой было записать куски числом на каждом сообщении, и она была неверна ровно там, где это важно: когда кусок — это поле, его нечего считать, нечего переставлять и нечего добыть ТРИ штуки, так что ни у комнаты, ни у источников не оказалось объекта, за который можно взяться, а `ChatConfig.want` нечего было считать. Шов рисуется, а не режется: `chat.scroll` помечает первое состояние каждой новой переписки, `chat_render` рисует это состояние как старый экран и новый бок о бок, и окно едет через стык — свайп, то есть тот же кроп, который `make_chat_part` и так делает, только пандус по другой оси. Шапка при этом уезжает ВНУТРИ картинки, а не остаётся накладкой: переход в другой чат двигает весь экран, и шапка, оставшаяся на месте, пока под ней всё едет, была бы единственной деталью, которая выдаёт подделку. У каждой переписки шапка своя по той же причине: три ветки в одном ролике — это три разных чата.
+
+**Ответ — это индекс, а индексы ездят.** `ChatMsg.reply_to` указывает в список СВОЕЙ переписки, потому что «на что отвечает эта реплика» — факт о той переписке, в которой её написали: ничто в одном куске не может отвечать ничему в другом. И он обязан пережить и перенарезку сцен, и переозвучку, и перераскладку. Платой стало то, что каждая операция, двигающая сообщение, тащит указатели за собой (`chatroom._remap`: одна карта «старое место → новое», применённая за один проход по снимку), и то, что ответ на УДАЛЁННОЕ сообщение становится ответом в никуда, а не ответом на то, что въехало в освободившийся слот: первое видно, второе — тихая ложь, подкладывающая чей-то ответ под чужую реплику. Правка переписки намеренно НЕ перераскладывает сцены: `chat_script.lay` строит таймлайн заново и заодно назначает голоса, так что вызов на каждое нажатие клавиши выбрасывал бы звук всех реплик, которых никто не трогал. Сцены появляются, когда оператор жмёт `script`, — ровно как монтажная запускает `tts` руками.
 
 Второго способа запустить стадию нет. `POST /api/runs/{id}/montage/stage` назван по комнате, которой он понадобился первой, но делает он вот что: запускает одну стадию цепочки ЭТОГО прогона, на его задании, с записью в его же список выполненного, — и для переписки это так же верно, как для монтажа. Поэтому комната переписки жмёт ту же ручку и перечитывает свой документ. Из чего следует и обратное: `montage.completed` обязан видеть работу, сделанную здесь, — `source` удовлетворяется наличием сообщений, а `render` — наличием состояний, так что набранная в комнате переписка считается состоявшимся добыванием, и подхваченная потом цепочка проходит мимо неё, а не заменяет набранное.
 
