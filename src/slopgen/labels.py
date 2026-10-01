@@ -3592,3 +3592,17 @@ EN.update({
     "web.chat.tg.as": "signed in as",
     "web.chat.tg.out": "sign out",
 })
+RU.update({
+    "web.chat.invent": "придумать",
+    "web.chat.invent.note": "Сценарист напишет переписку сам. Тема — необязательна: без "
+                            "неё он возьмёт что-нибудь бытовое и конкретное.",
+    "web.chat.invent.ph": "о чём (можно пусто)",
+    "web.chat.invent.go": "написать",
+})
+EN.update({
+    "web.chat.invent": "write one",
+    "web.chat.invent.note": "The writer makes a conversation up. A topic is optional — "
+                            "without one it picks something mundane and specific.",
+    "web.chat.invent.ph": "what about (may be empty)",
+    "web.chat.invent.go": "write it",
+})

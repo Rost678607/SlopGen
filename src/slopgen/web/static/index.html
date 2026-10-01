@@ -439,6 +439,15 @@
       <div class="chips" id="chat-src-tabs">
         <button data-src="reddit" class="on">reddit</button>
         <button data-src="telegram">telegram</button>
+        <button data-src="invent" data-l="web.chat.invent">придумать</button>
+      </div>
+      <div id="chat-invent" hidden>
+        <p class="dim" data-l="web.chat.invent.note"></p>
+        <div class="row">
+          <input id="chat-invent-topic" data-lp="web.chat.invent.ph">
+          <input id="chat-invent-n" type="number" min="1" max="6" value="1">
+          <button id="chat-invent-go" class="primary" data-l="web.chat.invent.go">написать</button>
+        </div>
       </div>
       <div id="chat-tg-login" hidden>
         <p class="dim" id="chat-tg-state"></p>

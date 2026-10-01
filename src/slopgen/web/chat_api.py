@@ -39,6 +39,7 @@ from ..pipeline import chatroom
 from ..pipeline.checkpoint import Checkpoint
 from ..pipeline.context import AppContext
 from ..chat import exports, reddit, telegram
+from ..llm import chat as chat_llm
 from ..pipeline.stages import chat_render, chat_source
 
 log = logging.getLogger(__name__)
@@ -569,6 +570,32 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
                 raise HTTPException(status_code=404, detail=f"nothing fetches {source!r}")
         except (reddit.RedditError, telegram.TelegramError) as e:
             raise HTTPException(status_code=422, detail=str(e))
+        added = chat_source.take(job, pieces)
+        out = answer(cp, i, job)
+        out["added"] = added
+        return out
+
+    @app.post("/api/runs/{run_id}/chat/invent")
+    async def invent(run_id: str, request: Request,
+                     slopgen: str | None = Cookie(default=None)) -> dict:
+        """Have the writer make one up, on a topic or on nothing.
+
+        A source like the other two, and in the room for the same reason they are: it
+        produces conversations, and what the room does with a conversation does not
+        depend on where it came from. The one difference is that this one can fail
+        with nothing to show for it, so it says so rather than parking an empty room
+        in front of somebody."""
+        guard(slopgen)
+        b = await body_of(request)
+        cp, i, job = edited(run_or_404(run_id), b)
+        ctx = context(cp)
+        try:
+            pieces = await run_in_threadpool(
+                chat_llm.invent, ctx, str(b.get("topic", "")),
+                max(1, min(int(b.get("want", 1) or 1), 6)), list(ctx.chat.cast),
+                (max(2, ctx.chat.invent_lo), max(3, ctx.chat.invent_hi)))
+        except Exception as e:  # noqa: BLE001 — the model's words are the useful half
+            raise HTTPException(status_code=502, detail=f"{type(e).__name__}: {e}")
         added = chat_source.take(job, pieces)
         out = answer(cp, i, job)
         out["added"] = added

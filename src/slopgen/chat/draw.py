@@ -364,10 +364,18 @@ class Canvas:
         tx = cx + max(4, s.radius // 7) + int(s.bubble_pad_x * 0.5)
         draw.text((tx, cy), who, font=self.f_meta, fill=b.person.colour)
         room = x1 - tx - s.bubble_pad_x
-        line = richtext.wrap(self._probe, said, self.f_text, s.text_px, room)
-        if line:
+        lines = richtext.wrap(self._probe, said, self.f_text, s.text_px, room)
+        # One line of it, and said to be one line of it. A quote cut off mid-word with
+        # nothing to show for it reads as a rendering fault; the ellipsis is what every
+        # client puts there, and it is re-wrapped to make room for itself rather than
+        # being appended over the bubble's edge.
+        if len(lines) > 1:
+            dots = richtext.width(self._probe, "…", self.f_text, s.text_px)
+            lines = richtext.wrap(self._probe, said, self.f_text, s.text_px, room - dots)
+            lines[0] += "…"
+        if lines:
             richtext.draw_line(img, draw, (tx, cy + int(s.meta_px * 1.15)),
-                               line[0], self.f_text, s.meta, s.text_px)
+                               lines[0], self.f_text, s.meta, s.text_px)
         return cy + self._reply_h()
 
     def _paint_reactions(self, img: Image.Image, draw: ImageDraw.ImageDraw, b: Block,

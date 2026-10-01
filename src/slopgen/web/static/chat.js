@@ -670,11 +670,34 @@ async function pickSource(which) {
     (b) => b.classList.toggle("on", b.dataset.src === which));
   cq("#chat-src-rows").innerHTML = "";
   const tg = which === "telegram";
-  cq("#chat-src-sort").hidden = tg;
+  const made = which === "invent";
+  cq("#chat-src-sort").hidden = tg || made;
   cq("#chat-src-q").placeholder = tg ? lab("web.chat.src.tgwhere", "@channel") : "r/AskReddit";
   cq("#chat-tg-login").hidden = !tg;
+  cq("#chat-invent").hidden = !made;
+  // nothing is browsed when the conversation is being written: there is no list of
+  // what is out there, only a topic and a model
+  cq("#chat-src-where").hidden = made || (tg && true);
   if (tg) await renderTg();
 }
+
+cq("#chat-invent-go").onclick = async () => {
+  if (!CHAT) return;
+  const go = cq("#chat-invent-go");
+  go.disabled = true;
+  const d = await chatDo("/invent", { body: {
+    topic: cq("#chat-invent-topic").value.trim(),
+    want: +(cq("#chat-invent-n").value || 1) } });
+  go.disabled = false;
+  if (d) {
+    cq("#chat-src-box").hidden = true;
+    chatConv = Math.max(0, d.conversations.length - 1);
+    chatSel = -1;
+    renderChat();
+    say(`${d.added} ${lab("web.chat.exports.added", "")}`);
+    shootChat();
+  }
+};
 
 // The sign-in, drawn from where it has got to. One field at a time, because that is
 // what the thing IS: a number, then a code Telegram sends to it, then a password for

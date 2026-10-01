@@ -295,7 +295,7 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
             "aspects": ["9:16", "16:9"],
             # where a conversation may come from. `manual` is the room, and the other
             # three go and get one (see `pipeline.stages.chat_source`).
-            "chat_sources": ["manual", "reddit", "telegram", "import"],
+            "chat_sources": ["manual", "invent", "reddit", "telegram", "import"],
             "scroll_modes": ["roll", "jump", "clear"],
             # Who reads the messages. A cloned voice for everybody, or the reserved
             # `none` for nobody — the third answer, an empty one, leaves each persona

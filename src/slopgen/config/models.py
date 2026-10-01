@@ -71,7 +71,7 @@ class LLMConfig(BaseModel):
     # drama_script, fandom_outline, fandom_script, fandom_canon, fandom_brief,
     # lore_lookup, drama_entities, drama_shot_fix, char_compile, char_autofill,
     # style_compile, metadata, profanity, censor, lookup, bp_rewrite, bp_scenes,
-    # tts_delivery, vision, chat_translate.
+    # tts_delivery, vision, chat_translate, chat_pick, chat_invent.
     stage_profiles: dict[str, str] = {}
     # legacy inline settings (deepseek | gemini | openrouter | custom)
     provider: str = "deepseek"
@@ -1398,10 +1398,12 @@ class PersonaConfig(BaseModel):
 # the reddit skin or not at all (see `chat.skins.compatible`).
 ChatSkin = Literal["telegram", "discord", "reddit"]
 
-# WHERE the conversation came from. `manual` covers both hands and the model — a
-# conversation typed in the editor and one the writer invented are the same object by
-# the time anything downstream sees it, and distinguishing them would buy nothing.
-ChatSource = Literal["manual", "reddit", "telegram", "import"]
+# WHERE the conversation came from. `manual` is the room — somebody types it — and
+# `invent` is the model writing one, which is a different ACT even though the two are
+# the same object by the time anything downstream sees them: one needs a person at the
+# keyboard and the other needs a topic and a model, so a run can be started on the
+# second and cannot be started on the first.
+ChatSource = Literal["manual", "invent", "reddit", "telegram", "import"]
 
 # What happens when the messages reach the bottom of the frame.
 #   roll  — the view travels up to follow the newest message, the way a real client
@@ -1512,6 +1514,11 @@ class ChatConfig(BaseModel):
     # foreign (see `llm/chat.py`).
     translate: bool = True
     cast: list[str] = []  # persona names this preset opens with; the editor may add more
+    # `invent` only: how long a written conversation runs, in messages. A range rather
+    # than a number because the writer is being asked for a conversation and not for a
+    # word count — a shape that lands in eleven lines must not be padded to fourteen.
+    invent_lo: int = 10
+    invent_hi: int = 22
     # HOW MANY pieces of conversation one video is made of, when something is fetching
     # them. A video is several chats shown one after another — that is the format, not
     # an edge case — so the number has to be askable before anything goes looking, and

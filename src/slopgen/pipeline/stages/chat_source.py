@@ -24,6 +24,7 @@ from typing import Callable
 from pathlib import Path
 
 from ...chat import exports, reddit, telegram
+from ...llm import chat as chat_llm
 from ..context import AppContext
 from ..job import ChatMsg, Conversation, VideoJob
 
@@ -113,15 +114,22 @@ def _reddit(job: VideoJob, ctx: AppContext) -> None:
     if not where:
         raise ValueError("this run reads reddit but was not told what — a thread's "
                          "address, or a subreddit")
+    want = max(1, ctx.chat.want)
     try:
         if "comments/" in where:
             take(job, reddit.thread(where))
             return
-        rows = reddit.listing(where, limit=max(10, ctx.chat.want * 4))
+        rows = reddit.listing(where, limit=max(25, want * 8))
         # Self-posts only: a link post is a picture with arguing under it, and the
         # picture is the half this mode cannot show.
         stories = [r for r in rows if r["text"].strip()] or rows
-        for row in stories[:max(1, ctx.chat.want)]:
+        # Which of them is worth a video is a judgement about whether anything HAPPENS
+        # in them, and a score is evidence of attention rather than of that — so a
+        # model reads the titles and the first lines and says (see `llm/chat.pick`).
+        # It fails soft on purpose: without it the listing's own order is what a person
+        # skimming would start from anyway.
+        chosen = chat_llm.pick(ctx, stories, want)
+        for row in ([stories[i] for i in chosen] or stories)[:want]:
             take(job, reddit.thread(row["url"]))
     except reddit.RedditError as e:
         raise ValueError(str(e))
@@ -142,6 +150,21 @@ def _telegram(job: VideoJob, ctx: AppContext) -> None:
         raise ValueError(f"{where} has nothing readable in it")
 
 
+def _invent(job: VideoJob, ctx: AppContext) -> None:
+    """Conversations written from nothing, on whatever topic was given.
+
+    `scenario` is the topic here, which is what it is in every other mode: the thing
+    the operator wants this video to be about. Empty is a legitimate answer and means
+    the writer picks the situation, which is the setting a loop runs on."""
+    pieces = chat_llm.invent(
+        ctx, topic=(ctx.params.scenario or "").strip(), want=max(1, ctx.chat.want),
+        cast=list(ctx.chat.cast),
+        length=(max(2, ctx.chat.invent_lo), max(3, ctx.chat.invent_hi)),
+    )
+    if not take(job, pieces):
+        raise ValueError("the writer came back with nothing to say")
+
+
 def _unbuilt(what: str) -> Callable[[VideoJob, AppContext], None]:
     """A source that is named but not yet written.
 
@@ -159,6 +182,7 @@ def _unbuilt(what: str) -> Callable[[VideoJob, AppContext], None]:
 
 SOURCES: dict[str, Callable[[VideoJob, AppContext], None]] = {
     "manual": _manual,
+    "invent": _invent,
     "import": _import,
     "reddit": _reddit,
     "telegram": _telegram,
