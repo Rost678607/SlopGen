@@ -405,6 +405,7 @@
     <span class="dim" id="chat-state"></span>
     <span class="grow"></span>
     <button id="chat-paste" class="ghost" data-l="web.chat.paste">вставить текстом</button>
+    <button id="chat-fetch" class="ghost" data-l="web.chat.sources">источники</button>
     <button id="chat-exports" class="ghost" data-l="web.chat.exports">экспорты</button>
     <button id="chat-settings" class="ghost" data-l="web.mont.settings">настройки</button>
     <button id="chat-shot" class="ghost" data-l="web.chat.shot">обновить кадр</button>
@@ -427,6 +428,32 @@
       <div id="chat-set" hidden></div>
       <div id="chat-cast"></div>
     </aside>
+  </div>
+
+  <!-- the live sources, over the room: what reddit and a signed-in Telegram account
+       have, and the sign-in itself when there is not one yet. Three steps, because
+       Telegram sends a code and waits for it and no form can be filled in once. -->
+  <div id="chat-src-box" hidden>
+    <div class="sheet">
+      <h3 data-l="web.chat.sources"></h3>
+      <div class="chips" id="chat-src-tabs">
+        <button data-src="reddit" class="on">reddit</button>
+        <button data-src="telegram">telegram</button>
+      </div>
+      <div id="chat-tg-login" hidden>
+        <p class="dim" id="chat-tg-state"></p>
+        <div class="row" id="chat-tg-step"></div>
+      </div>
+      <div class="row" id="chat-src-where">
+        <input id="chat-src-q" placeholder="r/AskReddit">
+        <select id="chat-src-sort"></select>
+        <button id="chat-src-go" class="primary" data-l="web.chat.src.look">посмотреть</button>
+      </div>
+      <div id="chat-src-rows"></div>
+      <div class="row">
+        <button id="chat-src-cancel" class="ghost" data-l="web.cancel"></button>
+      </div>
+    </div>
   </div>
 
   <!-- the exports base, over the room: files somebody has handed over, and which

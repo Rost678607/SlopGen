@@ -38,7 +38,7 @@ from ..config.loader import write_config
 from ..pipeline import chatroom
 from ..pipeline.checkpoint import Checkpoint
 from ..pipeline.context import AppContext
-from ..chat import exports
+from ..chat import exports, reddit, telegram
 from ..pipeline.stages import chat_render, chat_source
 
 log = logging.getLogger(__name__)
@@ -88,6 +88,12 @@ SHEET: list[dict] = [
 
 def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
     """Hang the chat-room routes on the app, using its session guard and run lookup."""
+
+    # The Telegram sign-in in progress, if there is one. One per server and not one
+    # per run, because what is being signed into is the MACHINE's session: a second
+    # flow would be a second connection to Telegram racing the first for the same
+    # session file. A dict rather than a bare name so the handlers can rebind it.
+    _login: dict[str, telegram.Login | None] = {"flow": None}
 
     def open_job(run, video: int):
         """`(checkpoint, index, job)` for one video of a run that is not moving."""
@@ -435,6 +441,134 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
         if isinstance(want, list) and want:
             keep = {int(x) for x in want if isinstance(x, (int, float))}
             pieces = [p for n, p in enumerate(pieces) if n in keep]
+        added = chat_source.take(job, pieces)
+        out = answer(cp, i, job)
+        out["added"] = added
+        return out
+
+    # -- signing in to Telegram, which is three steps and cannot be fewer ----
+
+    @app.get("/api/chat/telegram")
+    async def telegram_status(slopgen: str | None = Cookie(default=None)) -> dict:
+        """Whether this machine can read Telegram, and as whom."""
+        guard(slopgen)
+        out = await telegram.status(store.global_cfg.paths.state)
+        out["step"] = _login["flow"].step if _login["flow"] else ""
+        return out
+
+    @app.post("/api/chat/telegram/login")
+    async def telegram_login(request: Request,
+                             slopgen: str | None = Cookie(default=None)) -> dict:
+        """Ask Telegram to send a code to a number, and hold the sign-in open.
+
+        Held because it has to be: Telegram answers the number with a hash the code
+        must be sent back WITH, good only on the connection it was issued on. So the
+        client stays open between these three requests, and a flow somebody walked
+        away from is closed when the next one starts rather than left holding a
+        connection to Telegram forever."""
+        guard(slopgen)
+        b = await body_of(request)
+        if _login["flow"] is not None:
+            await _login["flow"].close()
+            _login["flow"] = None
+        try:
+            _login["flow"] = await telegram.begin(store.global_cfg.paths.state,
+                                                  str(b.get("phone", "")))
+        except telegram.TelegramError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+        return {"step": _login["flow"].step}
+
+    @app.post("/api/chat/telegram/code")
+    async def telegram_code(request: Request,
+                            slopgen: str | None = Cookie(default=None)) -> dict:
+        """Hand over the code Telegram sent. Answers `done`, or `password`."""
+        guard(slopgen)
+        b = await body_of(request)
+        flow = _login["flow"]
+        if flow is None:
+            raise HTTPException(status_code=409, detail="there is no sign-in waiting")
+        try:
+            await telegram.with_code(flow, str(b.get("code", "")))
+        except telegram.TelegramError as e:
+            if flow.step == "phone":
+                _login["flow"] = None
+            raise HTTPException(status_code=422, detail=str(e))
+        if flow.step == "done":
+            _login["flow"] = None
+        return {"step": flow.step}
+
+    @app.post("/api/chat/telegram/password")
+    async def telegram_password(request: Request,
+                                slopgen: str | None = Cookie(default=None)) -> dict:
+        """Hand over the two-step password, for an account that has one."""
+        guard(slopgen)
+        b = await body_of(request)
+        flow = _login["flow"]
+        if flow is None:
+            raise HTTPException(status_code=409, detail="there is no sign-in waiting")
+        try:
+            await telegram.with_password(flow, str(b.get("password", "")))
+        except telegram.TelegramError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+        _login["flow"] = None
+        return {"step": flow.step}
+
+    @app.post("/api/chat/telegram/logout")
+    async def telegram_logout(slopgen: str | None = Cookie(default=None)) -> dict:
+        """Log the account out, and take the session file with it."""
+        guard(slopgen)
+        if _login["flow"] is not None:
+            await _login["flow"].close()
+            _login["flow"] = None
+        await telegram.sign_out(store.global_cfg.paths.state)
+        return await telegram.status(store.global_cfg.paths.state)
+
+    # -- looking at what a source has ---------------------------------------
+
+    @app.get("/api/chat/browse")
+    async def browse(source: str, where: str = "", sort: str = "hot",
+                     slopgen: str | None = Cookie(default=None)) -> dict:
+        """What a source has, as something to choose from — never the whole of it.
+
+        Browsing is deciding what is worth reading, so neither of these brings back a
+        single message: a hundred reddit threads with their comment trees attached is
+        several megabytes to answer a question about titles, and a hundred Telegram
+        chats with their histories is several minutes of requests to answer a question
+        about names."""
+        guard(slopgen)
+        try:
+            if source == "reddit":
+                return {"source": source, "rows": [
+                    {"id": r["url"], "title": r["title"],
+                     "note": f"↑{r['score']} · {r['comments']}",
+                     "text": r["text"][:200]}
+                    for r in reddit.listing(where, sort)]}
+            if source == "telegram":
+                return {"source": source, "rows": [
+                    {"id": str(d["id"]), "title": d["title"], "note": d["kind"],
+                     "text": ""}
+                    for d in await telegram.dialogs(store.global_cfg.paths.state)]}
+        except (reddit.RedditError, telegram.TelegramError) as e:
+            raise HTTPException(status_code=422, detail=str(e))
+        raise HTTPException(status_code=404, detail=f"nothing browses {source!r}")
+
+    @app.post("/api/runs/{run_id}/chat/fetch")
+    async def fetch(run_id: str, request: Request,
+                    slopgen: str | None = Cookie(default=None)) -> dict:
+        """Put one thing a source has into this video, as a conversation."""
+        guard(slopgen)
+        b = await body_of(request)
+        cp, i, job = edited(run_or_404(run_id), b)
+        source, where = str(b.get("source", "")), str(b.get("where", ""))
+        try:
+            if source == "reddit":
+                pieces = await run_in_threadpool(reddit.thread, where)
+            elif source == "telegram":
+                pieces = await telegram.history(store.global_cfg.paths.state, where)
+            else:
+                raise HTTPException(status_code=404, detail=f"nothing fetches {source!r}")
+        except (reddit.RedditError, telegram.TelegramError) as e:
+            raise HTTPException(status_code=422, detail=str(e))
         added = chat_source.take(job, pieces)
         out = answer(cp, i, job)
         out["added"] = added

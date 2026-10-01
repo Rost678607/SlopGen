@@ -639,3 +639,126 @@ cq("#chat-exp-go").onclick = async () => {
     shootChat();
   }
 };
+
+// -- the live sources ------------------------------------------------------
+//
+// Reddit and a signed-in Telegram account, in the same sheet as the exports base
+// because it is the same gesture: look at what is there, take one. The difference is
+// that one of them has to be signed into first, and that sign-in is three steps —
+// Telegram sends a code and waits for it, so no form can be filled in once.
+
+let chatSrc = "reddit";
+
+cq("#chat-fetch").onclick = async () => {
+  cq("#chat-src-box").hidden = false;
+  cq("#chat-src-rows").innerHTML = "";
+  const sorts = cq("#chat-src-sort");
+  sorts.innerHTML = ["hot", "top", "new", "rising"]
+    .map((s) => `<option value="${s}">${s}</option>`).join("");
+  await pickSource(chatSrc);
+};
+cq("#chat-src-cancel").onclick = () => { cq("#chat-src-box").hidden = true; };
+
+cq("#chat-src-tabs").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-src]");
+  if (b) pickSource(b.dataset.src);
+});
+
+async function pickSource(which) {
+  chatSrc = which;
+  cq("#chat-src-tabs").querySelectorAll("[data-src]").forEach(
+    (b) => b.classList.toggle("on", b.dataset.src === which));
+  cq("#chat-src-rows").innerHTML = "";
+  const tg = which === "telegram";
+  cq("#chat-src-sort").hidden = tg;
+  cq("#chat-src-q").placeholder = tg ? lab("web.chat.src.tgwhere", "@channel") : "r/AskReddit";
+  cq("#chat-tg-login").hidden = !tg;
+  if (tg) await renderTg();
+}
+
+// The sign-in, drawn from where it has got to. One field at a time, because that is
+// what the thing IS: a number, then a code Telegram sends to it, then a password for
+// the accounts that have one.
+async function renderTg() {
+  let s;
+  try { s = await api("/api/chat/telegram"); } catch (e) { return say(e.message, true); }
+  const state = cq("#chat-tg-state");
+  const step = cq("#chat-tg-step");
+  cq("#chat-src-where").hidden = !s.signed_in;
+  if (!s.keys) {
+    state.textContent = lab("web.chat.tg.nokeys", "");
+    step.innerHTML = "";
+    return;
+  }
+  if (s.signed_in) {
+    state.textContent = `${lab("web.chat.tg.as", "вошли как")} ${s.who}`;
+    step.innerHTML = `<button class="ghost" id="chat-tg-out">${
+      esc(lab("web.chat.tg.out", "выйти"))}</button>
+      <button class="primary" id="chat-tg-dialogs">${
+      esc(lab("web.chat.src.look", "посмотреть"))}</button>`;
+    cq("#chat-tg-out").onclick = async () => {
+      try { await api("/api/chat/telegram/logout", { method: "POST" }); }
+      catch (e) { say(e.message, true); }
+      await renderTg();
+    };
+    cq("#chat-tg-dialogs").onclick = () => browseSource("");
+    return;
+  }
+  const waiting = s.step === "code" ? "code" : s.step === "password" ? "password" : "phone";
+  state.textContent = lab(`web.chat.tg.${waiting}`, "");
+  step.innerHTML = `<input id="chat-tg-in" ${waiting === "password" ? 'type="password"' : ""}>
+    <button class="primary" id="chat-tg-go">${esc(lab("web.chat.tg.go", "дальше"))}</button>`;
+  cq("#chat-tg-go").onclick = async () => {
+    const value = cq("#chat-tg-in").value.trim();
+    if (!value) return;
+    const at = { phone: "/login", code: "/code", password: "/password" }[waiting];
+    const key = waiting;
+    try {
+      await api(`/api/chat/telegram${at}`, { method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ [key]: value }) });
+    } catch (e) { say(e.message, true); }
+    await renderTg();
+  };
+  cq("#chat-tg-in").focus();
+}
+
+cq("#chat-src-go").onclick = () => browseSource(cq("#chat-src-q").value.trim());
+
+async function browseSource(where) {
+  const box = cq("#chat-src-rows");
+  box.innerHTML = `<p class="dim">…</p>`;
+  let d;
+  try {
+    d = await api(`/api/chat/browse?source=${chatSrc}` +
+                  `&where=${encodeURIComponent(where)}` +
+                  `&sort=${encodeURIComponent(cq("#chat-src-sort").value || "hot")}`);
+  } catch (e) { box.innerHTML = ""; return say(e.message, true); }
+  box.innerHTML = d.rows.length ? d.rows.map((r) => `
+    <div class="src-row">
+      <span class="what">
+        <b>${esc(r.title)}</b>
+        <i>${esc(r.note)}</i>
+        ${r.text ? `<i>${esc(r.text)}</i>` : ""}
+      </span>
+      <button class="ghost" data-take="${esc(r.id)}">${
+        esc(lab("web.chat.src.take", "взять"))}</button>
+    </div>`).join("")
+    : `<p class="dim">${esc(lab("web.chat.src.none", ""))}</p>`;
+}
+
+cq("#chat-src-rows").addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-take]");
+  if (!b || !CHAT) return;
+  b.disabled = true;
+  const d = await chatDo("/fetch", { body: { source: chatSrc, where: b.dataset.take } });
+  b.disabled = false;
+  if (d) {
+    cq("#chat-src-box").hidden = true;
+    chatConv = Math.max(0, d.conversations.length - 1);
+    chatSel = -1;
+    renderChat();
+    say(`${d.added} ${lab("web.chat.exports.added", "")}`);
+    shootChat();
+  }
+});

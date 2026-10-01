@@ -293,6 +293,9 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
             "chat_clips": _files(store, "footage", CHAT_VIDEO_EXTS),
             "chat_sounds": _files(store, CHAT_SFX_DIR, CHAT_SOUND_EXTS),
             "aspects": ["9:16", "16:9"],
+            # where a conversation may come from. `manual` is the room, and the other
+            # three go and get one (see `pipeline.stages.chat_source`).
+            "chat_sources": ["manual", "reddit", "telegram", "import"],
             "scroll_modes": ["roll", "jump", "clear"],
             # Who reads the messages. A cloned voice for everybody, or the reserved
             # `none` for nobody — the third answer, an empty one, leaves each persona
@@ -2699,6 +2702,13 @@ def _described(entries: dict, *fields: str, key: str = "") -> list:
 
 
 KEY_VARS = [
+    # The chat mode's four. Telegram's pair identify the PROGRAM and not the account —
+    # the account is a session, signed into separately (see `chat/telegram.py`) — and
+    # reddit's are a script app, which is what reading reddit now takes.
+    ("TELEGRAM_API_ID", "key.tgapi"),
+    ("TELEGRAM_API_HASH", "key.tghash"),
+    ("REDDIT_CLIENT_ID", "key.redditid"),
+    ("REDDIT_CLIENT_SECRET", "key.redditsecret"),
     ("DEEPSEEK_API_KEY", "key.deepseek"),
     ("GEMINI_API_KEY", "key.gemini"),
     ("OPENROUTER_API_KEY", "key.openrouter"),

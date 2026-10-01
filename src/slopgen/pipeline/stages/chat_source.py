@@ -17,12 +17,13 @@ which is exactly what "open the room and build me one" looks like from the CLI.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Callable
 
 from pathlib import Path
 
-from ...chat import exports
+from ...chat import exports, reddit, telegram
 from ..context import AppContext
 from ..job import ChatMsg, Conversation, VideoJob
 
@@ -100,6 +101,47 @@ def _import(job: VideoJob, ctx: AppContext) -> None:
         raise ValueError(f"{name} holds no messages this can read")
 
 
+def _reddit(job: VideoJob, ctx: AppContext) -> None:
+    """A thread, or the first few of a subreddit.
+
+    Which it is, is read off what the operator typed rather than asked as a second
+    question: a URL with `comments/` in it names one thread and anything else names a
+    place to take threads from. `want` is how many, because a video is several pieces
+    of conversation and a source that could only ever bring back one would make a mode
+    that cannot do what it was asked for."""
+    where = (ctx.params.chat_from or "").strip()
+    if not where:
+        raise ValueError("this run reads reddit but was not told what — a thread's "
+                         "address, or a subreddit")
+    try:
+        if "comments/" in where:
+            take(job, reddit.thread(where))
+            return
+        rows = reddit.listing(where, limit=max(10, ctx.chat.want * 4))
+        # Self-posts only: a link post is a picture with arguing under it, and the
+        # picture is the half this mode cannot show.
+        stories = [r for r in rows if r["text"].strip()] or rows
+        for row in stories[:max(1, ctx.chat.want)]:
+            take(job, reddit.thread(row["url"]))
+    except reddit.RedditError as e:
+        raise ValueError(str(e))
+    if not job.conversations:
+        raise ValueError(f"nothing readable came back from {where}")
+
+
+def _telegram(job: VideoJob, ctx: AppContext) -> None:
+    """One chat's recent messages, read as the account this machine is signed in as."""
+    where = (ctx.params.chat_from or "").strip()
+    if not where:
+        raise ValueError("this run reads Telegram but was not told which chat")
+    try:
+        pieces = asyncio.run(telegram.history(ctx.g.paths.state, where))
+    except telegram.TelegramError as e:
+        raise ValueError(str(e))
+    if not take(job, pieces):
+        raise ValueError(f"{where} has nothing readable in it")
+
+
 def _unbuilt(what: str) -> Callable[[VideoJob, AppContext], None]:
     """A source that is named but not yet written.
 
@@ -118,8 +160,8 @@ def _unbuilt(what: str) -> Callable[[VideoJob, AppContext], None]:
 SOURCES: dict[str, Callable[[VideoJob, AppContext], None]] = {
     "manual": _manual,
     "import": _import,
-    "reddit": _unbuilt("reddit"),
-    "telegram": _unbuilt("telegram"),
+    "reddit": _reddit,
+    "telegram": _telegram,
 }
 
 

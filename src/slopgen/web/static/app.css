@@ -1421,3 +1421,24 @@ button.danger{border-color:var(--bad);color:var(--bad)}
 .exp-piece .what{min-width:0;display:grid;gap:2px}
 .exp-piece .what i{font-style:normal;color:var(--dim);font-size:12px;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* The live sources, over the room. Same sheet as the exports base, because they are
+   the same gesture — look at what is there, take one — and the only difference is
+   that one of them has to be signed into first. */
+#chat-src-box{position:absolute;inset:0;z-index:6;display:grid;place-items:center;
+  background:#0008;backdrop-filter:blur(2px)}
+#chat-src-box .sheet{background:var(--panel);border:1px solid var(--line);
+  border-radius:10px;padding:16px;width:min(760px,94vw);max-height:88vh;overflow:auto;
+  display:grid;gap:10px;box-shadow:0 12px 40px #000a}
+#chat-src-box h3{margin:0;font-size:15px}
+#chat-src-box .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+#chat-src-box input,#chat-src-box select{font:inherit;font-size:13px;color:var(--ink);
+  background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:6px 9px}
+#chat-src-q{flex:1;min-width:180px}
+#chat-src-rows{display:grid;gap:5px}
+.src-row{display:flex;gap:9px;align-items:flex-start;font-size:13px;
+  border:1px solid var(--line);border-radius:7px;padding:7px 9px}
+.src-row .what{flex:1;min-width:0;display:grid;gap:2px}
+.src-row .what i{font-style:normal;color:var(--dim);font-size:12px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#chat-tg-state{margin:0;font-size:13px}

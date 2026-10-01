@@ -334,6 +334,58 @@ def main(
         raise typer.Exit()
 
 
+# -- the chat mode's account ------------------------------------------------
+
+
+@app.command("tg")
+def telegram_login(
+    ctx: typer.Context,
+    out: bool = typer.Option(False, "--out", help="log out and delete the session"),
+) -> None:
+    """Sign in to the Telegram account the chat mode reads chats as.
+
+    A session and not a bot token: a bot sees only the chats it was added to and gets
+    no history at all, so reading somebody's own chats means being signed in as them.
+    Interactive by nature — Telegram sends a code and waits for it — which is why this
+    is a command and not a field. The browser walks the same three steps in the chat
+    room; either leaves the same session behind, and one is enough.
+    """
+    import asyncio
+
+    from rich import print as rprint
+
+    from ..chat import telegram as tg
+
+    store: ConfigStore = ctx.obj
+    state = store.global_cfg.paths.state
+
+    async def go() -> None:
+        if out:
+            await tg.sign_out(state)
+            rprint("[green]signed out[/]; the session file is gone")
+            return
+        now = await tg.status(state)
+        if now["signed_in"]:
+            rprint(f"already signed in as [bold]{now['who']}[/] "
+                   f"— `slopgen tg --out` to change that")
+            return
+        phone = typer.prompt("phone, with its country code")
+        flow = await tg.begin(state, phone)
+        rprint("[dim]Telegram has sent a code[/]")
+        flow = await tg.with_code(flow, typer.prompt("the code"))
+        if flow.step == "password":
+            flow = await tg.with_password(
+                flow, typer.prompt("two-step password", hide_input=True))
+        who = (await tg.status(state))["who"]
+        rprint(f"[green]signed in[/] as [bold]{who}[/]")
+
+    try:
+        asyncio.run(go())
+    except tg.TelegramError as e:
+        rprint(f"[red]{e}[/]")
+        raise typer.Exit(code=1)
+
+
 # -- info mode --------------------------------------------------------------
 
 

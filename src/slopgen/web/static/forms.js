@@ -1550,6 +1550,28 @@ const FORMS = {
           }
         ],
         {
+          "f": "source",
+          "kind": "select",
+          "cls": "f-chatsrc",
+          "l": "web.f.source"
+        },
+        {
+          "when": "source=reddit|telegram|import",
+          "rows": [
+            {
+              "f": "chat_from",
+              "kind": "text",
+              "rows": 1,
+              "ph": "web.a.chatfrom",
+              "l": "web.f.chatfrom"
+            },
+            {
+              "note": "web.chat.src.note",
+              "cls": "dim"
+            }
+          ]
+        },
+        {
           "f": "chat_voice",
           "kind": "select",
           "cls": "f-chatvoice",

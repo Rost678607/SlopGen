@@ -3700,6 +3700,8 @@ async function loadOptions() {
   document.querySelectorAll(".f-chatpreset").forEach((el) => fill(el, opts.chats, true));
   document.querySelectorAll(".f-chatvoice").forEach(
     (el) => fill(el, opts.chat_voices || [], true, "w.cards.own"));
+  document.querySelectorAll(".f-chatsrc").forEach(
+    (el) => fill(el, opts.chat_sources || []));
   fillAll(".f-skin", opts.chat_skins);
   // `fill` words an option as `w.<value>`, and these three are too generic to own a
   // name in that namespace — `clear` and `jump` mean other things elsewhere. So they
@@ -3997,6 +3999,7 @@ function chatBody(form) {
   return {
   lang: f.get("lang"), chat: f.get("chat") || "", title: f.get("title"),
   chat_voice: f.get("chat_voice") || "", want: +(f.get("want") || 1),
+  source: f.get("source") || "manual", chat_from: f.get("chat_from") || "",
   skin: f.get("skin"), scroll: f.get("scroll"),
   roll_s: +(f.get("roll_s") || 0.45), gap_s: +(f.get("gap_s") || 1.2),
   chunk: +(f.get("chunk") || 0), chunk_min: +(f.get("chunk_min") || 0),

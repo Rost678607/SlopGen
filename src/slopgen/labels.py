@@ -3525,3 +3525,70 @@ EN.update({
     "web.chat.exports.empty": "There is nothing in this file to read.",
     "web.chat.exports.added": "conversations added",
 })
+RU.update({
+    "key.tgapi": "Telegram: api_id приложения (my.telegram.org/apps) — чтобы читать "
+                 "чаты как аккаунт, а не как бот",
+    "key.tghash": "Telegram: api_hash того же приложения",
+    "key.redditid": "Reddit: client_id скриптового приложения (reddit.com/prefs/apps)",
+    "key.redditsecret": "Reddit: client_secret того же приложения",
+})
+EN.update({
+    "key.tgapi": "Telegram: the application's api_id (my.telegram.org/apps) — to read "
+                 "chats as an account rather than as a bot",
+    "key.tghash": "Telegram: the api_hash of the same application",
+    "key.redditid": "Reddit: a script app's client_id (reddit.com/prefs/apps)",
+    "key.redditsecret": "Reddit: the client_secret of the same app",
+})
+RU.update({
+    "web.f.source": "откуда брать переписки",
+    "w.manual": "соберу в комнате",
+    "w.reddit": "reddit",
+    "w.telegram": "telegram",
+    "w.import": "из базы экспортов",
+    "web.chat.src.note": "Для реддита — сабреддит или ссылка на тред. Для телеграма — "
+                         "@канал, ссылка или id чата (нужен вход в аккаунт). Для базы "
+                         "— имя файла в assets/exports/.",
+    "web.a.chatfrom": "r/AskReddit · @channel · result.json",
+})
+EN.update({
+    "web.f.source": "where conversations come from",
+    "w.manual": "I will build them in the room",
+    "w.reddit": "reddit",
+    "w.telegram": "telegram",
+    "w.import": "from the exports base",
+    "web.chat.src.note": "For reddit, a subreddit or a thread's address. For Telegram, "
+                         "an @channel, a link or a chat id (the account has to be "
+                         "signed in). For the base, a file name in assets/exports/.",
+    "web.a.chatfrom": "r/AskReddit · @channel · result.json",
+})
+RU.update({
+    "web.chat.sources": "источники",
+    "web.chat.src.look": "посмотреть",
+    "web.chat.src.take": "взять",
+    "web.chat.src.none": "Ничего не нашлось.",
+    "web.chat.src.tgwhere": "@канал, ссылка или id чата",
+    "web.chat.tg.nokeys": "Телеграму нужны api_id и api_hash этой программы — заведи их "
+                          "один раз на my.telegram.org/apps и впиши в конфигурации, "
+                          "в ключах.",
+    "web.chat.tg.phone": "Номер телефона, с кодом страны. Telegram пришлёт код.",
+    "web.chat.tg.code": "Код из Telegram.",
+    "web.chat.tg.password": "Пароль двухэтапной проверки.",
+    "web.chat.tg.go": "дальше",
+    "web.chat.tg.as": "вошли как",
+    "web.chat.tg.out": "выйти",
+})
+EN.update({
+    "web.chat.sources": "sources",
+    "web.chat.src.look": "look",
+    "web.chat.src.take": "take it",
+    "web.chat.src.none": "Nothing came back.",
+    "web.chat.src.tgwhere": "@channel, a link, or a chat id",
+    "web.chat.tg.nokeys": "Telegram needs this program's api_id and api_hash — get them "
+                          "once at my.telegram.org/apps and put them in the keys panel.",
+    "web.chat.tg.phone": "The phone number, with its country code. Telegram will send a code.",
+    "web.chat.tg.code": "The code from Telegram.",
+    "web.chat.tg.password": "The two-step password.",
+    "web.chat.tg.go": "next",
+    "web.chat.tg.as": "signed in as",
+    "web.chat.tg.out": "sign out",
+})
