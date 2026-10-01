@@ -3937,6 +3937,7 @@ $("#startform").onsubmit = (e) => {
 // top-level with it (`loadRuns` and `loadLoops` then die on their own uninitialised
 // state, which is how this showed up).
 function wireByHand() {
+  wireChatByHand();
   const go = $("#f-by-hand-go");
   if (!go) return;
   go.onclick = async () => {
@@ -3988,9 +3989,14 @@ $("#infoform").onsubmit = (e) => submitRun(e, "info", (f) => ({
 // The conversation is NOT in this body. It is built in the room, on a run that
 // already exists (see `/api/runs/chat/by-hand`), and the form only says what kind of
 // video a conversation becomes — which is why there is no field here for it.
-$("#chatform").onsubmit = (e) => submitRun(e, "chat", (f) => ({
+// What the chat form MEANS, read once. Two buttons send it — start the chain, or make
+// the run and open the room on it — and a second copy of twenty fields is a second
+// place for them to drift (the fandom form learned this the same way).
+function chatBody(form) {
+  const f = new FormData(form);
+  return {
   lang: f.get("lang"), chat: f.get("chat") || "", title: f.get("title"),
-  chat_from: f.get("chat_from") || "", chat_voice: f.get("chat_voice") || "",
+  chat_voice: f.get("chat_voice") || "", want: +(f.get("want") || 1),
   skin: f.get("skin"), scroll: f.get("scroll"),
   roll_s: +(f.get("roll_s") || 0.45), gap_s: +(f.get("gap_s") || 1.2),
   chunk: +(f.get("chunk") || 0), chunk_min: +(f.get("chunk_min") || 0),
@@ -4003,7 +4009,31 @@ $("#chatform").onsubmit = (e) => submitRun(e, "chat", (f) => ({
   count: +f.get("count"), profanity: +f.get("profanity"),
   ad: f.get("ad"), push: f.get("push"),
   dry_run: f.get("dry_run") === "on", breakpoints: [...chosenBps.chat],
-}));
+  ...commonOf(form),
+  };
+}
+
+$("#chatform").onsubmit = (e) => submitRun(e, "chat", () => chatBody(e.target));
+
+// The other door out of the same form, and in this mode it is the main one: make the
+// run, run NOTHING, and open the room on it. A chat run has no brief to write and no
+// world to read — the conversations ARE the video, and they are built by somebody
+// looking at them, so starting the chain first would have fetched, translated and cast
+// before any screen appeared.
+function wireChatByHand() {
+  const go = $("#c-by-hand-go");
+  if (!go) return;
+  go.onclick = async () => {
+    if (editing) return say(lab("js.byhand-not-in-a-loop"), true);
+    let out;
+    try {
+      out = await api("/api/runs/chat/by-hand", { method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(chatBody($("#chatform"))) });
+    } catch (err) { return say(err.message, true); }
+    openChat(out.id, out.title);
+  };
+}
 
 $("#dramaform").onsubmit = (e) => submitRun(e, "drama", (f) => ({
   lang: f.get("lang"), scenario: f.get("scenario"), title: f.get("title"),

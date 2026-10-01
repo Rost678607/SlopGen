@@ -405,6 +405,7 @@
     <span class="dim" id="chat-state"></span>
     <span class="grow"></span>
     <button id="chat-paste" class="ghost" data-l="web.chat.paste">вставить текстом</button>
+    <button id="chat-settings" class="ghost" data-l="web.mont.settings">настройки</button>
     <button id="chat-shot" class="ghost" data-l="web.chat.shot">обновить кадр</button>
   </header>
 
@@ -413,9 +414,16 @@
   <div class="mont-stages" id="chat-stages"></div>
 
   <div id="chat-body">
+    <div id="chat-convs"></div>
     <div id="chat-list"></div>
     <aside id="chat-side">
       <div id="chat-frame"><img id="chat-shot-img" alt=""></div>
+      <!-- the clock, once there is one: a strip of the finished video with every
+           message marked on it and a handle you drag. Before `render` has run there
+           are no timings to show, so it stays hidden rather than lying about them. -->
+      <div id="chat-time" hidden><div id="chat-track"><div id="chat-head"></div></div>
+        <span class="dim" id="chat-clock"></span></div>
+      <div id="chat-set" hidden></div>
       <div id="chat-cast"></div>
     </aside>
   </div>

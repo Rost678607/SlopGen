@@ -3369,7 +3369,7 @@ RU.update({
     "web.chat.add": "＋ сообщение",
     "web.chat.after": "＋ ниже",
     "web.chat.drop": "убрать",
-    "web.chat.split": "новый кусок отсюда",
+    "web.chat.split": "разрезать здесь",
     "web.chat.who": "от кого",
     "web.chat.answers": "отвечает на",
     "web.chat.noreply": "— никому —",
@@ -3382,7 +3382,7 @@ RU.update({
     "web.chat.excerpt": "кусок",
     "web.chat.cleared": "экран чистится",
     "web.chat.lines": "сообщений",
-    "web.chat.excerpts": "куска",
+    "web.chat.excerpts": "переписок",
     "web.chat.nobody": "—",
     "web.chat.cast": "кто в переписке",
     "web.chat.silent": "не читается",
@@ -3408,7 +3408,7 @@ EN.update({
     "web.chat.add": "＋ a message",
     "web.chat.after": "＋ below",
     "web.chat.drop": "take it out",
-    "web.chat.split": "a new excerpt from here",
+    "web.chat.split": "cut it in two here",
     "web.chat.who": "from",
     "web.chat.answers": "answers",
     "web.chat.noreply": "— nobody —",
@@ -3435,4 +3435,44 @@ EN.update({
     "web.chat.block.empty": "there is no conversation yet",
     "web.chat.block.blank_line": "a message with nothing in it",
     "web.chat.block.reactions_in_a_thread": "reddit has no reactions — these will be lost",
+})
+RU.update({
+    "web.chat.pieces": "переписки",
+    "web.chat.addconv": "＋ переписка",
+    "web.chat.join": "склеить",
+    "web.chat.untitled": "без названия",
+    "web.chat.noconv": "Ни одной переписки. Нажми «＋ переписка» или вставь текстом.",
+    "web.chat.wassaid": "было",
+    "web.chat.block.empty_conversation": "есть пустая переписка",
+    "web.f.want": "переписок на ролик",
+})
+EN.update({
+    "web.chat.pieces": "conversations",
+    "web.chat.addconv": "＋ a conversation",
+    "web.chat.join": "join up",
+    "web.chat.untitled": "unnamed",
+    "web.chat.noconv": "No conversations yet. Press “＋ a conversation”, or paste one in.",
+    "web.chat.wassaid": "was",
+    "web.chat.block.empty_conversation": "a conversation with nothing in it",
+    "web.f.want": "conversations per video",
+})
+RU.update({
+    "web.cancel": "отмена",
+    "web.f.swipes": "свайп между переписками, с",
+    "web.f.chatname": "название чата по умолчанию",
+    "web.chat.settings": "настройки ролика",
+    "web.chat.settings.note": "Это настройки ЭТОГО ролика. Как только тронешь любую, "
+                              "ролик перестаёт следовать набору настроек, из которого "
+                              "его запустили, — иначе правка здесь меняла бы и все "
+                              "остальные ролики на том же наборе.",
+})
+EN.update({
+    "web.cancel": "cancel",
+    "web.f.swipes": "swipe between conversations, s",
+    "web.f.chatname": "default chat name",
+    "web.chat.settings": "this video's settings",
+    "web.chat.settings.note": "These belong to THIS video. Touch any of them and it "
+                              "stops following the preset it was started from — "
+                              "otherwise an edit here would change every other video "
+                              "on that preset too.",
 })

@@ -1550,13 +1550,6 @@ const FORMS = {
           }
         ],
         {
-          "f": "chat_from",
-          "kind": "text",
-          "rows": 1,
-          "ph": "web.a.chatfrom",
-          "l": "web.f.chatfrom"
-        },
-        {
           "f": "chat_voice",
           "kind": "select",
           "cls": "f-chatvoice",
@@ -1707,6 +1700,14 @@ const FORMS = {
       "cls": [],
       "title": "web.card.amount",
       "rows": [
+        {
+          "f": "want",
+          "kind": "number",
+          "min": "1",
+          "max": "12",
+          "value": "1",
+          "l": "web.f.want"
+        },
         {
           "f": "count",
           "kind": "number",
@@ -1997,7 +1998,12 @@ const FORMS = {
           "inline": true,
           "l": "web.f.dry"
         }
-      ]
+      ],
+      "go2": {
+        "id": "c-by-hand-go",
+        "l": "web.f.byhandgo",
+        "cls": "ghost big-go"
+      }
     }
   ]
 };

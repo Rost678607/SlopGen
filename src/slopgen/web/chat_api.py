@@ -28,8 +28,12 @@ from fastapi import Cookie, HTTPException, Request
 from fastapi.responses import FileResponse
 from starlette.concurrency import run_in_threadpool
 
+from PIL import Image
+
 from ..chat.draw import Canvas
-from ..config import ConfigStore, PersonaConfig
+from pydantic import ValidationError
+
+from ..config import ChatConfig, ConfigStore, PersonaConfig
 from ..config.loader import write_config
 from ..pipeline import chatroom
 from ..pipeline.checkpoint import Checkpoint
@@ -37,6 +41,35 @@ from ..pipeline.context import AppContext
 from ..pipeline.stages import chat_render
 
 log = logging.getLogger(__name__)
+
+
+# What the room may change about the run, and how each control is drawn. Written down
+# rather than derived from `ChatConfig`, for the reason `montage_api.SETTINGS` is: the
+# model knows the types and nothing about which of them are worth a control, which ones
+# only make sense for one skin, or what order they read in. The browser knows the six
+# kinds and nothing about what any particular setting means, so adding one here is the
+# whole of adding one.
+SHEET: list[dict] = [
+    {"f": "skin", "kind": "select", "l": "web.f.skin", "opts": "chat_skins"},
+    {"f": "header", "kind": "check", "l": "web.f.chathead"},
+    {"f": "title", "kind": "text", "l": "web.f.chatname"},
+    {"f": "header_avatar", "kind": "select", "l": "web.f.chatavatar", "opts": "avatars",
+     "blank": True},
+    {"f": "me", "kind": "select", "l": "web.f.chatme", "opts": "personas", "blank": True,
+     "when": "telegram"},
+    {"f": "background", "kind": "select", "l": "web.f.chatbg", "opts": "chat_backgrounds",
+     "blank": True, "when": "telegram"},
+    {"f": "scroll", "kind": "select", "l": "web.f.scroll", "opts": "scroll_modes",
+     "opt_l": "scr."},
+    {"f": "roll_s", "kind": "number", "l": "web.f.rolls", "min": 0, "max": 3, "step": 0.05},
+    {"f": "swipe_s", "kind": "number", "l": "web.f.swipes", "min": 0, "max": 3, "step": 0.05},
+    {"f": "gap_s", "kind": "number", "l": "web.f.gaps", "min": 0, "max": 10, "step": 0.1},
+    {"f": "chunk", "kind": "number", "l": "web.f.chunk", "min": 0, "max": 400, "step": 10},
+    {"f": "chunk_min", "kind": "number", "l": "web.f.chunkmin", "min": 0, "max": 800, "step": 10},
+    {"f": "reactions", "kind": "check", "l": "web.f.chatreact"},
+    {"f": "react_s", "kind": "number", "l": "web.f.reacts", "min": 0, "max": 4, "step": 0.1},
+    {"f": "translate", "kind": "check", "l": "web.f.chattr"},
+]
 
 
 def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
@@ -85,11 +118,34 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
         return AppContext(store=store, params=cp.params)
 
     def doc(cp: Checkpoint, i: int, job) -> dict:
-        out = chatroom.read(job, context(cp))
+        ctx = context(cp)
+        out = chatroom.read(job, ctx)
         out["video"] = i
         out["completed"] = cp.completed(i)
         out["stages"] = [name for name, _ in _chain(cp)]
+        out["sheet"] = SHEET
+        out["settings"] = ctx.chat.model_dump(mode="json")
+        # The clock, once there is one. A conversation being built has no timings at
+        # all — they do not exist until something has voiced it and drawn it — so the
+        # room shows a list until then and a timeline afterwards, which is the honest
+        # order and not a limitation to apologise for.
+        out["clock"] = _clock(job)
         return out
+
+    def _clock(job) -> dict:
+        """Where every message lands on the finished video's clock, for the strip the
+        room scrubs along. Empty until the scenes have been laid and voiced."""
+        if not job.scenes:
+            return {"total": 0.0, "marks": []}
+        at, starts = 0.0, []
+        for scene in job.scenes:
+            starts.append(at)
+            at += scene.duration
+        marks = []
+        for n, msg in enumerate(job.messages):
+            if 0 <= msg.scene < len(starts):
+                marks.append({"i": n, "at": starts[msg.scene]})
+        return {"total": at, "marks": marks}
 
     def _chain(cp: Checkpoint):
         from ..pipeline import orchestrator
@@ -145,7 +201,8 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
         guard(slopgen)
         b = await body_of(request)
         cp, i, job = edited(run_or_404(run_id), b)
-        guarded(chatroom.add)(job, int(b.get("at", len(job.messages))),
+        c = int(b.get("c", 0))
+        guarded(chatroom.add)(job, c, int(b.get("at", 1 << 30)),
                               str(b.get("persona", "")), str(b.get("text", "")))
         return answer(cp, i, job)
 
@@ -160,16 +217,16 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
         guard(slopgen)
         b = await body_of(request)
         cp, i, job = edited(run_or_404(run_id), b)
-        at = int(b.get("i", -1))
+        c, at = int(b.get("c", 0)), int(b.get("i", -1))
         if "text" in b:
-            guarded(chatroom.set_text)(job, at, str(b["text"]))
+            guarded(chatroom.set_text)(job, c, at, str(b["text"]))
         if "reactions" in b:
-            guarded(chatroom.set_reactions)(job, at, b["reactions"])
+            guarded(chatroom.set_reactions)(job, c, at, b["reactions"])
         fields = {k: b[k] for k in
                   ("persona", "reply_to", "stamp", "nick", "avatar", "score",
                    "clear_before", "pinned") if k in b}
         if fields:
-            guarded(chatroom.edit)(job, at, **fields)
+            guarded(chatroom.edit)(job, c, at, **fields)
         return answer(cp, i, job)
 
     @app.delete("/api/runs/{run_id}/chat/message")
@@ -179,7 +236,7 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
         guard(slopgen)
         b = await body_of(request)
         cp, i, job = edited(run_or_404(run_id), b)
-        guarded(chatroom.drop)(job, int(b.get("i", -1)))
+        guarded(chatroom.drop)(job, int(b.get("c", 0)), int(b.get("i", -1)))
         return answer(cp, i, job)
 
     @app.post("/api/runs/{run_id}/chat/move")
@@ -189,21 +246,72 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
         guard(slopgen)
         b = await body_of(request)
         cp, i, job = edited(run_or_404(run_id), b)
-        guarded(chatroom.move)(job, int(b.get("i", -1)), int(b.get("to", 0)))
+        guarded(chatroom.move)(job, int(b.get("c", 0)), int(b.get("i", -1)),
+                               int(b.get("to", 0)))
         return answer(cp, i, job)
 
-    @app.post("/api/runs/{run_id}/chat/split")
-    async def split_excerpt(run_id: str, request: Request,
-                            slopgen: str | None = Cookie(default=None)) -> dict:
-        """Begin a new excerpt here, or join this one back to the last.
+    # -- the conversations ---------------------------------------------------
 
-        The operation IS the boundary, so pressing it twice puts the boundary back
-        where it was — which is what an operator trying it out expects, and what a
-        separate "join" button would get wrong half the time."""
+    @app.post("/api/runs/{run_id}/chat/conversation")
+    async def add_conversation(run_id: str, request: Request,
+                               slopgen: str | None = Cookie(default=None)) -> dict:
+        """Put another piece of conversation into the video."""
         guard(slopgen)
         b = await body_of(request)
         cp, i, job = edited(run_or_404(run_id), b)
-        guarded(chatroom.split)(job, int(b.get("i", -1)))
+        guarded(chatroom.add_conversation)(job, int(b.get("at", -1)),
+                                           str(b.get("title", "")))
+        return answer(cp, i, job)
+
+    @app.put("/api/runs/{run_id}/chat/conversation")
+    async def name_conversation(run_id: str, request: Request,
+                                slopgen: str | None = Cookie(default=None)) -> dict:
+        """Name a piece, or record where it came from."""
+        guard(slopgen)
+        b = await body_of(request)
+        cp, i, job = edited(run_or_404(run_id), b)
+        fields = {k: b[k] for k in ("title", "source") if k in b}
+        guarded(chatroom.set_conversation)(job, int(b.get("c", 0)), **fields)
+        return answer(cp, i, job)
+
+    @app.delete("/api/runs/{run_id}/chat/conversation")
+    async def drop_conversation(run_id: str, request: Request,
+                                slopgen: str | None = Cookie(default=None)) -> dict:
+        """Take one piece out, with everything said in it."""
+        guard(slopgen)
+        b = await body_of(request)
+        cp, i, job = edited(run_or_404(run_id), b)
+        guarded(chatroom.drop_conversation)(job, int(b.get("c", 0)))
+        return answer(cp, i, job)
+
+    @app.post("/api/runs/{run_id}/chat/conversation/move")
+    async def move_conversation(run_id: str, request: Request,
+                                slopgen: str | None = Cookie(default=None)) -> dict:
+        """Show this piece earlier or later in the video."""
+        guard(slopgen)
+        b = await body_of(request)
+        cp, i, job = edited(run_or_404(run_id), b)
+        guarded(chatroom.move_conversation)(job, int(b.get("c", 0)), int(b.get("to", 0)))
+        return answer(cp, i, job)
+
+    @app.post("/api/runs/{run_id}/chat/split")
+    async def split_conversation(run_id: str, request: Request,
+                                 slopgen: str | None = Cookie(default=None)) -> dict:
+        """Cut this conversation in two here; the tail becomes the next piece."""
+        guard(slopgen)
+        b = await body_of(request)
+        cp, i, job = edited(run_or_404(run_id), b)
+        guarded(chatroom.split)(job, int(b.get("c", 0)), int(b.get("i", -1)))
+        return answer(cp, i, job)
+
+    @app.post("/api/runs/{run_id}/chat/join")
+    async def join_conversation(run_id: str, request: Request,
+                                slopgen: str | None = Cookie(default=None)) -> dict:
+        """Fold this piece back into the one before it — the undo of a split."""
+        guard(slopgen)
+        b = await body_of(request)
+        cp, i, job = edited(run_or_404(run_id), b)
+        guarded(chatroom.join)(job, int(b.get("c", 0)))
         return answer(cp, i, job)
 
     @app.post("/api/runs/{run_id}/chat/import")
@@ -213,7 +321,11 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
         guard(slopgen)
         b = await body_of(request)
         cp, i, job = edited(run_or_404(run_id), b)
-        n = guarded(chatroom.import_lines)(job, str(b.get("text", "")),
+        c = int(b.get("c", 0))
+        if not job.conversations:
+            chatroom.add_conversation(job)
+            c = 0
+        n = guarded(chatroom.import_lines)(job, c, str(b.get("text", "")),
                                            int(b.get("at", -1)))
         out = answer(cp, i, job)
         out["added"] = n
@@ -266,34 +378,111 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
         store.personas[name] = card
         return doc(cp, i, job)
 
+    @app.put("/api/runs/{run_id}/chat/settings")
+    async def set_settings(run_id: str, request: Request,
+                           slopgen: str | None = Cookie(default=None)) -> dict:
+        """Change how this run draws its conversations, with the frame in front of you.
+
+        Onto the run's own `manual_chat` rather than onto the preset it may have been
+        started from: a preset is a thing many videos share, and changing one of them
+        from inside one video would change the others behind their operators' backs. So
+        the first edit here copies the preset into the run and edits the copy, and the
+        run stops following that preset — which is what "this video's settings" means
+        and what the sheet says over them."""
+        guard(slopgen)
+        run = run_or_404(run_id)
+        b = await body_of(request)
+        cp, i, job = open_job(run, int(b.get("video", 0)))
+        known = {row["f"] for row in SHEET}
+        fields = {k: v for k, v in b.items() if k in known}
+        if fields:
+            base = context(cp).chat.model_dump(mode="json")
+            base.update(fields)
+            try:
+                fresh = ChatConfig.model_validate(base)
+            except ValidationError as e:
+                raise HTTPException(status_code=422,
+                                    detail=f"chat settings: {e.errors()[0]['msg']}")
+            run.params.manual_chat = fresh
+            cp.data["params"]["manual_chat"] = fresh.model_dump(mode="json")
+            cp.save()
+        return doc(cp, i, job)
+
     # -- what it will look like ---------------------------------------------
 
     @app.get("/api/runs/{run_id}/chat/preview")
-    async def preview(run_id: str, video: int = 0, at: int = -1,
+    async def preview(run_id: str, video: int = 0, at: int = -1, t: float = -1.0,
                       slopgen: str | None = Cookie(default=None)):
-        """One frame of the conversation, as it stands when message `at` has arrived.
+        """One frame, asked for in whichever of the two ways there is an answer to.
 
-        Drawn by the renderer that will draw the video, head-on: the same skin, the
-        same fonts, the same wallpaper, the same initials disc for whoever has no
-        picture. The one thing it does not reproduce is the clock — a preview has no
-        word timings to break a long message on, so every message in it is whole,
-        which is also what makes it answerable before anything has been voiced."""
+        `t` is a MOMENT of the finished video, and it is the honest preview — the
+        state that is up then, cropped where its window has travelled to by then, with
+        its own header bar on it. It needs the drawing to have happened, so it is what
+        the room offers once `render` has run and the timeline exists.
+
+        `at` is a MESSAGE, and it is what there is before that. A conversation being
+        built has no timings at all — they do not exist until something has voiced it
+        — so this lays the conversation out as far as that message and paints the
+        screen it ends on. Every message in it is whole, because there is nothing yet
+        to break a long one on.
+
+        Both go through the code that will draw the video: a preview computed some
+        cheaper second way is a preview that disagrees with the render exactly where
+        it matters."""
         guard(slopgen)
         run = run_or_404(run_id)
         cp, i, job = open_job(run, video)
         if not job.messages:
             raise HTTPException(status_code=404, detail="there is no conversation yet")
         ctx = context(cp)
-        last = len(job.messages) - 1 if at < 0 else max(0, min(at, len(job.messages) - 1))
         out = Path(job.workdir) / "chat" / "preview.png"
         out.parent.mkdir(parents=True, exist_ok=True)
         try:
-            await run_in_threadpool(_draw_preview, job, ctx, last, out)
+            if t >= 0 and job.chat_states:
+                await run_in_threadpool(_frame_at, job, ctx, float(t), out)
+            else:
+                last = (len(job.messages) - 1 if at < 0
+                        else max(0, min(at, len(job.messages) - 1)))
+                await run_in_threadpool(_draw_preview, job, ctx, last, out)
         except Exception as e:  # noqa: BLE001
             log.exception("drawing the chat preview failed")
             raise HTTPException(status_code=502, detail=f"{type(e).__name__}: {e}")
         return FileResponse(out, media_type="image/png",
                             headers={"Cache-Control": "no-store"})
+
+
+def _frame_at(job, ctx: AppContext, when: float, out: Path) -> None:
+    """The frame the finished video shows at `when`, out of the states already drawn.
+
+    The same arithmetic `ffmpeg.make_chat_part` renders with, done once in Pillow: find
+    the state that is up, interpolate its window along the ramp, crop, lay the bar on
+    top. Not a second opinion about what the video looks like — the same numbers,
+    evaluated at one instant — which is why scrubbing is honest and costs no encoder."""
+    cfg = ctx.chat
+    v = ctx.g.video
+    states = job.chat_states
+    at = max(0.0, float(when))
+    st = states[0]
+    for s in states:
+        if s.start <= at + 1e-6:
+            st = s
+        else:
+            break
+    img = Image.open(st.path).convert("RGB")
+    span = max(cfg.swipe_s if st.swipe else cfg.roll_s, 1e-3)
+    k = min(max((at - st.start) / span, 0.0), 1.0)
+    y = st.from_y + (st.to_y - st.from_y) * k
+    x = (v.width * k) if st.swipe else 0.0
+    x = min(max(x, 0), max(img.width - v.width, 0))
+    y = min(max(y, 0), max(img.height - v.height, 0))
+    frame = img.crop((int(x), int(y), int(x) + v.width, int(y) + v.height))
+    # A swipe already carries both bars inside the picture; everything else wears its
+    # own as an overlay, exactly as the assembler lays it (see `chat_render`).
+    if st.overlay and not st.swipe and Path(st.overlay).is_file():
+        with Image.open(st.overlay) as bar:
+            bar = bar.convert("RGBA")
+            frame.paste(bar, (0, 0), bar)
+    frame.save(out)
 
 
 def _draw_preview(job, ctx: AppContext, last: int, out: Path) -> None:

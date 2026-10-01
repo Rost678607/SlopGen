@@ -1,30 +1,34 @@
 // The chat room.
 //
 // Every other screen in this page edits what a stage produced. This one edits the
-// thing the video IS: a conversation is not an input to a chat run, it is the run's
-// whole material, and a chat run made by hand starts empty — so this is where the
+// thing the video IS: the conversations are not an input to a chat run, they are the
+// run's whole material, and a run made by hand starts empty — so this is where the
 // video comes into existence rather than where it is adjusted.
 //
-// It is a list and not a timeline, which is the opposite choice from the montage room
-// next door, and for the same reason that room is a timeline: you edit a thing in the
-// shape it has. A conversation is an ordered list of messages, the gestures that
-// matter are "say this instead", "this answers that" and "move this up", and all
-// three survive being typed. What does NOT survive being typed is what it will look
-// like, so the preview is a real frame drawn by the real renderer (`/chat/preview`),
-// one request away whenever the arrangement has changed enough to be worth a look.
+// Three columns, because the thing has three levels and flattening any of them was
+// the first version's mistake. The pieces of conversation the video is made of; the
+// messages of whichever is open; and what it will actually look like. A video is
+// several chats shown one after another with a swipe between them — that is the
+// format, not an edge case — so the pieces are objects in a list you add to and
+// reorder, not a boundary flag buried in the messages.
 //
-// Every edit is one request and the reply is the WHOLE document, as it is next door
-// and for a sharper reason: a reply points at a message by index, so dropping or
-// moving one rewrites pointers all over the list, and a screen patching one row would
-// be showing a conversation that no longer exists.
+// Every edit is one request and the reply is the WHOLE document, for a sharp reason:
+// a reply points at a message by index, so dropping or moving one rewrites pointers
+// all over that conversation, and a screen patching one row would be showing
+// something that no longer exists.
 
 let CHAT = null;          // {id, title, video, doc}
-let chatSel = -1;         // which message is open for editing, by index
-const chatDrafts = new Map();  // typed-but-not-saved text, by index
+let chatConv = 0;         // which conversation is open
+let chatSel = -1;         // which message is open for editing, by index within it
+const chatDrafts = new Map();  // typed-but-not-saved text, keyed "c:i"
+let chatOpts = null;      // /api/options, for the lists the settings sheet offers
+let chatAt = -1;          // where the playhead is, in seconds; -1 = follow the selection
 
 const cq = (s) => document.querySelector(s);
-const chatMsg = (i) => (CHAT && CHAT.doc.messages[i]) || null;
-const chatDraft = (m) => (chatDrafts.has(m.i) ? chatDrafts.get(m.i) : m.text);
+const chatConvs = () => (CHAT && CHAT.doc.conversations) || [];
+const chatActive = () => chatConvs()[chatConv] || null;
+const draftKey = (i) => `${chatConv}:${i}`;
+const chatDraft = (m) => (chatDrafts.has(draftKey(m.i)) ? chatDrafts.get(draftKey(m.i)) : m.text);
 
 // ---------------------------------------------------------------- opening it
 
@@ -34,8 +38,12 @@ async function openChat(id, title, video = 0) {
     d = await api(`/api/runs/${id}/chat?video=${video}`);
   } catch (e) { return say(e.message, true); }
   CHAT = { id, title, video, doc: d };
+  chatConv = 0;
   chatSel = -1;
+  chatAt = -1;
   chatDrafts.clear();
+  // the lists the settings sheet offers are the start form's own, fetched once
+  if (!chatOpts) { try { chatOpts = await api("/api/options"); } catch (e) { chatOpts = {}; } }
   cq("#chat-title").textContent = title;
   renderChat();
   cq("#chat").hidden = false;
@@ -48,12 +56,9 @@ function closeChat() {
   loadRuns();
 }
 
-// One request, one whole document back. `quiet` is for the edits that happen while
-// somebody is typing elsewhere on the screen — it redraws the list without stealing
-// the caret back to the top.
-async function chatDo(path, opts = {}, quiet = false) {
+async function chatDo(path, opts = {}) {
   if (!CHAT) return null;
-  const body = Object.assign({ video: CHAT.video }, opts.body || {});
+  const body = Object.assign({ video: CHAT.video, c: chatConv }, opts.body || {});
   try {
     const d = await api(`/api/runs/${CHAT.id}/chat${path}`, {
       method: opts.method || "POST",
@@ -61,50 +66,96 @@ async function chatDo(path, opts = {}, quiet = false) {
       body: JSON.stringify(body),
     });
     CHAT.doc = d;
-    if (!quiet) renderChat();
+    if (chatConv >= d.conversations.length) chatConv = Math.max(0, d.conversations.length - 1);
+    renderChat();
     return d;
   } catch (e) { say(e.message, true); return null; }
+}
+
+// Re-read the document without losing where you were. `openChat` resets the selection
+// and the drafts, which is right when the room opens and wrong after a stage has run
+// underneath you — the line you were looking at is still the line you were looking at.
+async function reloadChat() {
+  if (!CHAT) return;
+  try {
+    CHAT.doc = await api(`/api/runs/${CHAT.id}/chat?video=${CHAT.video}`);
+  } catch (e) { return say(e.message, true); }
+  if (chatConv >= chatConvs().length) chatConv = Math.max(0, chatConvs().length - 1);
+  const conv = chatActive();
+  if (!conv || chatSel >= conv.messages.length) chatSel = -1;
+  renderChat();
 }
 
 // ---------------------------------------------------------------- drawing it
 
 function renderChat() {
   if (!CHAT) return;
-  const d = CHAT.doc;
   renderChatStages();
+  renderChatConvs();
   renderChatCast();
-  cq("#chat-state").textContent = chatState(d);
+  renderChatClock();
+  if (!cq("#chat-set").hidden) renderChatSettings();
+  cq("#chat-state").textContent = chatState();
+  const conv = chatActive();
   const list = cq("#chat-list");
-  list.innerHTML = d.messages.map(chatRowHTML).join("")
-    + `<button class="ghost chat-add" data-add="${d.messages.length}">${
+  if (!conv) {
+    list.innerHTML = `<p class="dim chat-empty">${esc(lab("web.chat.noconv", ""))}</p>`;
+    return;
+  }
+  list.innerHTML =
+    `<div class="chat-convhead">
+       <input id="chat-convtitle" value="${esc(conv.title)}" placeholder="${
+         esc(lab("web.chat.untitled", "без названия"))}">
+       ${conv.source ? `<span class="dim">${esc(conv.source)}</span>` : ""}
+     </div>`
+    + conv.messages.map(chatRowHTML).join("")
+    + `<button class="ghost chat-add" data-add="${conv.messages.length}">${
          esc(lab("web.chat.add", "＋ сообщение"))}</button>`;
-  if (!d.messages.length)
-    list.insertAdjacentHTML("afterbegin",
+  if (!conv.messages.length)
+    list.insertAdjacentHTML("beforeend",
       `<p class="dim chat-empty">${esc(lab("web.chat.empty", ""))}</p>`);
 }
 
-function chatState(d) {
-  const bits = [`${d.messages.length} ${lab("web.chat.lines", "сообщений")}`];
-  if (d.excerpts > 1) bits.push(`${d.excerpts} ${lab("web.chat.excerpts", "куска")}`);
-  // what stands between this conversation and a video, said on the screen rather
+function chatState() {
+  const d = CHAT.doc;
+  const msgs = chatConvs().reduce((n, c) => n + c.lines, 0);
+  const bits = [`${chatConvs().length} ${lab("web.chat.excerpts", "переписок")}`,
+                `${msgs} ${lab("web.chat.lines", "сообщений")}`];
+  // what stands between these conversations and a video, said on the screen rather
   // than three stages later in a traceback
   for (const why of d.blocking || []) bits.push(lab("web.chat.block." + why, why));
   return bits.join(" · ");
 }
 
+// The pieces the video is made of, in the order they are shown. Selecting one opens
+// it; everything else on the screen is about whichever is open.
+function renderChatConvs() {
+  cq("#chat-convs").innerHTML =
+    `<h4>${esc(lab("web.chat.pieces", "переписки"))}</h4>` +
+    chatConvs().map((c) => `
+      <div class="chat-conv${c.c === chatConv ? " on" : ""}" data-conv="${c.c}">
+        <b>${esc(c.title || `${lab("web.chat.excerpt", "кусок")} ${c.c + 1}`)}</b>
+        <span class="dim">${c.lines}</span>
+        <span class="grow"></span>
+        <button class="ghost" data-cact="up" data-c="${c.c}" title="↑">↑</button>
+        <button class="ghost" data-cact="down" data-c="${c.c}" title="↓">↓</button>
+        ${c.c ? `<button class="ghost" data-cact="join" data-c="${c.c}">${
+          esc(lab("web.chat.join", "склеить"))}</button>` : ""}
+        <button class="ghost danger" data-cact="drop" data-c="${c.c}">✕</button>
+      </div>`).join("") +
+    `<button class="ghost" data-cact="add">${esc(lab("web.chat.addconv", "＋ переписка"))}</button>`;
+}
+
 function chatRowHTML(m) {
-  const d = CHAT.doc;
+  const conv = chatActive();
   const open = m.i === chatSel;
-  const head = [];
-  if (m.excerpt !== (d.messages[m.i - 1] || { excerpt: m.excerpt }).excerpt || m.i === 0)
-    head.push(`<div class="chat-seam">${esc(lab("web.chat.excerpt", "кусок"))} ${m.excerpt + 1}</div>`);
-  else if (m.clear_before)
-    head.push(`<div class="chat-seam dim">${esc(lab("web.chat.cleared", "экран чистится"))}</div>`);
-  const reply = m.reply_to >= 0 && d.messages[m.reply_to]
-    ? `<span class="chat-reply">↳ ${esc(trim(d.messages[m.reply_to].text, 40))}</span>` : "";
+  const head = m.clear_before
+    ? `<div class="chat-seam dim">${esc(lab("web.chat.cleared", "экран чистится"))}</div>` : "";
+  const reply = m.reply_to >= 0 && conv.messages[m.reply_to]
+    ? `<span class="chat-reply">↳ ${esc(trim(conv.messages[m.reply_to].text, 40))}</span>` : "";
   const react = (m.reactions || [])
     .map(([e, n]) => `<span class="chat-react">${esc(e)}${n > 1 ? n : ""}</span>`).join("");
-  return head.join("") + `
+  return head + `
 <div class="chat-row${open ? " on" : ""}${m.pinned ? " pinned" : ""}" data-i="${m.i}">
   <div class="chat-line" data-open="${m.i}">
     <b class="chat-who">${esc(m.nick || m.persona || lab("web.chat.nobody", "—"))}</b>
@@ -122,17 +173,20 @@ const trim = (s, n) => (s || "").length > n ? (s || "").slice(0, n - 1) + "…" 
 // controls is a list nobody can read down.
 function chatEditHTML(m) {
   const d = CHAT.doc;
+  const conv = chatActive();
   const who = d.cast.map((c) => c.name);
   if (m.persona && !who.includes(m.persona)) who.push(m.persona);
   const opts = (list, value) => list.map((v) =>
     `<option value="${esc(v)}"${v === value ? " selected" : ""}>${esc(v || "—")}</option>`).join("");
   const answers = [`<option value="-1">${esc(lab("web.chat.noreply", "— никому —"))}</option>`]
-    .concat(d.messages.filter((o) => o.i !== m.i).map((o) =>
+    .concat(conv.messages.filter((o) => o.i !== m.i).map((o) =>
       `<option value="${o.i}"${o.i === m.reply_to ? " selected" : ""}>${
         esc(`${o.persona}: ${trim(o.text, 30)}`)}</option>`)).join("");
   return `
 <div class="chat-edit">
   <textarea class="chat-area" data-text="${m.i}" rows="3">${esc(chatDraft(m))}</textarea>
+  ${m.source_text ? `<p class="dim chat-src">${esc(lab("web.chat.wassaid", "было"))}: ${
+    esc(trim(m.source_text, 180))}</p>` : ""}
   <div class="row2">
     <label>${esc(lab("web.chat.who", "от кого"))}
       <select data-f="persona" data-i="${m.i}">${opts([""].concat(who), m.persona)}</select></label>
@@ -158,7 +212,7 @@ function chatEditHTML(m) {
   <div class="chat-acts">
     <button class="ghost" data-act="up" data-i="${m.i}">↑</button>
     <button class="ghost" data-act="down" data-i="${m.i}">↓</button>
-    <button class="ghost" data-act="split" data-i="${m.i}">${esc(lab("web.chat.split", "новый кусок отсюда"))}</button>
+    <button class="ghost" data-act="split" data-i="${m.i}">${esc(lab("web.chat.split", "разрезать здесь"))}</button>
     <button class="ghost" data-act="after" data-i="${m.i}">${esc(lab("web.chat.after", "＋ ниже"))}</button>
     <span class="grow"></span>
     <button class="ghost danger" data-act="drop" data-i="${m.i}">${esc(lab("web.chat.drop", "убрать"))}</button>
@@ -166,9 +220,9 @@ function chatEditHTML(m) {
 </div>`;
 }
 
-// Who is in this conversation, and whether they are anybody outside it. A name with a
-// card behind it has a picture and a voice that survive into the next video; one
-// without is just a name on a bubble, and the button says which.
+// Who is in the video, and whether they are anybody outside it. A name with a card
+// behind it has a picture and a voice that survive into the next video; one without is
+// just a name on a bubble, and the button says which.
 function renderChatCast() {
   const d = CHAT.doc;
   cq("#chat-cast").innerHTML =
@@ -196,16 +250,169 @@ function renderChatStages() {
       esc(word(s))}</button>`).join("");
 }
 
-async function shootChat(at = -1) {
-  if (!CHAT || !CHAT.doc.messages.length) return;
-  const img = cq("#chat-shot-img");
-  img.src = tokd(`/api/runs/${CHAT.id}/chat/preview?video=${CHAT.video}&at=${at}&t=${Date.now()}`);
+// The frame as it stands at one message of the open conversation. `at` is counted
+// across the whole video, because that is what the renderer lays out — the room knows
+// the conversations, the drawing knows only the order they are shown in.
+function shootChat(at = -1) {
+  if (!CHAT) return;
+  chatAt = -1;
+  const before = chatConvs().slice(0, chatConv).reduce((n, c) => n + c.lines, 0);
+  const n = at < 0 ? before + ((chatActive() || { lines: 0 }).lines - 1) : before + at;
+  if (n < 0) return;
+  cq("#chat-shot-img").src =
+    tokd(`/api/runs/${CHAT.id}/chat/preview?video=${CHAT.video}&at=${n}&t=${Date.now()}`);
+}
+
+// The settings, with the frame in front of you. Drawn from what the server says it
+// will accept (`chat_api.SHEET`), so a setting added there reaches this screen without
+// touching this file — the browser knows the four kinds of control and nothing about
+// what any of them mean.
+function renderChatSettings() {
+  const d = CHAT.doc;
+  const v = d.settings || {};
+  const rows = (d.sheet || []).filter(
+    (r) => !r.when || r.when === v.skin).map((r) => {
+    const val = v[r.f];
+    if (r.kind === "check")
+      return `<label class="inline"><input type="checkbox" data-s="${r.f}"${
+        val ? " checked" : ""}> ${esc(lab(r.l, r.f))}</label>`;
+    if (r.kind === "number")
+      return `<label>${esc(lab(r.l, r.f))}<input type="number" data-s="${r.f}"
+        min="${r.min}" max="${r.max}" step="${r.step || 1}" value="${esc(String(val))}"></label>`;
+    if (r.kind === "select") {
+      const list = (r.blank ? [""] : []).concat(chatOpts[r.opts] || []);
+      const word = (o) => (r.opt_l ? lab(r.opt_l + o, o) : (o || lab("w.none", "— нет —")));
+      return `<label>${esc(lab(r.l, r.f))}<select data-s="${r.f}">${list.map((o) =>
+        `<option value="${esc(o)}"${o === val ? " selected" : ""}>${esc(word(o))}</option>`
+      ).join("")}</select></label>`;
+    }
+    return `<label>${esc(lab(r.l, r.f))}<input data-s="${r.f}" value="${esc(String(val || ""))}"></label>`;
+  });
+  cq("#chat-set").innerHTML =
+    `<h4>${esc(lab("web.chat.settings", "настройки ролика"))}</h4>` + rows.join("") +
+    `<p class="dim">${esc(lab("web.chat.settings.note", ""))}</p>`;
+}
+
+// The clock. Hidden until there is one — a conversation being built has no timings at
+// all, and a strip pretending otherwise would be the one control on this screen that
+// lies. Every message is a tick and every swipe is a brighter one, because what you
+// scrub for is usually a seam.
+function renderChatClock() {
+  const c = (CHAT.doc.clock || { total: 0, marks: [] });
+  const box = cq("#chat-time");
+  box.hidden = !(c.total > 0);
+  if (box.hidden) return;
+  const track = cq("#chat-track");
+  // where one conversation gives way to the next, by the video's own numbering
+  const seams = new Set();
+  let n = 0;
+  for (const conv of CHAT.doc.conversations || []) {
+    if (n) seams.add(n);
+    n += conv.lines;
+  }
+  track.querySelectorAll(".mark").forEach((m) => m.remove());
+  for (const m of c.marks) {
+    const el = document.createElement("div");
+    el.className = "mark" + (seams.has(m.i) ? " swipe" : "");
+    el.style.left = `${(m.at / c.total) * 100}%`;
+    track.appendChild(el);
+  }
+  chatHead(chatAt < 0 ? 0 : chatAt);
+}
+
+// Named `chatHead` rather than the obvious thing: the montage room already has a
+// function of that obvious name and loads after this file, so the plain one silently
+// became ITS playhead — the strip here moved nothing and said nothing, with no error
+// anywhere. All three rooms share one global scope, so everything in this file is
+// named as if the other two existed, because they do.
+function chatHead(at) {
+  const c = CHAT.doc.clock || { total: 0 };
+  if (!(c.total > 0)) return;
+  const k = Math.min(Math.max(at / c.total, 0), 1);
+  cq("#chat-head").style.left = `${k * 100}%`;
+  cq("#chat-clock").textContent = `${at.toFixed(2)} / ${c.total.toFixed(1)}s`;
 }
 
 // ---------------------------------------------------------------- the gestures
 
 cq("#chat-close").onclick = closeChat;
-cq("#chat-shot").onclick = () => shootChat(chatSel);
+cq("#chat-shot").onclick = () => (chatAt >= 0 ? shootAt(chatAt) : shootChat(chatSel));
+cq("#chat-settings").onclick = () => {
+  const box = cq("#chat-set");
+  box.hidden = !box.hidden;
+  if (!box.hidden) renderChatSettings();
+};
+
+cq("#chat-set").addEventListener("change", async (e) => {
+  const el = e.target.closest("[data-s]");
+  if (!el) return;
+  const value = el.type === "checkbox" ? el.checked
+    : (el.type === "number" ? +el.value : el.value);
+  await chatDo("/settings", { method: "PUT", body: { [el.dataset.s]: value } });
+  // Back to the live preview, whatever the playhead was on. The frames behind the
+  // timeline are the ones ALREADY DRAWN, so after a change of skin they show the old
+  // one — a picture that contradicts the control you just moved. The message preview
+  // is laid fresh on every request and therefore tells the truth; the timeline starts
+  // telling it again when `рисование` has run.
+  shootChat(chatSel);
+});
+
+// Scrubbing. The frame comes out of the states already drawn, interpolated at that
+// instant by the very arithmetic the renderer uses, so it costs no encoder and cannot
+// disagree with the video.
+function scrubTo(e) {
+  const c = CHAT.doc.clock || { total: 0 };
+  if (!(c.total > 0)) return;
+  const box = cq("#chat-track").getBoundingClientRect();
+  chatAt = Math.min(Math.max((e.clientX - box.left) / box.width, 0), 1) * c.total;
+  chatHead(chatAt);
+}
+
+cq("#chat-track").addEventListener("pointerdown", (e) => {
+  cq("#chat-track").setPointerCapture(e.pointerId);
+  scrubTo(e);
+});
+cq("#chat-track").addEventListener("pointermove", (e) => {
+  if (e.buttons) scrubTo(e);
+});
+cq("#chat-track").addEventListener("pointerup", (e) => { scrubTo(e); shootAt(chatAt); });
+
+function shootAt(at) {
+  if (!CHAT) return;
+  cq("#chat-shot-img").src = tokd(
+    `/api/runs/${CHAT.id}/chat/preview?video=${CHAT.video}&t=${at.toFixed(3)}&x=${Date.now()}`);
+}
+
+cq("#chat-convs").addEventListener("click", async (e) => {
+  const act = e.target.closest("[data-cact]");
+  if (act) {
+    const c = +act.dataset.c;
+    const what = act.dataset.cact;
+    if (what === "add") {
+      const d = await chatDo("/conversation", { body: { at: -1 } });
+      if (d) { chatConv = d.conversations.length - 1; chatSel = -1; renderChat(); }
+    } else if (what === "drop") {
+      chatSel = -1;
+      await chatDo("/conversation", { method: "DELETE", body: { c } });
+    } else if (what === "join") {
+      chatSel = -1; chatConv = c - 1;
+      await chatDo("/join", { body: { c } });
+    } else if (what === "up" && c > 0) {
+      chatConv = c - 1;
+      await chatDo("/conversation/move", { body: { c, to: c - 1 } });
+    } else if (what === "down") {
+      chatConv = c + 1;
+      await chatDo("/conversation/move", { body: { c, to: c + 1 } });
+    }
+    return shootChat();
+  }
+  const pick = e.target.closest("[data-conv]");
+  if (!pick) return;
+  chatConv = +pick.dataset.conv;
+  chatSel = -1;
+  renderChat();
+  shootChat();
+});
 
 cq("#chat-list").addEventListener("click", async (e) => {
   const open = e.target.closest("[data-open]");
@@ -219,8 +426,8 @@ cq("#chat-list").addEventListener("click", async (e) => {
   const add = e.target.closest("[data-add]");
   if (add) {
     const d = await chatDo("/message", { body: { at: +add.dataset.add, persona: lastWho() } });
-    if (d) { chatSel = d.messages.length - 1; renderChat(); }
-    return;
+    if (d) { chatSel = (chatActive() || { messages: [] }).messages.length - 1; renderChat(); }
+    return shootChat(chatSel);
   }
   const act = e.target.closest("[data-act]");
   if (!act) return;
@@ -229,7 +436,12 @@ cq("#chat-list").addEventListener("click", async (e) => {
   if (what === "drop") { chatSel = -1; await chatDo("/message", { method: "DELETE", body: { i } }); }
   else if (what === "up" && i > 0) { chatSel = i - 1; await chatDo("/move", { body: { i, to: i - 1 } }); }
   else if (what === "down") { chatSel = i + 1; await chatDo("/move", { body: { i, to: i + 1 } }); }
-  else if (what === "split") await chatDo("/split", { body: { i } });
+  else if (what === "split") {
+    chatSel = -1;
+    const was = chatConv;
+    const d = await chatDo("/split", { body: { i } });
+    if (d) { chatConv = was + 1; renderChat(); }
+  }
   else if (what === "after") {
     const d = await chatDo("/message", { body: { at: i + 1, persona: lastWho() } });
     if (d) { chatSel = i + 1; renderChat(); }
@@ -241,40 +453,40 @@ cq("#chat-list").addEventListener("click", async (e) => {
 // and the right one far more often than "nobody": a conversation is written down one
 // exchange at a time and the field is one click from being changed.
 function lastWho() {
-  const d = CHAT.doc;
-  return d.messages.length ? d.messages[d.messages.length - 1].persona : "";
+  const conv = chatActive();
+  return conv && conv.messages.length ? conv.messages[conv.messages.length - 1].persona : "";
 }
 
 // The text box commits on blur, not on every keystroke: the reply is the whole
 // document and a redraw mid-sentence would take the caret with it. The draft survives
-// the redraws in between (see `chatDrafts`), so the only way to lose what you typed is
-// to say so.
+// the redraws in between, so the only way to lose what you typed is to say so.
 cq("#chat-list").addEventListener("input", (e) => {
   const area = e.target.closest("[data-text]");
-  if (area) chatDrafts.set(+area.dataset.text, area.value);
+  if (area) chatDrafts.set(draftKey(+area.dataset.text), area.value);
 });
 
 cq("#chat-list").addEventListener("change", async (e) => {
+  const title = e.target.closest("#chat-convtitle");
+  if (title) return void await chatDo("/conversation", { method: "PUT", body: { title: title.value } });
   const area = e.target.closest("[data-text]");
   if (area) {
     const i = +area.dataset.text;
-    chatDrafts.delete(i);
+    chatDrafts.delete(draftKey(i));
     await chatDo("/message", { method: "PUT", body: { i, text: area.value } });
     return shootChat(chatSel);
   }
   const react = e.target.closest("[data-react]");
   if (react) {
-    const i = +react.dataset.react;
-    await chatDo("/message", { method: "PUT", body: { i, reactions: parseReactions(react.value) } });
+    await chatDo("/message", { method: "PUT",
+      body: { i: +react.dataset.react, reactions: parseReactions(react.value) } });
     return shootChat(chatSel);
   }
   const f = e.target.closest("[data-f]");
   if (!f) return;
-  const i = +f.dataset.i;
   const key = f.dataset.f;
   let value = f.type === "checkbox" ? f.checked : f.value;
   if (key === "reply_to" || key === "score") value = +value;
-  await chatDo("/message", { method: "PUT", body: { i, [key]: value } });
+  await chatDo("/message", { method: "PUT", body: { i: +f.dataset.i, [key]: value } });
   shootChat(chatSel);
 });
 
@@ -297,7 +509,7 @@ cq("#chat-cast").addEventListener("click", async (e) => {
   // four short strings, and a modal with four inputs would be a modal to maintain.
   const voice = prompt(lab("web.chat.ask.voice", "голос (пусто — не читается)"), was.voice || "");
   if (voice === null) return;
-  const avatar = prompt(lab("web.chat.ask.avatar", "аватарка из assets/avatars (без расширения)"), was.avatar || "");
+  const avatar = prompt(lab("web.chat.ask.avatar", "аватарка из assets/avatars"), was.avatar || "");
   if (avatar === null) return;
   await chatDo("/persona", { method: "PUT", body: { name, voice, avatar } });
   shootChat(chatSel);
@@ -315,22 +527,9 @@ cq("#chat-stages").addEventListener("click", async (e) => {
     say(`${word(b.dataset.stage)} ✓`);
   } catch (err) { say(err.message, true); }
   finally { b.disabled = false; }
-  // the stage wrote the job; the room's document is whatever is on it now
   await reloadChat();
   shootChat(chatSel);
 });
-
-// Re-read the document without losing where you were. `openChat` resets the selection
-// and the drafts, which is right when the room opens and wrong after a stage has run
-// underneath you — the line you were looking at is still the line you were looking at.
-async function reloadChat() {
-  if (!CHAT) return;
-  try {
-    CHAT.doc = await api(`/api/runs/${CHAT.id}/chat?video=${CHAT.video}`);
-  } catch (e) { return say(e.message, true); }
-  if (chatSel >= CHAT.doc.messages.length) chatSel = -1;
-  renderChat();
-}
 
 // -- the paste box ---------------------------------------------------------
 

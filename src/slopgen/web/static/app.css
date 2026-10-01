@@ -1306,6 +1306,20 @@ button.danger{border-color:var(--bad);color:var(--bad)}
 #chat header{display:flex;gap:10px;align-items:center;padding:10px 14px;
   border-bottom:1px solid var(--line)}
 #chat-body{flex:1;min-height:0;display:flex;gap:14px;padding:14px;overflow:hidden}
+/* The pieces the video is made of. Narrow on purpose: it is a place to pick from and
+   to reorder, and everything you actually write happens in the column beside it. */
+#chat-convs{width:min(230px,22vw);overflow:auto;display:grid;gap:5px;align-content:start}
+#chat-convs h4{margin:0;font-size:12px;color:var(--dim);text-transform:uppercase;
+  letter-spacing:.06em}
+.chat-conv{display:flex;gap:5px;align-items:center;font-size:13px;cursor:pointer;
+  border:1px solid var(--line);border-radius:7px;padding:5px 7px;background:var(--panel)}
+.chat-conv.on{border-color:var(--accent)}
+.chat-conv b{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chat-conv button{padding:1px 5px;font-size:11px}
+.chat-convhead{display:flex;gap:8px;align-items:center;margin-bottom:2px}
+#chat-convtitle{flex:1;font:inherit;font-size:13px;color:var(--ink);background:var(--bg);
+  border:1px solid var(--line);border-radius:6px;padding:5px 7px}
+.chat-src{margin:0;font-size:12px}
 #chat-list{flex:1;min-width:0;overflow:auto;display:grid;gap:6px;align-content:start}
 #chat-side{width:min(360px,34vw);display:flex;flex-direction:column;gap:12px;overflow:auto}
 #chat-frame{background:#000;border:1px solid var(--line);border-radius:8px;overflow:hidden;
@@ -1336,8 +1350,9 @@ button.danger{border-color:var(--bad);color:var(--bad)}
 .chat-edit label{display:grid;gap:3px;font-size:12px;color:var(--dim)}
 .chat-edit label.inline{display:flex;gap:6px;align-items:center;align-self:end;
   padding-bottom:6px}
-.chat-edit input,.chat-edit select,.chat-area{font:inherit;font-size:13px;color:var(--ink);
-  background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:5px 7px}
+.chat-edit input:not([type=checkbox]),.chat-edit select,.chat-area{font:inherit;
+  font-size:13px;color:var(--ink);background:var(--bg);border:1px solid var(--line);
+  border-radius:6px;padding:5px 7px}
 .chat-area{width:100%;resize:vertical}
 .chat-acts{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
 .chat-acts button{padding:3px 9px;font-size:12.5px}
@@ -1360,3 +1375,24 @@ button.danger{border-color:var(--bad);color:var(--bad)}
 #chat-paste-box h3{margin:0;font-size:15px}
 #chat-paste-box textarea{font:inherit;font-size:13.5px;color:var(--ink);background:var(--bg);
   border:1px solid var(--line);border-radius:6px;padding:8px;resize:vertical}
+
+/* The clock. A strip of the finished video with the messages marked on it — not a
+   waveform and not a list of rows: the question it answers is "what is on screen at
+   this second", and the only gesture is to point at a second. */
+#chat-time{display:flex;gap:8px;align-items:center}
+#chat-track{position:relative;flex:1;height:22px;border:1px solid var(--line);
+  border-radius:6px;background:var(--panel);cursor:pointer;overflow:hidden}
+#chat-track .mark{position:absolute;top:0;bottom:0;width:1px;background:var(--line)}
+#chat-track .mark.swipe{background:var(--accent);width:2px}
+#chat-head{position:absolute;top:0;bottom:0;width:3px;background:var(--accent);
+  border-radius:2px;pointer-events:none}
+#chat-clock{font:12px/1 var(--mono);min-width:72px;text-align:right}
+#chat-set{display:grid;gap:7px;border:1px solid var(--line);border-radius:8px;
+  padding:10px;background:var(--panel)}
+#chat-set h4{margin:0;font-size:12px;color:var(--dim);text-transform:uppercase;
+  letter-spacing:.06em}
+#chat-set label{display:grid;gap:3px;font-size:12px;color:var(--dim)}
+#chat-set label.inline{display:flex;gap:7px;align-items:center}
+#chat-set input:not([type=checkbox]),#chat-set select{font:inherit;font-size:13px;
+  color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:6px;
+  padding:4px 7px}
