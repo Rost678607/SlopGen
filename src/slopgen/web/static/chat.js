@@ -281,7 +281,8 @@ function renderChatSettings() {
         min="${r.min}" max="${r.max}" step="${r.step || 1}" value="${esc(String(val))}"></label>`;
     if (r.kind === "select") {
       const list = (r.blank ? [""] : []).concat(chatOpts[r.opts] || []);
-      const word = (o) => (r.opt_l ? lab(r.opt_l + o, o) : (o || lab("w.none", "— нет —")));
+      const word = (o) => (r.opt_l ? lab(r.opt_l + o, o)
+        : (o || lab(r.blank_l || "w.none", "— нет —")));
       return `<label>${esc(lab(r.l, r.f))}<select data-s="${r.f}">${list.map((o) =>
         `<option value="${esc(o)}"${o === val ? " selected" : ""}>${esc(word(o))}</option>`
       ).join("")}</select></label>`;

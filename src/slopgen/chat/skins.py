@@ -71,13 +71,20 @@ class Skin:
     votes: bool = False  # True = karma instead of reactions (Reddit)
     wallpaper: bool = False  # True = a picture may stand behind the chat (Telegram)
 
-    def at(self, width: int) -> "Skin":
-        """The same design at the frame's real width. Colours and flags are untouched;
-        every length is scaled and rounded, so a 720px render is the same picture and
-        not a different one."""
-        if width == REFERENCE_W:
+    def at(self, width: int, height: int = 0) -> "Skin":
+        """The same design at this frame's size. Colours and flags are untouched; every
+        length is scaled and rounded, so a 720px render is the same picture and not a
+        different one.
+
+        Scaled by the SHORT side and not by the width, which matters the moment the
+        frame is not a phone's. These numbers were read off a 1080-wide portrait
+        screenshot, so scaling a 1920×1080 frame by its width makes every glyph 1.78×
+        and fits three messages on screen — a chat nobody has ever seen. The short side
+        keeps a message the size a message is, and the room left over goes to the
+        margins, which is what a desktop client does with it too."""
+        k = (min(width, height) if height else width) / REFERENCE_W
+        if abs(k - 1.0) < 1e-6:
             return self
-        k = width / REFERENCE_W
         px = {f: int(round(getattr(self, f) * k)) for f in (
             "header_h", "pad_x", "gap", "avatar", "radius", "bubble_pad_x",
             "bubble_pad_y", "indent", "text_px", "name_px", "meta_px")}
@@ -117,8 +124,21 @@ REDDIT = Skin(
 SKINS = {s.key: s for s in (TELEGRAM, DISCORD, REDDIT)}
 
 
-def get(key: str, width: int = REFERENCE_W) -> Skin:
-    return SKINS.get(key, TELEGRAM).at(width)
+def get(key: str, width: int = REFERENCE_W, height: int = 0) -> Skin:
+    return SKINS.get(key, TELEGRAM).at(width, height)
+
+
+def column(skin: Skin, width: int) -> tuple[int, int]:
+    """How wide the conversation itself is, and where it starts.
+
+    A phone's chat is the whole screen. A wide one is a COLUMN down the middle with
+    the wallpaper either side, because that is what every desktop client does and
+    because a bubble stretched across 1920 pixels stops reading as a message. The
+    column is the design's own width at this scale, so the messages are the size they
+    would be on a phone however wide the frame is."""
+    want = int(REFERENCE_W * (skin.text_px / TELEGRAM.text_px)) if skin.text_px else width
+    want = min(width, max(want, REFERENCE_W // 2))
+    return want, (width - want) // 2
 
 
 def compatible(a: str, b: str) -> bool:

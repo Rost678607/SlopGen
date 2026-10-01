@@ -63,6 +63,13 @@ class BgAsset(BaseModel):
     # — which is what a swipe actually is on a phone.
     scroll_from_x: float = 0.0
     scroll_to_x: float = 0.0
+    # -- the split screen ---------------------------------------------------
+    # What plays UNDER the chat, for the format that keeps half the frame moving. The
+    # chat is drawn at `chat_h` and this fills the rest; `start` is the seek into it,
+    # which is the field continuous background mode already uses for exactly this —
+    # each piece reads the next slice, so the action carries instead of restarting.
+    filler: Path | None = None
+    chat_h: int = 0  # how tall the chat half is; 0 = it is the whole frame
     # The client's top bar, drawn once and laid over every frame of the piece. On the
     # asset rather than looked up at render time for the reason `fit` is: by then the
     # conversation is gone, and the assembler is handed a path and a duration.

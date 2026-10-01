@@ -3476,3 +3476,25 @@ EN.update({
                               "otherwise an edit here would change every other video "
                               "on that preset too.",
 })
+RU.update({
+    "web.f.sfx": "звук отправки",
+    "web.f.sfxvol": "громкость звука",
+    "w.sfx.roll": "— как выпадет —",
+    "web.f.aspect": "формат кадра",
+    "web.f.split": "разделённый экран",
+    "web.f.splitclip": "что внизу",
+    "w.clip.roll": "— как выпадет —",
+    "web.f.splitshare": "доля переписки, 0–1",
+    "web.f.splitchange": "менять клип каждые, с",
+})
+EN.update({
+    "web.f.sfx": "send sound",
+    "web.f.sfxvol": "how loud",
+    "w.sfx.roll": "— whatever it rolls —",
+    "web.f.aspect": "frame",
+    "web.f.split": "split screen",
+    "web.f.splitclip": "what plays below",
+    "w.clip.roll": "— whatever it rolls —",
+    "web.f.splitshare": "the chat's share, 0–1",
+    "web.f.splitchange": "change the clip every, s",
+})

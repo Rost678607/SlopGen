@@ -30,7 +30,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 
 from . import fonts, richtext
-from .skins import Skin
+from .skins import Skin, column as skins_column
 
 log = logging.getLogger(__name__)
 
@@ -91,6 +91,12 @@ class Canvas:
                  top_inset: int = 0):
         self.skin = skin
         self.width = width
+        # How wide the conversation itself is, and where it starts. The whole frame on
+        # a phone; a centred column with the ground either side on anything wide (see
+        # `skins.column`). Everything about a message is laid out against these two
+        # numbers and nothing against the frame — except the header bar, which spans
+        # it, as it does in every desktop client.
+        self.column, self.left = skins_column(skin, width)
         self.wallpaper = wallpaper
         # The header is painted over the band and does not scroll, exactly as it does
         # not in a real client — so the conversation has to start below it or its
@@ -151,7 +157,7 @@ class Canvas:
         # parent directly above its own parent.
         if s.tree:
             reply = None
-        limit = int(self.width * s.max_w) - indent - avatar_lane
+        limit = int(self.column * s.max_w) - indent - avatar_lane
         inner = limit - 2 * s.bubble_pad_x
         lines = richtext.wrap(self._probe, text, self.f_text, s.text_px, inner)
 
@@ -186,10 +192,10 @@ class Canvas:
                 h += int(s.meta_px * 1.25)
         w = int(min(max(widest + 2 * s.bubble_pad_x, s.radius * 3), limit))
         if person.mine and s.sides:
-            x1 = self.width - s.pad_x
+            x1 = self.left + self.column - s.pad_x
             x0 = x1 - w
         else:
-            x0 = s.pad_x + indent + avatar_lane
+            x0 = self.left + s.pad_x + indent + avatar_lane
             x1 = x0 + w
         return Block(msg=msg, top=top, height=h, lines=lines, person=person,
                      box=(x0, top, x1, top + h), show_head=show_head, stamp=stamp,
@@ -286,7 +292,7 @@ class Canvas:
             # the thread guides: one vertical rule per level, which is the whole of
             # how a reddit comment says what it is answering
             for level in range(b.depth):
-                gx = s.pad_x + s.indent * level + s.indent // 2
+                gx = self.left + s.pad_x + s.indent * level + s.indent // 2
                 draw.line([(gx, y - s.gap), (gx, bottom)], fill=s.divider, width=max(2, s.indent // 18))
 
         if s.bubbles:
@@ -300,7 +306,7 @@ class Canvas:
 
         head_x = cx
         if b.show_head and s.avatar and not (b.person.mine and s.sides):
-            ax = s.pad_x + (s.indent * b.depth if s.tree else 0)
+            ax = self.left + s.pad_x + (s.indent * b.depth if s.tree else 0)
             self._avatar(img, draw, b.person, (ax, y), s.avatar)
             if s.tree:
                 # reddit stands the picture ON the author line and runs the comment

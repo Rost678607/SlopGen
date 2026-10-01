@@ -38,6 +38,36 @@ and a bar that stayed put while everything under it slid would be the one thing 
 gave the screenshot away. Each conversation carries its own bar for the same reason:
 three threads in one video are three different chats.
 
+**The frame is turned, not the pictures.** A chat may be asked for in 16:9, and a mode
+cannot own that question — the frame is read from `AppContext.g` by the renderer, the
+assembler, the subtitle pass and the delivery, so a mode that turned its own drawings
+sideways would be the only thing in the run that had. So the whole config is handed
+back turned instead, once, and everything downstream is correct without knowing a
+question was asked. The subtitle size turns with it: it is an absolute number of pixels
+tuned against a 1920-tall frame, and the same 110px on a 1080-tall one is a wall. The
+SKIN then scales by the frame's short side rather than its width, and lays the
+conversation in a centred column (`skins.column`) — scaling a 1920×1080 frame by its
+width makes every glyph 1.78× and fits three messages on screen, which is a chat nobody
+has ever seen, and a bubble stretched across 1920 pixels stops reading as a message.
+What is left over goes to the margins, which is what a desktop client does with it too.
+
+**The split screen is two pictures stacked, and the lower one is not footage.** The
+chat is drawn at the height it will occupy and `make_chat_part` builds the other half
+beside it — one `vstack`, one extra input, seeked to where the piece falls on the clock
+so the loop carries across every cut instead of restarting on each message. What plays
+there is named the way a music track is (a file under `assets/footage/`, a folder, or a
+roll) and not chosen by a visuals profile: a profile is a question about what the video
+is ABOUT, answered per beat by a model, and the thing under a chat is a loop nobody is
+meant to look at.
+
+**The send sound is an effect.** `ffmpeg.EffectDraw` has always said that a sound with
+no picture is a whole effect that draws nothing, and the delivery pass has always known
+how to delay one to the moment it goes off — so the pop a message makes is not a second
+audio path, it is `effects.chat_sounds` emitting one draw per message, and everything
+about mixing it was written years before this mode existed. One per MESSAGE and not per
+state: a long message arrives in pieces and a reaction pops after it, and a phone makes
+its noise once, when the message lands.
+
 **A reply is an index, and indices move.** `ChatMsg.reply_to` points into its own
 conversation's list, because what a reply answers is a fact about the conversation it
 was had in — nothing in one piece can answer anything in another — and it has to
@@ -104,6 +134,12 @@ Three ways a run can stop and be picked up again, all on the same checkpoint:
 **Комната переписки** (`chatroom.py`, `web/chat_api.py`) — второй экран в программе, который не форма, и существует он по причине, обратной монтажной. Та правит то, что произвела стадия; эта правит то, чем видео ЯВЛЯЕТСЯ: переписка — не вход прогона, а весь его материал, и сделанный руками чатовый прогон начинается пустым. Поэтому это список, а не таймлайн: вещь правят в той форме, которая у неё есть, и три жеста, которые тут важны (сказать иначе, это отвечает на то, поднять выше), переживают набор с клавиатуры — чего «начать кадр на ВОТ этом слове» не переживает. Чего набор не переживает — это как оно будет выглядеть, поэтому предпросмотр здесь настоящий кадр, нарисованный настоящим рендерером (`Planner.lay_upto`), а не канвасная прикидка, как по соседству: расставлять тут нечего, а вопрос задают ровно один — как это будет выглядеть.
 
 **Единица — переписка, а не сообщение.** Ролик — это несколько кусков переписки, показанных один за другим со свайпом между ними, поэтому кусок — это `job.Conversation` со своим списком и своим названием. Первой попыткой было записать куски числом на каждом сообщении, и она была неверна ровно там, где это важно: когда кусок — это поле, его нечего считать, нечего переставлять и нечего добыть ТРИ штуки, так что ни у комнаты, ни у источников не оказалось объекта, за который можно взяться, а `ChatConfig.want` нечего было считать. Шов рисуется, а не режется: `chat.scroll` помечает первое состояние каждой новой переписки, `chat_render` рисует это состояние как старый экран и новый бок о бок, и окно едет через стык — свайп, то есть тот же кроп, который `make_chat_part` и так делает, только пандус по другой оси. Шапка при этом уезжает ВНУТРИ картинки, а не остаётся накладкой: переход в другой чат двигает весь экран, и шапка, оставшаяся на месте, пока под ней всё едет, была бы единственной деталью, которая выдаёт подделку. У каждой переписки шапка своя по той же причине: три ветки в одном ролике — это три разных чата.
+
+**Поворачивается кадр, а не картинки.** Переписку могут попросить в 16:9, и режим не вправе владеть этим вопросом: кадр читают из `AppContext.g` и рендерер, и сборка, и проход субтитров, и доставка, так что режим, развернувший только собственные рисунки, был бы единственным, кто в прогоне развернулся. Поэтому наружу отдаётся повёрнутый конфиг целиком, один раз, и всё ниже по течению право, не зная, что вопрос задавали. Кегль субтитров поворачивается вместе с ним: это абсолютные пиксели, подобранные под кадр высотой 1920, и те же 110px на кадре высотой 1080 — стена. Скин после этого масштабируется по короткой стороне, а не по ширине, и кладёт переписку в центральную колонку (`skins.column`): масштаб 1920×1080 по ширине делает каждую букву в 1.78 раза крупнее и умещает на экран три сообщения — такого чата никто не видел, — а облачко, растянутое на 1920 пикселей, перестаёт читаться как сообщение. Остаток уходит в поля, ровно как им распоряжается десктопный клиент.
+
+**Разделённый экран — это две картинки друг над другом, и нижняя — не видеоряд.** Чат рисуется той высоты, которую займёт, а вторую половину `make_chat_part` собирает рядом: один `vstack`, один дополнительный вход, с перемоткой туда, где кусок стоит на часах, — чтобы петля ехала через каждый стык, а не начиналась заново на каждом сообщении. То, что там играет, называется так же, как музыкальный трек (файл в `assets/footage/`, папка или жребий), а не выбирается профилем видеоряда: профиль — это вопрос о том, ПРО ЧТО ролик, на который модель отвечает по битам, а под чатом крутится петля, на которую смотреть не предполагается.
+
+**Звук отправки — это эффект.** В `ffmpeg.EffectDraw` с самого начала написано, что звук без картинки — это полноценный эффект, который ничего не рисует, а проход доставки всегда умел задерживать его до момента срабатывания. Поэтому «пик» приходящего сообщения — не второй звуковой тракт, а `effects.chat_sounds`, выдающий по одному draw на сообщение, и всё про их смешивание написано за годы до появления этого режима. По одному на СООБЩЕНИЕ, а не на состояние: длинное сообщение приходит кусками, после него всплывает реакция, а телефон пикает один раз — когда сообщение дошло.
 
 **Ответ — это индекс, а индексы ездят.** `ChatMsg.reply_to` указывает в список СВОЕЙ переписки, потому что «на что отвечает эта реплика» — факт о той переписке, в которой её написали: ничто в одном куске не может отвечать ничему в другом. И он обязан пережить и перенарезку сцен, и переозвучку, и перераскладку. Платой стало то, что каждая операция, двигающая сообщение, тащит указатели за собой (`chatroom._remap`: одна карта «старое место → новое», применённая за один проход по снимку), и то, что ответ на УДАЛЁННОЕ сообщение становится ответом в никуда, а не ответом на то, что въехало в освободившийся слот: первое видно, второе — тихая ложь, подкладывающая чей-то ответ под чужую реплику. Правка переписки намеренно НЕ перераскладывает сцены: `chat_script.lay` строит таймлайн заново и заодно назначает голоса, так что вызов на каждое нажатие клавиши выбрасывал бы звук всех реплик, которых никто не трогал. Сцены появляются, когда оператор жмёт `script`, — ровно как монтажная запускает `tts` руками.
 

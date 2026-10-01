@@ -299,7 +299,9 @@ def make_chat_part(img: Path, dur: float, out: Path, cfg: GlobalConfig,
                    y_from: float = 0.0, y_to: float = 0.0,
                    at: float = 0.0, travel: float = 0.0,
                    header: Path | None = None,
-                   x_from: float = 0.0, x_to: float = 0.0) -> None:
+                   x_from: float = 0.0, x_to: float = 0.0,
+                   filler: Path | None = None, filler_seek: float = 0.0,
+                   chat_h: int = 0) -> None:
     """One piece of the chat track: a drawn state, with the view sliding down it.
 
     Not `make_photo_part` with a move, and the difference is not cosmetic. A
@@ -322,18 +324,37 @@ def make_chat_part(img: Path, dur: float, out: Path, cfg: GlobalConfig,
     # the drawing is made at the frame's width already, but a state may be shorter
     # than the frame before the conversation has filled it — pad rather than scale,
     # so that the first message is the size every later one will be
+    # How tall the chat is. The whole frame unless something is playing under it, in
+    # which case the two halves are built separately and stacked — one picture that
+    # does not move and one that does nothing else.
+    top = chat_h if (filler is not None and 0 < chat_h < v.height) else v.height
     graph = (
-        f"[0:v]pad='max(iw,{v.width})':'max(ih,{v.height})':0:0:color=0x000000,"
-        f"crop={v.width}:{v.height}:'clip({x},0,iw-{v.width})':'clip({y},0,ih-{v.height})',"
+        f"[0:v]pad='max(iw,{v.width})':'max(ih,{top})':0:0:color=0x000000,"
+        f"crop={v.width}:{top}:'clip({x},0,iw-{v.width})':'clip({y},0,ih-{top})',"
         f"setsar=1,fps={v.fps}"
     )
     args = ["-loop", "1", "-i", str(img)]
+    nxt = 1
     if header is not None:
         # the bar is laid on the FRAME and not on the drawing, which is the whole
         # reason it is a second input: in a real client the conversation scrolls
         # underneath it and it does not move
-        graph += "[c];[c][1:v]overlay=0:0"
+        graph += f"[c];[c][{nxt}:v]overlay=0:0"
         args += ["-loop", "1", "-i", str(header)]
+        nxt += 1
+    if top < v.height:
+        # The lower half: whatever loop was pointed at, seeked to where this piece
+        # falls in the video so the action carries across the cut rather than
+        # restarting on every message. `-stream_loop` covers a clip shorter than the
+        # video; `increase`+`crop` fills the strip whatever shape the clip is.
+        seek = ["-ss", f"{filler_seek:.3f}"] if filler_seek > 0 else []
+        args += ["-stream_loop", "-1", *seek, "-i", str(filler)]
+        graph += (
+            f"[top];[{nxt}:v]scale={v.width}:{v.height - top}"
+            f":force_original_aspect_ratio=increase,"
+            f"crop={v.width}:{v.height - top},setsar=1,fps={v.fps}[bot];"
+            f"[top][bot]vstack=inputs=2"
+        )
     graph += "[v]"
     _run([
         "ffmpeg", "-y", *args, "-filter_complex", graph,

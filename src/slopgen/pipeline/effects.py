@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import logging
 import math
+import random
 from dataclasses import dataclass
 
 from ..config.models import (
@@ -1003,6 +1004,13 @@ def settle(job: VideoJob, cards: list[FrameCard]) -> int:
     return dropped
 
 
+# Where the chat mode's send sounds live, and how the choice is spelled. The same
+# three answers the music select has (`stages.assemble.MUSIC_NONE`): "" is a roll over
+# the folder, `none` is silence, anything else is one file.
+CHAT_SFX_DIR = "chat_sfx"
+SOUND_EXTS = {".mp3", ".wav", ".m4a", ".ogg", ".flac"}
+
+
 def for_part(job: VideoJob, ctx, scenes: list) -> list[Draw]:
     """Everything that goes on ONE episode, on that episode's own clock.
 
@@ -1011,17 +1019,63 @@ def for_part(job: VideoJob, ctx, scenes: list) -> list[Draw]:
     the assembling stage because what an effect needs — the world's cards and the
     effects base — is knowledge about configs, and `stages.assemble` is knowledge
     about ffmpeg."""
+    start, end = span_of(job, scenes)
+    out: list[Draw] = chat_sounds(job, ctx, start, end)
     if not job.effect_cues:
-        return []
+        return out
     world = ctx.store.fandoms.get(ctx.params.fandom) if ctx.params.mode == "fandom" else None
     cards = list(world.frames) if world else []
     specs = dict(getattr(ctx.store, "effects", {}) or {})
     if not specs:
-        return []
-    start, end = span_of(job, scenes)
+        return out
     v = ctx.g.video
-    return render(job, cards, specs, start, end,
-                  aspect=(v.width / v.height) if v.height else 9 / 16)
+    return out + render(job, cards, specs, start, end,
+                        aspect=(v.width / v.height) if v.height else 9 / 16)
+
+
+def chat_sounds(job: VideoJob, ctx, start: float, end: float) -> list[Draw]:
+    """The pop a message makes as it lands, one per message, on the part's own clock.
+
+    A sound with no picture is already a whole effect here (`ffmpeg.EffectDraw`: "a
+    `sound` with no `asset` is a whole effect and draws nothing"), and the delivery
+    pass already knows how to delay one to the moment it goes off. So the chat's send
+    sounds are not a second audio path — they are effects that happen to be inaudible
+    to the eye, and everything about mixing them was written years before this mode
+    existed.
+
+    One per MESSAGE and not per state: a long message arrives in pieces and a reaction
+    pops after it, and a phone makes its noise once, when the message lands."""
+    if getattr(ctx.params, "mode", "") != "chat" or not job.chat_states:
+        return []
+    cfg = ctx.chat
+    want = (cfg.sfx or "").strip()
+    if want == "none":
+        return []
+    root = ctx.g.paths.assets / CHAT_SFX_DIR
+    pool = sorted((p for p in root.rglob("*")
+                   if p.is_file() and p.suffix.lower() in SOUND_EXTS),
+                  key=lambda p: p.relative_to(root).as_posix()) if root.is_dir() else []
+    if not pool:
+        return []
+    if want:
+        named = [p for p in pool if p.name == want or p.stem == want]
+        if named:
+            pool = named
+        else:
+            log.warning("chat: the send sound %r is not in assets/%s any more — "
+                        "rolling instead", want, CHAT_SFX_DIR)
+    sound = random.Random(f"chat_sfx|{job.workdir}").choice(pool)
+    volume = min(max(float(cfg.sfx_volume), 0.0), 2.0)
+    seen: set[int] = set()
+    out: list[Draw] = []
+    for st in job.chat_states:
+        if st.msg in seen or not (start - 1e-6 <= st.start <= end + 1e-6):
+            seen.add(st.msg)
+            continue
+        seen.add(st.msg)
+        out.append(Draw(name="chat_sfx", sound=sound, start=st.start - start,
+                        duration=0.0, volume=volume))
+    return out
 
 
 def span_of(job: VideoJob, scenes: list) -> tuple[float, float]:

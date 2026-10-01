@@ -62,6 +62,8 @@ class AppContext:
     # compiled look, filled on first use (see `style_suffix`); None = not yet compiled,
     # "" = nothing to compile. Never set by the caller.
     _style: str | None = None
+    # the run's frame, when it is not the store's (see `g`). Filled on first use.
+    _frame: GlobalConfig | None = None
     # what the run spends, filled in by the client on every call (see `llm/usage`).
     # It lives on the context rather than inside the client because it outlives any
     # one of them: a run may split its stages across two models and still has one bill.
@@ -93,7 +95,35 @@ class AppContext:
 
     @property
     def g(self) -> GlobalConfig:
-        return self.store.global_cfg
+        """The global settings this RUN works under, which is nearly always the
+        store's own.
+
+        The exception is the frame. A chat may be asked for in 16:9 (`ChatConfig`),
+        and a mode cannot own that question: the frame is read from here by the
+        renderer, the assembler, the subtitle pass and the delivery, so a mode that
+        turned its own pictures sideways would be the only thing in the run that had.
+        So the whole config is handed back turned instead, once, and everything
+        downstream is correct without knowing a question was asked.
+
+        The subtitle size turns with it. It is an absolute number of pixels tuned
+        against a 1920-tall frame — 110px there is 6% of the height and a legible
+        caption; the same 110px on a 1080-tall frame is 10% and a wall. Scaling it by
+        the height keeps the caption the size it was designed to look."""
+        base = self.store.global_cfg
+        if self.params.mode != "chat" or self.chat.aspect != "16:9":
+            return base
+        if self._frame is None:
+            v = base.video
+            if v.width >= v.height:  # already wide: nothing to turn
+                self._frame = base
+            else:
+                k = v.width / v.height
+                turned = base.model_copy(deep=True)
+                turned.video.width, turned.video.height = v.height, v.width
+                turned.subtitles.font_size = max(12, int(turned.subtitles.font_size * k))
+                turned.subtitles.outline = max(1, int(round(turned.subtitles.outline * k)))
+                self._frame = turned
+        return self._frame
 
     @property
     def content(self) -> ContentTypeConfig:
@@ -199,7 +229,8 @@ class AppContext:
         render stage and the room can ask (see `slopgen.chat.skins`)."""
         from ..chat import skins
 
-        return skins.get(self.chat.skin, self.g.video.width)
+        v = self.g.video
+        return skins.get(self.chat.skin, v.width, v.height)
 
     def persona(self, name: str) -> PersonaConfig:
         """Who this is, by the name on the message. An unknown name is not an error:

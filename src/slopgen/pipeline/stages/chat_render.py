@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import random
 from pathlib import Path
 
 from PIL import Image
@@ -59,6 +60,51 @@ def asset(ctx: AppContext, folder: str, name: str) -> Path | None:
     return None
 
 
+FOOTAGE_DIR = "footage"
+VIDEO_EXTS = {".mp4", ".mov", ".webm", ".mkv", ".m4v"}
+
+
+def chat_height(ctx: AppContext) -> int:
+    """How tall the chat half is. The whole frame unless something plays under it.
+
+    Even, because an odd height is a frame half of x264's encoders refuse outright,
+    and the one place to round it is the one place that decides it."""
+    v = ctx.g.video
+    if not ctx.chat.split:
+        return v.height
+    share = min(max(float(ctx.chat.split_share), 0.2), 0.95)
+    return max(2, int(v.height * share) // 2 * 2)
+
+
+def fillers(ctx: AppContext) -> list[Path]:
+    """The clips the lower half may play, named the way a music track is.
+
+    A file under `assets/footage/`, a FOLDER of them with a trailing slash, or "" for
+    everything there. Sorted, because the order is what the roll indexes into and a
+    folder listed in whatever order the filesystem hands back would give one machine a
+    different clip from another for the same video."""
+    root = ctx.g.paths.assets / FOOTAGE_DIR
+    if not root.is_dir():
+        return []
+    want = (ctx.chat.split_clip or "").strip()
+    pool = sorted((p for p in root.rglob("*")
+                   if p.is_file() and p.suffix.lower() in VIDEO_EXTS),
+                  key=lambda p: p.relative_to(root).as_posix())
+    if not want:
+        return pool
+    if want.endswith("/"):
+        under = [p for p in pool if p.relative_to(root).as_posix().startswith(want)]
+        if under:
+            return under
+        log.warning("chat: %s holds no clips any more — rolling over all of them", want)
+        return pool
+    named = [p for p in pool if p.relative_to(root).as_posix() == want or p.name == want]
+    if named:
+        return named
+    log.warning("chat: %r is not in assets/footage any more — rolling instead", want)
+    return pool
+
+
 def people_of(job: VideoJob, ctx: AppContext) -> dict[str, Person]:
     """Everybody in the conversation, as the drawing needs them.
 
@@ -96,7 +142,8 @@ def _stamp(canvas: Canvas, state: ChatState, height: int) -> str:
     stage and a changed one cannot collide with the file it replaces."""
     h = hashlib.sha1()
     lo, hi = min(state.from_y, state.to_y), max(state.from_y, state.to_y) + height
-    h.update(f"{canvas.skin.key}|{canvas.width}|{height}|{state.from_y:.1f}|{state.to_y:.1f}"
+    h.update(f"{canvas.skin.key}|{canvas.width}|{canvas.column}|{height}"
+             f"|{state.from_y:.1f}|{state.to_y:.1f}"
              f"|{state.swipe}|{state.msg}".encode())
     for b in canvas.blocks:
         if b.bottom < lo or b.top > hi:
@@ -119,7 +166,9 @@ def _barred(view: "Image.Image", bar: Path | None) -> "Image.Image":
 
 
 def compile_assets(job: VideoJob, states: list[ChatState], roll_s: float,
-                   swipe_s: float = 0.35, width: int = 1080) -> None:
+                   swipe_s: float = 0.35, width: int = 1080,
+                   pool: list[Path] | None = None, chat_h: int = 0,
+                   change_s: float = 0.0, seed: str = "") -> None:
     """Slice the states onto the scenes, as the background every scene already has.
 
     A state that straddles a scene boundary becomes two pieces of the same drawing,
@@ -138,6 +187,16 @@ def compile_assets(job: VideoJob, states: list[ChatState], roll_s: float,
             if hi - lo <= 1e-3:
                 continue
             moves = abs(st.to_y - st.from_y) > 0.5
+            # What plays underneath, and where in it. One clip held for the whole
+            # video is the ordinary answer and the one the gameplay loops want — the
+            # seek is the piece's own place on the clock, so the action carries across
+            # every cut instead of restarting on each message. A change interval rolls
+            # a different clip every so often, and then the seek restarts with it.
+            under = seek = None
+            if pool:
+                turn = int(lo / change_s) if change_s > 0 else 0
+                under = pool[random.Random(f"{seed}|{turn}").randrange(len(pool))]
+                seek = (lo - turn * change_s) if change_s > 0 else lo
             scene.bg_assets.append(BgAsset(
                 path=st.path, duration=hi - lo, is_photo=True, scroll=True,
                 scroll_from=st.from_y, scroll_to=st.to_y,
@@ -151,6 +210,8 @@ def compile_assets(job: VideoJob, states: list[ChatState], roll_s: float,
                 scroll_at=st.start - lo,
                 scroll_s=swipe_s if st.swipe else (roll_s if moves else 0.0),
                 overlay=st.overlay,
+                filler=under, start=float(seek or 0.0),
+                chat_h=chat_h if under is not None else 0,
             ))
 
 
@@ -168,7 +229,15 @@ def run(job: VideoJob, ctx: AppContext) -> None:
         )
 
     video = ctx.g.video
-    width, height = video.width, video.height
+    # The chat is drawn at the height it will OCCUPY, which is the whole frame unless
+    # something is playing under it. Everything about the layout follows from that
+    # number — how much fits before the view has to travel, where it rests — so it is
+    # decided once, here, and handed to the planner as the screen's height.
+    width, height = video.width, chat_height(ctx)
+    pool = fillers(ctx) if cfg.split else []
+    if cfg.split and not pool:
+        log.warning("chat: the split is on and assets/footage holds no clips — "
+                    "the lower half would be black, so it is skipped")
     out_dir = Path(job.workdir) / "chat"
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -246,7 +315,12 @@ def run(job: VideoJob, ctx: AppContext) -> None:
         for s in planner.plan()
     ]
     compile_assets(job, job.chat_states, cfg.roll_s,
-                   swipe_s=max(0.0, float(cfg.swipe_s)), width=width)
+                   swipe_s=max(0.0, float(cfg.swipe_s)), width=width,
+                   pool=pool, chat_h=height,
+                   change_s=max(0.0, float(cfg.split_change_s)),
+                   # seeded on the run, so the same video draws the same clips every
+                   # time and on every machine, as the music roll already does
+                   seed=str(job.workdir))
     log.info("chat: %d states (%d drawn, %d already there)",
              len(job.chat_states), tally["drawn"], tally["reused"])
     ctx.progress("render", len(job.chat_states), len(job.chat_states))

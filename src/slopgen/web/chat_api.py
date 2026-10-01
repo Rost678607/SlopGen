@@ -69,6 +69,19 @@ SHEET: list[dict] = [
     {"f": "reactions", "kind": "check", "l": "web.f.chatreact"},
     {"f": "react_s", "kind": "number", "l": "web.f.reacts", "min": 0, "max": 4, "step": 0.1},
     {"f": "translate", "kind": "check", "l": "web.f.chattr"},
+    {"f": "sfx", "kind": "select", "l": "web.f.sfx", "opts": "chat_sounds", "blank": True,
+     "blank_l": "w.sfx.roll"},
+    {"f": "sfx_volume", "kind": "number", "l": "web.f.sfxvol", "min": 0, "max": 2,
+     "step": 0.05},
+    # the frame, and what shares it
+    {"f": "aspect", "kind": "select", "l": "web.f.aspect", "opts": "aspects"},
+    {"f": "split", "kind": "check", "l": "web.f.split"},
+    {"f": "split_clip", "kind": "select", "l": "web.f.splitclip", "opts": "chat_clips",
+     "blank": True, "blank_l": "w.clip.roll"},
+    {"f": "split_share", "kind": "number", "l": "web.f.splitshare", "min": 0.2,
+     "max": 0.95, "step": 0.01},
+    {"f": "split_change_s", "kind": "number", "l": "web.f.splitchange", "min": 0,
+     "max": 120, "step": 5},
 ]
 
 
@@ -469,20 +482,34 @@ def _frame_at(job, ctx: AppContext, when: float, out: Path) -> None:
         else:
             break
     img = Image.open(st.path).convert("RGB")
+    top = chat_render.chat_height(ctx)
     span = max(cfg.swipe_s if st.swipe else cfg.roll_s, 1e-3)
     k = min(max((at - st.start) / span, 0.0), 1.0)
     y = st.from_y + (st.to_y - st.from_y) * k
     x = (v.width * k) if st.swipe else 0.0
     x = min(max(x, 0), max(img.width - v.width, 0))
-    y = min(max(y, 0), max(img.height - v.height, 0))
-    frame = img.crop((int(x), int(y), int(x) + v.width, int(y) + v.height))
+    y = min(max(y, 0), max(img.height - top, 0))
+    frame = img.crop((int(x), int(y), int(x) + v.width, int(y) + top))
     # A swipe already carries both bars inside the picture; everything else wears its
     # own as an overlay, exactly as the assembler lays it (see `chat_render`).
     if st.overlay and not st.swipe and Path(st.overlay).is_file():
         with Image.open(st.overlay) as bar:
             bar = bar.convert("RGBA")
             frame.paste(bar, (0, 0), bar)
-    frame.save(out)
+    _framed(frame, v, top).save(out)
+
+
+def _framed(chat, v, top: int):
+    """The chat half on a frame of the real shape, when something else fills the rest.
+
+    Black rather than a sample of the loop playing under it: the preview is about the
+    conversation, and the honest thing to show is how much of the screen it will have
+    — not a guess at which second of somebody's gameplay will be under it."""
+    if top >= v.height:
+        return chat
+    out = Image.new("RGB", (v.width, v.height), "#000000")
+    out.paste(chat, (0, 0))
+    return out
 
 
 def _draw_preview(job, ctx: AppContext, last: int, out: Path) -> None:
@@ -495,16 +522,20 @@ def _draw_preview(job, ctx: AppContext, last: int, out: Path) -> None:
     skin = ctx.chat_skin
     cfg = ctx.chat
     v = ctx.g.video
+    top = chat_render.chat_height(ctx)
     wallpaper = (chat_render.asset(ctx, chat_render.BACKGROUNDS_DIR, cfg.background)
                  if skin.wallpaper else None)
-    planner = Planner(ctx, job, v.width, v.height,
+    planner = Planner(ctx, job, v.width, top,
                       people=chat_render.people_of(job, ctx), wallpaper=wallpaper,
                       top_inset=skin.header_h if cfg.header else 0)
     canvas: Canvas = planner.lay_upto(last)
-    frame = canvas.band(int(max(0.0, canvas.height - v.height)), v.height)
+    frame = canvas.band(int(max(0.0, canvas.height - top)), top)
     if cfg.header:
-        bar = canvas.header_image(cfg.title or job.chat_title or "",
+        conv = next((c for c in job.conversations
+                     if any(m is job.messages[last] for m in c.messages)), None)
+        bar = canvas.header_image((conv.title if conv else "") or cfg.title
+                                  or job.chat_title or "",
                                   chat_render.asset(ctx, chat_render.AVATARS_DIR,
                                                     cfg.header_avatar))
         frame.paste(bar, (0, 0), bar)
-    frame.save(out)
+    _framed(frame, v, top).save(out)

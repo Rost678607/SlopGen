@@ -1438,16 +1438,24 @@ class ChatConfig(BaseModel):
     # -- the frame ---------------------------------------------------------
     # 9:16 is the format this mode is for and the pipeline's own default
     # (`VideoConfig` is 1080x1920). 16:9 is here because a wall of messages is one of
-    # the few things that reads fine wide, and because the split below has to have a
-    # format to NOT be in.
+    # the few things that reads fine wide. It is applied by turning the RUN's frame
+    # (see `pipeline.context.AppContext.g`) rather than by anything in this mode
+    # knowing about it: every stage already reads the frame from there, so the whole
+    # video changes shape at once and the subtitles keep their share of the height.
     aspect: Literal["9:16", "16:9"] = "9:16"
     # The attention-span split: the chat above, something moving below. What plays
-    # underneath is an ordinary visuals profile (`configs/visuals/`) — the gameplay
-    # loop behind narration is what `VisualsBackground.continuous` already is, so the
-    # bottom half costs this mode no footage machinery of its own.
+    # underneath is named the way a music track is (`stages.assemble.MUSIC_NONE`) —
+    # a file under `assets/footage/`, a FOLDER of them with a trailing slash, or ""
+    # for a roll over everything there. Not a visuals profile: a profile is a question
+    # about what the video is ABOUT, answered per beat by a model, and the thing under
+    # a chat is a loop nobody is meant to look at. It is picked once and played on.
     split: bool = False
-    split_visuals: str = ""  # visuals profile for the lower half; empty = the run's
+    split_clip: str = ""
     split_share: float = 0.62  # how much of the height the chat takes
+    # How often the lower half changes, when it is rolling over a folder. 0 is one
+    # clip for the whole video, played straight through so the action is continuous —
+    # which is what the gameplay loops this exists for are usually used as.
+    split_change_s: float = 0.0
 
     # -- the chrome --------------------------------------------------------
     header: bool = True  # the bar on top: chat picture, title, the client's buttons

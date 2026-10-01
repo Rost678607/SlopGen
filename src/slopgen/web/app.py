@@ -66,7 +66,9 @@ from ..pipeline import manual, review
 from ..pipeline.stages.chat_render import (AVATARS_DIR as CHAT_AVATARS,
                                            BACKGROUNDS_DIR as CHAT_BACKGROUNDS,
                                            IMAGE_EXTS as CHAT_IMAGE_EXTS)
+from ..pipeline.stages.chat_render import VIDEO_EXTS as CHAT_VIDEO_EXTS
 from ..pipeline.stages.chat_script import VOICE_NONE
+from ..pipeline.effects import CHAT_SFX_DIR, SOUND_EXTS as CHAT_SOUND_EXTS
 from ..pipeline.stages.ads import OVERLAY_EXTS
 from ..pipeline.stages.assemble import (
     MUSIC_NONE,
@@ -97,6 +99,16 @@ def _pictures(store: ConfigStore, folder: str) -> list[str]:
         return []
     return sorted({p.stem for p in root.iterdir()
                    if p.is_file() and p.suffix.lower() in CHAT_IMAGE_EXTS})
+
+
+def _files(store: ConfigStore, folder: str, exts: set[str]) -> list[str]:
+    """What is in one of the asset folders, by the name a config stores — the file's
+    own, subfolders included, so a loop filed under `gameplay/` is still one name."""
+    root = store.global_cfg.paths.assets / folder
+    if not root.is_dir():
+        return []
+    return sorted({p.relative_to(root).as_posix() for p in root.rglob("*")
+                   if p.is_file() and p.suffix.lower() in exts})
 from ..models import ModelStore, human_size
 from . import chat_api, montage_api
 from .params import (FILTER_HELP, chat_params, drama_params, fandom_params, info_params,
@@ -275,6 +287,12 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
             # off the disk and not off the store.
             "avatars": _pictures(store, CHAT_AVATARS),
             "chat_backgrounds": _pictures(store, CHAT_BACKGROUNDS),
+            # …and the two the split and the send sound draw from. Named the way a
+            # music track is: "" rolls over the folder, so the blank line is an answer
+            # rather than the absence of one.
+            "chat_clips": _files(store, "footage", CHAT_VIDEO_EXTS),
+            "chat_sounds": _files(store, CHAT_SFX_DIR, CHAT_SOUND_EXTS),
+            "aspects": ["9:16", "16:9"],
             "scroll_modes": ["roll", "jump", "clear"],
             # Who reads the messages. A cloned voice for everybody, or the reserved
             # `none` for nobody — the third answer, an empty one, leaves each persona
