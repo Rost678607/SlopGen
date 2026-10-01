@@ -9,6 +9,15 @@ pkgs.mkShell {
     ffmpeg
     sox # qwen-tts imports the `sox` bindings and shouts if the binary is absent
     dejavu_fonts # default subtitle font
+    # The chat mode draws a messenger's own interface, so it wants that messenger's
+    # own typeface. Telegram's and Discord's are not redistributable, so what is here
+    # is the open stand-in each skin asks for by NAME (see `slopgen.chat.fonts`):
+    # fontconfig resolves it, and resolves it to something sane when it is absent, so
+    # nothing here is a hard requirement and no path to it is ever written down.
+    roboto # telegram
+    inter # discord
+    ibm-plex # reddit
+    noto-fonts-color-emoji # reactions, and the emoji inside half the messages
   ];
 
   shellHook = ''
