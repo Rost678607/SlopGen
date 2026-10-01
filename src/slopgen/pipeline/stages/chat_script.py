@@ -70,7 +70,10 @@ def lay(job: VideoJob, ctx: AppContext) -> None:
     cfg = ctx.chat
     gap = max(0.0, float(cfg.gap_s))
     scenes: list[Scene] = []
-    for msg in job.messages:
+    # Across the conversations in order, because the video is all of them one after
+    # another: the timeline is the video's and the seams are drawn by the renderer
+    # (see `chat.scroll`), not carved into the clock.
+    for msg in (m for c in job.conversations for m in c.messages):
         spec = voice_for(msg, ctx)
         scene = Scene(text=msg.text)
         if spec:
@@ -100,6 +103,7 @@ def run(job: VideoJob, ctx: AppContext) -> None:
             "there is no conversation to make a video out of — build one in the chat "
             "room, or point the run at a source that fetches one"
         )
+    log.info("chat: %d conversation(s)", len(job.conversations))
     if ctx.chat.translate:
         from ...llm.chat import translate
 

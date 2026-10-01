@@ -1479,6 +1479,11 @@ class ChatConfig(BaseModel):
     gap_s: float = 1.2
     roll_s: float = 0.45  # how long the view takes to travel (scroll="roll")
     scroll: ScrollMode = "roll"
+    # How long the swipe between one conversation and the next takes. The seam is not
+    # a cut: a video holding several pieces of conversation shows them one after
+    # another, and what a phone does between two chats is slide, so that is what is
+    # drawn (see `chat.scroll` and `ffmpeg.make_chat_part`). 0 makes it a cut.
+    swipe_s: float = 0.35
 
     # -- the trimmings -----------------------------------------------------
     # Reactions land when their message has been read to the end, one after another,
@@ -1499,6 +1504,13 @@ class ChatConfig(BaseModel):
     # foreign (see `llm/chat.py`).
     translate: bool = True
     cast: list[str] = []  # persona names this preset opens with; the editor may add more
+    # HOW MANY pieces of conversation one video is made of, when something is fetching
+    # them. A video is several chats shown one after another — that is the format, not
+    # an edge case — so the number has to be askable before anything goes looking, and
+    # a source that can only ever bring back one would make a mode that cannot do what
+    # it was asked for. Ignored by `manual`, where the answer is however many the
+    # operator put in the room.
+    want: int = 1
 
 
 # --- resolved parameters of a single run ----------------------------------

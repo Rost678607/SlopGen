@@ -298,7 +298,8 @@ def make_photo_part(img: Path, dur: float, out: Path, cfg: GlobalConfig, motion:
 def make_chat_part(img: Path, dur: float, out: Path, cfg: GlobalConfig,
                    y_from: float = 0.0, y_to: float = 0.0,
                    at: float = 0.0, travel: float = 0.0,
-                   header: Path | None = None) -> None:
+                   header: Path | None = None,
+                   x_from: float = 0.0, x_to: float = 0.0) -> None:
     """One piece of the chat track: a drawn state, with the view sliding down it.
 
     Not `make_photo_part` with a move, and the difference is not cosmetic. A
@@ -314,13 +315,16 @@ def make_chat_part(img: Path, dur: float, out: Path, cfg: GlobalConfig,
     v = cfg.video
     span = max(travel, 1e-3)
     y = _ramp([(at, y_from), (at + span, y_to)]) if abs(y_to - y_from) > 0.5 else f"{y_from:.3f}"
+    # Sideways is the swipe between two conversations, and it is the same arithmetic
+    # one axis over: the drawing is the old screen and the new one side by side, and
+    # the window slides across the join.
+    x = _ramp([(at, x_from), (at + span, x_to)]) if abs(x_to - x_from) > 0.5 else f"{x_from:.3f}"
     # the drawing is made at the frame's width already, but a state may be shorter
     # than the frame before the conversation has filled it — pad rather than scale,
     # so that the first message is the size every later one will be
     graph = (
-        f"[0:v]scale={v.width}:-2:flags=lanczos,"
-        f"pad={v.width}:'max(ih,{v.height})':0:0:color=0x000000,"
-        f"crop={v.width}:{v.height}:0:'clip({y},0,ih-{v.height})',"
+        f"[0:v]pad='max(iw,{v.width})':'max(ih,{v.height})':0:0:color=0x000000,"
+        f"crop={v.width}:{v.height}:'clip({x},0,iw-{v.width})':'clip({y},0,ih-{v.height})',"
         f"setsar=1,fps={v.fps}"
     )
     args = ["-loop", "1", "-i", str(img)]

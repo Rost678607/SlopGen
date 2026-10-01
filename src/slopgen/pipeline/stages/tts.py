@@ -882,6 +882,15 @@ def run(job: VideoJob, ctx: AppContext) -> None:
         _run_manual(job, ctx)
         return
 
+    # A job with nothing to say needs no synthesizer, and asking for one is not
+    # harmless: building a speaker resolves a voice, and an engine that only clones
+    # refuses outright when no card was named. That is the right answer for a video
+    # whose lines are meant to be spoken and the wrong one for a chat nobody reads
+    # aloud, where every line is silent ON PURPOSE (see `Scene.silent`).
+    if job.scenes and all(s.unvoiced for s in job.scenes):
+        log.info("TTS: nothing to say — every line is silent")
+        ctx.progress("tts", len(job.scenes), len(job.scenes))
+        return
     speaker = _speaker_for(ctx)
     log.info("TTS: %s · %s", speaker.id, speaker.voice)
     # before the first line is spoken, because the answer decides what is spoken with:

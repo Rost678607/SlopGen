@@ -54,7 +54,7 @@ class State:
     The planner's own result type. `pipeline.job.ChatState` is the same thing written
     down on the job so a resumed run does not redraw it, and the stage copies one into
     the other — which is the usual price of keeping a layer from importing upward, and
-    a small one: six fields that have not changed since they were written."""
+    a small one: a handful of fields that have not changed since they were written."""
 
     start: float
     msg: int
@@ -63,6 +63,15 @@ class State:
     duration: float = 0.0
     anchor_scene: int = -1
     path: Path | None = None
+    # This state is the first of a new conversation, so the picture does not cut to it:
+    # it slides in from the right over the one before, which is what every messenger
+    # does when you open the next chat (see `ffmpeg.make_chat_part`).
+    swipe: bool = False
+    # The header bar laid over this state, filled in by whoever painted it. The
+    # drawing layer neither knows nor cares what it is — it is a path the stage puts
+    # here on its way to the assembler — but it belongs to the state rather than to
+    # the run, because which bar is up is a property of which conversation is.
+    overlay: object = None
 
 
 def scene_starts(scenes: list) -> list[float]:
@@ -173,12 +182,27 @@ class Planner:
 
     # -- the window ---------------------------------------------------------
 
+    def _walk(self) -> list[tuple[int, int, object]]:
+        """Every message in the video as (ordinal, which conversation, the message).
+
+        The ordinal is the one `ChatMsg.scene` was laid against and the one a state
+        reports, so it is the video's own numbering; the conversation index is what
+        the seams are read off. Computed once per pass rather than zipped at each use,
+        because three callers need the same three numbers and a fourth derivation of
+        them is a fourth place for them to disagree."""
+        out, n = [], 0
+        for ci, conv in enumerate(self.job.conversations):
+            for msg in conv.messages:
+                out.append((n, ci, msg))
+                n += 1
+        return out
+
     def _rest(self) -> float:
         """Where the view belongs with the canvas as it stands: at the bottom of it,
         or at the top while the conversation is still shorter than the screen."""
         return max(0.0, self.canvas.height - self.height)
 
-    def _push(self, at: float, msg: int) -> ChatState:
+    def _push(self, at: float, msg: int, swipe: bool = False) -> State:
         """Record one state beginning at `at`, with the window travelling to wherever
         the canvas now says it belongs."""
         if self.states:
@@ -187,8 +211,8 @@ class Planner:
         if self.cfg.scroll != "roll" or now <= was:
             was = now  # a jump, or nothing to follow: the view is simply there
         self.window = now
-        state = State(start=at, msg=msg, from_y=was, to_y=now,
-                      anchor_scene=self.job.messages[msg].scene)
+        state = State(start=at, msg=msg, from_y=was, to_y=now, swipe=swipe,
+                      anchor_scene=self._walk_scene(msg))
         self.states.append(state)
         if self.paint is not None:
             self.paint(self.canvas, state)
@@ -199,7 +223,8 @@ class Planner:
     def plan(self) -> list[State]:
         cfg = self.cfg
         starts = scene_starts(self.job.scenes)
-        for i, msg in enumerate(self.job.messages):
+        walk = self._walk()
+        for i, ci, msg in walk:
             si = msg.scene
             if not (0 <= si < len(self.job.scenes)):
                 continue
@@ -219,7 +244,8 @@ class Planner:
                         if si + 1 < len(self.job.scenes) and self.job.scenes[si + 1].hush
                         else 0.0)
 
-            if msg.clear_before or self._must_clear(msg, i):
+            seam = self._seam(walk, i, ci)
+            if seam or msg.clear_before or self._must_clear():
                 self.canvas.clear()
                 self.window = 0.0
 
@@ -229,16 +255,20 @@ class Planner:
             if self.canvas.blocks and self.canvas.blocks[-1].msg != i:
                 prev_block = self.canvas.blocks[-1]
                 prev_block.show_tail = prev_block.person.name != person.name
-            block = self._lay(msg, i, person, [])
+            block = self._lay(msg, i, person, [], walk=walk)
             lines = list(block.lines)
             caps = chunk_lines(lines, cfg.chunk, cfg.chunk_min)
-            for cap, at in zip(caps, reveal_times(scene, lines, caps, start, end)):
-                self._lay(msg, i, person, [], text="\n".join(lines[:cap]))
-                self._push(at, i)
+            for n, (cap, at) in enumerate(zip(caps, reveal_times(scene, lines, caps, start, end))):
+                self._lay(msg, i, person, [], text="\n".join(lines[:cap]), walk=walk)
+                # The swipe belongs to the FIRST state of a new conversation and to no
+                # other: that is the moment the screen stops being one chat and starts
+                # being the next, and a transition on any later state would be a swipe
+                # into a picture the viewer is already looking at.
+                self._push(at, i, swipe=bool(seam and n == 0))
             if cfg.reactions and msg.reactions and not self.skin.votes:
                 flurry = react_times(read_end, room, len(msg.reactions), cfg.react_s)
                 for n, at in enumerate(flurry, start=1):
-                    self._lay(msg, i, person, msg.reactions[:n])
+                    self._lay(msg, i, person, msg.reactions[:n], walk=walk)
                     self._push(at, i)
         self._settle()
         return self.states
@@ -254,15 +284,23 @@ class Planner:
         the render agree by construction: a preview computed some cheaper second way
         is a preview that disagrees with the render exactly where it matters."""
         show_reactions = self.cfg.reactions and not self.skin.votes
-        for i, msg in enumerate(self.job.messages[:max(last, 0) + 1]):
-            if msg.clear_before or self._must_clear(msg, i):
+        walk = self._walk()
+        for i, ci, msg in walk[:max(last, 0) + 1]:
+            if self._seam(walk, i, ci) or msg.clear_before or self._must_clear():
                 self.canvas.clear()
             person = self._person(msg)
             if self.canvas.blocks and self.canvas.blocks[-1].msg != i:
                 prev_block = self.canvas.blocks[-1]
                 prev_block.show_tail = prev_block.person.name != person.name
-            self._lay(msg, i, person, msg.reactions if show_reactions else [])
+            self._lay(msg, i, person, msg.reactions if show_reactions else [], walk=walk)
         return self.canvas
+
+    def _walk_scene(self, ordinal: int) -> int:
+        """Which scene the message at this ordinal was laid onto, or -1 before any
+        were. Looked up rather than carried, because a state is pushed from several
+        places and all of them have the ordinal and none of them have the message."""
+        flat = self.job.messages
+        return flat[ordinal].scene if 0 <= ordinal < len(flat) else -1
 
     def _person(self, msg) -> Person:
         """Who this message is from, as the drawing needs them. A name with no card
@@ -270,20 +308,27 @@ class Planner:
         import names people nobody has carded and the conversation is not wrong."""
         return self.people.get(msg.persona) or Person(name=msg.persona)
 
-    def _must_clear(self, msg, i: int) -> bool:
-        """Whether the screen has to be emptied before this message.
+    def _seam(self, walk: list, i: int, ci: int) -> bool:
+        """Whether this message opens a new conversation — the place a swipe goes.
 
-        In `clear` mode it is emptied as soon as the conversation would otherwise
-        scroll — which is what "the screen fills and starts again" means — and at
-        every seam between two excerpts, in every mode, because two unrelated pieces
-        of conversation sharing a screen read as one conversation that stopped making
-        sense."""
-        if i and msg.excerpt != self.job.messages[i - 1].excerpt:
-            return True
+        Two unrelated pieces of conversation sharing a screen read as one conversation
+        that stopped making sense, so a seam always clears, in every scroll mode. The
+        first message of the video is not a seam: there is nothing to swipe away
+        from."""
+        return bool(i) and walk[i - 1][1] != ci
+
+    def _must_clear(self) -> bool:
+        """Whether the screen has to be emptied because it has filled up.
+
+        Only in `clear` mode, which is what "the screen fills and starts again" means.
+        The other two scroll instead, and the operator's own mark on a message
+        (`ChatMsg.clear_before`) is handled beside this rather than inside it, because
+        one is a setting about the format and the other is a judgement about a line."""
         return self.cfg.scroll == "clear" and self.canvas.height > self.height
 
     def _lay(self, msg, i: int, person: Person,
-             reactions: list[tuple[str, int]], text: str | None = None):
+             reactions: list[tuple[str, int]], text: str | None = None,
+             walk: list | None = None):
         """Lay (or re-lay) this message as the last block on the canvas.
 
         Re-laying rather than painting it with a cap, because a bubble is drawn around
@@ -291,41 +336,49 @@ class Planner:
         bubble, not a four-line bubble with three empty ones in it. The prefix is
         handed over already wrapped, and re-wrapping it gives the same lines back —
         the prefix of a greedy wrap is the greedy wrap of that prefix."""
-        prev = self.job.messages[i - 1] if i else None
+        walk = walk if walk is not None else self._walk()
+        here_c = walk[i][1] if i < len(walk) else 0
+        # the message before this one, but only if it is in the SAME conversation: a
+        # run of messages from one person cannot continue across a swipe
+        prev = walk[i - 1][2] if i and walk[i - 1][1] == here_c else None
+        conv = (self.job.conversations[here_c]
+                if here_c < len(self.job.conversations) else None)
         kw = dict(
             msg=i, person=person, text=msg.text if text is None else text,
             stamp=msg.stamp, reactions=reactions,
             score=msg.score if self.skin.votes else None,
-            depth=self._depth(i),
+            depth=self._depth(conv, msg),
             # A messenger folds a run of messages from one person into a block with a
             # single name on it; a comment tree does not, because each comment is its
             # own thing with its own score and its own place in the thread.
             show_head=self.skin.tree or not (
-                prev and prev.persona == msg.persona
-                and prev.excerpt == msg.excerpt and not msg.clear_before),
-            reply=self._reply(msg),
+                prev and prev.persona == msg.persona and not msg.clear_before),
+            reply=self._reply(conv, msg),
         )
         here = bool(self.canvas.blocks) and self.canvas.blocks[-1].msg == i
         return self.canvas.amend(**kw) if here else self.canvas.append(**kw)
 
-    def _depth(self, i: int) -> int:
+    def _depth(self, conv, msg) -> int:
         """How deep in the comment tree this message sits — reddit only, and zero
-        everywhere else, where a reply is a quoted strip rather than an indent."""
-        if not self.skin.tree:
+        everywhere else, where a reply is a quoted strip rather than an indent.
+
+        Walked inside the conversation, because that is what a reply points into: a
+        thread's shape is a fact about that thread."""
+        if not self.skin.tree or conv is None:
             return 0
         depth, seen = 0, set()
-        at = self.job.messages[i].reply_to
-        while 0 <= at < len(self.job.messages) and at not in seen and depth < 8:
+        at = msg.reply_to
+        while 0 <= at < len(conv.messages) and at not in seen and depth < 8:
             seen.add(at)
             depth += 1
-            at = self.job.messages[at].reply_to
+            at = conv.messages[at].reply_to
         return depth
 
-    def _reply(self, msg: ChatMsg) -> tuple[str, str] | None:
+    def _reply(self, conv, msg) -> tuple[str, str] | None:
         at = msg.reply_to
-        if not (0 <= at < len(self.job.messages)):
+        if conv is None or not (0 <= at < len(conv.messages)):
             return None
-        parent = self.job.messages[at]
+        parent = conv.messages[at]
         return (parent.nick or parent.persona, parent.text)
 
     def _settle(self) -> None:

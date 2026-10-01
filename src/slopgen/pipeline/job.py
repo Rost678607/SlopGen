@@ -55,6 +55,14 @@ class BgAsset(BaseModel):
     scroll_to: float = 0.0  # …where it ends up; equal to `scroll_from` = a still hold
     scroll_at: float = 0.0  # seconds into the piece where the travel begins
     scroll_s: float = 0.0  # how long the travel takes
+    # …and sideways, which is the swipe between one conversation and the next. The
+    # same window on the same kind of drawing, travelling along the other axis: the
+    # state's picture is the old screen and the new one side by side, and the window
+    # slides from one to the other. One more number rather than a transition filter,
+    # because a transition would have to join two SEGMENTS and this joins two pictures
+    # — which is what a swipe actually is on a phone.
+    scroll_from_x: float = 0.0
+    scroll_to_x: float = 0.0
     # The client's top bar, drawn once and laid over every frame of the piece. On the
     # asset rather than looked up at render time for the reason `fit` is: by then the
     # conversation is gone, and the assembler is handed a path and a duration.
@@ -352,8 +360,10 @@ class ChatMsg(BaseModel):
     persona: str = ""  # PersonaConfig.name — who sent it
     text: str = ""
     source_text: str = ""  # what it said before the translation pass; "" = untranslated
-    # WHICH message this one answers. An index into the conversation, not a scene: a
-    # reply is a fact about the conversation and survives the scenes being re-cut.
+    # WHICH message this one answers. An index into THIS CONVERSATION's own list, not
+    # into the video's: a reply is a fact about the conversation it was had in, and
+    # nothing in one piece of conversation can answer anything in another. Not a scene
+    # index either — a reply survives the scenes being re-cut.
     # -1 = not a reply. In the reddit skin this is the tree edge and decides the
     # indent; in a messenger it is the quoted strip above the bubble.
     reply_to: int = -1
@@ -363,10 +373,6 @@ class ChatMsg(BaseModel):
     reactions: list[tuple[str, int]] = Field(default_factory=list)
     score: int = 0  # reddit only: karma. Meaningless in a messenger and never drawn there
     stamp: str = ""  # the time printed on the bubble, verbatim; "" = the skin prints none
-    # WHICH excerpt this message belongs to. Several unrelated pieces of conversation
-    # in one video is the ordinary case, and the swipe between them is drawn where
-    # this number changes (see `chat.scroll`). One excerpt = every message at 0.
-    excerpt: int = 0
     # Empty the screen BEFORE drawing this one. A per-message mark rather than a
     # scroll mode, because a conversation that rolls throughout still wants a clean
     # start at the places the operator chooses — and where that is depends on what is
@@ -382,6 +388,31 @@ class ChatMsg(BaseModel):
     # the same promise `FrameShot.pinned` and `EffectCue.pinned` make. It is what
     # keeps a re-run of the translation from undoing a line somebody fixed by hand.
     pinned: bool = False
+
+
+class Conversation(BaseModel):
+    """One piece of conversation, and the unit the chat mode is actually made of.
+
+    A video is several of these shown one after another with a swipe between them,
+    which was the operator's description of the format from the first sentence — so
+    they are objects with a list each, rather than a number written on every message.
+    That was the first attempt and it was wrong in the way that matters: with the
+    pieces expressed as a field, there was nothing to count, nothing to reorder and
+    nothing to fetch THREE of, so neither the room nor the sources had anything to
+    hold. What is a thing in the format has to be a thing in the model.
+
+    `title` is what the header bar says while this one is up, which is not a property
+    of the run: three reddit threads in one video are three different chats, and a
+    single bar carrying the run's own name over all of them is the tell that the
+    screenshot is fake. Empty falls back to the run's.
+
+    `source` is where it came from, in whatever words the fetch left behind — a URL, a
+    file name, nothing at all for one somebody typed. Nothing reads it; it is there so
+    that an operator looking at four conversations a week later can tell them apart."""
+
+    title: str = ""
+    source: str = ""
+    messages: list[ChatMsg] = Field(default_factory=list)
 
 
 class ChatState(BaseModel):
@@ -409,6 +440,13 @@ class ChatState(BaseModel):
     anchor_scene: int = -1
     anchor_word: int = -1
     msg: int = -1  # which message this state is a picture of, for the screen to show
+    swipe: bool = False  # the first state of a new conversation: it slides in
+    # The header bar laid over this state, which is the bar of the conversation it
+    # belongs to — a video holding three chats has three names on it, and one name
+    # over all of them is the tell that the screenshot is fake. None on a swipe: there
+    # the bar is part of the sliding picture, because moving to another chat moves the
+    # whole screen and a bar that stayed put would be the one thing that gave it away.
+    overlay: Path | None = None
     # The crop window over the drawn canvas, at the start and at the end of the state,
     # as fractions of it. Equal = the view is still; different = it travels, and
     # `ChatConfig.roll_s` is how long the travel takes out of `duration`.
@@ -472,13 +510,28 @@ class VideoJob(BaseModel):
     # document the operator edits and every later pass reads; the states are what the
     # render stage makes of them and what assemble puts on screen. Empty in every
     # other mode.
-    messages: list[ChatMsg] = Field(default_factory=list)
+    conversations: list[Conversation] = Field(default_factory=list)
     chat_states: list[ChatState] = Field(default_factory=list)
-    chat_title: str = ""  # what the header bar says, as the source named it
+    # What the header bar says for a conversation that does not name itself. The run's
+    # own default, not the video's title: a video holding three chats has three names
+    # on the bar and this is only the fallback for whichever did not come with one.
+    chat_title: str = ""
     parts: list[Part] = Field(default_factory=list)  # the episodes, in order (see pipeline/parts.py)
     # episodes still short of a hand-made clip, so the tail stages must skip them and
     # run again on the next resume. Recomputed by the footage stage on every pass.
     pending_parts: list[int] = Field(default_factory=list)
+
+    @property
+    def messages(self) -> list[ChatMsg]:
+        """Every message in the video, in order, flattened across the conversations.
+
+        A READ-ONLY view, and the passes that use it are the ones for which the seams
+        genuinely do not matter: the translator reads the lot in windows, the cast is
+        gathered from all of them, the voicing walks the scenes they were laid onto.
+        Anything that edits — or that cares where one piece ends and the next begins —
+        works on `conversations` instead, because appending to this list would append
+        to a list that is thrown away."""
+        return [m for c in self.conversations for m in c.messages]
 
     @property
     def total_duration(self) -> float:

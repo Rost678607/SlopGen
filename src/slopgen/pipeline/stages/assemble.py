@@ -153,7 +153,8 @@ def _segment(i: int, scene, tmp, ctx: AppContext):
             # frame and throw away the part being scrolled to.
             ffmpeg.make_chat_part(a.path, a.duration, part, ctx.g,
                                   y_from=a.scroll_from, y_to=a.scroll_to,
-                                  at=a.scroll_at, travel=a.scroll_s, header=a.overlay)
+                                  at=a.scroll_at, travel=a.scroll_s, header=a.overlay,
+                                  x_from=a.scroll_from_x, x_to=a.scroll_to_x)
         elif a.is_photo:
             ffmpeg.make_photo_part(a.path, a.duration, part, ctx.g, vis.background.motion,
                                    direction=k, move=a.move, phase=a.move_at,

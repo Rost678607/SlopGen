@@ -21,6 +21,8 @@ import hashlib
 import logging
 from pathlib import Path
 
+from PIL import Image
+
 from ...chat import skins
 from ...chat.draw import Canvas, Person
 from ...chat.scroll import Planner, State, scene_starts
@@ -94,7 +96,8 @@ def _stamp(canvas: Canvas, state: ChatState, height: int) -> str:
     stage and a changed one cannot collide with the file it replaces."""
     h = hashlib.sha1()
     lo, hi = min(state.from_y, state.to_y), max(state.from_y, state.to_y) + height
-    h.update(f"{canvas.skin.key}|{canvas.width}|{height}|{state.from_y:.1f}|{state.to_y:.1f}".encode())
+    h.update(f"{canvas.skin.key}|{canvas.width}|{height}|{state.from_y:.1f}|{state.to_y:.1f}"
+             f"|{state.swipe}|{state.msg}".encode())
     for b in canvas.blocks:
         if b.bottom < lo or b.top > hi:
             continue
@@ -104,8 +107,19 @@ def _stamp(canvas: Canvas, state: ChatState, height: int) -> str:
     return h.hexdigest()[:16]
 
 
+def _barred(view: "Image.Image", bar: Path | None) -> "Image.Image":
+    """One screen with its header bar on it, for a picture the bar has to travel in."""
+    if bar is None or not Path(bar).is_file():
+        return view
+    out = view.copy()
+    with Image.open(bar) as strip:
+        strip = strip.convert("RGBA")
+        out.paste(strip, (0, 0), strip)
+    return out
+
+
 def compile_assets(job: VideoJob, states: list[ChatState], roll_s: float,
-                   header: Path | None = None) -> None:
+                   swipe_s: float = 0.35, width: int = 1080) -> None:
     """Slice the states onto the scenes, as the background every scene already has.
 
     A state that straddles a scene boundary becomes two pieces of the same drawing,
@@ -123,15 +137,20 @@ def compile_assets(job: VideoJob, states: list[ChatState], roll_s: float,
             hi = min(st.start + st.duration, starts[i] + scene.duration)
             if hi - lo <= 1e-3:
                 continue
+            moves = abs(st.to_y - st.from_y) > 0.5
             scene.bg_assets.append(BgAsset(
                 path=st.path, duration=hi - lo, is_photo=True, scroll=True,
                 scroll_from=st.from_y, scroll_to=st.to_y,
+                # a swipe travels sideways and holds still vertically: it is the seam
+                # between two conversations, not a scroll inside one
+                scroll_from_x=0.0 if st.swipe else 0.0,
+                scroll_to_x=float(width) if st.swipe else 0.0,
                 # the travel begins when the STATE does, so a piece starting later
                 # into it begins partway through — a negative offset the ramp reads
                 # as "this already happened", which is exactly what it is
                 scroll_at=st.start - lo,
-                scroll_s=roll_s if abs(st.to_y - st.from_y) > 0.5 else 0.0,
-                overlay=header,
+                scroll_s=swipe_s if st.swipe else (roll_s if moves else 0.0),
+                overlay=st.overlay,
             ))
 
 
@@ -155,37 +174,79 @@ def run(job: VideoJob, ctx: AppContext) -> None:
 
     wallpaper = asset(ctx, BACKGROUNDS_DIR, cfg.background) if skin.wallpaper else None
     tally = {"drawn": 0, "reused": 0}
+    # What the last state left on screen, kept so that the next conversation can slide
+    # in over it. An image rather than a path: the swipe needs the two screens in ONE
+    # drawing, and re-opening the previous PNG to crop the same window out of it again
+    # would be the same pixels at the cost of a decode per seam.
+    seen: dict[str, object] = {"view": None, "bar": None}
 
     def paint(canvas: Canvas, state: State) -> None:
         y0 = int(min(state.from_y, state.to_y))
-        band = int(max(state.from_y, state.to_y) - y0) + height
-        path = out_dir / f"state_{_stamp(canvas, state, height)}.png"
+        band_h = int(max(state.from_y, state.to_y) - y0) + height
+        band = canvas.band(y0, band_h)
+        # the window as it will rest at the END of this state, which is what the next
+        # one slides away from
+        rest = int(min(max(state.to_y - y0, 0), max(band_h - height, 0)))
+        view = band.crop((0, rest, width, rest + height))
+
+        ci = where[state.msg] if 0 <= state.msg < len(where) else 0
+        picture, name = band, _stamp(canvas, state, height)
+        if state.swipe and seen["view"] is not None:
+            # the old screen and the new one side by side, in one drawing. The window
+            # then travels across the join, which is a swipe — and is the same crop
+            # with a ramp on the other axis (see `ffmpeg.make_chat_part`). The bars go
+            # INTO the picture here: moving to another chat moves the whole screen, and
+            # a bar that stayed put while everything under it slid would be the one
+            # thing that gave the screenshot away.
+            picture = Image.new("RGB", (width * 2, height), skin.bg)
+            picture.paste(_barred(seen["view"], seen["bar"]), (0, 0))
+            picture.paste(_barred(view, bars.get(ci)), (width, 0))
+            name = f"swipe_{name}"
+            state.from_y = state.to_y = 0.0
+        else:
+            state.swipe = False  # nothing to slide away from: the first screen of all
+            state.overlay = bars.get(ci)
+            # the window is recorded against the BAND, whose top is where it began
+            state.from_y -= y0
+            state.to_y -= y0
+
+        path = out_dir / f"state_{name}.png"
         if path.is_file():
             tally["reused"] += 1
         else:
-            canvas.band(y0, band).save(path, compress_level=1)
+            picture.save(path, compress_level=1)
             tally["drawn"] += 1
         state.path = path
-        # the window is recorded against the BAND, whose top is where the travel began
-        state.from_y -= y0
-        state.to_y -= y0
+        seen["view"], seen["bar"] = view, bars.get(ci)
         ctx.progress("render", tally["drawn"] + tally["reused"], len(job.messages))
 
     planner = Planner(
         ctx, job, width, height, people=people_of(job, ctx), wallpaper=wallpaper,
         top_inset=skin.header_h if cfg.header else 0, paint=paint,
     )
-    header = None
+    # which conversation each message belongs to, by its place in the video — the one
+    # thing `paint` needs that a state does not carry
+    where = [ci for ci, conv in enumerate(job.conversations) for _ in conv.messages]
+    # One bar per conversation, drawn once and laid over every state of it. The title
+    # is the conversation's own, and the preset's or the run's only where it does not
+    # name itself — three threads in one video are three different chats.
+    bars: dict[int, Path] = {}
     if cfg.header:
-        header = out_dir / "header.png"
-        planner.canvas.header_image(cfg.title or job.chat_title or "",
-                                    asset(ctx, AVATARS_DIR, cfg.header_avatar)).save(header)
+        pic = asset(ctx, AVATARS_DIR, cfg.header_avatar)
+        for ci, conv in enumerate(job.conversations):
+            title = conv.title or cfg.title or job.chat_title or ""
+            at = out_dir / f"header_{hashlib.sha1(title.encode()).hexdigest()[:12]}.png"
+            if not at.is_file():
+                planner.canvas.header_image(title, pic).save(at)
+            bars[ci] = at
     job.chat_states = [
         ChatState(path=s.path, start=s.start, duration=s.duration, msg=s.msg,
-                  anchor_scene=s.anchor_scene, from_y=s.from_y, to_y=s.to_y)
+                  anchor_scene=s.anchor_scene, from_y=s.from_y, to_y=s.to_y,
+                  swipe=s.swipe, overlay=s.overlay)
         for s in planner.plan()
     ]
-    compile_assets(job, job.chat_states, cfg.roll_s, header=header)
+    compile_assets(job, job.chat_states, cfg.roll_s,
+                   swipe_s=max(0.0, float(cfg.swipe_s)), width=width)
     log.info("chat: %d states (%d drawn, %d already there)",
              len(job.chat_states), tally["drawn"], tally["reused"])
     ctx.progress("render", len(job.chat_states), len(job.chat_states))

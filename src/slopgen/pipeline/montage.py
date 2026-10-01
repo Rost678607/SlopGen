@@ -125,7 +125,7 @@ def available(params, job: VideoJob | None) -> bool:
 # so "the job has none" cannot be read as "it has not run".
 SATISFIED = {
     # the chat mode's two: the conversation it is made of, and the drawing of it
-    "source": lambda job: bool(job.messages),
+    "source": lambda job: any(c.messages for c in job.conversations),
     "render": lambda job: bool(job.chat_states),
     "canon": lambda job: bool(job.canon.strip()),
     "script": lambda job: bool(job.scenes),
