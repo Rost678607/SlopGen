@@ -71,7 +71,7 @@ class LLMConfig(BaseModel):
     # drama_script, fandom_outline, fandom_script, fandom_canon, fandom_brief,
     # lore_lookup, drama_entities, drama_shot_fix, char_compile, char_autofill,
     # style_compile, metadata, profanity, censor, lookup, bp_rewrite, bp_scenes,
-    # tts_delivery, vision.
+    # tts_delivery, vision, chat_translate.
     stage_profiles: dict[str, str] = {}
     # legacy inline settings (deepseek | gemini | openrouter | custom)
     provider: str = "deepseek"
@@ -1344,10 +1344,167 @@ class ShapesConfig(BaseModel):
         return next((s for s in self.shapes if s.name.strip().casefold() == key), None)
 
 
+# --- configs/personas/*.toml ----------------------------------------------
+
+
+class PersonaConfig(BaseModel):
+    """One participant of a conversation: the name on the bubble, the picture beside
+    it, and who reads it aloud.
+
+    Three things that are always chosen together and were therefore one card from the
+    start rather than three parallel bases. An operator building a chat picks people,
+    not a nickname from one list, a file from another and a voice from a third — and
+    the same cast comes back in the next video, which is the whole economy of a base.
+
+    The picture is a FILE NAME under `assets/avatars/` and not a card of its own,
+    because an avatar has no properties: it is a square, it is shown, that is all of
+    it. (Contrast a frame card, which carries crop targets and hung effects and
+    genuinely needs a TOML.) Empty means the initials disc every real client draws
+    when somebody has no photo — see `chat.draw.initials`.
+
+    `voice` is the whole of this mode's casting. A spec exactly as `Scene.voice` is
+    one (`марта`, or `марта:зло`), resolved against the run's single engine — the
+    per-author ENGINE is deliberately out of scope for now, since it would have to
+    move into the voice spec and take the voiced-line cache with it. Empty means this
+    person is not read aloud: their messages appear, hold for the gap, and pass. A
+    conversation where nobody has a voice is a silent chat, which is a legitimate
+    video and not an error.
+
+    `handle` is what the skin prints under or beside the name where the platform
+    prints one (`u/`, `@`, a discriminator). Empty prints nothing, which is right for
+    Telegram as often as not."""
+
+    name: str  # the display name on the bubble, and the card's identity
+    handle: str = ""  # u/somebody, @somebody — printed where the skin has a place for it
+    avatar: str = ""  # file under assets/avatars/; empty = the initials disc
+    voice: str = ""  # a voice spec as `Scene.voice` holds one; empty = not read aloud
+    # The bubble's accent, as `#rrggbb`. Real clients derive it from the name so that
+    # the same person is the same colour everywhere; empty keeps that behaviour (see
+    # `chat.skins.tint`), and setting it overrules the derivation for this one person.
+    colour: str = ""
+    note: str = ""  # who this is, for the operator's eye only; nothing reads it
+
+
+# --- configs/chat/*.toml --------------------------------------------------
+
+# WHICH client is being impersonated. It decides the drawing and nothing else: where
+# the message came FROM is a separate question (`ChatSource`), and a Telegram export
+# rendered in the Discord skin is an ordinary thing to want.
+#
+# Reddit is the exception and is kept apart on purpose. Its unit is not a chat line
+# but a post with a comment TREE, it scores with karma where the messengers react
+# with emoji, and the two do not convert into each other in either direction. So the
+# skin is not interchangeable with the other two: a reddit conversation is drawn by
+# the reddit skin or not at all (see `chat.skins.compatible`).
+ChatSkin = Literal["telegram", "discord", "reddit"]
+
+# WHERE the conversation came from. `manual` covers both hands and the model — a
+# conversation typed in the editor and one the writer invented are the same object by
+# the time anything downstream sees it, and distinguishing them would buy nothing.
+ChatSource = Literal["manual", "reddit", "telegram", "import"]
+
+# What happens when the messages reach the bottom of the frame.
+#   roll  — the view travels up to follow the newest message, the way a real client
+#           scrolls. `roll_s` is how long one travel takes.
+#   jump  — the view moves in one frame, no travel. Cheaper to read on a small
+#           screen and the right answer for fast, short lines.
+#   clear — the screen empties and the conversation starts again at the top.
+#
+# `clear` is also available to the other two as a per-message MARK rather than a mode
+# (`ChatMsg.clear_before`): a long conversation that rolls throughout still wants a
+# clean screen at the places the operator chooses, and that is a property of the
+# message, not of the video.
+ScrollMode = Literal["roll", "jump", "clear"]
+
+
+class ChatConfig(BaseModel):
+    """Everything about how a conversation becomes a video, as one saveable preset.
+
+    A config kind of its own (`configs/chat/*.toml`) rather than thirty fields on
+    `RunParams`, for the reason the operator gave when asking for it: there are too
+    many settings here for a form that is filled in again every time, and the set of
+    them that makes "a reddit story" is different from the set that makes "a group
+    chat bit" in nearly every field. Being an ordinary named config, it inherits the
+    whole of the config panel — save, rename, delete, overwrite — without a line of
+    new plumbing (see `loader.RENAMEABLE`).
+
+    A run names one (`RunParams.chat`) or carries an ad-hoc one built in the form
+    (`RunParams.manual_chat`), exactly as visuals profiles and ad contracts work."""
+
+    name: str
+    source: ChatSource = "manual"
+    skin: ChatSkin = "telegram"
+
+    # -- the frame ---------------------------------------------------------
+    # 9:16 is the format this mode is for and the pipeline's own default
+    # (`VideoConfig` is 1080x1920). 16:9 is here because a wall of messages is one of
+    # the few things that reads fine wide, and because the split below has to have a
+    # format to NOT be in.
+    aspect: Literal["9:16", "16:9"] = "9:16"
+    # The attention-span split: the chat above, something moving below. What plays
+    # underneath is an ordinary visuals profile (`configs/visuals/`) — the gameplay
+    # loop behind narration is what `VisualsBackground.continuous` already is, so the
+    # bottom half costs this mode no footage machinery of its own.
+    split: bool = False
+    split_visuals: str = ""  # visuals profile for the lower half; empty = the run's
+    split_share: float = 0.62  # how much of the height the chat takes
+
+    # -- the chrome --------------------------------------------------------
+    header: bool = True  # the bar on top: chat picture, title, the client's buttons
+    title: str = ""  # what that bar says; empty = the conversation's own title
+    header_avatar: str = ""  # file under assets/avatars/ for the bar; empty = initials
+    # Telegram only: WHOSE account this is. Their messages sit on the right in the
+    # outgoing colour, everyone else's on the left — which is the single strongest
+    # signal that a picture is a real screenshot. Empty is a legitimate answer and
+    # means a conversation watched from outside, with every bubble on the left.
+    me: str = ""  # persona name
+    # Telegram only: the wallpaper, a file under `assets/chat_bg/`. Empty = the skin's
+    # own plain ground. Discord and reddit have no such thing and ignore it.
+    background: str = ""
+
+    # -- the clock ---------------------------------------------------------
+    # How a long message arrives: in pieces, as the reader gets to them. `chunk` is
+    # how many characters a piece aims for, and the piece appears on the first word of
+    # it by the voice's own word timings. 0 turns the whole thing off and every
+    # message appears whole.
+    chunk: int = 90
+    # …and the length a message has to reach before it is broken up at all. Below it a
+    # message appears whole however small `chunk` is, because a two-word line revealed
+    # in two pieces reads as a stutter rather than as typing.
+    chunk_min: int = 140
+    # The fixed pause between one message and the next. It is what the operator asked
+    # for in place of a reading-speed model, and it does double duty: for a message
+    # nobody reads aloud it is the whole of how long that message is up, and for one
+    # that is read it is the breath after the last word before the next bubble lands.
+    gap_s: float = 1.2
+    roll_s: float = 0.45  # how long the view takes to travel (scroll="roll")
+    scroll: ScrollMode = "roll"
+
+    # -- the trimmings -----------------------------------------------------
+    # Reactions land when their message has been read to the end, one after another,
+    # quickly — and faster the more of them there are, so that eight reactions do not
+    # take eight times as long as one. `react_s` is the whole flurry, not one pop.
+    reactions: bool = True
+    react_s: float = 0.5
+    # The send sound, a file under `assets/chat_sfx/`. Spelled the way the music
+    # select is (`assemble.MUSIC_NONE`): empty is the roll over the folder, `none` is
+    # silence, anything else is one file.
+    sfx: str = ""
+    sfx_volume: float = 0.5
+    # Translate the conversation into the run's language. Done by the configured LLM
+    # rather than by a translation API, because the rule that matters cannot be
+    # expressed to one: a russian chat with the odd english word in it, where the
+    # english IS the joke, must come out untouched, and only something reading the
+    # whole conversation can tell that from a message that merely happens to be
+    # foreign (see `llm/chat.py`).
+    translate: bool = True
+    cast: list[str] = []  # persona names this preset opens with; the editor may add more
+
+
 # --- resolved parameters of a single run ----------------------------------
 
 
-Mode = Literal["info", "drama", "fandom"]
+Mode = Literal["info", "drama", "fandom", "chat"]
 # fandom mode: WHO is telling it, all of them from inside the world.
 #   resident   — a person who lives there, first person, the world as daily life
 #   chronicler — a chronicler/researcher/theorist of that world, no "I" protagonist,
@@ -1390,8 +1547,10 @@ class RunParams(BaseModel):
     # what to generate: "info" = the minute-of-info clip; "drama" = the AI web
     # drama (a narrated story with a recurring cast + AI-generated shots);
     # "fandom" = the same shape as a drama, but set in a world the operator wrote
-    # down, narrated from INSIDE it as fact. The mode selects the stage chain in
-    # the orchestrator.
+    # down, narrated from INSIDE it as fact; "chat" = a conversation read aloud and
+    # drawn in a messenger's own interface, which is the one mode whose picture is
+    # not footage at all but a thing this program draws itself (see `slopgen.chat`).
+    # The mode selects the stage chain in the orchestrator.
     mode: Mode = "info"
     idea: str = ""  # user-provided topic; empty = the LLM invents one
     visuals: str = "classic"  # visuals profile name from configs/visuals/
@@ -1552,6 +1711,24 @@ class RunParams(BaseModel):
     # for — a video whose effects were decided by somebody looking at it must not have
     # a second opinion laid over them on the next pass of the picture stage.
     frame_effects: bool = True
+    # -- chat mode ---------------------------------------------------------
+    # The preset this run draws its thirty-odd settings from (`configs/chat/*.toml`),
+    # and the ad-hoc one built in the form instead. Exactly the pair `visuals` and
+    # `manual_visuals` are, and for the same reason: a series of alike videos names a
+    # saved preset, while a one-off is typed into the form and belongs to nothing.
+    chat: str = ""
+    manual_chat: ChatConfig | None = None
+    # Where the conversation is being taken FROM, when it is not being typed. A
+    # subreddit, a Telegram channel or chat, a path to an export — one field, because
+    # what it means is decided by `ChatConfig.source` and a second one would only
+    # give the two a way to disagree.
+    chat_from: str = ""
+    # One voice for everybody, overruling what each persona's card says. It is the
+    # answer to the common case — a single narrator reading somebody else's group
+    # chat, which is the format this mode exists for — without having to re-cast
+    # every card for one video. `none` is the other blunt answer: nobody is read, the
+    # messages simply appear. Empty leaves the casting to the personas.
+    chat_voice: str = ""
 
     @field_validator("fandom_invent", mode="before")
     @classmethod

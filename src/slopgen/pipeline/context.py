@@ -10,12 +10,14 @@ from typing import Callable
 from ..config import (
     AccountConfig,
     AdConfig,
+    ChatConfig,
     CharacterConfig,
     ConfigStore,
     ContentTypeConfig,
     FandomConfig,
     GlobalConfig,
     OrchestrationConfig,
+    PersonaConfig,
     RunParams,
     VisualsConfig,
 )
@@ -169,6 +171,43 @@ class AppContext:
     @property
     def is_fandom(self) -> bool:
         return self.params.mode == "fandom"
+
+    @property
+    def is_chat(self) -> bool:
+        return self.params.mode == "chat"
+
+    @property
+    def chat(self) -> ChatConfig:
+        """This run's chat settings: the ad-hoc ones built in the form, else the named
+        preset, else the defaults.
+
+        The same three-step every other profile on the context resolves through
+        (`visuals`, `orchestration`), and a blank `ChatConfig` is a usable answer
+        rather than an error — the mode's defaults are the common case, and a run that
+        named a preset which has since been deleted should cost the preset, not the
+        video."""
+        if self.params.manual_chat:
+            return self.params.manual_chat
+        return self.store.chats.get(self.params.chat) or ChatConfig(name="")
+
+    @property
+    def chat_skin(self):
+        """The client being impersonated, at this video's width.
+
+        Resolved here rather than in each caller because the width is the run's and
+        the skin is the preset's, and the two have to meet somewhere that both the
+        render stage and the room can ask (see `slopgen.chat.skins`)."""
+        from ..chat import skins
+
+        return skins.get(self.chat.skin, self.g.video.width)
+
+    def persona(self, name: str) -> PersonaConfig:
+        """Who this is, by the name on the message. An unknown name is not an error:
+        an imported export names people the operator never carded, and the right
+        answer there is a person with that name, no picture and no voice — which is
+        exactly a blank card. Carding them is then an edit in the room, not a
+        precondition for the run to start."""
+        return self.store.personas.get(name) or PersonaConfig(name=name)
 
     @property
     def is_beats(self) -> bool:

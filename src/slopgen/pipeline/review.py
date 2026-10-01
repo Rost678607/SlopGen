@@ -47,7 +47,15 @@ _DRAMA_STAGES = (
 _FANDOM_STAGES = ["canon"] + [s for s in _DRAMA_STAGES if s != "cut"]
 _FANDOM_STAGES.insert(_FANDOM_STAGES.index("footage"), "picture")
 
-_MODE_STAGES = {"drama": _DRAMA_STAGES, "fandom": _FANDOM_STAGES}
+# The chat mode's own three, and one of them matters more than any other breakpoint
+# in the program: `source` is where the operator sits with a conversation in front of
+# them and decides what the video is. `script` is after the translation and the
+# casting, which is the moment to argue with both. `render` is the last look before
+# anything is drawn — and the only one of the three that is cheap to walk past, since
+# the drawing is cached per state and re-entering it costs only what changed.
+_CHAT_STAGES = ["source", "script", "tts", "render", "subtitles", "assemble", "metadata"]
+
+_MODE_STAGES = {"drama": _DRAMA_STAGES, "fandom": _FANDOM_STAGES, "chat": _CHAT_STAGES}
 
 
 def _beats(mode: str) -> bool:

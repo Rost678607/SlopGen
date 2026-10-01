@@ -295,6 +295,48 @@ def make_photo_part(img: Path, dur: float, out: Path, cfg: GlobalConfig, motion:
     ])
 
 
+def make_chat_part(img: Path, dur: float, out: Path, cfg: GlobalConfig,
+                   y_from: float = 0.0, y_to: float = 0.0,
+                   at: float = 0.0, travel: float = 0.0,
+                   header: Path | None = None) -> None:
+    """One piece of the chat track: a drawn state, with the view sliding down it.
+
+    Not `make_photo_part` with a move, and the difference is not cosmetic. A
+    Ken-Burns window is three numbers because the picture is fitted to the frame's
+    aspect BEFORE anything is cropped out of it (see :class:`~config.models.Rect`) —
+    and for a conversation drawn as one tall canvas, that fitting is precisely what
+    throws away everything the scroll was going to travel to. So the window here is
+    the frame's own size in the source's own pixels, and it only ever moves down.
+
+    The travel is a ramp in seconds, the same shape the effects track lays its paths
+    on (:func:`_ramp`), clamped so that a state shorter than its own travel simply
+    arrives late rather than running past the bottom of the drawing."""
+    v = cfg.video
+    span = max(travel, 1e-3)
+    y = _ramp([(at, y_from), (at + span, y_to)]) if abs(y_to - y_from) > 0.5 else f"{y_from:.3f}"
+    # the drawing is made at the frame's width already, but a state may be shorter
+    # than the frame before the conversation has filled it — pad rather than scale,
+    # so that the first message is the size every later one will be
+    graph = (
+        f"[0:v]scale={v.width}:-2:flags=lanczos,"
+        f"pad={v.width}:'max(ih,{v.height})':0:0:color=0x000000,"
+        f"crop={v.width}:{v.height}:0:'clip({y},0,ih-{v.height})',"
+        f"setsar=1,fps={v.fps}"
+    )
+    args = ["-loop", "1", "-i", str(img)]
+    if header is not None:
+        # the bar is laid on the FRAME and not on the drawing, which is the whole
+        # reason it is a second input: in a real client the conversation scrolls
+        # underneath it and it does not move
+        graph += "[c];[c][1:v]overlay=0:0"
+        args += ["-loop", "1", "-i", str(header)]
+    graph += "[v]"
+    _run([
+        "ffmpeg", "-y", *args, "-filter_complex", graph,
+        "-map", "[v]", "-an", *PART_VENC, "-t", f"{dur:.3f}", str(out),
+    ])
+
+
 def effect_at(d: EffectDraw, at: float) -> tuple[float, float, float, float, float] | None:
     """Where an effect is at ONE instant: (cx, cy, width, alpha, turn), or None when it
     is not up at that moment.

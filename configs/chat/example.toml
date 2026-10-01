@@ -1,0 +1,35 @@
+# A saved set of chat-mode settings. Copy it, rename it, change what you need: the
+# browser's config panel does all three, and a run names one of these instead of
+# filling in thirty fields again (see `config.models.ChatConfig`).
+#
+# This one is the shape the mode was built for: somebody else's group chat, read
+# aloud over a Telegram screenshot, vertical.
+
+source = "manual"   # typed or imported in the room; reddit/telegram fetch their own
+skin = "telegram"   # telegram | discord | reddit — reddit does not mix with the other two
+aspect = "9:16"
+
+# the chrome
+header = true
+title = ""          # empty = whatever the conversation calls itself
+me = ""             # a persona name: their messages sit on the right. Empty = watched from outside
+background = ""     # a file under assets/chat_bg/; empty = the plain ground
+
+# the clock
+chunk = 90          # a long message arrives in pieces of about this many characters
+chunk_min = 140     # …but only once it is this long; below it, whole
+gap_s = 1.2         # between one message and the next, and the whole hold of an unread one
+scroll = "roll"     # roll | jump | clear
+roll_s = 0.45       # how long the view takes to travel
+
+# the trimmings
+reactions = true
+react_s = 0.5       # the whole flurry, however many there are
+sfx = ""            # a file under assets/chat_sfx/; "none" is silence, "" rolls one
+sfx_volume = 0.5
+translate = true    # into the run's language, by the configured model (see llm/chat.py)
+
+# the split: the chat above, something moving below, for the people who need it
+split = false
+split_visuals = ""  # a configs/visuals/ profile for the lower half
+split_share = 0.62

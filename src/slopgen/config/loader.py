@@ -11,6 +11,7 @@ import tomli_w
 from .models import (
     AccountConfig,
     AdConfig,
+    ChatConfig,
     CharacterConfig,
     ContentTypeConfig,
     EffectSpec,
@@ -19,6 +20,7 @@ from .models import (
     GlobalConfig,
     LLMProfile,
     OrchestrationConfig,
+    PersonaConfig,
     PresetConfig,
     RunParams,
     ShapesConfig,
@@ -367,6 +369,11 @@ class ConfigStore:
             v.set_root(CONFIGS_DIR / "voices")
         self.orchestrations: dict[str, OrchestrationConfig] = _load_dir("orchestration", OrchestrationConfig)
         self.shapes: dict[str, ShapesConfig] = _load_dir("shapes", ShapesConfig)
+        # the chat mode: its presets, and the people who appear in one. Ordinary named
+        # configs, which is the whole reason they are two folders and not a block of
+        # fields somewhere — the config panel's save/rename/delete comes with them.
+        self.chats: dict[str, ChatConfig] = _load_dir("chat", ChatConfig)
+        self.personas: dict[str, PersonaConfig] = _load_dir("personas", PersonaConfig)
         # the effects base: arrows, circles, stings. Like a cloned voice, each entry
         # is told where it was loaded from, because its material lies beside it.
         self.effects: dict[str, EffectSpec] = _load_dir(EFFECTS_DIR, EffectSpec)
@@ -409,6 +416,8 @@ class ConfigStore:
         "characters": "characters",
         "content": "content_types",
         "orchestration": "orchestrations",
+        "chat": "chats",
+        "personas": "personas",
     }
 
     # Where a name of one kind is written down in ANOTHER config: the preset is the one

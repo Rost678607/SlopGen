@@ -43,6 +43,22 @@ class BgAsset(BaseModel):
     fit: str = "crop"
     fit_x: float = 0.5
     fit_y: float = 0.5
+    # -- chat mode: a drawn state, scrolled (see `slopgen.chat.scroll`) ------
+    # The chat's picture travels DOWN a tall drawing, and that is not a Ken-Burns
+    # move however much it looks like one: a crop window there is three numbers
+    # because the picture is fitted to the frame's aspect before anything is cropped
+    # out of it (see `config.models.Rect`), and fitting is exactly what would throw
+    # away the part of the canvas this travel exists to reach. So it is its own
+    # thing — a window of the frame's own size, sliding in the source's own pixels.
+    scroll: bool = False
+    scroll_from: float = 0.0  # the window's top edge, in pixels of the source image
+    scroll_to: float = 0.0  # …where it ends up; equal to `scroll_from` = a still hold
+    scroll_at: float = 0.0  # seconds into the piece where the travel begins
+    scroll_s: float = 0.0  # how long the travel takes
+    # The client's top bar, drawn once and laid over every frame of the piece. On the
+    # asset rather than looked up at render time for the reason `fit` is: by then the
+    # conversation is gone, and the assembler is handed a path and a duration.
+    overlay: Path | None = None
 
 
 class InsertCue(BaseModel):
@@ -157,9 +173,39 @@ class Scene(BaseModel):
     # then carries it for free. The one rule about it is that two in a row is one
     # pause said twice, which is why `montage.add_hush` refuses to make the second.
     hush: bool = False
+    # A line with text that is nonetheless never spoken: a chat message whose author
+    # has no voice (see `config.models.PersonaConfig.voice`). It is NOT a pause — it
+    # has words, they are drawn on screen, and the operator can read them — but to
+    # the synthesizer and to the clock it is the same thing a pause is: a stretch of
+    # seconds with no audio under it, its length set by `ChatConfig.gap_s` rather
+    # than by how long anything took to say.
+    #
+    # A second flag rather than a reuse of `hush`, because the two differ in the one
+    # place it would matter: a pause has nothing in it and a silent line has a line
+    # in it, so the room may edit this text, the subtitle pass could caption it, and
+    # giving it a voice turns it into an ordinary line. Everything that merely asks
+    # "is there anything here to synthesize" asks :attr:`unvoiced` instead.
+    silent: bool = False
     audio_tempo: float = 1.0  # atempo factor applied so the voice fits the clip
     video_tempo: float = 1.0  # setpts factor applied to the clip for the same reason
     part: int = 1  # drama: output part number; cuts happen after the last scene in a part
+
+    @property
+    def unvoiced(self) -> bool:
+        """Nothing here is going to be synthesized, and its length is already set.
+
+        The question the voicing stage actually asks, and the two reasons for it are
+        different things worth keeping apart (see `hush` and `silent`)."""
+        return self.hush or self.silent
+
+    # -- chat mode ---------------------------------------------------------
+    # WHERE a long message breaks into the pieces it is revealed in: the indices into
+    # `words` that each start a new piece (the first piece starts at 0 and is not
+    # listed). Word indices and not characters, because the reveal fires on the word
+    # the reader reaches, and `words` is the only thing that knows when that is.
+    # Empty = this message appears whole, which is every short one and all of them
+    # when `ChatConfig.chunk` is off.
+    chat_chunks: list[int] = []
 
 
 class FrameShot(BaseModel):
@@ -277,6 +323,99 @@ class FrameAsk(BaseModel):
     card: str = ""  # the card it became, once delivered and filed
 
 
+class ChatMsg(BaseModel):
+    """One message of a conversation: who wrote it, what it says, and what is drawn
+    around it.
+
+    It sits BESIDE the scene rather than replacing it. A message that is read aloud is
+    one :class:`Scene` — same text, same voice, same word timings — and the whole of
+    the montage room then works on a chat unchanged: reordering lines, re-voicing one,
+    fixing a caption without paying for a re-synthesis. What a scene has no place for
+    is everything a picture of a message needs, and that is this: an author, a reply,
+    reactions, a score. `scene` is the link, and it is an INDEX because that is what
+    every other track here anchors with (`FrameShot.anchor_scene`, `EffectCue`), and
+    because the montage room already knows how to keep indices honest when a line is
+    inserted or dropped.
+
+    A message that is NOT read aloud — its author has no voice, or nobody does — still
+    gets a scene. It has no audio and holds for `ChatConfig.gap_s`, which is exactly
+    what `Scene.hush` already is one of: a stretch of the clock with nothing spoken
+    over it. Making it a scene rather than a special case is what keeps one clock for
+    the video instead of two that have to be reconciled.
+
+    `text` is what is drawn and read; `source_text` is what arrived, before the
+    translation pass. Both are kept because the operator reviewing a translated chat
+    is reviewing a translation, and a line they cannot compare to its original is a
+    line they cannot check. Where nothing was translated they are equal."""
+
+    scene: int = -1  # index into VideoJob.scenes; -1 until the script stage lays them
+    persona: str = ""  # PersonaConfig.name — who sent it
+    text: str = ""
+    source_text: str = ""  # what it said before the translation pass; "" = untranslated
+    # WHICH message this one answers. An index into the conversation, not a scene: a
+    # reply is a fact about the conversation and survives the scenes being re-cut.
+    # -1 = not a reply. In the reddit skin this is the tree edge and decides the
+    # indent; in a messenger it is the quoted strip above the bubble.
+    reply_to: int = -1
+    # The emoji on the bubble, in the order they land, with how many of each. A list
+    # of pairs rather than a dict because the ORDER is the animation (see
+    # `ChatConfig.react_s`) and a dict's order is an accident of how it was built.
+    reactions: list[tuple[str, int]] = Field(default_factory=list)
+    score: int = 0  # reddit only: karma. Meaningless in a messenger and never drawn there
+    stamp: str = ""  # the time printed on the bubble, verbatim; "" = the skin prints none
+    # WHICH excerpt this message belongs to. Several unrelated pieces of conversation
+    # in one video is the ordinary case, and the swipe between them is drawn where
+    # this number changes (see `chat.scroll`). One excerpt = every message at 0.
+    excerpt: int = 0
+    # Empty the screen BEFORE drawing this one. A per-message mark rather than a
+    # scroll mode, because a conversation that rolls throughout still wants a clean
+    # start at the places the operator chooses — and where that is depends on what is
+    # being said, which is a judgement no setting can hold.
+    clear_before: bool = False
+    # The operator overruling the persona's card for this one message. Both empty is
+    # the ordinary case and means "whatever the card says"; filling one in is how a
+    # person changes their picture mid-conversation, or how a one-off account appears
+    # without earning a card of its own.
+    nick: str = ""
+    avatar: str = ""
+    # The operator has touched this message, so no automatic pass may rewrite it —
+    # the same promise `FrameShot.pinned` and `EffectCue.pinned` make. It is what
+    # keeps a re-run of the translation from undoing a line somebody fixed by hand.
+    pinned: bool = False
+
+
+class ChatState(BaseModel):
+    """One drawn STATE of the conversation, and when it is up.
+
+    The chat mode's picture is not footage: it is this program's own drawing, remade
+    every time anything on screen changes — a message arriving, a piece of a long one
+    being revealed, a reaction popping. So the track is a list of states, each a PNG
+    and a stretch of the clock, and `chat.scroll` turns them into the ordinary
+    per-scene :class:`BgAsset`s that `stages.assemble` already renders. Nothing
+    downstream of the render stage knows that this mode exists.
+
+    The scroll rides on `BgAsset.move` for the same reason: a state is drawn as a tall
+    canvas and the view travels down it, which is precisely the crop-window move the
+    frame base already computes and ffmpeg already renders. A roll is a `KenBurns`
+    between two windows; a jump is two states with none.
+
+    Anchored to a WORD like everything else on a derived track (see
+    :class:`FrameShot`): re-voicing one line moves every second after it, and a state
+    pinned to seconds would come unstuck from the message it is a picture of."""
+
+    path: Path | None = None  # the drawn PNG; None until the render stage has drawn it
+    start: float = 0.0  # absolute seconds in the finished video, re-derived from the anchor
+    duration: float = 0.0
+    anchor_scene: int = -1
+    anchor_word: int = -1
+    msg: int = -1  # which message this state is a picture of, for the screen to show
+    # The crop window over the drawn canvas, at the start and at the end of the state,
+    # as fractions of it. Equal = the view is still; different = it travels, and
+    # `ChatConfig.roll_s` is how long the travel takes out of `duration`.
+    from_y: float = 0.0
+    to_y: float = 0.0
+
+
 class ScriptPlan(BaseModel):
     """What one fandom video is ABOUT, and the order it comes apart in — decided by
     one pass before a beat is written (`stages.fandom_script.plan_spine`).
@@ -329,6 +468,13 @@ class VideoJob(BaseModel):
     # fandom: the world's compiled canon sheet, carried here so a resumed run writes
     # against the same world the first pass did — even if the lore was edited since.
     canon: str = ""
+    # chat mode: the conversation itself, and the drawing of it. The messages are the
+    # document the operator edits and every later pass reads; the states are what the
+    # render stage makes of them and what assemble puts on screen. Empty in every
+    # other mode.
+    messages: list[ChatMsg] = Field(default_factory=list)
+    chat_states: list[ChatState] = Field(default_factory=list)
+    chat_title: str = ""  # what the header bar says, as the source named it
     parts: list[Part] = Field(default_factory=list)  # the episodes, in order (see pipeline/parts.py)
     # episodes still short of a hand-made clip, so the tail stages must skip them and
     # run again on the next resume. Recomputed by the footage stage on every pass.

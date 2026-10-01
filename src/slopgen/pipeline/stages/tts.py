@@ -712,7 +712,7 @@ def restretch_one(job: VideoJob, ctx: AppContext, index: int, rate: int) -> floa
     Each of those is a case where re-voicing is the right answer, and the caller's
     fallback is exactly that (see `montage.voice`)."""
     scene = job.scenes[index]
-    if scene.hush or not scene.audio:
+    if scene.unvoiced or not scene.audio:
         return None
     engine = resolve_engine(ctx)
     if varies_rate(engine):
@@ -762,12 +762,12 @@ def _run_manual(job: VideoJob, ctx: AppContext) -> None:
     # length of, so it is neither in the manifest nor waited for (see `Scene.hush`).
     delivered = manual_tts.collect_or_pause(
         job.workdir, [scene.text for scene in job.scenes],
-        skip={i for i, scene in enumerate(job.scenes) if scene.hush},
+        skip={i for i, scene in enumerate(job.scenes) if scene.unvoiced},
     )
     offset = 0.0
     total = len(job.scenes)
     for i, scene in enumerate(job.scenes):
-        if scene.hush:
+        if scene.unvoiced:
             if not ctx.is_beats:
                 offset += scene.duration
             ctx.progress("tts", i + 1, total)
@@ -852,7 +852,7 @@ def _cast_deliveries(job: VideoJob, ctx: AppContext, engine: str) -> None:
     # a pause says nothing, so it is nothing to cast — and it is `fixed` rather than
     # filtered out so the indices the model answers on stay the scenes' own
     fixed = {i for i, sc in enumerate(job.scenes)
-             if sc.hush or (sc.voice and not sc.voice_auto)}
+             if sc.unvoiced or (sc.voice and not sc.voice_auto)}
     cast = delivery.cast(
         ctx.llm,
         [sc.text for sc in job.scenes],
@@ -892,11 +892,12 @@ def run(job: VideoJob, ctx: AppContext) -> None:
     offset = 0.0
     total = len(job.scenes)
     for i, scene in enumerate(job.scenes):
-        # A pause has nothing to say and a length of its own already (see `Scene.hush`).
-        # Sent to a synthesizer it would come back as either an error or a file of
-        # nothing, and either way the length the operator set would be overwritten by
-        # whatever the engine made of an empty string.
-        if scene.hush:
+        # A pause has nothing to say and a length of its own already (see `Scene.hush`),
+        # and so does a line nobody was cast to read (`Scene.silent`). Sent to a
+        # synthesizer either would come back as an error or a file of nothing, and
+        # either way the length that was set would be overwritten by whatever the
+        # engine made of it.
+        if scene.unvoiced:
             if not ctx.is_beats:
                 offset += scene.duration
             ctx.progress("tts", i + 1, total)

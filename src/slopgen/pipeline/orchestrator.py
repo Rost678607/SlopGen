@@ -39,6 +39,9 @@ from .job import VideoJob
 from .manual import ManualInputPending
 from .stages import (
     assemble,
+    chat_render,
+    chat_script,
+    chat_source,
     cut,
     drama_footage,
     drama_script,
@@ -108,7 +111,29 @@ STAGES_FANDOM: list[tuple[str, Callable]] = [
     ("metadata", metadata.run),
 ]
 
-_CHAINS = {"drama": STAGES_DRAMA, "fandom": STAGES_FANDOM}
+# The chat chain shares three names with every other and owns three. `source` is the
+# fetch, and it is a stage rather than a step inside the writer because it is the one
+# place a run can be parked while somebody browses for a conversation. `script` casts
+# the voices and lays the messages onto scenes, which is what buys this mode the
+# montage room, the subtitle pass and the assembler for nothing. `render` is the
+# drawing, and it sits after `tts` for a hard reason: when a piece of a long message
+# appears is a question about word timings, and those do not exist until something has
+# said the words.
+#
+# No `cut`: a conversation is one video. The excerpts inside it are a thing on the
+# screen rather than a thing to publish separately, and a chat has no cliffhanger to
+# hang an episode break on.
+STAGES_CHAT: list[tuple[str, Callable]] = [
+    ("source", chat_source.run),
+    ("script", chat_script.run),
+    ("tts", tts.run),
+    ("render", chat_render.run),
+    ("subtitles", subtitles.run),
+    ("assemble", assemble.run),
+    ("metadata", metadata.run),
+]
+
+_CHAINS = {"drama": STAGES_DRAMA, "fandom": STAGES_FANDOM, "chat": STAGES_CHAT}
 
 
 def stages_for(params) -> list[tuple[str, Callable]]:

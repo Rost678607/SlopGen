@@ -124,10 +124,18 @@ def available(params, job: VideoJob | None) -> bool:
 # `entities` is deliberately absent: an empty registry is a perfectly ordinary outcome,
 # so "the job has none" cannot be read as "it has not run".
 SATISFIED = {
+    # the chat mode's two: the conversation it is made of, and the drawing of it
+    "source": lambda job: bool(job.messages),
+    "render": lambda job: bool(job.chat_states),
     "canon": lambda job: bool(job.canon.strip()),
     "script": lambda job: bool(job.scenes),
+    # A line with nothing to synthesize is not a line waiting to be synthesized. That
+    # covers the pause the operator put on the track and the chat message nobody was
+    # cast to read (`Scene.unvoiced`) — without it, any job holding either never
+    # counted `tts` as done, so every resume walked back into the stage to skip every
+    # line in it and announce that it had run.
     "tts": lambda job: bool(job.scenes) and all(
-        s.audio and s.words for s in job.scenes if not s.is_ad),
+        s.audio and s.words for s in job.scenes if not s.is_ad and not s.unvoiced),
     "picture": lambda job: bool(job.frame_shots),
     "footage": lambda job: any(s.bg_assets for s in job.scenes),
     "subtitles": lambda job: any(p.ass for p in job.parts),

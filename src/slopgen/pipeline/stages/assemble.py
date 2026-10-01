@@ -146,7 +146,15 @@ def _segment(i: int, scene, tmp, ctx: AppContext):
     bg_parts = []
     for k, a in enumerate(scene.bg_assets):
         part = tmp / f"s{i:02d}_bg{k}.mp4"
-        if a.is_photo:
+        if a.scroll:
+            # the chat mode's own picture: a drawing of the conversation with the view
+            # sliding down it (see `slopgen.chat.scroll`). Checked before `is_photo`
+            # because a state IS a still, and a Ken-Burns window would fit it to the
+            # frame and throw away the part being scrolled to.
+            ffmpeg.make_chat_part(a.path, a.duration, part, ctx.g,
+                                  y_from=a.scroll_from, y_to=a.scroll_to,
+                                  at=a.scroll_at, travel=a.scroll_s, header=a.overlay)
+        elif a.is_photo:
             ffmpeg.make_photo_part(a.path, a.duration, part, ctx.g, vis.background.motion,
                                    direction=k, move=a.move, phase=a.move_at,
                                    fit=a.fit, ax=a.fit_x, ay=a.fit_y)
