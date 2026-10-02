@@ -24,6 +24,7 @@ everything the expensive half needs.
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -31,6 +32,11 @@ from PIL import Image, ImageDraw
 
 from . import fonts, richtext
 from .skins import Skin, column as skins_column
+
+# How much bigger than life the bubble outline is drawn before being shrunk
+# back down. ImageDraw has no antialiasing of its own, and a tail is thin
+# enough that without this it is more staircase than curve.
+SS = 4
 
 log = logging.getLogger(__name__)
 
@@ -312,8 +318,7 @@ class Canvas:
 
         if s.bubbles:
             fill = s.bubble_out if b.person.mine else s.bubble_in
-            draw.rounded_rectangle([x0, y, x1, bottom], radius=s.radius, fill=fill)
-            self._tail(draw, b, dy, fill)
+            self._bubble(img, b, y, bottom, fill)
 
         cx = x0 + (s.bubble_pad_x if s.bubbles else 0)
         cy = y + (s.bubble_pad_y if s.bubbles else 0)
@@ -387,20 +392,60 @@ class Canvas:
         richtext.draw_line(img, draw, (int(cx - w / 2), int(y + px * 0.34)),
                            text, face, s.meta, px)
 
-    def _tail(self, draw: ImageDraw.ImageDraw, b: Block, dy: int, fill: str) -> None:
-        """Telegram's little spur at the bottom corner of a bubble. It is two
-        triangles' worth of pixels and most of what makes the picture read as
-        Telegram rather than as a rounded rectangle."""
-        if not self.skin.bubbles or not b.show_tail:
-            return
+    def _bubble(self, img: Image.Image, b: Block, y: int, bottom: int,
+                fill: str) -> None:
+        """The bubble and its tail, as one shape, drawn through a mask.
+
+        Two things here are the difference between a picture that reads as Telegram
+        and one that reads as a rounded rectangle with a spike glued on.
+
+        The first is that the tail is not a triangle. Telegram's bubble goes *square*
+        at the corner the tail grows from — all the rounding is on the other three —
+        and the tail is a hook whose outer edge curves back **inwards** to the tip.
+        Drawing a sharp wedge from a point inside a rounded corner, which is what this
+        did before, leaves a notch where the two shapes fail to meet and a spur that
+        points the wrong way.
+
+        The second is that `ImageDraw` does not antialias anything. A circle's quadrant
+        at this size is a visible staircase, and a thin tail is mostly staircase. So
+        the whole outline is drawn into an `L` mask at :data:`SS` times the size and
+        shrunk with LANCZOS, which is how the avatars have always been cut out; the
+        colour then arrives through the mask and can sit on a wallpaper as happily as
+        on a flat ground."""
         s = self.skin
         x0, _, x1, _ = b.box
-        foot = b.bottom + dy
-        t = int(s.radius * 0.58)
-        if b.person.mine and s.sides:
-            draw.polygon([(x1 - 2, foot - t * 2), (x1 + t, foot), (x1 - 2, foot)], fill=fill)
-        else:
-            draw.polygon([(x0 + 2, foot - t * 2), (x0 - t, foot), (x0 + 2, foot)], fill=fill)
+        right_side = b.person.mine and s.sides
+        t = int(s.radius * 0.62) if b.show_tail else 0
+        left = x0 - (t if not right_side else 0)
+        edge = x1 + (t if right_side else 0)
+        w, h = edge - left, bottom - y
+        if w <= 0 or h <= 0:
+            return
+
+        mask = Image.new("L", (w * SS, h * SS), 0)
+        md = ImageDraw.Draw(mask)
+        bx0, bx1 = (x0 - left) * SS, (x1 - left) * SS - 1
+        by1 = h * SS - 1
+        # (top-left, top-right, bottom-right, bottom-left); the tail's own corner is
+        # the one that stays square, because the tail continues it
+        corners = (True, True, not (t and right_side), not (t and not right_side))
+        md.rounded_rectangle([bx0, 0, bx1, by1], radius=s.radius * SS, fill=255,
+                             corners=corners)
+        if t:
+            r = t * SS
+            # a quarter circle centred level with the foot of the bubble's edge and
+            # one tail out from it: the arc runs from that edge down to the tip, and
+            # is concave because the centre is on the far side of it
+            cy = by1 - r
+            cx = bx0 - r if not right_side else bx1 + r
+            steps = max(8, r // 2)
+            arc = []
+            for i in range(steps + 1):
+                a = math.pi / 2 * i / steps
+                dx = math.cos(a) * r
+                arc.append((cx + dx if not right_side else cx - dx, cy + math.sin(a) * r))
+            md.polygon(arc + [(bx0 if not right_side else bx1, by1)], fill=255)
+        img.paste(fill, (left, y), mask.resize((w, h), Image.LANCZOS))
 
     def _paint_reply(self, img: Image.Image, draw: ImageDraw.ImageDraw, b: Block,
                      cx: int, cy: int, x1: int) -> int:
