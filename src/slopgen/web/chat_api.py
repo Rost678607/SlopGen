@@ -59,7 +59,11 @@ SHEET: list[dict] = [
     {"f": "title", "kind": "text", "l": "web.f.chatname"},
     {"f": "header_avatar", "kind": "select", "l": "web.f.chatavatar", "opts": "avatars",
      "blank": True},
-    {"f": "me", "kind": "select", "l": "web.f.chatme", "opts": "personas", "blank": True,
+    # `cast` and not `personas`: whose account this is is a question about the people
+    # in the conversation, and the conversation is full of people an import named and
+    # nobody carded. Offering the card file instead listed strangers and left out
+    # everybody on screen, so the setting could not be answered at all.
+    {"f": "me", "kind": "select", "l": "web.f.chatme", "opts": "cast", "blank": True,
      "when": "telegram"},
     {"f": "background", "kind": "select", "l": "web.f.chatbg", "opts": "chat_backgrounds",
      "blank": True, "when": "telegram"},

@@ -1,9 +1,0 @@
-# One participant of a conversation: the name on the bubble, the picture beside it,
-# and who reads their lines aloud. Three things that are always chosen together, which
-# is why they are one card and not three lists (see `config.models.PersonaConfig`).
-
-handle = "anna_k"   # printed where the platform prints one (u/…, @…); empty prints none
-avatar = ""         # a file under assets/avatars/; empty = the initials disc
-voice = ""          # a voice spec, as a line carries one. Empty = not read aloud
-colour = ""         # "#rrggbb"; empty = derived from the name, stably
-note = "пример карточки участника"

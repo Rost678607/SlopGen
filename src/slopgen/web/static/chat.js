@@ -265,16 +265,25 @@ let chatWho = "";   // which person is open for editing, by name
 
 function renderChatCast() {
   const d = CHAT.doc;
+  // Who is in the conversation that is OPEN. The list used to pool every piece in the
+  // video, so three imported chats put thirty strangers in one column and the one
+  // list on the screen that should have followed the selection did not move when the
+  // selection did. `here` is their line count in this piece; `lines` stays the whole
+  // video's, because a card is a thing of the run and not of the piece.
+  const here = (c) => (c.by_conv || [])[chatConv] || 0;
+  const mine = d.cast.filter((c) => here(c) > 0);
+  const rest = d.cast.filter((c) => here(c) === 0);
   cq("#chat-cast").innerHTML =
     `<h4>${esc(lab("web.chat.cast", "кто в переписке"))}</h4>` +
-    (d.cast.some((c) => !c.silent)
-      ? d.cast.filter((c) => !c.silent).map(personHTML).join("")
+    (mine.length
+      ? mine.map((c) => personHTML(c, here(c))).join("")
       : `<p class="dim">${esc(lab("web.chat.nocast", ""))}</p>`) +
-    // the address book behind the video: people with a card who have not said anything
-    // in THIS one. Apart, because the cast of a video is who is in it.
-    (d.cast.some((c) => c.silent)
+    // everybody else the room knows: people with a card, and people who speak in one
+    // of the OTHER pieces of this video. Apart, because the cast of a conversation is
+    // who is in that conversation — but still here, so nobody becomes unreachable.
+    (rest.length
       ? `<h4 class="quiet">${esc(lab("web.chat.cast.quiet", ""))}</h4>` +
-        d.cast.filter((c) => c.silent).map(personHTML).join("")
+        rest.map((c) => personHTML(c, 0)).join("")
       : "") +
     `<button class="ghost" id="chat-who-new">${
       esc(lab("web.chat.who.new", "＋ человек"))}</button>`;
@@ -291,13 +300,18 @@ function renderChatCast() {
 // It was two `prompt()` boxes in a row, which is the shape that asks you to remember
 // what the first one said while you answer the second, and offers no way at all to
 // see what a field currently is.
-function personHTML(c) {
+function personHTML(c, here) {
   const open = c.name === chatWho;
+  // how much they say HERE, and — when that is not the whole story — how much in the
+  // video altogether, because a card is edited for the run and not for this piece
+  const count = here
+    ? (c.lines > here ? `${here} / ${c.lines}` : `${here}`)
+    : (c.lines ? `0 / ${c.lines}` : "0");
   const head = `
     <div class="chat-person${c.carded ? " carded" : ""}${open ? " on" : ""}${
-      c.silent ? " quiet" : ""}" data-person="${esc(c.name)}">
+      here ? "" : " quiet"}" data-person="${esc(c.name)}">
       <b>${esc(c.name)}</b>
-      <span class="dim">${c.lines}</span>
+      <span class="dim">${count}</span>
       <span class="dim">${esc(c.voice || lab("web.chat.silent", "не читается"))}</span>
       <span class="grow"></span>
       ${c.avatar ? `<img class="who-pic" src="${tokd(`/api/avatar?name=${
@@ -385,7 +399,14 @@ function renderChatSettings() {
       return `<label>${esc(lab(r.l, r.f))}<input type="number" data-s="${r.f}"
         min="${r.min}" max="${r.max}" step="${r.step || 1}" value="${esc(String(val))}"></label>`;
     if (r.kind === "select") {
-      const list = (r.blank ? [""] : []).concat(chatOpts[r.opts] || []);
+      // `cast` is the only list that comes out of the document rather than out of
+      // the config store: it is whoever is in this video. Everybody, not just this
+      // conversation's — the setting belongs to the run, and the account being read
+      // from is as likely to be in the third piece as in the first.
+      const source = r.opts === "cast"
+        ? (CHAT.doc.cast || []).map((c) => c.name)
+        : (chatOpts[r.opts] || []);
+      const list = (r.blank ? [""] : []).concat(source);
       const word = (o) => (r.opt_l ? lab(r.opt_l + o, o)
         : (o || lab(r.blank_l || "w.none", "— нет —")));
       return `<label>${esc(lab(r.l, r.f))}<select data-s="${r.f}">${list.map((o) =>

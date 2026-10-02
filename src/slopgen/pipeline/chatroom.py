@@ -105,6 +105,15 @@ def read(job: VideoJob, ctx) -> dict:
     # button having done nothing.
     spoken = list(dict.fromkeys(m.persona for m in everyone))
     silent = [n for n in sorted(ctx.store.personas) if n not in spoken]
+    # How much each of them says in each PIECE. The room shows one conversation at a
+    # time, and a cast list that pooled every piece in the video put people from three
+    # different chats in one column with no way to tell which was which — the one list
+    # on the screen that did not change when the conversation did.
+    per_conv = {
+        name: [sum(1 for m in conv.messages if m.persona == name)
+               for conv in job.conversations]
+        for name in spoken + silent
+    }
     for name in spoken + silent:
         card = ctx.store.personas.get(name)
         quiet = name in silent
@@ -125,6 +134,8 @@ def read(job: VideoJob, ctx) -> dict:
             "voice": card.voice if card else "",
             "colour": card.colour if card else "",
             "lines": sum(1 for m in everyone if m.persona == name),
+            # per conversation, in the conversations' own order
+            "by_conv": per_conv[name],
         })
     return {
         "conversations": [

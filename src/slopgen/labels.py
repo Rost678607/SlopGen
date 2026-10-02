@@ -3776,8 +3776,8 @@ EN.update({
                         "the height the chat takes; the rest goes to the clip.",
 })
 RU.update({
-    "web.chat.cast.quiet": "есть карточка, но в этом ролике молчат",
+    "web.chat.cast.quiet": "в этой переписке не говорят",
 })
 EN.update({
-    "web.chat.cast.quiet": "carded, but silent in this video",
+    "web.chat.cast.quiet": "not speaking in this one",
 })
