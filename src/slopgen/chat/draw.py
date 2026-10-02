@@ -426,11 +426,23 @@ class Canvas:
         md = ImageDraw.Draw(mask)
         bx0, bx1 = (x0 - left) * SS, (x1 - left) * SS - 1
         by1 = h * SS - 1
-        # (top-left, top-right, bottom-right, bottom-left); the tail's own corner is
-        # the one that stays square, because the tail continues it
-        corners = (True, True, not (t and right_side), not (t and not right_side))
-        md.rounded_rectangle([bx0, 0, bx1, by1], radius=s.radius * SS, fill=255,
-                             corners=corners)
+
+        # The four corners, each with its own radius, because Telegram gives them
+        # four. Within a run of messages from one person the corners that FACE the
+        # neighbouring bubble — the ones down the avatar's side — are pulled in tight,
+        # so the run reads as one block with seams in it rather than as three separate
+        # bubbles that happen to be close. Only the outer side stays fully round.
+        big, tight = s.radius * SS, int(s.radius * 0.3) * SS
+        # a new run starts here: either nobody of theirs is above, or a day pill is
+        joins_above = not b.show_head and not b.separator
+        joins_below = not b.show_tail
+        near_top = tight if joins_above else big
+        near_bot = 0 if t else (tight if joins_below else big)
+        if right_side:
+            radii = (big, near_top, near_bot, big)      # tl, tr, br, bl
+        else:
+            radii = (near_top, big, big, near_bot)
+        _corners(md, bx0, 0, bx1, by1, radii)
         if t:
             r = t * SS
             # a quarter circle centred level with the foot of the bubble's edge and
@@ -556,6 +568,30 @@ class Canvas:
             r = max(2, size // 26)
             cy = y + size // 2 - int(size * 0.22) + i * int(size * 0.22)
             draw.ellipse([dots - r, cy - r, dots + r, cy + r], fill=s.header_text)
+
+
+def _corners(md: ImageDraw.ImageDraw, x0: int, y0: int, x1: int, y1: int,
+             radii: tuple[int, int, int, int]) -> None:
+    """A filled rectangle with four independently rounded corners.
+
+    `ImageDraw.rounded_rectangle` takes one radius for all four and a flag per corner
+    saying round-or-square, which is one answer short: Telegram's bubbles want a large
+    radius on the outside and a small one where they meet the next message. So the box
+    is filled, each corner is cut back to a square, and a quarter circle of that
+    corner's own radius is put back in it."""
+    md.rectangle([x0, y0, x1, y1], fill=255)
+    tl, tr, br, bl = radii
+    for r, box, centre, arc in (
+        (tl, (x0, y0, x0 + tl, y0 + tl), (x0 + tl, y0 + tl), (180, 270)),
+        (tr, (x1 - tr, y0, x1, y0 + tr), (x1 - tr, y0 + tr), (270, 360)),
+        (br, (x1 - br, y1 - br, x1, y1), (x1 - br, y1 - br), (0, 90)),
+        (bl, (x0, y1 - bl, x0 + bl, y1), (x0 + bl, y1 - bl), (90, 180)),
+    ):
+        if r <= 0:
+            continue
+        md.rectangle(list(box), fill=0)
+        cx, cy = centre
+        md.pieslice([cx - r, cy - r, cx + r, cy + r], arc[0], arc[1], fill=255)
 
 
 def _rgba(colour: str, alpha: int) -> tuple[int, int, int, int]:
