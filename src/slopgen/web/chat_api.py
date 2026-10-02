@@ -835,6 +835,11 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
         ctx = context(cp)
         out = Path(job.workdir) / "chat" / "preview.png"
         out.parent.mkdir(parents=True, exist_ok=True)
+        # A message named outright wins over a moment: they are two ways of asking
+        # the same question and only one of them can be answered, so the more specific
+        # one is. Belt and braces after a caller sent both and meant the first.
+        if at >= 0:
+            t = -1.0
         try:
             if t >= 0 and job.chat_states:
                 await run_in_threadpool(_frame_at, job, ctx, float(t), out)

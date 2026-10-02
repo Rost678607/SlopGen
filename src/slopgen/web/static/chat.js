@@ -358,7 +358,10 @@ function shootChat(at = -1) {
   const n = at < 0 ? before + ((chatActive() || { lines: 0 }).lines - 1) : before + at;
   if (n < 0) return;
   cq("#chat-shot-img").src =
-    tokd(`/api/runs/${CHAT.id}/chat/preview?video=${CHAT.video}&at=${n}&t=${Date.now()}`);
+    // `x` and not `t`: `t` is the preview's other question — a MOMENT of the finished
+    // video — so a cache-buster parked in it asked for second 1.79e12 of a ten-second
+    // cut, and every click on a message drew the last frame of the video instead.
+    tokd(`/api/runs/${CHAT.id}/chat/preview?video=${CHAT.video}&at=${n}&x=${Date.now()}`);
 }
 
 // The settings, with the frame in front of you. Drawn from what the server says it
