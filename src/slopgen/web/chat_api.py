@@ -59,11 +59,13 @@ SHEET: list[dict] = [
     {"f": "title", "kind": "text", "l": "web.f.chatname"},
     {"f": "header_avatar", "kind": "select", "l": "web.f.chatavatar", "opts": "avatars",
      "blank": True},
-    # `cast` and not `personas`: whose account this is is a question about the people
-    # in the conversation, and the conversation is full of people an import named and
-    # nobody carded. Offering the card file instead listed strangers and left out
-    # everybody on screen, so the setting could not be answered at all.
+    # Not drawn in the sheet — `"hide": True` — because it is answered on the person:
+    # every card in the cast carries `это я`, which is where somebody looking for
+    # "whose account is this" actually looks. It stays in the sheet's list all the
+    # same, because that list is also what the settings route will accept, and one
+    # place deciding both is what keeps them from drifting apart.
     {"f": "me", "kind": "select", "l": "web.f.chatme", "opts": "cast", "blank": True,
+     "hide": True,
      "when": "telegram"},
     {"f": "background", "kind": "select", "l": "web.f.chatbg", "opts": "chat_backgrounds",
      "blank": True, "when": "telegram"},
@@ -806,7 +808,19 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
         guard(slopgen)
         root = (store.global_cfg.paths.assets / chat_render.AVATARS_DIR).resolve()
         at = (root / name).resolve()
-        if not str(at).startswith(str(root)) or not at.is_file():
+        if not str(at).startswith(str(root)):
+            raise HTTPException(status_code=404, detail="no such picture")
+        # …and with an extension on it, because the lists this is called from hold
+        # bare names: a card stores `tg_1000561679` and the file is `tg_1000561679.jpg`,
+        # which is the same resolution `chat_render.asset` does for the renderer. Only
+        # the browser was being made to guess, so every thumbnail in the picker came
+        # back 404 and the one control for choosing a picture showed no pictures.
+        if not at.is_file():
+            for ext in chat_render.IMAGE_EXTS:
+                if at.with_name(at.name + ext).is_file():
+                    at = at.with_name(at.name + ext)
+                    break
+        if not at.is_file():
             raise HTTPException(status_code=404, detail="no such picture")
         return FileResponse(at, headers={"Cache-Control": "max-age=300"})
 
