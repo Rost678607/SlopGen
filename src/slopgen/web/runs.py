@@ -342,6 +342,9 @@ class Supervisor:
         job = VideoJob(index=0, workdir=run_dir / "00")
         job.workdir.mkdir(parents=True, exist_ok=True)
         cp.paused(job, [], "", "js.made-by-hand")
+        # …and the name goes ON the checkpoint, so the run is still recognisable after
+        # the server has been restarted under it (see `Checkpoint.title`)
+        cp.name_it(title or _title(params))
         run = Run(id=uuid.uuid4().hex[:12], title=title or _title(params), params=params,
                   status="paused", message="js.made-by-hand",
                   run_dir=run_dir, resume_dir=run_dir,
@@ -417,8 +420,8 @@ class Supervisor:
         states = [cp.status(i) for i in range(cp.params.count)]
         status = next((s for s in ("failed", "review", "paused") if s in states),
                       "done" if states and all(s == "done" for s in states) else "stopped")
-        run = Run(id=uuid.uuid4().hex[:12], title=run_dir.name, params=cp.params,
-                  status=status, run_dir=run_dir, resume_dir=run_dir,
+        run = Run(id=uuid.uuid4().hex[:12], title=cp.title or run_dir.name,
+                  params=cp.params, status=status, run_dir=run_dir, resume_dir=run_dir,
                   message="js.found-on-disk", finished_at=cp_path.stat().st_mtime)
         with self._lock:
             self.runs[run.id] = run
@@ -755,6 +758,16 @@ class Supervisor:
             )
             orch.run(resume_dir=resume_dir)
             run.run_dir = orch.run_dir
+            # The name goes onto the checkpoint the moment there is one to put it on.
+            # A run outlives the process that made it — the browser rediscovers runs
+            # off the disk after a restart — and one that came back as its folder name
+            # among forty of its kind is, from where the operator stands, a run that
+            # was not saved.
+            if run.run_dir is not None:
+                try:
+                    Checkpoint.load(run.run_dir).name_it(run.title)
+                except Exception:  # noqa: BLE001 — a name is never worth a failed run
+                    pass
             run.status = "stopped" if run._stop else _final_status(orch, run)
             self._emit(run, -1, "run", run.status, str(orch.run_dir or ""))
         except Exception as e:  # a failed run is a state, not a crash of the server

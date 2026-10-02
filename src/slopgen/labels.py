@@ -3734,3 +3734,44 @@ EN.update({
     "web.chat.rx.which": "which emoji",
     "web.chat.rx.swap": "change the emoji",
 })
+RU.update({
+    "web.chat.build": "собрать ролик",
+    "web.chat.build.at": "иду:",
+    "web.chat.build.done": "ролик собран",
+    "web.chat.shot": "перерисовать",
+    "web.chat.day": "дата",
+    "web.chat.restamp": "время по порядку",
+    "web.chat.restamp.why": "Перетаскивание не трогает время: штамп — это когда "
+                            "сообщение было отправлено, и комната не вправе переписывать "
+                            "запись. Но порядок и часы могут разойтись — это их мирит: "
+                            "первое сообщение остаётся как есть, каждое следующее на "
+                            "минуту позже, в нынешнем порядке.",
+})
+EN.update({
+    "web.chat.build": "make the video",
+    "web.chat.build.at": "at:",
+    "web.chat.build.done": "the cut is made",
+    "web.chat.shot": "redraw",
+    "web.chat.day": "date",
+    "web.chat.restamp": "times in order",
+    "web.chat.restamp.why": "Dragging does not touch the times: a stamp is when the "
+                            "message was sent, and the room is not entitled to rewrite "
+                            "the record. But the order and the clock can then "
+                            "contradict each other — this settles them: the first "
+                            "message keeps its time and each one after it is a minute "
+                            "later, in the order they are now in.",
+})
+RU.update({
+    "web.f.split.note": "Клипы берутся из assets/footage/. Доля — сколько высоты "
+                        "занимает переписка; остальное отдаётся клипу.",
+})
+EN.update({
+    "web.f.split.note": "The clips come from assets/footage/. The share is how much of "
+                        "the height the chat takes; the rest goes to the clip.",
+})
+RU.update({
+    "web.chat.cast.quiet": "есть карточка, но в этом ролике молчат",
+})
+EN.update({
+    "web.chat.cast.quiet": "carded, but silent in this video",
+})

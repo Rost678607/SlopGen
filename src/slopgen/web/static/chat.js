@@ -204,7 +204,7 @@ function chatEditHTML(m) {
   </div>
   <div class="row2">
     <label>${esc(lab("web.chat.stamp", "время"))}
-      <input data-f="stamp" data-i="${m.i}" value="${esc(m.stamp)}"></label>
+      <input type="time" data-f="stamp" data-i="${m.i}" value="${esc(m.stamp)}"></label>
     <label>${esc(lab("web.chat.react", "реакции"))}
       <span class="rx-edit">${(m.reactions || []).map(([e, n], k) => `
         <span class="rx-chip">
@@ -223,6 +223,8 @@ function chatEditHTML(m) {
   ${d.votes ? `<label>${esc(lab("web.chat.score", "карма"))}
       <input type="number" data-f="score" data-i="${m.i}" value="${m.score}"></label>` : ""}
   <div class="row2">
+    <label>${esc(lab("web.chat.day", "дата"))}
+      <input type="date" data-f="day" data-i="${m.i}" value="${esc(m.day || "")}"></label>
     <label>${esc(lab("web.chat.nick", "ник в этом сообщении"))}
       <input data-f="nick" data-i="${m.i}" value="${esc(m.nick)}" placeholder="${
         esc(lab("web.chat.asthecard", "— как на карточке —"))}"></label>
@@ -232,6 +234,8 @@ function chatEditHTML(m) {
   <div class="chat-acts">
     <button class="ghost" data-act="split" data-i="${m.i}">${esc(lab("web.chat.split", "разрезать здесь"))}</button>
     <button class="ghost" data-act="after" data-i="${m.i}">${esc(lab("web.chat.after", "＋ ниже"))}</button>
+    <button class="ghost" data-act="restamp" title="${esc(lab("web.chat.restamp.why", ""))}">${
+      esc(lab("web.chat.restamp", "время по порядку"))}</button>
     <span class="grow"></span>
     <button class="ghost danger" data-act="drop" data-i="${m.i}">${esc(lab("web.chat.drop", "убрать"))}</button>
   </div>
@@ -247,8 +251,15 @@ function renderChatCast() {
   const d = CHAT.doc;
   cq("#chat-cast").innerHTML =
     `<h4>${esc(lab("web.chat.cast", "кто в переписке"))}</h4>` +
-    (d.cast.length ? d.cast.map(personHTML).join("")
-     : `<p class="dim">${esc(lab("web.chat.nocast", ""))}</p>`) +
+    (d.cast.some((c) => !c.silent)
+      ? d.cast.filter((c) => !c.silent).map(personHTML).join("")
+      : `<p class="dim">${esc(lab("web.chat.nocast", ""))}</p>`) +
+    // the address book behind the video: people with a card who have not said anything
+    // in THIS one. Apart, because the cast of a video is who is in it.
+    (d.cast.some((c) => c.silent)
+      ? `<h4 class="quiet">${esc(lab("web.chat.cast.quiet", ""))}</h4>` +
+        d.cast.filter((c) => c.silent).map(personHTML).join("")
+      : "") +
     `<button class="ghost" id="chat-who-new">${
       esc(lab("web.chat.who.new", "＋ человек"))}</button>`;
   cq("#chat-who-new").onclick = async () => {
@@ -267,8 +278,8 @@ function renderChatCast() {
 function personHTML(c) {
   const open = c.name === chatWho;
   const head = `
-    <div class="chat-person${c.carded ? " carded" : ""}${open ? " on" : ""}"
-         data-person="${esc(c.name)}">
+    <div class="chat-person${c.carded ? " carded" : ""}${open ? " on" : ""}${
+      c.silent ? " quiet" : ""}" data-person="${esc(c.name)}">
       <b>${esc(c.name)}</b>
       <span class="dim">${c.lines}</span>
       <span class="dim">${esc(c.voice || lab("web.chat.silent", "не читается"))}</span>
@@ -288,7 +299,12 @@ function personHTML(c) {
       <label>${esc(lab("web.chat.who.voice", "голос"))}
         <select data-p="voice">${pick(voices, c.voice, "web.chat.silent")}</select></label>
       <label>${esc(lab("web.chat.who.pic", "аватарка"))}
-        <select data-p="avatar">${pick(pics, c.avatar, "web.chat.who.initials")}</select></label>
+        <span class="pic-pick">${pics.map((v) => `
+          <button class="pic${v === c.avatar ? " on" : ""}" data-pic="${esc(v)}"
+                  title="${esc(v || lab("web.chat.who.initials", ""))}">${
+            v ? `<img src="${tokd(`/api/avatar?name=${encodeURIComponent(v)}`)}" alt="">`
+              : `<i>${esc((c.name[0] || "?").toUpperCase())}</i>`}</button>`).join("")}
+        </span></label>
       <div class="row2">
         <label>${esc(lab("web.chat.who.handle", "@ник"))}
           <input data-p="handle" value="${esc(c.handle)}"></label>
@@ -413,7 +429,7 @@ let chatWatching = false;
 
 function renderChatWatch() {
   const has = !!(CHAT && CHAT.doc.video);
-  cq("#chat-watch-row").hidden = !has;
+  cq("#chat-watch").hidden = !has;
   if (!has && chatWatching) showStill();
   cq("#chat-watch").textContent =
     lab(chatWatching ? "web.chat.watch.still" : "web.chat.watch", "");
@@ -445,6 +461,39 @@ cq("#chat-watch").onclick = () => {
   v.play().catch(() => {});
 };
 
+// -- making the video --------------------------------------------------------
+//
+// "How do I actually assemble it" had no answer on this screen. The chain was a row of
+// chips that read as status rather than as buttons, with nothing saying they were to
+// be pressed left to right — so this presses them, in order, stopping at the first one
+// that will not go and saying which. The chips stay, because redoing ONE stage is the
+// other half of how this screen is used.
+async function buildChat() {
+  if (!CHAT) return;
+  const go = cq("#chat-build");
+  go.disabled = true;
+  const was = go.textContent;
+  try {
+    for (const stage of CHAT.doc.stages || []) {
+      if (stage === "source") continue;   // the conversation is already here
+      go.textContent = `${lab("web.chat.build.at", "")} ${word(stage)}…`;
+      await api(`/api/runs/${CHAT.id}/montage/stage`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ video: CHAT.video, stage }),
+      });
+    }
+    say(lab("web.chat.build.done", "готово"));
+  } catch (e) {
+    say(e.message, true);
+  } finally {
+    go.disabled = false;
+    go.textContent = was;
+  }
+  await reloadChat();
+  if (CHAT && CHAT.doc.video) cq("#chat-watch").click();
+}
+
+cq("#chat-build").onclick = buildChat;
 cq("#chat-close").onclick = closeChat;
 cq("#chat-shot").onclick = () => (chatAt >= 0 ? shootAt(chatAt) : shootChat(chatSel));
 cq("#chat-settings").onclick = () => {
@@ -543,6 +592,7 @@ cq("#chat-list").addEventListener("click", async (e) => {
   const i = +act.dataset.i;
   const what = act.dataset.act;
   if (what === "drop") { chatSel = -1; await chatDo("/message", { method: "DELETE", body: { i } }); }
+  else if (what === "restamp") { await chatDo("/restamp", { body: { step: 1 } }); }
   else if (what === "split") {
     chatSel = -1;
     const was = chatConv;
@@ -692,6 +742,15 @@ cq("#chat-cast").addEventListener("click", async (e) => {
   chatWho = chatWho === row.dataset.person ? "" : row.dataset.person;
   renderChatCast();
 });
+
+cq("#chat-cast").addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-pic]");
+  if (!b || !chatWho) return;
+  e.stopPropagation();
+  await chatDo("/persona", { method: "PUT",
+    body: { name: chatWho, avatar: b.dataset.pic } });
+  shootChat(chatSel);
+}, true);
 
 cq("#chat-cast").addEventListener("change", async (e) => {
   const f = e.target.closest("[data-p]");

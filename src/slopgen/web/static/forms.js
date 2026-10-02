@@ -1634,6 +1634,42 @@ const FORMS = {
               "l": "web.f.chatbg"
             }
           ]
+        },
+        {
+          "f": "aspect",
+          "kind": "select",
+          "cls": "f-aspect",
+          "l": "web.f.aspect"
+        },
+        {
+          "f": "split",
+          "kind": "checkbox",
+          "inline": true,
+          "l": "web.f.split"
+        },
+        {
+          "when": "split=*",
+          "rows": [
+            {
+              "f": "split_clip",
+              "kind": "select",
+              "cls": "f-splitclip",
+              "l": "web.f.splitclip"
+            },
+            {
+              "f": "split_share",
+              "kind": "number",
+              "min": "0.2",
+              "max": "0.95",
+              "step": "0.01",
+              "value": "0.62",
+              "l": "web.f.splitshare"
+            },
+            {
+              "note": "web.f.split.note",
+              "cls": "dim"
+            }
+          ]
         }
       ]
     },

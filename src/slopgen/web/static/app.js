@@ -3777,6 +3777,9 @@ async function loadOptions() {
   document.querySelectorAll(".f-chatsrc").forEach(
     (el) => fill(el, opts.chat_sources || []));
   fillAll(".f-skin", opts.chat_skins);
+  fillAll(".f-aspect", opts.aspects);
+  document.querySelectorAll(".f-splitclip").forEach(
+    (el) => fill(el, opts.chat_clips || [], true, "w.clip.roll"));
   // `fill` words an option as `w.<value>`, and these three are too generic to own a
   // name in that namespace — `clear` and `jump` mean other things elsewhere. So they
   // are drawn from their own prefix, the one the queue's override row already uses
@@ -4083,6 +4086,8 @@ function chatBody(form) {
   translate: f.get("translate") === "on",
   header_avatar: f.get("header_avatar") || "", me: f.get("me") || "",
   background: f.get("background") || "",
+  aspect: f.get("aspect") || "9:16", split: f.get("split") === "on",
+  split_clip: f.get("split_clip") || "", split_share: +(f.get("split_share") || 0.62),
   count: +f.get("count"), profanity: +f.get("profanity"),
   ad: f.get("ad"), push: f.get("push"),
   dry_run: f.get("dry_run") === "on", breakpoints: [...chosenBps.chat],

@@ -253,7 +253,7 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
         if "reactions" in b:
             guarded(chatroom.set_reactions)(job, c, at, b["reactions"])
         fields = {k: b[k] for k in
-                  ("persona", "reply_to", "stamp", "nick", "avatar", "score",
+                  ("persona", "reply_to", "stamp", "day", "nick", "avatar", "score",
                    "clear_before", "pinned") if k in b}
         if fields:
             guarded(chatroom.edit)(job, c, at, **fields)
@@ -644,6 +644,18 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
         return out
 
     # -- the people ---------------------------------------------------------
+
+    @app.post("/api/runs/{run_id}/chat/restamp")
+    async def restamp(run_id: str, request: Request,
+                      slopgen: str | None = Cookie(default=None)) -> dict:
+        """Walk the times forward through this conversation in its current order."""
+        guard(slopgen)
+        b = await body_of(request)
+        cp, i, job = edited(run_or_404(run_id), b)
+        n = guarded(chatroom.restamp)(job, int(b.get("c", 0)), int(b.get("step", 1)))
+        out = answer(cp, i, job)
+        out["restamped"] = n
+        return out
 
     @app.post("/api/runs/{run_id}/chat/rename")
     async def rename_person(run_id: str, request: Request,

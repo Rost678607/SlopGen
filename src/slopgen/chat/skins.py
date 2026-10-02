@@ -102,7 +102,7 @@ TELEGRAM = Skin(
     bg="#cfd9e3", bubble_in="#ffffff", bubble_out="#effdde",
     text_in="#000000", text_out="#000000", meta="#8a9199", divider="#e4e8eb",
     header_bg="#527da3", header_text="#ffffff", header_h=132,
-    pad_x=20, gap=13, avatar=76, radius=17, bubble_pad_x=26, bubble_pad_y=15,
+    pad_x=20, gap=13, avatar=76, radius=24, bubble_pad_x=26, bubble_pad_y=15,
     max_w=0.80, indent=0, text_px=42, name_px=35, meta_px=29, line_h=1.20,
     react_bg="#e3f0fa", react_ink="#3b8ad1",
     bubbles=True, sides=True, wallpaper=True,

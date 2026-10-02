@@ -165,6 +165,21 @@ class Checkpoint:
 
     # -- persistence -------------------------------------------------------
 
+    @property
+    def title(self) -> str:
+        """What the operator called this run, if they called it anything.
+
+        On the checkpoint and not only in the server's memory, because a run outlives
+        the process that made it: the browser rediscovers runs off the disk after a
+        restart, and a run that came back as `20261002_124330_chat_ru` among forty of
+        its kind is a run nobody can find again. That is the same thing as not having
+        been saved, from where the operator is standing."""
+        return str(self.data.get("title") or "")
+
+    def name_it(self, title: str) -> None:
+        self.data["title"] = str(title or "").strip()
+        self.save()
+
     def save(self) -> None:
         self.data["updated_at"] = datetime.now().isoformat(timespec="seconds")
         self.path.parent.mkdir(parents=True, exist_ok=True)

@@ -99,13 +99,24 @@ def read(job: VideoJob, ctx) -> dict:
     cfg = ctx.chat
     everyone = job.messages
     cast = []
-    for name in dict.fromkeys(m.persona for m in everyone):
+    # Everybody who has said something, and then everybody who has a card and has not.
+    # The second half is what makes `＋ a person` do anything visible: a card with no
+    # messages behind it used to exist and appear nowhere, which is the same as the
+    # button having done nothing.
+    spoken = list(dict.fromkeys(m.persona for m in everyone))
+    silent = [n for n in sorted(ctx.store.personas) if n not in spoken]
+    for name in spoken + silent:
         card = ctx.store.personas.get(name)
+        quiet = name in silent
         # what the import found for them, when it found anything: the room offers it
         # as the picture to put on a card rather than making one behind their back
         found = next((m.avatar for m in everyone if m.persona == name and m.avatar), "")
         cast.append({
             "name": name,
+            # somebody with a card who has not said anything in THIS video. They are
+            # listed apart rather than mixed in, because the cast of a video is who is
+            # in it and this is the address book behind it.
+            "silent": quiet,
             "carded": card is not None,
             "handle": card.handle if card else "",
             "role": card.role if card else "",
@@ -335,6 +346,8 @@ def edit(job: VideoJob, c: int, i: int, **fields) -> None:
         msg.reply_to = to
     if "stamp" in fields:
         msg.stamp = str(fields["stamp"])
+    if "day" in fields:
+        msg.day = str(fields["day"]).strip()
     if "nick" in fields:
         msg.nick = str(fields["nick"])
     if "avatar" in fields:
@@ -372,6 +385,46 @@ def set_reactions(job: VideoJob, c: int, i: int, pairs) -> None:
         if emoji:
             out.append((emoji, max(1, count)))
     msg.reactions = out
+
+
+def restamp(job: VideoJob, c: int, step: int = 1) -> int:
+    """Walk the times forward through the conversation in its current order.
+
+    Moving a message does NOT touch its time, and that is deliberate: a stamp is
+    something that was true when the message was sent, and a room that quietly
+    rewrote it on every drag would be editing the record rather than the video. But
+    the two can then contradict each other — a line dragged above one sent earlier
+    reads as a chat that goes backwards — and this is the repair: the first message
+    keeps its time and every one after it is set a minute (or `step`) later, in the
+    order they are now in.
+
+    Only where there is something to walk from. A conversation nobody stamped stays
+    unstamped, because invented times on an invented conversation are a detail nobody
+    asked for and the bubbles read perfectly well without any."""
+    conv = conv_at(job, c)
+    first = next((m.stamp for m in conv.messages if _minutes(m.stamp) is not None), "")
+    at = _minutes(first)
+    if at is None:
+        return 0
+    step = max(0, int(step))
+    n = 0
+    for msg in conv.messages:
+        msg.stamp = f"{(at // 60) % 24:02d}:{at % 60:02d}"
+        at += step
+        n += 1
+    return n
+
+
+def _minutes(stamp: str) -> int | None:
+    """`HH:MM` as minutes since midnight, or None for anything that is not one."""
+    bits = str(stamp or "").strip().split(":")
+    if len(bits) != 2:
+        return None
+    try:
+        h, m = int(bits[0]), int(bits[1])
+    except ValueError:
+        return None
+    return h * 60 + m if 0 <= h < 24 and 0 <= m < 60 else None
 
 
 def rename(job: VideoJob, was: str, now: str) -> int:

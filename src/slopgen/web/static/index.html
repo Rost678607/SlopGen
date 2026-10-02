@@ -416,9 +416,14 @@
     <b id="chat-title"></b>
     <span class="dim" id="chat-state"></span>
     <span class="grow"></span>
-    <button id="chat-add" class="primary" data-l="web.chat.add.open">＋ переписка</button>
+    <button id="chat-add" class="ghost" data-l="web.chat.add.open">＋ переписка</button>
     <button id="chat-settings" class="ghost" data-l="web.mont.settings">настройки</button>
-    <button id="chat-shot" class="ghost" data-l="web.chat.shot">обновить кадр</button>
+    <!-- The question "how do I actually make the video" had no answer on this screen:
+         the chain was a row of chips that read as status rather than as buttons, and
+         nothing said they were meant to be pressed left to right. This is that answer.
+         The chips stay, because pressing one of them is still how you redo just that
+         stage — but the ordinary case is one button. -->
+    <button id="chat-build" class="primary" data-l="web.chat.build">собрать ролик</button>
   </header>
 
   <!-- The pipeline as a row of buttons, exactly as the montage room draws it and
@@ -437,8 +442,9 @@
         <img id="chat-shot-img" alt="">
         <video id="chat-video" controls playsinline hidden></video>
       </div>
-      <div class="row" id="chat-watch-row" hidden>
-        <button id="chat-watch" class="ghost" data-l="web.chat.watch">смотреть ролик</button>
+      <div class="row" id="chat-watch-row">
+        <button id="chat-shot" class="ghost" data-l="web.chat.shot">перерисовать</button>
+        <button id="chat-watch" class="ghost" data-l="web.chat.watch" hidden>смотреть ролик</button>
       </div>
       <!-- the clock, once there is one: a strip of the finished video with every
            message marked on it and a handle you drag. Before `render` has run there

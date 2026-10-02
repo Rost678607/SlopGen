@@ -1508,3 +1508,15 @@ button.danger{border-color:var(--bad);color:var(--bad)}
 .chat-row.dragging{opacity:.4}
 .chat-row.drop-here{box-shadow:0 -2px 0 var(--accent)}
 .chat-row.drop-after{box-shadow:0 2px 0 var(--accent)}
+
+/* Picking a face by looking at it. A <select> of file names is a list of strings
+   about pictures, which is the one thing a picture cannot be chosen from. */
+.pic-pick{display:flex;gap:5px;flex-wrap:wrap}
+.pic-pick .pic{width:34px;height:34px;border-radius:50%;padding:0;overflow:hidden;
+  border:2px solid var(--line);background:var(--bg);cursor:pointer;display:grid;
+  place-items:center}
+.pic-pick .pic.on{border-color:var(--accent)}
+.pic-pick .pic img{width:100%;height:100%;object-fit:cover;display:block}
+.pic-pick .pic i{font-style:normal;font-size:13px;color:var(--dim)}
+#chat-cast h4.quiet{margin-top:9px;opacity:.65}
+.chat-person.quiet b{opacity:.7}
