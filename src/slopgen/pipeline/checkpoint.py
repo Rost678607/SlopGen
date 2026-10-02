@@ -61,7 +61,7 @@ class Checkpoint:
         path = Path(run_dir) / CHECKPOINT_NAME
         if not path.exists():
             raise FileNotFoundError(f"no checkpoint at {path}")
-        return cls(run_dir, json.loads(path.read_text()), usage=usage)
+        return cls(run_dir, json.loads(path.read_text(encoding="utf-8")), usage=usage)
 
     def usage_of(self, index: int) -> dict:
         """What this video has cost so far, as `llm.usage.UsageLedger.summary()` last
@@ -184,7 +184,7 @@ class Checkpoint:
         self.data["updated_at"] = datetime.now().isoformat(timespec="seconds")
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_name(self.path.name + ".tmp")
-        tmp.write_text(json.dumps(self.data, ensure_ascii=False, indent=1))
+        tmp.write_text(json.dumps(self.data, ensure_ascii=False, indent=1), encoding="utf-8")
         os.replace(tmp, self.path)
 
 

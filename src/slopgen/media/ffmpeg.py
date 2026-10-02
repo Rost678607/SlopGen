@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass, field as dc_field
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Callable
 
 from ..config.models import GlobalConfig, KenBurns
+from ..typeface import find as _find_typeface
 from .filters import graph as filter_graph
 
 
@@ -22,8 +25,83 @@ class FFmpegError(Exception):
         self.signal = signal
 
 
+# A filtergraph is parsed twice — once to cut it into filters, then once per filter to
+# cut the argument list — and the two passes read different punctuation. Quoting the
+# whole value handles the first (`,` `;` `[` `]` and whitespace stop being structure);
+# these three have to be backslashed anyway, because the second pass still sees them
+# inside the quotes: `:` ends an option, `=` starts a value, `\` is the escape itself.
+#
+# Determined by experiment against ffmpeg, not from the documentation, which describes
+# a tidier scheme than the one that is implemented.
+_FILTER_ESCAPE = ":=\\"
+
+
+def filter_arg(value: PurePath | str) -> str:
+    """A value quoted and escaped for the inside of a filtergraph option.
+
+    Paths come out as forward slashes on every platform ffmpeg runs on — including
+    Windows, where a backslash is an escape and `C:\\Users\\…` handed to `ass=` arrives
+    as nonsense, or as half a filter name.
+
+    One character cannot be carried through a filtergraph at all: an apostrophe. Every
+    escaping ffmpeg documents for it — `\\'`, `'\\''`, the two combined — ends the
+    quoted run early and loses the character, and in `drawtext` the damage does not
+    stop there: the rest of the filter's own options get drawn onto the video as text.
+    So the apostrophe is replaced here with the typographic one, which is what it
+    should have been in a caption anyway, and which means nothing to the parser. A file
+    name cannot be rewritten like that, which is what :func:`filter_path` is about."""
+    text = value.as_posix() if isinstance(value, PurePath) else str(value)
+    out = []
+    for ch in text:
+        if ch == "'":
+            out.append("’")
+        elif ch in _FILTER_ESCAPE:
+            out.append("\\" + ch)
+        else:
+            out.append(ch)
+    return "'" + "".join(out) + "'"
+
+
+def filter_path(path: PurePath | str) -> str:
+    """A FILE NAME for the inside of a filtergraph, or a readable complaint.
+
+    ffmpeg loses an apostrophe out of an option value — `/home/o'brien/subs.ass` is
+    opened as `/home/obrien/subs.ass`, and what comes back is libass failing to read a
+    file nobody asked for. Nothing here can fix that, so the only kindness left is to
+    say which character did it and where, instead of letting the error surface two
+    layers down as a missing file."""
+    text = path.as_posix() if isinstance(path, PurePath) else str(path)
+    if "'" in text:
+        raise FFmpegError(
+            f"ffmpeg cannot be given a path with an apostrophe in it — it silently "
+            f"drops the character and then fails to find the file:\n  {text}\n"
+            f"Move the project (or the folder named in [paths]) somewhere without one.")
+    return filter_arg(text)
+
+
+def _drawtext_face(cfg: GlobalConfig) -> str:
+    """`drawtext`'s font option for the configured family: a FILE where one can be
+    found, the family's name where it cannot.
+
+    `font=` makes drawtext ask fontconfig, and fontconfig is a Linux assumption — a
+    Windows ffmpeg build either has no configuration for it or has no DejaVu to find,
+    and drawtext does not substitute, it fails the whole filtergraph. `fontfile=` asks
+    nothing of the platform, and the file is the same one the chat mode draws with (see
+    :mod:`slopgen.typeface`), so the ad caption and the messages agree. Falling back to
+    `font=` keeps the old behaviour wherever fontconfig is the better answer."""
+    face = _find_typeface(cfg.subtitles.font)
+    if face is not None:
+        return f"fontfile={filter_path(face)}"
+    return f"font={filter_arg(cfg.subtitles.font)}"
+
+
 def _run(cmd: list[str]) -> None:
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    # utf-8 with replacement rather than the locale's encoding: ffmpeg prints the file
+    # names it was given, those names are Russian half the time, and a Windows console
+    # code page that cannot decode them would turn a real ffmpeg error into a
+    # UnicodeDecodeError from inside the error path.
+    proc = subprocess.run(cmd, capture_output=True, text=True,
+                          encoding="utf-8", errors="replace")
     if proc.returncode == 0:
         return
     detail = proc.stderr[-2000:]
@@ -39,6 +117,8 @@ def probe(path: Path) -> dict:
         ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", str(path)],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     if proc.returncode != 0:
         raise FFmpegError(f"ffprobe failed for {path}")
@@ -884,13 +964,50 @@ CONCAT_DEFAULT_INPUTS = 12  # fallback when free memory can't be read
 
 
 def _free_memory() -> int:
-    """Bytes the kernel reports as available right now, 0 if it will not say."""
+    """Bytes the kernel reports as available right now, 0 if it will not say.
+
+    Three ways of asking, because the answer decides how many inputs one concat pass
+    may hold open and the fallback is a flat twelve — correct on nothing in particular.
+    `/proc/meminfo` is the honest number on Linux (available, not free: it counts the
+    page cache that would be dropped); `sysconf` answers on macOS and the BSDs;
+    `GlobalMemoryStatusEx` is the Windows equivalent and is reached through ctypes
+    rather than a dependency."""
     try:
-        for line in Path("/proc/meminfo").read_text().splitlines():
+        for line in Path("/proc/meminfo").read_text(encoding="utf-8").splitlines():
             if line.startswith("MemAvailable:"):
                 return int(line.split()[1]) * 1024
     except (OSError, ValueError, IndexError):
+        pass
+    try:
+        pages = os.sysconf("SC_AVPHYS_PAGES")
+        size = os.sysconf("SC_PAGE_SIZE")
+        if pages > 0 and size > 0:
+            return pages * size
+    except (AttributeError, OSError, ValueError):
+        pass
+    return _free_memory_windows()
+
+
+def _free_memory_windows() -> int:
+    """What `GlobalMemoryStatusEx` says, or 0 anywhere that is not Windows."""
+    if sys.platform != "win32":
         return 0
+    import ctypes
+
+    class _Status(ctypes.Structure):
+        _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+
+    status = _Status()
+    status.dwLength = ctypes.sizeof(_Status)
+    try:
+        if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+            return int(status.ullAvailPhys)
+    except (AttributeError, OSError):
+        pass
     return 0
 
 
@@ -1082,7 +1199,8 @@ def _delivery_cmd(
         filters.extend(_effect_video(d, vi, vtag, f"[vx{vi}]", cfg))
         vtag = f"[vx{vi}]"
     if ass:
-        sub = f"ass={ass}" + (f":fontsdir={fonts_dir}" if fonts_dir else "")
+        sub = f"ass={filter_path(ass)}" + (
+            f":fontsdir={filter_path(fonts_dir)}" if fonts_dir else "")
         filters.append(f"{vtag}{sub}[vs]")
         vtag = "[vs]"
     if overlay:
@@ -1096,10 +1214,9 @@ def _delivery_cmd(
             aw, ah = video_dims(overlay.asset)
             ty = f"{int(140 + overlay.width * ah / aw + 14)}" if overlay.position.startswith("top") else f"h-{420 - 14}"
             tx = "40" if overlay.position.endswith("left") else "w-text_w-40"
-            text = overlay.text.replace("'", r"\'").replace(":", r"\:")
             # expansion=none: literal text ('%' breaks the default expansion mode)
             filters.append(
-                f"{vtag}drawtext=text='{text}':expansion=none:font='{cfg.subtitles.font}':fontsize=44:"
+                f"{vtag}drawtext=text={filter_arg(overlay.text)}:expansion=none:{_drawtext_face(cfg)}:fontsize=44:"
                 f"fontcolor=white:borderw=3:bordercolor=black:x={tx}:y={ty}:enable='{en}'[vt]"
             )
             vtag = "[vt]"

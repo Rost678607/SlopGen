@@ -78,7 +78,7 @@ class SampleReport:
 def _astats(path: Path) -> dict[str, float]:
     proc = subprocess.run(
         ["ffmpeg", "-hide_banner", "-i", str(path), "-af", "astats", "-f", "null", "-"],
-        capture_output=True, text=True,
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
     )
     out: dict[str, float] = {}
     for key, name in (("Peak level dB", "peak"), ("RMS level dB", "rms"),
@@ -216,7 +216,7 @@ def _silences(path: Path, duration: float, floor_db: float | None = None,
         # the rest of this module does would silence the answer along with the banner
         ["ffmpeg", "-hide_banner", "-i", str(path), "-af",
          f"silencedetect=n={floor_db}dB:d={min_s}", "-f", "null", "-"],
-        capture_output=True, text=True,
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
     )
     out: list[tuple[float, float]] = []
     start: float | None = None
@@ -313,7 +313,7 @@ def _peak_gain(src: Path, chain: str, target_db: float = -1.0) -> float:
     proc = subprocess.run(
         ["ffmpeg", "-hide_banner", "-i", str(src), "-af",
          f"{chain},aformat=sample_fmts=fltp,astats", "-f", "null", "-"],
-        capture_output=True, text=True,
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
     )
     m = re.search(r"Peak level dB:\s*(-?(?:inf|nan|\d+\.?\d*))", proc.stderr)
     if not m:

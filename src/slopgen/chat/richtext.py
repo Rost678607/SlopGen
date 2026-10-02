@@ -56,7 +56,11 @@ def emoji_image(char: str, px: int) -> Image.Image | None:
     face = fonts.emoji_font()
     if face is None:
         return None
-    big = Image.new("RGBA", (fonts.EMOJI_PX + 8, fonts.EMOJI_PX + 8), (0, 0, 0, 0))
+    # the canvas comes from the FONT, not from a constant: Noto draws at 109px and
+    # nothing else, Apple's at its own strike, Segoe UI Emoji at whatever it was asked
+    # for (see `fonts.emoji_px`).
+    canvas = fonts.emoji_px() + 8
+    big = Image.new("RGBA", (canvas, canvas), (0, 0, 0, 0))
     try:
         ImageDraw.Draw(big).text((4, 4), char, font=face, embedded_color=True)
     except Exception:  # noqa: BLE001 — a glyph the font does not have

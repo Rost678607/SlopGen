@@ -119,7 +119,7 @@ class Tunnel:
                f"http://{self.host}:{self.port}"]
         log.info("bot: raising a tunnel: %s", " ".join(cmd))
         proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-                                text=True, errors="replace", bufsize=1)
+                                text=True, encoding="utf-8", errors="replace", bufsize=1)
         self._proc = proc
         assert proc.stderr is not None
         for line in proc.stderr:

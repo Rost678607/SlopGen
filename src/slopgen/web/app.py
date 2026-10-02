@@ -1696,7 +1696,7 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
         brief = (ct.idea_brief.get(lang) or next(iter(ct.idea_brief.values()), "")) if ct else ""
         hist = store.global_cfg.paths.state / "history.json"
         try:
-            recent = [h.get("topic", "") for h in json.loads(hist.read_text())[-30:]
+            recent = [h.get("topic", "") for h in json.loads(hist.read_text(encoding="utf-8"))[-30:]
                       if h.get("content_type") == kind and h.get("lang") == lang]
         except Exception:  # no history yet, or one written by a version that moved on
             recent = []

@@ -84,13 +84,13 @@ class ManualVoiceManifest(BaseModel):
         path = manifest_path(workdir)
         if not path.exists():
             return cls()
-        return cls.model_validate_json(path.read_text())
+        return cls.model_validate_json(path.read_text(encoding="utf-8"))
 
     def save(self, workdir: Path) -> None:
         path = manifest_path(workdir)
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_name(path.name + ".tmp")
-        tmp.write_text(self.model_dump_json(indent=1))
+        tmp.write_text(self.model_dump_json(indent=1), encoding="utf-8")
         os.replace(tmp, path)
 
     def pending(self) -> list[ManualLine]:

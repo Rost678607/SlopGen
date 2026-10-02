@@ -73,7 +73,7 @@ class QwenAPIEngine:
         if not path or not path.exists():
             return None
         try:
-            return json.loads(path.read_text()).get(f"{voice.name}|{url}|{self.cfg.model}")
+            return json.loads(path.read_text(encoding="utf-8")).get(f"{voice.name}|{url}|{self.cfg.model}")
         except (OSError, ValueError):
             return None
 
@@ -82,12 +82,12 @@ class QwenAPIEngine:
         if not path:
             return
         try:
-            data = json.loads(path.read_text()) if path.exists() else {}
+            data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
         except (OSError, ValueError):
             data = {}
         data[f"{voice.name}|{url}|{self.cfg.model}"] = voice_id
         try:
-            path.write_text(json.dumps(data, ensure_ascii=False, indent=1))
+            path.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
         except OSError:  # a lost cache only costs one enrolment
             pass
 

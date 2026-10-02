@@ -115,7 +115,7 @@ def physical_cores() -> int:
     number SMT hides; anything unparseable falls back to half the logical count."""
     try:
         pairs, cur = set(), {}
-        for line in Path("/proc/cpuinfo").read_text().splitlines():
+        for line in Path("/proc/cpuinfo").read_text(encoding="utf-8").splitlines():
             if ":" not in line:
                 if cur.get("physical id") is not None and cur.get("core id") is not None:
                     pairs.add((cur["physical id"], cur["core id"]))

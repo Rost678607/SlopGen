@@ -324,11 +324,12 @@ class AppContext:
 
     def load_history(self) -> list[dict]:
         if self.history_file.exists():
-            return json.loads(self.history_file.read_text())
+            return json.loads(self.history_file.read_text(encoding="utf-8"))
         return []
 
     def append_history(self, entry: dict) -> None:
         hist = self.load_history()
         hist.append(entry)
         self.history_file.parent.mkdir(parents=True, exist_ok=True)
-        self.history_file.write_text(json.dumps(hist, ensure_ascii=False, indent=1))
+        self.history_file.write_text(json.dumps(hist, ensure_ascii=False, indent=1),
+                                     encoding="utf-8")

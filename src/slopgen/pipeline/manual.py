@@ -133,13 +133,13 @@ class ManualManifest(BaseModel):
         path = manifest_path(workdir)
         if not path.exists():
             return cls()
-        return cls.model_validate_json(path.read_text())
+        return cls.model_validate_json(path.read_text(encoding="utf-8"))
 
     def save(self, workdir: Path) -> None:
         path = manifest_path(workdir)
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_name(path.name + ".tmp")
-        tmp.write_text(self.model_dump_json(indent=1))
+        tmp.write_text(self.model_dump_json(indent=1), encoding="utf-8")
         os.replace(tmp, path)
 
     # -- queries -----------------------------------------------------------
@@ -207,7 +207,7 @@ def _write_prompt_files(manifest: ManualManifest, workdir: Path) -> None:
     pdir = prompts_dir(workdir)
     pdir.mkdir(parents=True, exist_ok=True)
     for shot in manifest.shots:
-        (pdir / f"{shot.id}.txt").write_text(task_text(shot) + "\n")
+        (pdir / f"{shot.id}.txt").write_text(task_text(shot) + "\n", encoding="utf-8")
 
 
 def build_or_update(
@@ -306,6 +306,7 @@ def probe_asset(path: Path) -> tuple[str, float]:
              "stream=codec_type,nb_frames:format=format_name,duration",
              "-of", "json", str(path)],
             capture_output=True, text=True, check=True,
+            encoding="utf-8", errors="replace",
         )
         data = json.loads(out.stdout or "{}")
         fmt = data.get("format") or {}

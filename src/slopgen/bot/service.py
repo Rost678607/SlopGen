@@ -53,6 +53,18 @@ def pid_file(store: ConfigStore) -> Path:
     return state_dir(store) / "bot.pid"
 
 
+def stop_file(store: ConfigStore) -> Path:
+    """The file whose appearance means "shut down".
+
+    A signal would be the unix answer and is still used where there is one, but
+    `--detach` on Windows produces a process with no console of its own, and a process
+    with no console cannot be sent a Ctrl-Break — `os.kill` there does not deliver a
+    signal at all, it calls `TerminateProcess`. Killing the bot outright would leave
+    the tunnel up, the pid file behind and the supervisor's runs unstopped, so the
+    cross-platform stop is a flag file that :func:`serve` watches for."""
+    return state_dir(store) / "bot.stop"
+
+
 def url_file(store: ConfigStore) -> Path:
     """Where the current public address is written.
 
@@ -114,8 +126,17 @@ def serve(store: ConfigStore) -> None:
                                daemon=True)
     watcher.start()
 
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        signal.signal(sig, lambda *_: stop.set())
+    # A stale flag from a previous run would stop this one before it served anything.
+    stop_file(store).unlink(missing_ok=True)
+    threading.Thread(target=_watch_stop_file, args=(store, stop), name="slopgen-stopfile",
+                     daemon=True).start()
+
+    # SIGBREAK is Windows' Ctrl-Break, and the only signal a console process there can
+    # usefully be sent; SIGTERM exists on Windows too but nothing can send it.
+    for name in ("SIGINT", "SIGTERM", "SIGBREAK"):
+        sig = getattr(signal, name, None)
+        if sig is not None:
+            signal.signal(sig, lambda *_: stop.set())
 
     where = address["url"] or f"http://{store.global_cfg.web.host}:{store.global_cfg.web.port}"
     log.info("bot: up. Panel: %s", where or "(none)")
@@ -132,6 +153,18 @@ def serve(store: ConfigStore) -> None:
         tg.close()
         url_file(store).unlink(missing_ok=True)
         pid_file(store).unlink(missing_ok=True)
+        stop_file(store).unlink(missing_ok=True)
+
+
+def _watch_stop_file(store: ConfigStore, stop: threading.Event) -> None:
+    """Set `stop` when the flag file turns up. Half a second of latency, no polling
+    cost worth measuring, and it is what makes `--stop` graceful on Windows."""
+    path = stop_file(store)
+    while not stop.wait(0.5):
+        if path.exists():
+            log.info("bot: asked to stop (%s)", path)
+            stop.set()
+            return
 
 
 def _poll(tg: Telegram, chat: Chat, stop: threading.Event) -> None:
@@ -238,9 +271,10 @@ def detach(store: ConfigStore, extra: list[str] | None = None) -> int:
     log_path = state / "bot.log"
     handle = open(log_path, "ab", buffering=0)
     handle.write(f"\n=== {time.strftime('%Y-%m-%d %H:%M:%S')} starting ===\n".encode())
+    stop_file(store).unlink(missing_ok=True)
     proc = subprocess.Popen([sys.executable, "-m", "slopgen", "bot", *(extra or [])],
                             stdin=subprocess.DEVNULL, stdout=handle, stderr=handle,
-                            start_new_session=True, cwd=os.getcwd())
+                            cwd=os.getcwd(), **_detached_kwargs())
     # Wait long enough to catch the failures that happen before anything is serving —
     # no token, a token Telegram refuses, a port already taken. Reporting "running,
     # pid 12345" about a process that died two seconds later is worse than not
@@ -252,6 +286,62 @@ def detach(store: ConfigStore, extra: list[str] | None = None) -> int:
         return proc.pid
     raise BotError(f"it stopped at once (exit {proc.returncode}). Last of {log_path}:\n"
                    + _tail(log_path))
+
+
+def _detached_kwargs() -> dict:
+    """What `Popen` needs to outlive the terminal it was started from, here.
+
+    POSIX: its own session, so a hangup on the terminal does not reach it. Windows:
+    `start_new_session` is silently IGNORED there, so the flags have to be given by
+    name — DETACHED_PROCESS to let go of the console, CREATE_NEW_PROCESS_GROUP so a
+    Ctrl-C in the parent's console is not broadcast to it."""
+    if sys.platform == "win32":
+        flags = getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+        flags |= getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+        return {"creationflags": flags}
+    return {"start_new_session": True}
+
+
+def _running(pid: int) -> bool:
+    """Whether this pid is a live process.
+
+    `os.kill(pid, 0)` is the unix idiom and a trap on Windows, where `os.kill` ignores
+    the signal and calls `TerminateProcess` with it as the exit code — so the liveness
+    check would KILL the bot it was asking about. Windows gets `OpenProcess` through
+    ctypes instead, which asks without touching."""
+    if sys.platform == "win32":
+        import ctypes
+
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        STILL_ACTIVE = 259
+        ERROR_ACCESS_DENIED = 5
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            # Access denied means it exists and belongs to somebody else; anything
+            # else (invalid parameter) means there is no such process.
+            return ctypes.GetLastError() == ERROR_ACCESS_DENIED
+        try:
+            code = ctypes.c_ulong()
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return True
+            return code.value == STILL_ACTIVE
+        finally:
+            kernel32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _terminate(pid: int) -> None:
+    """Last resort: end the process without asking it to."""
+    if sys.platform == "win32":
+        subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)],
+                       capture_output=True, check=False)
+        return
+    os.kill(pid, signal.SIGKILL)
 
 
 def _tail(path: Path, lines: int = 8) -> str:
@@ -270,30 +360,37 @@ def alive(store: ConfigStore) -> int:
         pid = int(path.read_text(encoding="utf-8").strip())
     except (OSError, ValueError):
         return 0
-    try:
-        os.kill(pid, 0)
-    except OSError:
+    if not _running(pid):
         path.unlink(missing_ok=True)
         return 0
     return pid
 
 
 def halt(store: ConfigStore, timeout: float = 15.0) -> bool:
-    """Ask the detached bot to stop, and wait for it to actually be gone."""
+    """Ask the detached bot to stop, and wait for it to actually be gone.
+
+    Both ways of asking, because neither works everywhere: the flag file is what a
+    detached Windows process can be reached by at all, and SIGTERM is what a bot
+    started before this change, or run under systemd, already understands."""
     pid = alive(store)
     if not pid:
         return False
-    os.kill(pid, signal.SIGTERM)
+    stop_file(store).touch()
+    if sys.platform != "win32":
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        try:
-            os.kill(pid, 0)
-        except OSError:
+        if not _running(pid):
             pid_file(store).unlink(missing_ok=True)
+            stop_file(store).unlink(missing_ok=True)
             return True
         time.sleep(0.25)
-    os.kill(pid, signal.SIGKILL)
+    _terminate(pid)
     pid_file(store).unlink(missing_ok=True)
+    stop_file(store).unlink(missing_ok=True)
     return True
 
 

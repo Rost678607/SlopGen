@@ -187,7 +187,7 @@ class ModelStore:
 
     def info(self, model_id: str) -> dict:
         try:
-            return json.loads((self.path(model_id) / MARKER).read_text())
+            return json.loads((self.path(model_id) / MARKER).read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return {}
 
@@ -252,7 +252,8 @@ class ModelStore:
             # --extra-index-url, not --index-url: the CPU index carries torch and
             # nothing else, and the other requirements still have to come from PyPI
             cmd += ["--extra-index-url", index]
-        proc = subprocess.run(cmd + list(missing), capture_output=True, text=True)
+        proc = subprocess.run(cmd + list(missing), capture_output=True, text=True,
+                              encoding="utf-8", errors="replace")
         if proc.returncode != 0:
             raise ModelError(
                 f"pip install {' '.join(missing)} failed:\n{proc.stderr.strip()[-2000:]}"
@@ -285,7 +286,7 @@ class ModelStore:
         (dest / MARKER).write_text(json.dumps({
             "id": spec.id, "label": spec.label, "license": spec.license,
             "installed_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-        }, ensure_ascii=False, indent=1))
+        }, ensure_ascii=False, indent=1), encoding="utf-8")
         return dest
 
     def _unpack_zip(self, spec: ModelSpec, dest: Path, progress: Progress) -> None:

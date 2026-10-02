@@ -1839,7 +1839,7 @@ def _tr(app: "SlopgenApp", key: str, fallback: str) -> str:
 def _update_global_toml(section: str, values: dict) -> None:
     """Merge values into a section of configs/slopgen.toml (comments not preserved)."""
     path = Path("configs/slopgen.toml")
-    data = tomllib.loads(path.read_text()) if path.exists() else {}
+    data = tomllib.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
     data.setdefault(section, {}).update(values)
     path.write_bytes(tomli_w.dumps(data).encode())
 

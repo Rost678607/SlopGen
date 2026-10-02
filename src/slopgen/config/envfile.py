@@ -17,7 +17,7 @@ def set_env_var(name: str, value: str, path: Path = ENV_PATH) -> None:
     """Update or append `name=value`, preserving all other lines; also updates os.environ."""
     line = f"{name}={value}"
     if path.exists():
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
         pattern = re.compile(rf"^{re.escape(name)}=.*$", flags=re.MULTILINE)
         if pattern.search(text):
             text = pattern.sub(line, text)
@@ -25,5 +25,5 @@ def set_env_var(name: str, value: str, path: Path = ENV_PATH) -> None:
             text = text.rstrip("\n") + ("\n" if text.strip() else "") + line + "\n"
     else:
         text = line + "\n"
-    path.write_text(text)
+    path.write_text(text, encoding="utf-8")
     os.environ[name] = value
