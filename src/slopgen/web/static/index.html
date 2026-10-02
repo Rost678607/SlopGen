@@ -499,6 +499,30 @@
         <button id="chat-src-go" class="primary" data-l="web.chat.src.look">посмотреть</button>
       </div>
       <div id="chat-src-rows"></div>
+
+      <!-- The step that was missing. Taking a chat used to mean taking its last
+           hundred-odd messages sight unseen, which for a chat of ten thousand is an
+           arbitrary stretch of somebody's year. A chat is not a thing you take; a
+           stretch of it is — so here it is, to be read and chosen from. -->
+      <div id="chat-pane-pick" hidden>
+        <div class="row pick-head">
+          <button id="chat-pick-back" class="ghost" data-l="web.chat.pick.back">← к списку</button>
+          <b id="chat-pick-title"></b>
+          <select id="chat-pick-piece" hidden></select>
+          <span class="grow"></span>
+          <span class="dim" id="chat-pick-count"></span>
+        </div>
+        <div class="row">
+          <button id="chat-pick-all" class="ghost" data-l="web.chat.pick.all">выбрать все</button>
+          <button id="chat-pick-none" class="ghost" data-l="web.chat.pick.none">снять</button>
+          <button id="chat-pick-older" class="ghost" data-l="web.chat.pick.older" hidden>⟲ ещё старее</button>
+          <span class="grow"></span>
+          <button id="chat-pick-go" class="primary" data-l="web.chat.pick.take">взять выбранные</button>
+        </div>
+        <p class="dim" data-l="web.chat.pick.note"></p>
+        <div id="chat-pick-rows"></div>
+      </div>
+
       <div class="row">
         <button id="chat-src-cancel" class="ghost" data-l="web.cancel"></button>
       </div>

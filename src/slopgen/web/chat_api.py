@@ -37,6 +37,7 @@ from ..config import ChatConfig, ConfigStore, PersonaConfig
 from ..config.loader import write_config
 from ..pipeline import chatroom
 from ..pipeline.checkpoint import Checkpoint
+from ..pipeline.job import ChatMsg, Conversation
 from ..pipeline.context import AppContext
 from ..chat import exports, reddit, telegram
 from ..llm import chat as chat_llm
@@ -429,26 +430,6 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
              "first": p.lines[0].text[:140] if p.lines else ""}
             for n, p in enumerate(pieces)]}
 
-    @app.post("/api/runs/{run_id}/chat/exports/take")
-    async def take_export(run_id: str, request: Request,
-                          slopgen: str | None = Cookie(default=None)) -> dict:
-        """Put the chosen pieces of one export into the video, as conversations."""
-        guard(slopgen)
-        b = await body_of(request)
-        cp, i, job = edited(run_or_404(run_id), b)
-        try:
-            pieces = exports.read(chat_source.pick(context(cp), str(b.get("name", ""))))
-        except (exports.ExportError, ValueError) as e:
-            raise HTTPException(status_code=422, detail=str(e))
-        want = b.get("pieces")
-        if isinstance(want, list) and want:
-            keep = {int(x) for x in want if isinstance(x, (int, float))}
-            pieces = [p for n, p in enumerate(pieces) if n in keep]
-        added = chat_source.take(job, pieces)
-        out = answer(cp, i, job)
-        out["added"] = added
-        return out
-
     # -- signing in to Telegram, which is three steps and cannot be fewer ----
 
     @app.get("/api/chat/telegram")
@@ -555,52 +536,93 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
             raise HTTPException(status_code=422, detail=str(e))
         raise HTTPException(status_code=404, detail=f"nothing browses {source!r}")
 
-    @app.post("/api/runs/{run_id}/chat/fetch")
-    async def fetch(run_id: str, request: Request,
-                    slopgen: str | None = Cookie(default=None)) -> dict:
-        """Put one thing a source has into this video, as a conversation."""
-        guard(slopgen)
-        b = await body_of(request)
-        cp, i, job = edited(run_or_404(run_id), b)
-        source, where = str(b.get("source", "")), str(b.get("where", ""))
-        try:
-            if source == "reddit":
-                pieces = await run_in_threadpool(reddit.thread, where)
-            elif source == "telegram":
-                pieces = await telegram.history(store.global_cfg.paths.state, where)
-            else:
-                raise HTTPException(status_code=404, detail=f"nothing fetches {source!r}")
-        except (reddit.RedditError, telegram.TelegramError) as e:
-            raise HTTPException(status_code=422, detail=str(e))
-        added = chat_source.take(job, pieces)
-        out = answer(cp, i, job)
-        out["added"] = added
-        return out
+    @app.get("/api/runs/{run_id}/chat/peek")
+    async def peek(run_id: str, source: str, where: str = "", piece: int = 0,
+                   before: int = 0, video: int = 0,
+                   slopgen: str | None = Cookie(default=None)) -> dict:
+        """What is actually in there, before any of it is in the video.
 
-    @app.post("/api/runs/{run_id}/chat/invent")
-    async def invent(run_id: str, request: Request,
-                     slopgen: str | None = Cookie(default=None)) -> dict:
-        """Have the writer make one up, on a topic or on nothing.
-
-        A source like the other two, and in the room for the same reason they are: it
-        produces conversations, and what the room does with a conversation does not
-        depend on where it came from. The one difference is that this one can fail
-        with nothing to show for it, so it says so rather than parking an empty room
-        in front of somebody."""
+        This is the step that was missing, and the one the operator noticed was
+        missing: taking a chat used to mean taking its last hundred-odd messages
+        sight unseen, which for a chat of ten thousand is an arbitrary stretch of
+        somebody's year. A chat is not a thing you take; a stretch of it is. So the
+        messages come back here to be looked at and chosen from, and `before` walks
+        backwards through them a window at a time — a message id for Telegram, which
+        is the only source with more than one window in it."""
         guard(slopgen)
-        b = await body_of(request)
-        cp, i, job = edited(run_or_404(run_id), b)
+        cp, _i, _job = open_job(run_or_404(run_id), video)
         ctx = context(cp)
         try:
-            pieces = await run_in_threadpool(
-                chat_llm.invent, ctx, str(b.get("topic", "")),
-                max(1, min(int(b.get("want", 1) or 1), 6)), list(ctx.chat.cast),
-                (max(2, ctx.chat.invent_lo), max(3, ctx.chat.invent_hi)))
-        except Exception as e:  # noqa: BLE001 — the model's words are the useful half
-            raise HTTPException(status_code=502, detail=f"{type(e).__name__}: {e}")
-        added = chat_source.take(job, pieces)
+            if source == "telegram":
+                got, oldest, more = await telegram.window(
+                    store.global_cfg.paths.state, where, before=before)
+                pieces, cursor = [got], oldest
+            elif source == "reddit":
+                pieces, cursor, more = await run_in_threadpool(reddit.thread, where), 0, False
+            elif source == "export":
+                pieces = exports.read(chat_source.pick(ctx, where))
+                cursor, more = 0, False
+            else:
+                raise HTTPException(status_code=404, detail=f"nothing reads {source!r}")
+        except (reddit.RedditError, telegram.TelegramError, exports.ExportError,
+                ValueError) as e:
+            raise HTTPException(status_code=422, detail=str(e))
+        at = max(0, min(int(piece), len(pieces) - 1)) if pieces else 0
+        got = pieces[at] if pieces else None
+        return {
+            "title": got.title if got else "",
+            "source": source,
+            "where": where,
+            # a multi-chat export has more than one; everything else has exactly one
+            "pieces": [{"p": n, "title": p.title, "lines": len(p.lines)}
+                       for n, p in enumerate(pieces)],
+            "piece": at,
+            "before": cursor,
+            "more": bool(more),
+            "lines": [
+                {"i": n, "who": ln.who, "text": ln.text, "stamp": ln.stamp,
+                 "reply_to": ln.reply_to, "score": ln.score,
+                 "reactions": [[e, c] for e, c in ln.reactions]}
+                for n, ln in enumerate(got.lines)] if got else [],
+        }
+
+    @app.post("/api/runs/{run_id}/chat/take")
+    async def take_lines(run_id: str, request: Request,
+                         slopgen: str | None = Cookie(default=None)) -> dict:
+        """Put the messages somebody actually chose into the video, and only those.
+
+        The lines come back from the browser rather than being re-fetched, because
+        re-fetching is the one way this could go wrong: a window of a live chat is not
+        the same window a minute later, and `take the 4th, 7th and 9th of what I was
+        looking at` has to mean what was on the screen. They are the operator's own
+        bytes either way — the room lets them rewrite every one.
+
+        Replies are remapped onto what was kept, so a reply whose target was left
+        behind becomes no reply rather than pointing at whichever line slid into that
+        number — the quiet lie this mode refuses everywhere else."""
+        guard(slopgen)
+        b = await body_of(request)
+        cp, i, job = edited(run_or_404(run_id), b)
+        rows = [r for r in (b.get("lines") or []) if isinstance(r, dict)]
+        if not rows:
+            raise HTTPException(status_code=422, detail="nothing was chosen")
+        moved = {int(r.get("i", -1)): n for n, r in enumerate(rows)}
+        conv = Conversation(title=str(b.get("title", "")).strip(),
+                            source=str(b.get("source", "")).strip())
+        for n, r in enumerate(rows):
+            was = int(r.get("reply_to", -1))
+            conv.messages.append(ChatMsg(
+                persona=str(r.get("who", "")).strip(),
+                text=str(r.get("text", "")),
+                stamp=str(r.get("stamp", "")),
+                score=int(r.get("score", 0) or 0),
+                reply_to=moved.get(was, -1) if was >= 0 and moved.get(was, n) != n else -1,
+                reactions=[(str(e), max(1, int(c)))
+                           for e, c in (r.get("reactions") or []) if str(e).strip()],
+            ))
+        job.conversations.append(conv)
         out = answer(cp, i, job)
-        out["added"] = added
+        out["added"] = 1
         return out
 
     # -- the people ---------------------------------------------------------

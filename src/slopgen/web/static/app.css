@@ -1447,3 +1447,20 @@ button.danger{border-color:var(--bad);color:var(--bad)}
    empty room is the one screen where nothing on it is obvious. */
 .chat-start{display:grid;gap:10px;justify-items:start;padding:8px 2px;max-width:46ch}
 .chat-start p{margin:0}
+
+/* Choosing which messages of a chat go in. A list you read down and click along,
+   because that is the gesture — nobody picks the fourth, seventh and ninth message of
+   a conversation out of a form. */
+#chat-pane-pick{display:grid;gap:8px;min-height:0}
+.pick-head b{max-width:40ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#chat-pick-rows{display:grid;gap:3px;max-height:48vh;overflow:auto;
+  border:1px solid var(--line);border-radius:8px;padding:6px}
+.pick-row{display:flex;gap:9px;align-items:baseline;font-size:13px;cursor:pointer;
+  border:1px solid transparent;border-radius:6px;padding:4px 7px;user-select:none}
+.pick-row:hover{border-color:var(--line)}
+.pick-row.on{background:color-mix(in srgb, var(--accent) 14%, transparent);
+  border-color:var(--accent)}
+.pick-row .who{color:var(--accent);white-space:nowrap;font-weight:600}
+.pick-row .at{color:var(--dim);font:11px/1 var(--mono)}
+.pick-row .what{flex:1;min-width:0}
+.pick-row .rx{color:var(--dim);font-size:12px;white-space:nowrap}

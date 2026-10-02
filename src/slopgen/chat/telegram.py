@@ -261,13 +261,19 @@ async def dialogs(state_dir: Path, limit: int = 60) -> list[dict]:
         await client.disconnect()
 
 
-async def history(state_dir: Path, chat, limit: int = 120) -> list[Piece]:
-    """One chat's recent messages, oldest first, as a piece of conversation.
+async def window(state_dir: Path, chat, limit: int = 200,
+                 before: int = 0) -> tuple[Piece, int, bool]:
+    """One window of a chat's messages, oldest first, and how to ask for the one before.
 
-    `chat` is whatever Telegram itself accepts for one: a numeric id, a `@username`,
-    an invite-less public link. Oldest first because that is the order a conversation
-    happened in and the order a video reads it — telethon hands them back newest first,
-    which is the order a client SCROLLS and nothing else."""
+    A chat is ten thousand messages and a video is twenty of them, so there is no such
+    thing as reading "the chat" — there is only reading a stretch of it. `before` is a
+    message id and means "older than this"; what comes back carries the oldest id in
+    the window so the caller can ask for the next one up, and whether there is more
+    behind it. Oldest first inside the window because that is the order the
+    conversation happened in and the order a video reads it; telethon hands them back
+    newest first, which is the order a client SCROLLS and nothing else.
+
+    `chat` is whatever Telegram itself accepts: a numeric id, a `@username`, a link."""
     client = await _connected(state_dir)
     try:
         try:
@@ -275,13 +281,17 @@ async def history(state_dir: Path, chat, limit: int = 120) -> list[Piece]:
         except Exception as e:  # noqa: BLE001
             raise TelegramError(f"no chat answers to {chat!r} ({type(e).__name__})")
         name = str(getattr(entity, "title", "") or _person(entity) or str(chat))
+        want = max(1, min(int(limit), 400))
         rows = []
-        async for msg in client.iter_messages(entity, limit=max(1, min(int(limit), 500))):
+        async for msg in client.iter_messages(entity, limit=want,
+                                              offset_id=max(0, int(before))):
             rows.append(msg)
         piece = Piece(title=name, source=f"telegram:{chat}")
         ids: dict[object, int] = {}
         pending: list[tuple[int, object]] = []
+        oldest = 0
         for msg in reversed(rows):
+            oldest = min(oldest, msg.id) if oldest else msg.id
             text = str(getattr(msg, "message", "") or "")
             if not text.strip():
                 continue  # a sticker, a photo, a service line: nothing to read or draw
@@ -294,10 +304,21 @@ async def history(state_dir: Path, chat, limit: int = 120) -> list[Piece]:
                 reactions=_reactions(msg),
             ))
         _settle(piece, ids, pending)
-        log.info("telegram: %s — %d line(s)", name, len(piece.lines))
-        return [piece] if piece.lines else []
+        log.info("telegram: %s — %d of %d in this window", name, len(piece.lines), len(rows))
+        return piece, oldest, len(rows) >= want
     finally:
         await client.disconnect()
+
+
+async def history(state_dir: Path, chat, limit: int = 120) -> list[Piece]:
+    """The last stretch of a chat, for a run that is not being watched.
+
+    The blunt answer, and it says so: a run told to read a chat and nothing else takes
+    the most recent `limit` messages, because there is nobody there to choose. When
+    there IS somebody there, they use :func:`window` and pick (see the chat room),
+    which is the honest way and the one the room offers first."""
+    piece, _oldest, _more = await window(state_dir, chat, limit)
+    return [piece] if piece.lines else []
 
 
 def _as_target(chat):

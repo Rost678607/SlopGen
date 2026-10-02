@@ -625,19 +625,14 @@ cq("#chat-exp-list").addEventListener("click", async (e) => {
   cq("#chat-exp-go").hidden = !chatExpPieces.length;
 });
 
+// An export's pieces are opened and chosen from like everything else. Taking a whole
+// one unread was the same mistake in a smaller coat: an exported chat is a year of
+// somebody's messages and the video wants nine of them.
 cq("#chat-exp-go").onclick = async () => {
-  const want = [...cq("#chat-exp-pieces").querySelectorAll("[data-piece]")]
-    .filter((b) => b.checked).map((b) => +b.dataset.piece);
-  if (!want.length || !CHAT) return;
-  const d = await chatDo("/exports/take", { body: { name: chatExpFile, pieces: want } });
-  cq("#chat-src-box").hidden = true;
-  if (d) {
-    chatConv = Math.max(0, d.conversations.length - want.length);
-    chatSel = -1;
-    renderChat();
-    say(`${d.added} ${lab("web.chat.exports.added", "")}`);
-    shootChat();
-  }
+  const first = [...cq("#chat-exp-pieces").querySelectorAll("[data-piece]")]
+    .filter((b) => b.checked).map((b) => +b.dataset.piece)[0];
+  if (first === undefined || !CHAT) return;
+  await openPick("export", chatExpFile, first);
 };
 
 // -- the live sources ------------------------------------------------------
@@ -689,6 +684,9 @@ async function pickSource(which) {
                               ["#chat-invent", "invent"],
                               ["#chat-tg-login", "telegram"]])
     cq(pane).hidden = which !== when;
+  cq("#chat-pane-pick").hidden = true;
+  cq("#chat-src-rows").hidden = false;
+  PICK = null;
   // the search row belongs to the one source that has something to search; Telegram's
   // appears only once somebody is signed in, which `renderTg` decides
   cq("#chat-src-where").hidden = which !== "reddit";
@@ -774,16 +772,134 @@ async function browseSource(where) {
 
 cq("#chat-src-rows").addEventListener("click", async (e) => {
   const b = e.target.closest("[data-take]");
-  if (!b || !CHAT) return;
-  b.disabled = true;
-  const d = await chatDo("/fetch", { body: { source: chatSrc, where: b.dataset.take } });
-  b.disabled = false;
+  if (b) await openPick(chatSrc, b.dataset.take);
+});
+
+// -- choosing which messages go in -----------------------------------------
+//
+// The step that was missing, and the one that was noticed missing: taking a chat used
+// to mean taking its last hundred-odd messages sight unseen, which for a chat of ten
+// thousand is an arbitrary stretch of somebody's year. A chat is not a thing you take.
+// A stretch of it is — so it is read here first, and chosen from.
+
+let PICK = null;   // {source, where, piece, lines, before, more, title}
+const picked = new Set();
+let pickAnchor = -1;
+
+async function openPick(source, where, piece = 0, before = 0, keep = false) {
+  const rows = cq("#chat-pick-rows");
+  rows.innerHTML = `<p class="dim">…</p>`;
+  // the picker REPLACES the tab's own pane rather than stacking under it: a sheet
+  // showing the file list, the piece list and the messages at once is three screens
+  // of scrolling to answer one question
+  for (const pane of ["#chat-pane-paste", "#chat-pane-manual", "#chat-pane-export",
+                      "#chat-invent", "#chat-tg-login", "#chat-src-rows",
+                      "#chat-src-where"])
+    cq(pane).hidden = true;
+  cq("#chat-pane-pick").hidden = false;
+  let d;
+  try {
+    d = await api(`/api/runs/${CHAT.id}/chat/peek?video=${CHAT.video}` +
+                  `&source=${encodeURIComponent(source)}` +
+                  `&where=${encodeURIComponent(where)}&piece=${piece}&before=${before}`);
+  } catch (e) { closePick(); return say(e.message, true); }
+  // Older messages are PREPENDED, so what was already chosen stays chosen and keeps
+  // its place: walking back through a chat must not undo the choosing done so far.
+  const older = keep && PICK ? PICK.lines : [];
+  const shift = d.lines.length;
+  if (keep && PICK) {
+    const was = new Set(picked);
+    picked.clear();
+    was.forEach((i) => picked.add(i + shift));
+  } else {
+    picked.clear();
+    // A short conversation is almost always wanted whole, and a long window almost
+    // never is. The rule is not a guess about taste: with forty lines, "all" is one
+    // click from right; with two hundred it is two hundred clicks from it.
+    if (d.lines.length <= 40) d.lines.forEach((ln) => picked.add(ln.i));
+  }
+  // The older window goes in FRONT, and everything that was already there shifts by
+  // its length — the indices and the replies inside them both, or a reply would point
+  // at whatever now sits on its old number.
+  PICK = { source, where, piece: d.piece, title: d.title, before: d.before,
+           more: d.more, pieces: d.pieces,
+           lines: d.lines.concat(older.map((ln) => ({
+             ...ln, i: ln.i + shift,
+             reply_to: ln.reply_to >= 0 ? ln.reply_to + shift : -1 }))) };
+  pickAnchor = -1;
+  renderPick();
+}
+
+function closePick() {
+  PICK = null;
+  // back to whatever tab we came from, drawn by the one thing that knows how
+  pickSource(chatSrc);
+}
+
+function renderPick() {
+  if (!PICK) return;
+  cq("#chat-pick-title").textContent = PICK.title || lab("web.chat.untitled", "");
+  cq("#chat-pick-count").textContent =
+    `${picked.size} / ${PICK.lines.length}`;
+  cq("#chat-pick-older").hidden = !PICK.more;
+  const sel = cq("#chat-pick-piece");
+  sel.hidden = (PICK.pieces || []).length < 2;
+  if (!sel.hidden)
+    sel.innerHTML = PICK.pieces.map((p) =>
+      `<option value="${p.p}"${p.p === PICK.piece ? " selected" : ""}>${
+        esc(p.title || lab("web.chat.untitled", ""))} · ${p.lines}</option>`).join("");
+  cq("#chat-pick-rows").innerHTML = PICK.lines.map((ln) => `
+    <div class="pick-row${picked.has(ln.i) ? " on" : ""}" data-pick="${ln.i}">
+      <span class="at">${esc(ln.stamp || "")}</span>
+      <span class="who">${esc(ln.who || "—")}</span>
+      <span class="what">${esc(ln.text)}</span>
+      ${ln.reactions.length ? `<span class="rx">${
+        esc(ln.reactions.map(([e, n]) => n > 1 ? `${e}${n}` : e).join(" "))}</span>` : ""}
+    </div>`).join("");
+}
+
+cq("#chat-pick-back").onclick = closePick;
+cq("#chat-pick-all").onclick = () => {
+  PICK.lines.forEach((ln) => picked.add(ln.i));
+  renderPick();
+};
+cq("#chat-pick-none").onclick = () => { picked.clear(); renderPick(); };
+cq("#chat-pick-older").onclick = () =>
+  openPick(PICK.source, PICK.where, PICK.piece, PICK.before, true);
+cq("#chat-pick-piece").onchange = (e) =>
+  openPick(PICK.source, PICK.where, +e.target.value, 0, false);
+
+cq("#chat-pick-rows").addEventListener("click", (e) => {
+  const row = e.target.closest("[data-pick]");
+  if (!row || !PICK) return;
+  const i = +row.dataset.pick;
+  const at = PICK.lines.findIndex((ln) => ln.i === i);
+  // shift takes the run between this and the last one touched, because picking a
+  // stretch of a conversation is the common case and forty clicks is not a gesture
+  if (e.shiftKey && pickAnchor >= 0) {
+    const [lo, hi] = at < pickAnchor ? [at, pickAnchor] : [pickAnchor, at];
+    const want = !picked.has(i);
+    for (let k = lo; k <= hi; k++)
+      want ? picked.add(PICK.lines[k].i) : picked.delete(PICK.lines[k].i);
+  } else {
+    picked.has(i) ? picked.delete(i) : picked.add(i);
+    pickAnchor = at;
+  }
+  renderPick();
+});
+
+cq("#chat-pick-go").onclick = async () => {
+  if (!PICK || !picked.size) return;
+  const lines = PICK.lines.filter((ln) => picked.has(ln.i));
+  const d = await chatDo("/take", { body: {
+    title: PICK.title, source: `${PICK.source}:${PICK.where}`, lines } });
   if (d) {
+    closePick();
     cq("#chat-src-box").hidden = true;
     chatConv = Math.max(0, d.conversations.length - 1);
     chatSel = -1;
     renderChat();
-    say(`${d.added} ${lab("web.chat.exports.added", "")}`);
+    say(`${lines.length} ${lab("web.chat.lines", "сообщений")}`);
     shootChat();
   }
-});
+};

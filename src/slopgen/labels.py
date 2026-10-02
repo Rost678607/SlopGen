@@ -3663,3 +3663,23 @@ EN.update({
                        "from Telegram, from reddit, from the writer, from a block of "
                        "pasted text — or you start an empty one and type.",
 })
+RU.update({
+    "web.chat.pick.back": "← к списку",
+    "web.chat.pick.all": "выбрать все",
+    "web.chat.pick.none": "снять",
+    "web.chat.pick.older": "⟲ ещё старее",
+    "web.chat.pick.take": "взять выбранные",
+    "web.chat.pick.note": "Клик — отметить сообщение, shift+клик — весь кусок от "
+                          "предыдущего отмеченного. «Ещё старее» подгружает то, что "
+                          "было до этого; уже отмеченное остаётся отмеченным.",
+})
+EN.update({
+    "web.chat.pick.back": "← to the list",
+    "web.chat.pick.all": "all of them",
+    "web.chat.pick.none": "none",
+    "web.chat.pick.older": "⟲ older still",
+    "web.chat.pick.take": "take the chosen ones",
+    "web.chat.pick.note": "Click marks a message, shift+click takes the run between it "
+                          "and the last one marked. “Older still” loads what came "
+                          "before; anything already marked stays marked.",
+})
