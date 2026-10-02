@@ -767,7 +767,30 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
                                     detail=f"chat settings: {e.errors()[0]['msg']}")
             run.params.manual_chat = fresh
             cp.data["params"]["manual_chat"] = fresh.model_dump(mode="json")
+            # The drawing that exists belongs to the settings that drew it. Every one
+            # of these changes the picture — the shape of the frame, the skin, the
+            # header, the wallpaper, how far the view rolls — so the states on disk
+            # and the bars baked beside them are now pictures of a video this run is
+            # no longer making. Leaving them was the whole of what the operator was
+            # looking at: the timeline kept scrubbing 9:16 frames with a header on
+            # them for a run that had been switched to 16:9 with the header off, and
+            # nothing on the screen said the frames were old. `chat_states` is what
+            # `montage.SATISFIED` reads to decide `рисование` is done, so dropping it
+            # puts the stage back on the table where it belongs, and the preview
+            # falls back to drawing each frame live until it has run again.
             cp.save()
+            if job.chat_states or any(p.file or p.ass for p in job.parts):
+                job.chat_states = []
+                # …and the cut that was made FROM those frames, with its subtitles.
+                # `assemble` and `subtitles` skip a part that already has a file, so
+                # leaving these set meant the stages answered "done" without doing
+                # anything and the room went on serving a 9:16 video to a run that had
+                # been switched to 16:9 — the clearest form of the same lie: a picture
+                # of settings nobody holds any more, with nothing saying so.
+                for part in job.parts:
+                    part.file = None
+                    part.ass = None
+                return answer(cp, i, job)
         return doc(cp, i, job)
 
     @app.get("/api/avatar")
@@ -816,14 +839,36 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
             if t >= 0 and job.chat_states:
                 await run_in_threadpool(_frame_at, job, ctx, float(t), out)
             else:
-                last = (len(job.messages) - 1 if at < 0
-                        else max(0, min(at, len(job.messages) - 1)))
+                # A moment asked for before anything has been drawn — or after a
+                # settings change threw the drawing away — is still a moment worth
+                # answering. It becomes the message that is up then, so the strip goes
+                # on scrubbing instead of dying the instant the skin is changed, and
+                # what it shows is drawn fresh and therefore true.
+                last = (_message_at(job, float(t)) if t >= 0 else
+                        (len(job.messages) - 1 if at < 0
+                         else max(0, min(at, len(job.messages) - 1))))
                 await run_in_threadpool(_draw_preview, job, ctx, last, out)
         except Exception as e:  # noqa: BLE001
             log.exception("drawing the chat preview failed")
             raise HTTPException(status_code=502, detail=f"{type(e).__name__}: {e}")
         return FileResponse(out, media_type="image/png",
                             headers={"Cache-Control": "no-store"})
+
+
+def _message_at(job, when: float) -> int:
+    """Which message is up at `when`, by the scene clock the strip is marked with.
+
+    The same arithmetic `_clock` numbers the marks with, so the frame that comes back
+    is the one the mark under the playhead names."""
+    at, start = 0.0, []
+    for scene in job.scenes:
+        start.append(at)
+        at += scene.duration
+    last = 0
+    for n, msg in enumerate(job.messages):
+        if 0 <= msg.scene < len(start) and start[msg.scene] <= when + 1e-6:
+            last = n
+    return max(0, min(last, len(job.messages) - 1))
 
 
 def _frame_at(job, ctx: AppContext, when: float, out: Path) -> None:
@@ -892,7 +937,10 @@ def _draw_preview(job, ctx: AppContext, last: int, out: Path) -> None:
                       top_inset=skin.header_h if cfg.header else 0,
                       day_label=lambda iso: chat_render.day_label(iso, ctx.params.lang))
     canvas: Canvas = planner.lay_upto(last)
-    frame = canvas.band(int(max(0.0, canvas.height - top)), top)
+    # the bottom of the conversation, even when the conversation is shorter than the
+    # screen and the number is negative: the list hangs from the bottom edge the way
+    # a messenger's does (see `scroll.Planner._rest`)
+    frame = canvas.band(int(canvas.height - top), top)
     if cfg.header:
         conv = next((c for c in job.conversations
                      if any(m is job.messages[last] for m in c.messages)), None)

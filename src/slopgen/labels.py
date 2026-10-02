@@ -3333,7 +3333,7 @@ EN.update({
 RU.update({
     "w.cards.own": "— как на карточках —",
     "w.chatbg.plain": "— без обоев —",
-    "web.f.chatavatar": "картинка чата",
+    "web.f.chatavatar": "картинка чата по умолчанию",
     "web.f.chatme": "чей это аккаунт",
     "web.f.chatbg": "обои",
     "web.f.reacts": "вся пачка реакций, с",
@@ -3347,7 +3347,7 @@ RU.update({
 EN.update({
     "w.cards.own": "— as the cards say —",
     "w.chatbg.plain": "— no wallpaper —",
-    "web.f.chatavatar": "chat picture",
+    "web.f.chatavatar": "default chat picture",
     "web.f.chatme": "whose account this is",
     "web.f.chatbg": "wallpaper",
     "web.f.reacts": "the whole flurry of reactions, s",
