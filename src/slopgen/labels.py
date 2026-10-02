@@ -3689,8 +3689,10 @@ EN.update({
                           "before loads itself; anything already marked stays marked.",
 })
 RU.update({
-    "web.chat.who.new": "＋ человек",
+    "web.chat.who.new": "＋ добавить персонажа",
     "web.chat.who.newname": "как его зовут",
+    "web.chat.who.drop": "удалить карточку",
+    "web.chat.who.dropsure": "Удалить карточку «%s»? Она пропадёт из всех роликов.",
     "web.chat.who.voice": "голос",
     "web.chat.who.pic": "аватарка",
     "web.chat.who.initials": "— кружок с инициалами —",
@@ -3699,8 +3701,10 @@ RU.update({
     "web.chat.who.rename": "переименовать",
 })
 EN.update({
-    "web.chat.who.new": "＋ a person",
+    "web.chat.who.new": "＋ add a person",
     "web.chat.who.newname": "what are they called",
+    "web.chat.who.drop": "delete the card",
+    "web.chat.who.dropsure": "Delete the card for %s? It goes from every video.",
     "web.chat.who.voice": "voice",
     "web.chat.who.pic": "picture",
     "web.chat.who.initials": "— the initials disc —",

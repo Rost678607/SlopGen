@@ -330,6 +330,9 @@ function personHTML(c) {
       <div class="chat-acts">
         <button class="ghost" data-rename="${esc(c.name)}">${
           esc(lab("web.chat.who.rename", "переименовать"))}</button>
+        <span class="grow"></span>
+        ${c.lines ? "" : `<button class="ghost warn" data-drop-who="${esc(c.name)}">${
+          esc(lab("web.chat.who.drop", "удалить карточку"))}</button>`}
       </div>
     </div>`;
 }
@@ -763,6 +766,15 @@ cq("#chat-cast").addEventListener("click", async (e) => {
     if (!now || !now.trim() || now === re.dataset.rename) return;
     chatWho = now.trim();
     await chatDo("/rename", { body: { was: re.dataset.rename, now: now.trim() } });
+    return shootChat(chatSel);
+  }
+  const rm = e.target.closest("[data-drop-who]");
+  if (rm) {
+    const who = rm.dataset.dropWho;
+    if (!confirm(lab("web.chat.who.dropsure", "Удалить «%s»?").replace("%s", who)))
+      return;
+    chatWho = "";
+    await chatDo("/persona", { method: "DELETE", body: { name: who } });
     return shootChat(chatSel);
   }
   const row = e.target.closest("[data-person]");

@@ -34,7 +34,7 @@ from ..chat.draw import Canvas
 from pydantic import ValidationError
 
 from ..config import ChatConfig, ConfigStore, PersonaConfig
-from ..config.loader import write_config
+from ..config.loader import delete_config, write_config
 from ..pipeline import chatroom
 from ..pipeline.checkpoint import Checkpoint
 from ..pipeline.job import ChatMsg, Conversation
@@ -705,6 +705,34 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
         )
         write_config("personas", name, card.model_dump(mode="json"))
         store.personas[name] = card
+        return doc(cp, i, job)
+
+    @app.delete("/api/runs/{run_id}/chat/persona")
+    async def uncard_person(run_id: str, request: Request,
+                            slopgen: str | None = Cookie(default=None)) -> dict:
+        """Throw a card away.
+
+        Only one that nobody in this video speaks through: a card is reached from the
+        cast list, and the cast list is built from who talks, so deleting a speaker's
+        card would delete the voice and the picture of somebody still on screen and
+        leave no way to notice. Whoever is still speaking has to be removed from the
+        conversation first, which is the operation that already exists.
+
+        The card is a config and this unlinks the file, so it goes for every video and
+        not only this one. That is the point — the cast list fills up with people
+        invented for one script, and nothing else offers to clear them out."""
+        guard(slopgen)
+        b = await body_of(request)
+        run = run_or_404(run_id)
+        cp, i, job = open_job(run, int(b.get("video", 0)))
+        name = str(b.get("name", "")).strip()
+        speaks = any(m.persona == name for c in job.conversations for m in c.messages)
+        if speaks:
+            raise HTTPException(
+                status_code=409,
+                detail=f"{name} still speaks in this video — remove their messages first")
+        delete_config("personas", name)
+        store.personas.pop(name, None)
         return doc(cp, i, job)
 
     @app.put("/api/runs/{run_id}/chat/settings")
