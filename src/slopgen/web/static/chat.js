@@ -540,23 +540,30 @@ async function buildChat() {
   go.disabled = true;
   const was = go.textContent;
   try {
-    for (const stage of CHAT.doc.stages || []) {
-      if (stage === "source") continue;   // the conversation is already here
-      go.textContent = `${lab("web.chat.build.at", "")} ${word(stage)}…`;
-      await api(`/api/runs/${CHAT.id}/montage/stage`, {
-        method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ video: CHAT.video, stage }),
-      });
-    }
-    say(lab("web.chat.build.done", "готово"));
+    // Hand the run to the supervisor rather than walking the chain from here. Pressing
+    // the stages one at a time out of the browser worked, and told you nothing: each
+    // call is a single request that can take minutes, so the room sat on a disabled
+    // button, and the runs list — the one place in this program that draws a progress
+    // bar, streams the log and offers to stop — went on calling the run `ждёт`, because
+    // from its side nothing had started. There was no way to tell building from hung.
+    const rows = await api("/api/runs");
+    const row = rows.find((r) => r.id === CHAT.id);
+    if (!row || !row.run_dir) throw new Error(lab("web.chat.build.nodir", "нет папки"));
+    await api(`/api/runs/${CHAT.id}/resume`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ run_dir: row.run_dir }),
+    });
+    say(lab("web.chat.build.started", ""));
+    // …and out to the list, which is where it can now be watched. Staying put would
+    // leave the operator looking at the one screen that cannot show what is happening.
+    closeChat();
+    return;
   } catch (e) {
     say(e.message, true);
   } finally {
     go.disabled = false;
     go.textContent = was;
   }
-  await reloadChat();
-  if (CHAT && CHAT.doc.video) cq("#chat-watch").click();
 }
 
 cq("#chat-build").onclick = buildChat;

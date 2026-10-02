@@ -3749,6 +3749,8 @@ EN.update({
 RU.update({
     "web.chat.build": "собрать ролик",
     "web.chat.build.at": "иду:",
+    "web.chat.build.started": "собираю — смотрите в списке прогонов",
+    "web.chat.build.nodir": "у этого прогона ещё нет папки на диске",
     "web.chat.build.done": "ролик собран",
     "web.chat.shot": "перерисовать",
     "web.chat.day": "дата",
@@ -3762,6 +3764,8 @@ RU.update({
 EN.update({
     "web.chat.build": "make the video",
     "web.chat.build.at": "at:",
+    "web.chat.build.started": "building — watch it in the runs list",
+    "web.chat.build.nodir": "this run has no folder on disk yet",
     "web.chat.build.done": "the cut is made",
     "web.chat.shot": "redraw",
     "web.chat.day": "date",
