@@ -1484,3 +1484,27 @@ button.danger{border-color:var(--bad);color:var(--bad)}
 #chat-set h5{margin:8px 0 0;font-size:11.5px;color:var(--accent);
   text-transform:uppercase;letter-spacing:.07em}
 #chat-set h5:first-of-type{margin-top:0}
+#chat-frame video{width:100%;display:block}
+
+/* Reactions as chips. It was one text field in a syntax of its own — `🔥3 ❤️` — which
+   is a thing to get wrong for an edit that is three taps. */
+.rx-edit{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.rx-chip{display:inline-flex;gap:2px;align-items:center;border:1px solid var(--line);
+  border-radius:14px;padding:1px 3px 1px 5px;font-size:13px}
+.rx-chip b{min-width:12px;text-align:center;font-size:12px;color:var(--dim)}
+.rx-chip button{background:none;border:none;padding:0 4px;cursor:pointer;
+  color:var(--dim);font-size:13px;line-height:1.5}
+.rx-chip button:hover{color:var(--ink)}
+.rx-chip .rx-emoji{font-size:14px;padding:0 2px}
+.rx-chip .rx-off:hover{color:var(--bad)}
+.rx-add{display:inline-flex;gap:1px;align-items:center;opacity:.5}
+.rx-add:hover{opacity:1}
+.rx-add button{background:none;border:none;padding:1px 3px;cursor:pointer;font-size:14px}
+
+/* Dragging a message. The line says where it would land — a drop with no target drawn
+   is a guess about what the program understood. */
+.chat-row{cursor:grab}
+.chat-row.on,.chat-row:has(.chat-edit){cursor:default}
+.chat-row.dragging{opacity:.4}
+.chat-row.drop-here{box-shadow:0 -2px 0 var(--accent)}
+.chat-row.drop-after{box-shadow:0 2px 0 var(--accent)}

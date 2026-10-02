@@ -155,6 +155,11 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
         # room shows a list until then and a timeline afterwards, which is the honest
         # order and not a limitation to apologise for.
         out["clock"] = _clock(job)
+        # Whether there is a finished cut to WATCH. A still frame answers "what will
+        # this look like"; it cannot answer "how does it move", and the reveal, the
+        # roll and the swipe are most of what this mode is. So the room says when the
+        # real thing exists and plays it (see `/api/runs/{id}/video`).
+        out["video"] = any(p.file and Path(p.file).is_file() for p in job.parts)
         return out
 
     def _clock(job) -> dict:
@@ -588,6 +593,7 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
             "lines": [
                 {"i": n, "who": ln.who, "text": ln.text, "stamp": ln.stamp,
                  "reply_to": ln.reply_to, "score": ln.score, "avatar": ln.avatar,
+                 "day": ln.day,
                  "reactions": [[e, c] for e, c in ln.reactions]}
                 for n, ln in enumerate(got.lines)] if got else [],
         }
@@ -621,6 +627,7 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
                 persona=str(r.get("who", "")).strip(),
                 text=str(r.get("text", "")),
                 stamp=str(r.get("stamp", "")),
+                day=str(r.get("day", "")),
                 # The picture rides on the MESSAGE and not on a card, because carding
                 # somebody is the operator's decision and an import must not make it
                 # for them. When they do card the person, the room offers this as the
@@ -677,6 +684,7 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
             avatar=str(b.get("avatar", was.avatar if was else "")),
             voice=str(b.get("voice", was.voice if was else "")),
             colour=str(b.get("colour", was.colour if was else "")),
+            role=str(b.get("role", was.role if was else "")),
             note=str(b.get("note", was.note if was else "")),
         )
         write_config("personas", name, card.model_dump(mode="json"))
@@ -832,7 +840,8 @@ def _draw_preview(job, ctx: AppContext, last: int, out: Path) -> None:
                  if skin.wallpaper else None)
     planner = Planner(ctx, job, v.width, top,
                       people=chat_render.people_of(job, ctx), wallpaper=wallpaper,
-                      top_inset=skin.header_h if cfg.header else 0)
+                      top_inset=skin.header_h if cfg.header else 0,
+                      day_label=lambda iso: chat_render.day_label(iso, ctx.params.lang))
     canvas: Canvas = planner.lay_upto(last)
     frame = canvas.band(int(max(0.0, canvas.height - top)), top)
     if cfg.header:

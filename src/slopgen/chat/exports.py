@@ -68,6 +68,11 @@ class Line:
     # never does — that is the first thing a client leaves out — so this is empty for
     # everything but a live read, and empty means the initials disc.
     avatar: str = ""
+    # The DAY this was said, as `YYYY-MM-DD`, kept apart from the clock because it is
+    # drawn apart from it: a messenger prints the time on the bubble and the date as a
+    # separator between the days, and the second only appears where the first changes.
+    # Empty where the source gave no date at all.
+    day: str = ""
 
 
 @dataclass
@@ -171,6 +176,7 @@ def _tg_chat(chat: dict) -> Piece:
             continue  # a sticker, a photo, a file: nothing to read and nothing to draw
         who = str(msg.get("from") or "").strip()
         line = Line(who=who, text=text, stamp=_clock(msg.get("date")),
+                    day=_day(msg.get("date")),
                     reactions=_tg_reactions(msg.get("reactions")))
         ids[msg.get("id")] = len(piece.lines)
         if msg.get("reply_to_message_id") is not None:
@@ -254,8 +260,8 @@ def telegram_html(text: str) -> list[Piece]:
         ids[m.group("id")] = len(piece.lines)
         if reply:
             pending.append((len(piece.lines), reply.group("id")))
-        piece.lines.append(Line(who=who, text=said,
-                                stamp=_clock(at.group("at") if at else "")))
+        when = at.group("at") if at else ""
+        piece.lines.append(Line(who=who, text=said, stamp=_clock(when), day=_day(when)))
     _settle(piece, ids, pending)
     return [piece] if piece.lines else []
 
@@ -300,6 +306,7 @@ def discord_json(data: dict) -> list[Piece]:
             pending.append((len(piece.lines), ref["messageId"]))
         piece.lines.append(Line(
             who=who, text=said, stamp=_clock(msg.get("timestamp")),
+            day=_day(msg.get("timestamp")),
             reactions=_discord_reactions(msg.get("reactions")),
         ))
     _settle(piece, ids, pending)
@@ -338,7 +345,8 @@ def reddit_json(data) -> list[Piece]:
     if post is not None:
         piece.title = post["title"]
         piece.lines.append(Line(who=post["who"], text=post["text"],
-                                score=post["score"], stamp=_clock(post["at"])))
+                                score=post["score"], stamp=_clock(post["at"]),
+                                day=_day(post["at"])))
     for listing in listings:
         for child in _children(listing):
             if child.get("kind") == "t1":
@@ -383,6 +391,7 @@ def _reddit_comment(piece: Piece, d: dict, parent: int) -> None:
         who=f"u/{d.get('author') or 'somebody'}",
         text=body, score=int(d.get("score") or 0),
         reply_to=parent, stamp=_clock(d.get("created_utc")),
+        day=_day(d.get("created_utc")),
     ))
     for child in _children(d.get("replies")):
         if child.get("kind") == "t1":
@@ -407,6 +416,30 @@ def _settle(piece: Piece, ids: dict, pending: list[tuple[int, object]]) -> None:
             where = ids.get(str(target))
         if where is not None and where != at:
             piece.lines[at].reply_to = where
+
+
+def _day(at) -> str:
+    """The date as `YYYY-MM-DD`, out of whatever the export wrote.
+
+    ISO rather than words, because which words depends on the language the VIDEO is in
+    and this module does not know it — the render stage does, and turns one into the
+    other (`stages.chat_render.day_label`)."""
+    if at is None or at == "":
+        return ""
+    if isinstance(at, (int, float)):
+        try:
+            return datetime.fromtimestamp(float(at), tz=timezone.utc).strftime("%Y-%m-%d")
+        except (OverflowError, OSError, ValueError):
+            return ""
+    text = str(at).strip()
+    hit = re.search(r"(?<!\d)(\d{4})-(\d{2})-(\d{2})(?!\d)", text)
+    if hit:
+        return hit.group(0)
+    # Telegram's HTML export writes `DD.MM.YYYY HH:MM:SS`
+    hit = re.search(r"(?<!\d)(\d{2})\.(\d{2})\.(\d{4})(?!\d)", text)
+    if hit:
+        return f"{hit.group(3)}-{hit.group(2)}-{hit.group(1)}"
+    return ""
 
 
 def _clock(at) -> str:

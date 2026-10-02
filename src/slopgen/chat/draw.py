@@ -44,6 +44,9 @@ class Person:
     avatar: Path | None = None
     colour: str = "#65aadd"
     mine: bool = False
+    # What they are called besides their name — `Куратор`, `админ` — printed at the
+    # right of the name line, which is where Telegram prints an admin's title.
+    role: str = ""
     # What the initials disc says when there is no picture. Separate from `name`
     # because the name printed on a comment may carry the platform's own prefix —
     # `u/костя` — and a disc reading "U" for everybody is a disc that identifies
@@ -68,6 +71,10 @@ class Block:
     # fill one in, since it is also where the text goes
     box: tuple[int, int, int, int] = (0, 0, 0, 0)
     show_head: bool = True  # the author's name/avatar, or a run of theirs continuing
+    # The day this message starts, when it starts one: a centred pill above it, which
+    # is how every client says the conversation has crossed midnight. Empty is the
+    # ordinary case — only the first message of a day carries one.
+    separator: str = ""
     # The little spur at the bottom corner. It marks the END of somebody's run of
     # messages, not the start of it, so it is a separate question from `show_head` and
     # is answered one message later — which costs nothing, because the spur is drawn
@@ -143,7 +150,7 @@ class Canvas:
              stamp: str = "", reply: tuple[str, str] | None = None,
              reactions: list[tuple[str, int]] | None = None,
              score: int | None = None, depth: int = 0,
-             show_head: bool = True) -> Block:
+             show_head: bool = True, separator: str = "") -> Block:
         s = self.skin
         reactions = list(reactions or [])
         indent = s.indent * depth if s.tree else 0
@@ -162,6 +169,8 @@ class Canvas:
         lines = richtext.wrap(self._probe, text, self.f_text, s.text_px, inner)
 
         line_h = int(s.text_px * s.line_h)
+        sep_h = self._sep_h() if separator else 0
+        top += sep_h
         h = s.bubble_pad_y * 2 + max(len(lines), 1) * line_h
         if show_head and (s.bubbles and not person.mine or not s.bubbles):
             h += self._head_h()
@@ -197,10 +206,14 @@ class Canvas:
         else:
             x0 = self.left + s.pad_x + indent + avatar_lane
             x1 = x0 + w
-        return Block(msg=msg, top=top, height=h, lines=lines, person=person,
-                     box=(x0, top, x1, top + h), show_head=show_head, stamp=stamp,
-                     reply=reply, reactions=reactions, score=score, depth=depth,
-                     show_tail=True)
+        return Block(msg=msg, top=top - sep_h, height=h + sep_h, lines=lines,
+                     person=person, box=(x0, top, x1, top + h), show_head=show_head,
+                     stamp=stamp, reply=reply, reactions=reactions, score=score,
+                     depth=depth, show_tail=True, separator=separator)
+
+    def _sep_h(self) -> int:
+        """The band a date pill occupies, above the first message of its day."""
+        return int(self.skin.meta_px * 2.7)
 
     def _head_h(self) -> int:
         """The author line. In a tree skin it also carries the little avatar, so it is
@@ -285,8 +298,10 @@ class Canvas:
                cap: int | None = None) -> None:
         s = self.skin
         x0, _, x1, _ = b.box
-        y = b.top + dy
+        y = b.box[1] + dy          # the bubble's own top; the block may start higher
         bottom = b.bottom + dy
+        if b.separator:
+            self._paint_separator(img, draw, b.separator, b.top + dy)
 
         if s.tree and b.depth:
             # the thread guides: one vertical rule per level, which is the whole of
@@ -321,8 +336,16 @@ class Canvas:
         if b.show_head and (not s.bubbles or not b.person.mine):
             name = b.person.name + (f"  {b.stamp}" if (b.stamp and not s.bubbles) else "")
             head_h = self._head_h()
-            draw.text((head_x, cy + (head_h - s.name_px * s.line_h) / 2), name,
-                      font=self.f_name, fill=b.person.colour)
+            ny = cy + (head_h - s.name_px * s.line_h) / 2
+            richtext.draw_line(img, draw, (head_x, int(ny)), name, self.f_name,
+                               b.person.colour, s.name_px)
+            # What they are besides their name, at the other end of the line: Telegram
+            # prints an admin's title there, and it reads as a label precisely because
+            # it is not next to the name.
+            if b.person.role and s.bubbles:
+                rw = self._probe.textlength(b.person.role, font=self.f_meta)
+                draw.text((x1 - s.bubble_pad_x - rw, ny + s.name_px * 0.18),
+                          b.person.role, font=self.f_meta, fill=s.meta)
             cy += head_h
 
         if b.reply:
@@ -342,6 +365,27 @@ class Canvas:
             w = self._probe.textlength(b.stamp, font=self.f_meta)
             draw.text((x1 - s.bubble_pad_x - w, bottom - s.bubble_pad_y - s.meta_px * 1.05),
                       b.stamp, font=self.f_meta, fill=s.meta)
+
+    def _paint_separator(self, img: Image.Image, draw: ImageDraw.ImageDraw,
+                         text: str, top: int) -> None:
+        """The date, as the centred pill every client draws between two days.
+
+        A pill and not a rule, because that is what it is: a little ground with the
+        day on it, floating over the wallpaper."""
+        s = self.skin
+        px = int(s.meta_px * 1.02)
+        face = fonts.load(s.family, px, "medium")
+        w = richtext.width(self._probe, text, face, px)
+        pad = int(px * 0.9)
+        cx = self.left + self.column // 2
+        y = top + int(px * 0.5)
+        box = (cx - w / 2 - pad, y, cx + w / 2 + pad, y + px * 1.75)
+        # over a wallpaper the pill is the bubble's own ground at half strength, which
+        # is what Telegram does; on a flat skin it is simply the divider
+        draw.rounded_rectangle(box, radius=int(px), fill=(
+            _rgba(s.bubble_in, 150) if s.wallpaper else s.divider))
+        richtext.draw_line(img, draw, (int(cx - w / 2), int(y + px * 0.34)),
+                           text, face, s.meta, px)
 
     def _tail(self, draw: ImageDraw.ImageDraw, b: Block, dy: int, fill: str) -> None:
         """Telegram's little spur at the bottom corner of a bubble. It is two
@@ -462,6 +506,12 @@ class Canvas:
             r = max(2, size // 26)
             cy = y + size // 2 - int(size * 0.22) + i * int(size * 0.22)
             draw.ellipse([dots - r, cy - r, dots + r, cy + r], fill=s.header_text)
+
+
+def _rgba(colour: str, alpha: int) -> tuple[int, int, int, int]:
+    """A `#rrggbb` with an alpha on it, for the one thing here drawn see-through."""
+    c = colour.lstrip("#")
+    return (int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16), alpha)
 
 
 def _round_photo(path: Path, size: int) -> Image.Image | None:

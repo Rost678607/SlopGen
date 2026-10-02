@@ -429,7 +429,17 @@
     <div id="chat-convs"></div>
     <div id="chat-list"></div>
     <aside id="chat-side">
-      <div id="chat-frame"><img id="chat-shot-img" alt=""></div>
+      <!-- A still answers "what will this look like" and cannot answer "how does it
+           move" — and the reveal, the roll and the swipe are most of what this mode
+           is. So the frame has two faces, and the second appears when there is a cut
+           to show in it. -->
+      <div id="chat-frame">
+        <img id="chat-shot-img" alt="">
+        <video id="chat-video" controls playsinline hidden></video>
+      </div>
+      <div class="row" id="chat-watch-row" hidden>
+        <button id="chat-watch" class="ghost" data-l="web.chat.watch">смотреть ролик</button>
+      </div>
       <!-- the clock, once there is one: a strip of the finished video with every
            message marked on it and a handle you drag. Before `render` has run there
            are no timings to show, so it stays hidden rather than lying about them. -->

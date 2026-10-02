@@ -105,6 +105,34 @@ def fillers(ctx: AppContext) -> list[Path]:
     return pool
 
 
+# The months, in the two languages this program speaks. A table and not a library
+# call, because `strftime` gives whatever the machine's locale is — which on a server
+# is `C`, and `17 September` in a Russian video is the one word nobody wrote.
+MONTHS = {
+    "ru": ("января", "февраля", "марта", "апреля", "мая", "июня",
+           "июля", "августа", "сентября", "октября", "ноября", "декабря"),
+    "en": ("January", "February", "March", "April", "May", "June",
+           "July", "August", "September", "October", "November", "December"),
+}
+
+
+def day_label(iso: str, lang: str) -> str:
+    """`2024-09-17` as the pill says it: `17 сентября`, `17 September`.
+
+    The year is left off unless it is not this one — which is what a messenger does,
+    and for the reason it does it: a date needs a year only when somebody might think
+    it was recent."""
+    try:
+        y, m, d = (int(x) for x in str(iso).split("-"))
+        month = MONTHS.get(lang, MONTHS["en"])[m - 1]
+    except (ValueError, IndexError):
+        return str(iso)
+    from datetime import date
+
+    out = f"{d} {month}" if lang != "en" else f"{d} {month}"
+    return out if y == date.today().year else f"{out} {y}"
+
+
 def people_of(job: VideoJob, ctx: AppContext) -> dict[str, Person]:
     """Everybody in the conversation, as the drawing needs them.
 
@@ -127,6 +155,7 @@ def people_of(job: VideoJob, ctx: AppContext) -> dict[str, Person]:
             avatar=asset(ctx, AVATARS_DIR, msg.avatar or card.avatar),
             colour=card.colour.strip() or skins.tint(card.name, skin),
             initials=card.name,
+            role=card.role.strip(),
             # only Telegram takes sides, and only when somebody was named as the
             # account the conversation is being watched from
             mine=bool(skin.sides and me and card.name == me),
@@ -292,6 +321,7 @@ def run(job: VideoJob, ctx: AppContext) -> None:
     planner = Planner(
         ctx, job, width, height, people=people_of(job, ctx), wallpaper=wallpaper,
         top_inset=skin.header_h if cfg.header else 0, paint=paint,
+        day_label=lambda iso: day_label(iso, ctx.params.lang),
     )
     # which conversation each message belongs to, by its place in the video — the one
     # thing `paint` needs that a state does not carry

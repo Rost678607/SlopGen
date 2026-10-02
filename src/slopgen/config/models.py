@@ -1382,6 +1382,10 @@ class PersonaConfig(BaseModel):
     # the same person is the same colour everywhere; empty keeps that behaviour (see
     # `chat.skins.tint`), and setting it overrules the derivation for this one person.
     colour: str = ""
+    # What this person is called BESIDES their name — `Куратор`, `админ`, `OP`. Printed
+    # at the right of the name line, which is where Telegram prints an admin's title
+    # and where it reads as a label rather than as part of the name.
+    role: str = ""
     note: str = ""  # who this is, for the operator's eye only; nothing reads it
 
 

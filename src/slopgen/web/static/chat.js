@@ -94,6 +94,7 @@ function renderChat() {
   renderChatConvs();
   renderChatCast();
   renderChatClock();
+  renderChatWatch();
   if (!cq("#chat-set").hidden) renderChatSettings();
   cq("#chat-state").textContent = chatState();
   const conv = chatActive();
@@ -163,7 +164,8 @@ function chatRowHTML(m) {
   const react = (m.reactions || [])
     .map(([e, n]) => `<span class="chat-react">${esc(e)}${n > 1 ? n : ""}</span>`).join("");
   return head + `
-<div class="chat-row${open ? " on" : ""}${m.pinned ? " pinned" : ""}" data-i="${m.i}">
+<div class="chat-row${open ? " on" : ""}${m.pinned ? " pinned" : ""}" data-i="${m.i}"
+     draggable="true">
   <div class="chat-line" data-open="${m.i}">
     <b class="chat-who">${esc(m.nick || m.persona || lab("web.chat.nobody", "—"))}</b>
     <span class="chat-text">${esc(trim(chatDraft(m), 160))}</span>
@@ -204,8 +206,19 @@ function chatEditHTML(m) {
     <label>${esc(lab("web.chat.stamp", "время"))}
       <input data-f="stamp" data-i="${m.i}" value="${esc(m.stamp)}"></label>
     <label>${esc(lab("web.chat.react", "реакции"))}
-      <input data-react="${m.i}" value="${esc((m.reactions || []).map(([e, n]) => n > 1 ? `${e}${n}` : e).join(" "))}"
-             placeholder="🔥3 ❤️"></label>
+      <span class="rx-edit">${(m.reactions || []).map(([e, n], k) => `
+        <span class="rx-chip">
+          <button class="rx-emoji" data-rx="pick" data-k="${k}" title="${
+            esc(lab("web.chat.rx.swap", ""))}">${esc(e)}</button>
+          <button data-rx="less" data-k="${k}">−</button>
+          <b>${n}</b>
+          <button data-rx="more" data-k="${k}">+</button>
+          <button class="rx-off" data-rx="drop" data-k="${k}">✕</button>
+        </span>`).join("")}
+        <span class="rx-add">${COMMON_RX.map((e) =>
+          `<button data-rx="add" data-e="${esc(e)}">${esc(e)}</button>`).join("")}
+          <button data-rx="other">…</button></span>
+      </span></label>
   </div>
   ${d.votes ? `<label>${esc(lab("web.chat.score", "карма"))}
       <input type="number" data-f="score" data-i="${m.i}" value="${m.score}"></label>` : ""}
@@ -217,8 +230,6 @@ function chatEditHTML(m) {
       m.clear_before ? " checked" : ""}> ${esc(lab("web.chat.clearhere", "чистить экран здесь"))}</label>
   </div>
   <div class="chat-acts">
-    <button class="ghost" data-act="up" data-i="${m.i}">↑</button>
-    <button class="ghost" data-act="down" data-i="${m.i}">↓</button>
     <button class="ghost" data-act="split" data-i="${m.i}">${esc(lab("web.chat.split", "разрезать здесь"))}</button>
     <button class="ghost" data-act="after" data-i="${m.i}">${esc(lab("web.chat.after", "＋ ниже"))}</button>
     <span class="grow"></span>
@@ -392,6 +403,48 @@ function chatHead(at) {
 
 // ---------------------------------------------------------------- the gestures
 
+// -- watching the real thing -----------------------------------------------
+//
+// The still is exact about everything except the one thing the format is made of:
+// movement. A message arriving a piece at a time, the view rolling up after it, the
+// swipe between two chats — none of that is in a frame, and no amount of frames makes
+// it. So once there is a cut, the room plays it.
+let chatWatching = false;
+
+function renderChatWatch() {
+  const has = !!(CHAT && CHAT.doc.video);
+  cq("#chat-watch-row").hidden = !has;
+  if (!has && chatWatching) showStill();
+  cq("#chat-watch").textContent =
+    lab(chatWatching ? "web.chat.watch.still" : "web.chat.watch", "");
+}
+
+function showStill() {
+  chatWatching = false;
+  const v = cq("#chat-video");
+  v.pause();
+  v.removeAttribute("src");
+  v.load();
+  v.hidden = true;
+  cq("#chat-shot-img").hidden = false;
+  cq("#chat-time").hidden = !(CHAT && CHAT.doc.clock && CHAT.doc.clock.total > 0);
+  renderChatWatch();
+}
+
+cq("#chat-watch").onclick = () => {
+  if (chatWatching) return showStill();
+  chatWatching = true;
+  const v = cq("#chat-video");
+  // cache-busted, because the whole point of pressing this is to see the cut that was
+  // just made and not the one the browser kept from before `сборка` ran
+  v.src = tokd(`/api/runs/${CHAT.id}/video?x=${Date.now()}`);
+  v.hidden = false;
+  cq("#chat-shot-img").hidden = true;
+  cq("#chat-time").hidden = true;
+  renderChatWatch();
+  v.play().catch(() => {});
+};
+
 cq("#chat-close").onclick = closeChat;
 cq("#chat-shot").onclick = () => (chatAt >= 0 ? shootAt(chatAt) : shootChat(chatSel));
 cq("#chat-settings").onclick = () => {
@@ -490,8 +543,6 @@ cq("#chat-list").addEventListener("click", async (e) => {
   const i = +act.dataset.i;
   const what = act.dataset.act;
   if (what === "drop") { chatSel = -1; await chatDo("/message", { method: "DELETE", body: { i } }); }
-  else if (what === "up" && i > 0) { chatSel = i - 1; await chatDo("/move", { body: { i, to: i - 1 } }); }
-  else if (what === "down") { chatSel = i + 1; await chatDo("/move", { body: { i, to: i + 1 } }); }
   else if (what === "split") {
     chatSel = -1;
     const was = chatConv;
@@ -502,6 +553,61 @@ cq("#chat-list").addEventListener("click", async (e) => {
     const d = await chatDo("/message", { body: { at: i + 1, persona: lastWho() } });
     if (d) { chatSel = i + 1; renderChat(); }
   }
+  shootChat(chatSel);
+});
+
+// -- dragging a message somewhere else -------------------------------------
+//
+// Two arrow buttons moved a line one place per press, which for "this belongs nine
+// lines up" is nine presses and nine redraws. A conversation is a list and a list is
+// dragged. The line under the cursor says where it would land, because a drop with no
+// target drawn is a guess about what the program understood.
+let chatDrag = -1;
+
+cq("#chat-list").addEventListener("dragstart", (e) => {
+  const row = e.target.closest(".chat-row");
+  if (!row) return;
+  chatDrag = +row.dataset.i;
+  row.classList.add("dragging");
+  e.dataTransfer.effectAllowed = "move";
+  // Firefox refuses to start a drag without payload, and the payload is never read
+  e.dataTransfer.setData("text/plain", String(chatDrag));
+});
+
+cq("#chat-list").addEventListener("dragover", (e) => {
+  if (chatDrag < 0) return;
+  const row = e.target.closest(".chat-row");
+  e.preventDefault();
+  e.dataTransfer.dropEffect = "move";
+  cq("#chat-list").querySelectorAll(".drop-here, .drop-after")
+    .forEach((x) => x.classList.remove("drop-here", "drop-after"));
+  if (!row || +row.dataset.i === chatDrag) return;
+  // above or below the midline, which is the only thing a cursor can mean here
+  const box = row.getBoundingClientRect();
+  row.classList.add(e.clientY > box.top + box.height / 2 ? "drop-after" : "drop-here");
+});
+
+cq("#chat-list").addEventListener("dragend", () => {
+  chatDrag = -1;
+  cq("#chat-list").querySelectorAll(".dragging, .drop-here, .drop-after")
+    .forEach((x) => x.classList.remove("dragging", "drop-here", "drop-after"));
+});
+
+cq("#chat-list").addEventListener("drop", async (e) => {
+  const row = e.target.closest(".chat-row");
+  e.preventDefault();
+  const from = chatDrag;
+  chatDrag = -1;
+  if (!row || from < 0) return;
+  const box = row.getBoundingClientRect();
+  const after = e.clientY > box.top + box.height / 2;
+  let to = +row.dataset.i + (after ? 1 : 0);
+  // a line taken out from above shifts everything under it up by one, so the place it
+  // is going is one lower than the place that was pointed at
+  if (from < to) to -= 1;
+  if (to === from) return;
+  chatSel = to;
+  await chatDo("/move", { body: { i: from, to } });
   shootChat(chatSel);
 });
 
@@ -531,12 +637,7 @@ cq("#chat-list").addEventListener("change", async (e) => {
     await chatDo("/message", { method: "PUT", body: { i, text: area.value } });
     return shootChat(chatSel);
   }
-  const react = e.target.closest("[data-react]");
-  if (react) {
-    await chatDo("/message", { method: "PUT",
-      body: { i: +react.dataset.react, reactions: parseReactions(react.value) } });
-    return shootChat(chatSel);
-  }
+
   const f = e.target.closest("[data-f]");
   if (!f) return;
   const key = f.dataset.f;
@@ -546,15 +647,36 @@ cq("#chat-list").addEventListener("change", async (e) => {
   shootChat(chatSel);
 });
 
-// `🔥3 ❤️ 👍2` — the emoji, each with how many of it. Written as one field because
-// that is how it reads on the bubble, and because two parallel lists of unequal length
-// is the shape every reaction editor gets wrong.
-function parseReactions(text) {
-  return (text || "").split(/\s+/).filter(Boolean).map((bit) => {
-    const m = bit.match(/^(.*?)(\d+)$/);
-    return m && m[1] ? [m[1], +m[2]] : [bit, 1];
-  });
-}
+// The handful somebody actually presses. Offered as buttons rather than left to a
+// field, because `🔥3 ❤️` was a syntax to learn for a thing that is three taps.
+const COMMON_RX = ["❤️", "👍", "🔥", "😁", "😭", "🤡", "👎", "🙏"];
+
+// Reactions are edited as chips: the emoji, how many of it, and a way to be rid of it.
+// It was one text field in a format of its own — which is a syntax to get wrong, and
+// no way at all to see what the counts are without reading it back.
+cq("#chat-list").addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-rx]");
+  if (!b || chatSel < 0) return;
+  e.stopPropagation();
+  const m = (chatActive() || { messages: [] }).messages[chatSel];
+  if (!m) return;
+  const rx = (m.reactions || []).map(([x, n]) => [x, n]);
+  const k = +b.dataset.k;
+  const what = b.dataset.rx;
+  if (what === "add") {
+    const at = rx.findIndex(([x]) => x === b.dataset.e);
+    at >= 0 ? rx[at][1]++ : rx.push([b.dataset.e, 1]);
+  } else if (what === "other" || what === "pick") {
+    const was = what === "pick" ? rx[k][0] : "";
+    const got = prompt(lab("web.chat.rx.which", "эмодзи"), was);
+    if (!got || !got.trim()) return;
+    what === "pick" ? (rx[k][0] = got.trim()) : rx.push([got.trim(), 1]);
+  } else if (what === "more") rx[k][1]++;
+  else if (what === "less") rx[k][1] > 1 ? rx[k][1]-- : rx.splice(k, 1);
+  else if (what === "drop") rx.splice(k, 1);
+  await chatDo("/message", { method: "PUT", body: { i: chatSel, reactions: rx } });
+  shootChat(chatSel);
+}, true);
 
 cq("#chat-cast").addEventListener("click", async (e) => {
   const re = e.target.closest("[data-rename]");
@@ -592,7 +714,7 @@ cq("#chat-stages").addEventListener("click", async (e) => {
   } catch (err) { say(err.message, true); }
   finally { b.disabled = false; }
   await reloadChat();
-  shootChat(chatSel);
+  if (!chatWatching) shootChat(chatSel);
 });
 
 // -- pasting a block in ----------------------------------------------------

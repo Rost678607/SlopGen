@@ -3718,3 +3718,19 @@ EN.update({
     "web.chat.set.extra": "the trimmings",
     "web.chat.set.frame": "the frame, and what shares it",
 })
+RU.update({
+    "web.chat.watch": "▶ смотреть ролик",
+    "web.chat.watch.still": "← к кадру",
+})
+EN.update({
+    "web.chat.watch": "▶ watch the cut",
+    "web.chat.watch.still": "← back to the frame",
+})
+RU.update({
+    "web.chat.rx.which": "какое эмодзи",
+    "web.chat.rx.swap": "поменять эмодзи",
+})
+EN.update({
+    "web.chat.rx.which": "which emoji",
+    "web.chat.rx.swap": "change the emoji",
+})

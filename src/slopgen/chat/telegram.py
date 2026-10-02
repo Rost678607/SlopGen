@@ -32,7 +32,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from .exports import Line, Piece, _clock, _settle
+from .exports import Line, Piece, _clock, _day, _settle
 
 log = logging.getLogger(__name__)
 
@@ -333,6 +333,7 @@ async def window(state_dir: Path, chat, limit: int = 200, before: int = 0,
             piece.lines.append(Line(
                 who=_sender(msg), text=text,
                 stamp=_clock(msg.date.isoformat() if msg.date else ""),
+                day=_day(msg.date.isoformat() if msg.date else ""),
                 reactions=_reactions(msg),
                 avatar=(await _photo(client, getattr(msg, "sender", None), photos,
                                      seen_photos) if photos is not None else ""),

@@ -53,6 +53,14 @@ configs/content/*.toml
 !configs/content/facts.toml
 !configs/content/psych.toml
 !configs/content/story.toml
+# The chat mode's people and its presets. A persona is somebody real as often as not —
+# their nickname, their picture, their voice — and a preset is the operator's own
+# editorial line about what their videos are. Both belong beside the cast, which is to
+# say out of the repository.
+configs/personas/*.toml
+!configs/personas/example.toml
+configs/chat/*.toml
+!configs/chat/example.toml
 # Personal AI-drama cast, publishing accounts, and ad contracts.
 configs/characters/*.toml
 !configs/characters/example.toml

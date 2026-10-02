@@ -74,6 +74,7 @@ def take(job: VideoJob, pieces) -> int:
         job.conversations.append(Conversation(
             title=piece.title, source=piece.source,
             messages=[ChatMsg(persona=ln.who, text=ln.text, stamp=ln.stamp,
+                              day=ln.day, avatar=ln.avatar,
                               reply_to=ln.reply_to, reactions=list(ln.reactions),
                               score=ln.score)
                       for ln in piece.lines],

@@ -163,7 +163,7 @@ class Planner:
 
     def __init__(self, ctx, job, width: int, height: int,
                  *, people: dict[str, Person], wallpaper: Path | None = None,
-                 top_inset: int = 0, paint=None):
+                 top_inset: int = 0, paint=None, day_label=None):
         self.ctx = ctx
         self.cfg = ctx.chat
         self.skin = ctx.chat_skin
@@ -179,6 +179,10 @@ class Planner:
         # that has since grown. Planning without painting is a legitimate use (the
         # room's timeline wants the clock and not the pictures), so it is optional.
         self.paint = paint
+        # Turns `2024-09-17` into `17 сентября`. A callable and not a table, because
+        # which words those are depends on the video's language and this layer does
+        # not know it — the stage that drives this does (see `chat_render.day_label`).
+        self.day_label = day_label
 
     # -- the window ---------------------------------------------------------
 
@@ -341,6 +345,14 @@ class Planner:
         # the message before this one, but only if it is in the SAME conversation: a
         # run of messages from one person cannot continue across a swipe
         prev = walk[i - 1][2] if i and walk[i - 1][1] == here_c else None
+        # The day pill goes above the first message of its day — and above the first
+        # message of a conversation that has one at all, because a video that opens in
+        # the middle of somebody's Tuesday should say so.
+        sep = ""
+        if self.day_label and getattr(msg, "day", ""):
+            before = walk[i - 1][2] if i and walk[i - 1][1] == here_c else None
+            if before is None or getattr(before, "day", "") != msg.day:
+                sep = self.day_label(msg.day)
         conv = (self.job.conversations[here_c]
                 if here_c < len(self.job.conversations) else None)
         kw = dict(
@@ -354,6 +366,7 @@ class Planner:
             show_head=self.skin.tree or not (
                 prev and prev.persona == msg.persona and not msg.clear_before),
             reply=self._reply(conv, msg),
+            separator=sep,
         )
         here = bool(self.canvas.blocks) and self.canvas.blocks[-1].msg == i
         return self.canvas.amend(**kw) if here else self.canvas.append(**kw)

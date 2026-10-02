@@ -380,6 +380,11 @@ class ChatMsg(BaseModel):
     reactions: list[tuple[str, int]] = Field(default_factory=list)
     score: int = 0  # reddit only: karma. Meaningless in a messenger and never drawn there
     stamp: str = ""  # the time printed on the bubble, verbatim; "" = the skin prints none
+    # The DAY, as `YYYY-MM-DD`. Kept apart from the clock because it is drawn apart
+    # from it: a messenger prints the time on the bubble and the date as a separator
+    # between one day and the next, which only appears where the day changes. ISO and
+    # not words, because which words depends on the video's language.
+    day: str = ""
     # Empty the screen BEFORE drawing this one. A per-message mark rather than a
     # scroll mode, because a conversation that rolls throughout still wants a clean
     # start at the places the operator chooses — and where that is depends on what is
