@@ -271,19 +271,25 @@ function renderChatCast() {
   // selection did. `here` is their line count in this piece; `lines` stays the whole
   // video's, because a card is a thing of the run and not of the piece.
   const here = (c) => (c.by_conv || [])[chatConv] || 0;
-  const mine = d.cast.filter((c) => here(c) > 0);
-  const rest = d.cast.filter((c) => here(c) === 0);
+  const me = (d.settings || {}).me || "";
+  // Two lists and no third. Who is in the conversation that is OPEN, and — apart —
+  // the cards nobody uses anywhere in this video, which are the ones that can be
+  // thrown away. Somebody who speaks in ANOTHER piece belongs to that piece's list
+  // and is reached by opening it; carrying them here as a third group was carrying
+  // the pooled list that switching the conversation was supposed to get rid of.
+  const cast = d.cast.filter((c) => here(c) > 0);
+  // the account the chat is being read from goes to the top, because it is the one
+  // entry in the list that is about the whole picture rather than about one person
+  cast.sort((a, b) => (b.name === me) - (a.name === me));
+  const spare = d.cast.filter((c) => !c.lines);
   cq("#chat-cast").innerHTML =
     `<h4>${esc(lab("web.chat.cast", "кто в переписке"))}</h4>` +
-    (mine.length
-      ? mine.map((c) => personHTML(c, here(c))).join("")
+    (cast.length
+      ? cast.map((c) => personHTML(c, here(c), c.name === me)).join("")
       : `<p class="dim">${esc(lab("web.chat.nocast", ""))}</p>`) +
-    // everybody else the room knows: people with a card, and people who speak in one
-    // of the OTHER pieces of this video. Apart, because the cast of a conversation is
-    // who is in that conversation — but still here, so nobody becomes unreachable.
-    (rest.length
+    (spare.length
       ? `<h4 class="quiet">${esc(lab("web.chat.cast.quiet", ""))}</h4>` +
-        rest.map((c) => personHTML(c, 0)).join("")
+        spare.map((c) => personHTML(c, 0, false)).join("")
       : "") +
     `<button class="ghost" id="chat-who-new">${
       esc(lab("web.chat.who.new", "＋ человек"))}</button>`;
@@ -300,7 +306,7 @@ function renderChatCast() {
 // It was two `prompt()` boxes in a row, which is the shape that asks you to remember
 // what the first one said while you answer the second, and offers no way at all to
 // see what a field currently is.
-function personHTML(c, here) {
+function personHTML(c, here, isMe) {
   const open = c.name === chatWho;
   // how much they say HERE, and — when that is not the whole story — how much in the
   // video altogether, because a card is edited for the run and not for this piece
@@ -309,8 +315,9 @@ function personHTML(c, here) {
     : (c.lines ? `0 / ${c.lines}` : "0");
   const head = `
     <div class="chat-person${c.carded ? " carded" : ""}${open ? " on" : ""}${
-      here ? "" : " quiet"}" data-person="${esc(c.name)}">
+      here ? "" : " quiet"}${isMe ? " main" : ""}" data-person="${esc(c.name)}">
       <b>${esc(c.name)}</b>
+      ${isMe ? `<span class="tag">${esc(lab("web.chat.who.me", "это я"))}</span>` : ""}
       <span class="dim">${count}</span>
       <span class="dim">${esc(c.voice || lab("web.chat.silent", "не читается"))}</span>
       <span class="grow"></span>
@@ -342,6 +349,8 @@ function personHTML(c, here) {
           <input data-p="colour" value="${esc(c.colour)}" placeholder="#rrggbb"></label>
       </div>
       <div class="chat-acts">
+        <button class="ghost${isMe ? " on" : ""}" data-me="${esc(c.name)}">${
+          esc(lab(isMe ? "web.chat.who.unme" : "web.chat.who.beme", ""))}</button>
         <button class="ghost" data-rename="${esc(c.name)}">${
           esc(lab("web.chat.who.rename", "переименовать"))}</button>
         <span class="grow"></span>
@@ -391,6 +400,7 @@ function renderChatSettings() {
     // between them is a list nobody reaches the bottom of — which is how "there is no
     // way to turn the split screen on" happens to a screen that has one.
     if (r.head) return `<h5>${esc(lab(r.head, ""))}</h5>`;
+    if (r.hide) return "";   // answered elsewhere; see SHEET
     const val = v[r.f];
     if (r.kind === "check")
       return `<label class="inline"><input type="checkbox" data-s="${r.f}"${
@@ -810,6 +820,14 @@ cq("#chat-cast").addEventListener("click", async (e) => {
     if (!now || !now.trim() || now === re.dataset.rename) return;
     chatWho = now.trim();
     await chatDo("/rename", { body: { was: re.dataset.rename, now: now.trim() } });
+    return shootChat(chatSel);
+  }
+  const be = e.target.closest("[data-me]");
+  if (be) {
+    // pressing it on the one who already is turns it off, which is the only way back
+    // to a conversation where nobody's messages take the right-hand side
+    const now = (CHAT.doc.settings || {}).me === be.dataset.me ? "" : be.dataset.me;
+    await chatDo("/settings", { method: "PUT", body: { me: now } });
     return shootChat(chatSel);
   }
   const rm = e.target.closest("[data-drop-who]");

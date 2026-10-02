@@ -3691,6 +3691,9 @@ EN.update({
 RU.update({
     "web.chat.who.new": "＋ добавить персонажа",
     "web.chat.who.newname": "как его зовут",
+    "web.chat.who.me": "это я",
+    "web.chat.who.beme": "это я",
+    "web.chat.who.unme": "больше не я",
     "web.chat.who.drop": "удалить карточку",
     "web.chat.who.dropsure": "Удалить карточку «%s»? Она пропадёт из всех роликов.",
     "web.chat.who.voice": "голос",
@@ -3703,6 +3706,9 @@ RU.update({
 EN.update({
     "web.chat.who.new": "＋ add a person",
     "web.chat.who.newname": "what are they called",
+    "web.chat.who.me": "me",
+    "web.chat.who.beme": "this is me",
+    "web.chat.who.unme": "no longer me",
     "web.chat.who.drop": "delete the card",
     "web.chat.who.dropsure": "Delete the card for %s? It goes from every video.",
     "web.chat.who.voice": "voice",
@@ -3776,8 +3782,8 @@ EN.update({
                         "the height the chat takes; the rest goes to the clip.",
 })
 RU.update({
-    "web.chat.cast.quiet": "в этой переписке не говорят",
+    "web.chat.cast.quiet": "не задействованы",
 })
 EN.update({
-    "web.chat.cast.quiet": "not speaking in this one",
+    "web.chat.cast.quiet": "not used anywhere",
 })
