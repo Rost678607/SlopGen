@@ -284,7 +284,7 @@ class Canvas:
     def avatar_of(self, msg: int) -> tuple[Person, int, int, int] | None:
         """Whose picture rides on this block and where it sits, or None.
 
-        `(person, x, bottom, size)` in canvas coordinates. Handed out because of what
+        `(person, x, bottom, size, msg)` in canvas coordinates. Handed out because of what
         the picture does while a new message arrives: it belongs to the foot of
         somebody's run, so each new message of theirs moves it down the canvas by
         exactly as much as the view then rolls up — and the two cancel out, which is
@@ -297,14 +297,19 @@ class Canvas:
         A messenger only: a comment tree stands the picture on the author's line,
         where it scrolls with the comment and belongs to nothing else."""
         s = self.skin
-        if not s.bubbles or s.tree or not s.avatar:
+        if not s.bubbles or s.tree or not s.avatar or not self.blocks:
             return None
-        for b in reversed(self.blocks):
-            if not b.show_tail or (b.person.mine and s.sides):
-                continue
-            x = self.left + s.pad_x
-            return b.person, x, b.bottom, s.avatar
-        return None
+        # The LAST block and no other. This used to walk back up the canvas until it
+        # found any block wearing a tail, which quietly picked the wrong one: the
+        # account the chat is read from draws no picture of itself, so as soon as the
+        # bottom message was theirs the search fell through to the run ABOVE and
+        # pinned that person's face — a face that belongs to finished history and has
+        # to scroll away with it. It was then pinned at the place it will rest while
+        # also being painted into the band, so the two copies slid apart.
+        b = self.blocks[-1]
+        if not b.show_tail or (b.person.mine and s.sides):
+            return None
+        return b.person, self.left + s.pad_x, b.bottom, s.avatar, b.msg
 
     def paint_avatar(self, img: Image.Image, person: Person, xy: tuple[int, int],
                      size: int) -> None:

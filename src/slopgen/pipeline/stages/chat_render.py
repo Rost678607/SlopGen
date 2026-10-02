@@ -212,7 +212,7 @@ def _overlay(canvas: "Canvas", out_dir: Path, width: int, height: int,
             strip = strip.convert("RGBA")
             img.paste(strip, (0, 0), strip)
     if pinned is not None:
-        person, ax, foot, size = pinned
+        person, ax, foot, size, _msg = pinned
         ay = int(round(foot - window - size))
         top_guard = canvas.skin.header_h if bar is not None else 0
         ay = max(top_guard, min(ay, height - size))
@@ -329,7 +329,9 @@ def run(job: VideoJob, ctx: AppContext) -> None:
         # and a face that stayed put while the chat slid out from under it would be
         # the one thing giving the shot away.
         pinned = None if state.swipe else canvas.avatar_of(state.msg)
-        band = canvas.band(y0, band_h, pin=None if pinned is None else state.msg)
+        # the block whose picture was lifted, which is not always the state's own
+        # message: it is whichever block the picture actually belongs to
+        band = canvas.band(y0, band_h, pin=None if pinned is None else pinned[4])
         # the window as it will rest at the END of this state, which is what the next
         # one slides away from
         rest = int(min(max(state.to_y - y0, 0), max(band_h - height, 0)))
