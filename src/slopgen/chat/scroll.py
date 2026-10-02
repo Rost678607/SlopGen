@@ -202,9 +202,22 @@ class Planner:
         return out
 
     def _rest(self) -> float:
-        """Where the view belongs with the canvas as it stands: at the bottom of it,
-        or at the top while the conversation is still shorter than the screen."""
-        return max(0.0, self.canvas.height - self.height)
+        """Where the view belongs with the canvas as it stands: at the bottom of it.
+
+        Always at the bottom — the number goes NEGATIVE while the conversation is
+        still shorter than the screen, which is the whole point. A messenger's list is
+        bottom-anchored: three messages in a fresh chat sit on the keyboard with the
+        empty screen above them, and each new one pushes the stack up. Resting at zero
+        instead, which is what clamping did, grew the conversation downwards from the
+        top with a widening gap underneath — so for the first half of a short video
+        nothing rose at all, and then the view lurched into scrolling once the content
+        happened to pass the bottom edge.
+
+        Negative is not a problem for anything downstream: `Canvas.band` paints at an
+        offset and takes the sign happily, and the render stage records each window
+        against the band it cut, which puts both ends back at or above zero before
+        ffmpeg is told about them."""
+        return self.canvas.height - self.height
 
     def _push(self, at: float, msg: int, swipe: bool = False) -> State:
         """Record one state beginning at `at`, with the window travelling to wherever
