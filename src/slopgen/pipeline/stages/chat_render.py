@@ -163,7 +163,7 @@ def people_of(job: VideoJob, ctx: AppContext) -> dict[str, Person]:
     return out
 
 
-def _stamp(canvas: Canvas, state: ChatState, height: int) -> str:
+def _stamp(canvas: Canvas, state: ChatState, height: int, pinned=None) -> str:
     """A name for this drawing that changes when the drawing does.
 
     The whole visible conversation goes into it, every block's geometry and text, the
@@ -173,7 +173,11 @@ def _stamp(canvas: Canvas, state: ChatState, height: int) -> str:
     lo, hi = min(state.from_y, state.to_y), max(state.from_y, state.to_y) + height
     h.update(f"{canvas.skin.key}|{canvas.width}|{canvas.column}|{height}"
              f"|{state.from_y:.1f}|{state.to_y:.1f}"
-             f"|{state.swipe}|{state.msg}".encode())
+             f"|{state.swipe}|{state.msg}"
+             # whether the bottom run's picture was lifted out of this band: the same
+             # messages drawn with and without it are two different pictures, and a
+             # name that could not tell them apart would hand back the wrong one
+             f"|{'pinned' if pinned else 'inline'}".encode())
     for b in canvas.blocks:
         if b.bottom < lo or b.top > hi:
             continue
@@ -181,6 +185,44 @@ def _stamp(canvas: Canvas, state: ChatState, height: int) -> str:
         h.update("".join(b.lines).encode())
         h.update(f"{b.reactions}|{b.score}|{b.person.name}|{b.person.mine}".encode())
     return h.hexdigest()[:16]
+
+
+def _overlay(canvas: "Canvas", out_dir: Path, width: int, height: int,
+             bar: Path | None, pinned, window: float) -> Path | None:
+    """The layer that does not scroll: the header bar, and the picture at the foot of
+    the run that is currently at the bottom.
+
+    One image the size of the whole frame rather than the strip the bar used to be,
+    because the two things on it belong at opposite ends of it. Nothing downstream
+    minds the new shape — `make_chat_part` composites it with `overlay=0:0` and the
+    room pastes it at the origin — so this is the same single layer it always was,
+    with more on it.
+
+    The picture is placed where the window will COME TO REST, which is where it would
+    have been anyway once the roll finished. That is the whole trick: through the roll
+    it therefore does not move at all, and a new message from the same person slides up
+    past a face that stays put, which is what a client looks like."""
+    if bar is None and pinned is None:
+        return None
+    img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    key = hashlib.sha1()
+    key.update(f"{width}x{height}|{bar}".encode())
+    if bar is not None and Path(bar).is_file():
+        with Image.open(bar) as strip:
+            strip = strip.convert("RGBA")
+            img.paste(strip, (0, 0), strip)
+    if pinned is not None:
+        person, ax, foot, size = pinned
+        ay = int(round(foot - window - size))
+        top_guard = canvas.skin.header_h if bar is not None else 0
+        ay = max(top_guard, min(ay, height - size))
+        canvas.paint_avatar(img, person, (ax, ay), size)
+        key.update(f"|{person.name}|{person.avatar}|{person.colour}"
+                   f"|{person.initials}|{ax}|{ay}|{size}".encode())
+    at = out_dir / f"over_{key.hexdigest()[:16]}.png"
+    if not at.is_file():
+        img.save(at)
+    return at
 
 
 def _barred(view: "Image.Image", bar: Path | None) -> "Image.Image":
@@ -281,14 +323,20 @@ def run(job: VideoJob, ctx: AppContext) -> None:
     def paint(canvas: Canvas, state: State) -> None:
         y0 = int(min(state.from_y, state.to_y))
         band_h = int(max(state.from_y, state.to_y) - y0) + height
-        band = canvas.band(y0, band_h)
+        # The picture at the foot of the bottom run comes OUT of the scrolling band
+        # and onto the overlay that does not scroll (see `Canvas.avatar_of`). A swipe
+        # is the exception and keeps it in the picture: there the whole screen moves,
+        # and a face that stayed put while the chat slid out from under it would be
+        # the one thing giving the shot away.
+        pinned = None if state.swipe else canvas.avatar_of(state.msg)
+        band = canvas.band(y0, band_h, pin=None if pinned is None else state.msg)
         # the window as it will rest at the END of this state, which is what the next
         # one slides away from
         rest = int(min(max(state.to_y - y0, 0), max(band_h - height, 0)))
         view = band.crop((0, rest, width, rest + height))
 
         ci = where[state.msg] if 0 <= state.msg < len(where) else 0
-        picture, name = band, _stamp(canvas, state, height)
+        picture, name = band, _stamp(canvas, state, height, pinned)
         if state.swipe and seen["view"] is not None:
             # the old screen and the new one side by side, in one drawing. The window
             # then travels across the join, which is a swipe — and is the same crop
@@ -303,7 +351,8 @@ def run(job: VideoJob, ctx: AppContext) -> None:
             state.from_y = state.to_y = 0.0
         else:
             state.swipe = False  # nothing to slide away from: the first screen of all
-            state.overlay = bars.get(ci)
+            state.overlay = _overlay(canvas, out_dir, width, height, bars.get(ci),
+                                     pinned, y0 + rest)
             # the window is recorded against the BAND, whose top is where it began
             state.from_y -= y0
             state.to_y -= y0

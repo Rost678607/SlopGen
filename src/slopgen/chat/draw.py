@@ -255,7 +255,7 @@ class Canvas:
         return img
 
     def band(self, y0: int, height: int, *, header: tuple[str, Path | None] | None = None,
-             reveal: dict[int, int] | None = None) -> Image.Image:
+             reveal: dict[int, int] | None = None, pin: int | None = None) -> Image.Image:
         """Render the canvas from `y0` for `height` pixels.
 
         `reveal` caps how many LINES of a block are painted, by message index — which
@@ -274,11 +274,44 @@ class Canvas:
         for block in self.blocks:
             if block.bottom < y0 or block.top > y0 + height:
                 continue
-            self._paint(img, draw, block, -y0, cap=(reveal or {}).get(block.msg))
+            self._paint(img, draw, block, -y0, cap=(reveal or {}).get(block.msg),
+                        hide_pic=(pin is not None and block.msg == pin))
         if header:
             self._paint_header(img, draw, *header)
         del top_guard
         return img
+
+    def avatar_of(self, msg: int) -> tuple[Person, int, int, int] | None:
+        """Whose picture rides on this block and where it sits, or None.
+
+        `(person, x, bottom, size)` in canvas coordinates. Handed out because of what
+        the picture does while a new message arrives: it belongs to the foot of
+        somebody's run, so each new message of theirs moves it down the canvas by
+        exactly as much as the view then rolls up — and the two cancel out, which is
+        why in a real client the picture does not appear to move at all. Painted into
+        the scrolling picture it cannot cancel: it is drawn where it will END, so it
+        comes into view from below with the new bubble and the eye reads that as the
+        picture jumping. Lifting it out of the band and laying it on top at its
+        resting place puts the cancellation back.
+
+        A messenger only: a comment tree stands the picture on the author's line,
+        where it scrolls with the comment and belongs to nothing else."""
+        s = self.skin
+        if not s.bubbles or s.tree or not s.avatar:
+            return None
+        for b in reversed(self.blocks):
+            if not b.show_tail or (b.person.mine and s.sides):
+                continue
+            x = self.left + s.pad_x
+            return b.person, x, b.bottom, s.avatar
+        return None
+
+    def paint_avatar(self, img: Image.Image, person: Person, xy: tuple[int, int],
+                     size: int) -> None:
+        """Put one picture onto an image that is not the band — the overlay that does
+        not scroll. The same disc, so a pinned picture and a scrolled one cannot come
+        out looking different."""
+        self._avatar(img, ImageDraw.Draw(img, "RGBA"), person, xy, size)
 
     def _ground_for(self, height: int) -> Image.Image:
         """The wallpaper, scaled to cover the frame once and reused for every band.
@@ -301,7 +334,7 @@ class Canvas:
         return self._ground
 
     def _paint(self, img: Image.Image, draw: ImageDraw.ImageDraw, b: Block, dy: int,
-               cap: int | None = None) -> None:
+               cap: int | None = None, hide_pic: bool = False) -> None:
         s = self.skin
         x0, _, x1, _ = b.box
         y = b.box[1] + dy          # the bubble's own top; the block may start higher
@@ -329,7 +362,7 @@ class Canvas:
         # one person carries the name on the first and the little spur on the last, and
         # the avatar sits beside the spur, at the foot of the run. Drawn at the top it
         # floats beside a bubble the person is still in the middle of saying.
-        show_pic = (b.show_tail if s.bubbles else b.show_head)
+        show_pic = (b.show_tail if s.bubbles else b.show_head) and not hide_pic
         if show_pic and s.avatar and not (b.person.mine and s.sides):
             ax = self.left + s.pad_x + (s.indent * b.depth if s.tree else 0)
             ay = y if (s.tree or not s.bubbles) else max(y, bottom - s.avatar)
