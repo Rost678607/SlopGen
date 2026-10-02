@@ -416,9 +416,7 @@
     <b id="chat-title"></b>
     <span class="dim" id="chat-state"></span>
     <span class="grow"></span>
-    <button id="chat-paste" class="ghost" data-l="web.chat.paste">вставить текстом</button>
-    <button id="chat-fetch" class="ghost" data-l="web.chat.sources">источники</button>
-    <button id="chat-exports" class="ghost" data-l="web.chat.exports">экспорты</button>
+    <button id="chat-add" class="primary" data-l="web.chat.add.open">＋ переписка</button>
     <button id="chat-settings" class="ghost" data-l="web.mont.settings">настройки</button>
     <button id="chat-shot" class="ghost" data-l="web.chat.shot">обновить кадр</button>
   </header>
@@ -442,16 +440,46 @@
     </aside>
   </div>
 
-  <!-- the live sources, over the room: what reddit and a signed-in Telegram account
-       have, and the sign-in itself when there is not one yet. Three steps, because
-       Telegram sends a code and waits for it and no form can be filled in once. -->
+  <!-- Where a conversation comes from, all of it in one sheet. It was three buttons
+       in the header — paste, sources, exports — which is three answers to one
+       question with nothing on the screen saying they were the same question; an
+       operator looking for "browse my Telegram" had no reason to press any of them.
+       One door, one row of tabs, and every way in is visible from every other. -->
   <div id="chat-src-box" hidden>
     <div class="sheet">
-      <h3 data-l="web.chat.sources"></h3>
+      <h3 data-l="web.chat.add.title"></h3>
       <div class="chips" id="chat-src-tabs">
-        <button data-src="reddit" class="on">reddit</button>
-        <button data-src="telegram">telegram</button>
+        <button data-src="export" data-l="web.chat.tab.export">из экспорта</button>
+        <button data-src="telegram" data-l="web.chat.tab.tg">из телеграма</button>
+        <button data-src="reddit">reddit</button>
         <button data-src="invent" data-l="web.chat.invent">придумать</button>
+        <button data-src="paste" data-l="web.chat.tab.paste">вставить текстом</button>
+        <button data-src="manual" data-l="web.chat.tab.manual">пустую</button>
+      </div>
+      <!-- the pasted block, and the empty one: the two that need no source at all -->
+      <div id="chat-pane-paste" hidden>
+        <p class="dim" data-l="web.chat.paste.note"></p>
+        <textarea id="chat-paste-text" rows="12"></textarea>
+        <div class="row">
+          <button id="chat-paste-go" class="primary" data-l="web.chat.paste.go">добавить</button>
+        </div>
+      </div>
+      <div id="chat-pane-manual" hidden>
+        <p class="dim" data-l="web.chat.tab.manual.note"></p>
+        <div class="row">
+          <button id="chat-manual-go" class="primary" data-l="web.chat.tab.manual.go">завести пустую</button>
+        </div>
+      </div>
+      <!-- the exports base: the files, then the pieces of whichever is open -->
+      <div id="chat-pane-export" hidden>
+        <p class="dim" data-l="web.chat.exports.note"></p>
+        <label class="upload"><span data-l="web.chat.exports.add"></span>
+          <input type="file" id="chat-exp-file" hidden></label>
+        <div id="chat-exp-list"></div>
+        <div id="chat-exp-pieces"></div>
+        <div class="row">
+          <button id="chat-exp-go" class="primary" data-l="web.chat.exports.take" hidden></button>
+        </div>
       </div>
       <div id="chat-invent" hidden>
         <p class="dim" data-l="web.chat.invent.note"></p>
@@ -476,37 +504,6 @@
       </div>
     </div>
   </div>
-
-  <!-- the exports base, over the room: files somebody has handed over, and which
-       pieces of whichever is open should become conversations in this video -->
-  <div id="chat-exp-box" hidden>
-    <div class="sheet">
-      <h3 data-l="web.chat.exports"></h3>
-      <p class="dim" data-l="web.chat.exports.note"></p>
-      <label class="upload"><span data-l="web.chat.exports.add"></span>
-        <input type="file" id="chat-exp-file" hidden></label>
-      <div id="chat-exp-list"></div>
-      <div id="chat-exp-pieces"></div>
-      <div class="row">
-        <button id="chat-exp-go" class="primary" data-l="web.chat.exports.take" hidden></button>
-        <button id="chat-exp-cancel" class="ghost" data-l="web.cancel"></button>
-      </div>
-    </div>
-  </div>
-
-  <!-- the paste box, over the room: a block of `Ник: текст` lines in one go -->
-  <div id="chat-paste-box" hidden>
-    <div class="sheet">
-      <h3 data-l="web.chat.paste"></h3>
-      <p class="dim" data-l="web.chat.paste.note"></p>
-      <textarea id="chat-paste-text" rows="14"></textarea>
-      <div class="row">
-        <button id="chat-paste-go" class="primary" data-l="web.chat.paste.go">добавить</button>
-        <button id="chat-paste-cancel" class="ghost" data-l="web.cancel">отмена</button>
-      </div>
-    </div>
-  </div>
-</div>
 
 <!-- The montage room: one video's timeline, cut and cast by hand.
 

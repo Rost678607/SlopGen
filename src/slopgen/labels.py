@@ -3388,7 +3388,7 @@ RU.update({
     "web.chat.silent": "не читается",
     "web.chat.makecard": "завести карточку",
     "web.chat.editcard": "карточка",
-    "web.chat.nocast": "Пока никого: добавь сообщение или вставь переписку текстом.",
+    "web.chat.nocast": "Пока никого — состав соберётся сам, как только появится первая переписка.",
     "web.chat.empty": "Пусто. «Вставить текстом» — если переписка уже есть где-то "
                       "скопированной, иначе «＋ сообщение».",
     "web.chat.ask.voice": "голос (пусто — этого человека не читают вслух)",
@@ -3427,7 +3427,7 @@ EN.update({
     "web.chat.silent": "not read aloud",
     "web.chat.makecard": "give them a card",
     "web.chat.editcard": "card",
-    "web.chat.nocast": "Nobody yet: add a message, or paste a conversation in.",
+    "web.chat.nocast": "Nobody yet — the cast gathers itself as soon as there is a conversation.",
     "web.chat.empty": "Empty. Press “paste it in” if the conversation is already "
                       "copied somewhere, otherwise “＋ a message”.",
     "web.chat.ask.voice": "voice (empty — this person is not read aloud)",
@@ -3634,4 +3634,32 @@ EN.update({
     "web.chat.tg.ph.phone": "+1…",
     "web.chat.tg.ph.code": "the code from Telegram",
     "web.chat.tg.ph.password": "the two-step password",
+})
+RU.update({
+    "web.chat.add.open": "＋ переписка",
+    "web.chat.add.title": "откуда взять переписку",
+    "web.chat.tab.export": "из экспорта",
+    "web.chat.tab.tg": "из телеграма",
+    "web.chat.tab.paste": "вставить текстом",
+    "web.chat.tab.manual": "пустую",
+    "web.chat.tab.manual.note": "Пустая переписка, в которую будешь писать сообщения "
+                                "руками.",
+    "web.chat.tab.manual.go": "завести пустую",
+    "web.chat.noconv": "В ролике пока ни одной переписки. Их берут из выгрузки, из "
+                       "телеграма, с реддита, сочиняют нейронкой, вставляют текстом — "
+                       "или заводят пустую и пишут руками.",
+})
+EN.update({
+    "web.chat.add.open": "＋ a conversation",
+    "web.chat.add.title": "where this one comes from",
+    "web.chat.tab.export": "from an export",
+    "web.chat.tab.tg": "from Telegram",
+    "web.chat.tab.paste": "paste it in",
+    "web.chat.tab.manual": "an empty one",
+    "web.chat.tab.manual.note": "An empty conversation, to type the messages into by "
+                                "hand.",
+    "web.chat.tab.manual.go": "start an empty one",
+    "web.chat.noconv": "No conversations in this video yet. They come from an export, "
+                       "from Telegram, from reddit, from the writer, from a block of "
+                       "pasted text — or you start an empty one and type.",
 })

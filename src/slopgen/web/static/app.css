@@ -1442,3 +1442,8 @@ button.danger{border-color:var(--bad);color:var(--bad)}
 .src-row .what i{font-style:normal;color:var(--dim);font-size:12px;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #chat-tg-state{margin:0;font-size:13px}
+
+/* The front door of an empty room. It is a button and not a sentence, because an
+   empty room is the one screen where nothing on it is obvious. */
+.chat-start{display:grid;gap:10px;justify-items:start;padding:8px 2px;max-width:46ch}
+.chat-start p{margin:0}

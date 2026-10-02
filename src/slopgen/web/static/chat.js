@@ -99,7 +99,14 @@ function renderChat() {
   const conv = chatActive();
   const list = cq("#chat-list");
   if (!conv) {
-    list.innerHTML = `<p class="dim chat-empty">${esc(lab("web.chat.noconv", ""))}</p>`;
+    // The front door, and the only place it can be: an empty room is the one screen
+    // where nothing on it is obvious, and a line of grey text pointing at a button in
+    // the header is not an answer to "where do I press".
+    list.innerHTML = `<div class="chat-start">
+      <p class="dim">${esc(lab("web.chat.noconv", ""))}</p>
+      <button class="primary" id="chat-start-go">${
+        esc(lab("web.chat.add.open", "＋ переписка"))}</button></div>`;
+    cq("#chat-start-go").onclick = () => openAdd();
     return;
   }
   list.innerHTML =
@@ -390,8 +397,7 @@ cq("#chat-convs").addEventListener("click", async (e) => {
     const c = +act.dataset.c;
     const what = act.dataset.cact;
     if (what === "add") {
-      const d = await chatDo("/conversation", { body: { at: -1 } });
-      if (d) { chatConv = d.conversations.length - 1; chatSel = -1; renderChat(); }
+      return openAdd();
     } else if (what === "drop") {
       chatSel = -1;
       await chatDo("/conversation", { method: "DELETE", body: { c } });
@@ -532,20 +538,19 @@ cq("#chat-stages").addEventListener("click", async (e) => {
   shootChat(chatSel);
 });
 
-// -- the paste box ---------------------------------------------------------
+// -- pasting a block in ----------------------------------------------------
 
-cq("#chat-paste").onclick = () => {
-  cq("#chat-paste-text").value = "";
-  cq("#chat-paste-box").hidden = false;
-  cq("#chat-paste-text").focus();
-};
-cq("#chat-paste-cancel").onclick = () => { cq("#chat-paste-box").hidden = true; };
 cq("#chat-paste-go").onclick = async () => {
   const text = cq("#chat-paste-text").value;
   if (!text.trim()) return;
   const d = await chatDo("/import", { body: { text } });
-  cq("#chat-paste-box").hidden = true;
-  if (d) say(`${d.added} ${lab("web.chat.lines", "сообщений")}`);
+  cq("#chat-src-box").hidden = true;
+  if (d) {
+    chatConv = Math.max(0, d.conversations.length - 1);
+    chatSel = -1;
+    renderChat();
+    say(`${d.added} ${lab("web.chat.lines", "сообщений")}`);
+  }
   shootChat();
 };
 
@@ -559,17 +564,12 @@ cq("#chat-paste-go").onclick = async () => {
 let chatExpFile = "";     // which file of the base is open
 let chatExpPieces = [];   // and what it turned out to hold
 
-cq("#chat-exports").onclick = async () => {
-  chatExpFile = "";
-  chatExpPieces = [];
-  cq("#chat-exp-pieces").innerHTML = `<p class="dim">${esc(lab("web.chat.exports.pick", ""))}</p>`;
-  cq("#chat-exp-go").hidden = true;
-  cq("#chat-exp-box").hidden = false;
-  await loadExports();
-};
-cq("#chat-exp-cancel").onclick = () => { cq("#chat-exp-box").hidden = true; };
-
 async function loadExports() {
+  if (!chatExpFile) {
+    cq("#chat-exp-pieces").innerHTML =
+      `<p class="dim">${esc(lab("web.chat.exports.pick", ""))}</p>`;
+    cq("#chat-exp-go").hidden = true;
+  }
   if (!CHAT) return;
   let d;
   try {
@@ -630,7 +630,7 @@ cq("#chat-exp-go").onclick = async () => {
     .filter((b) => b.checked).map((b) => +b.dataset.piece);
   if (!want.length || !CHAT) return;
   const d = await chatDo("/exports/take", { body: { name: chatExpFile, pieces: want } });
-  cq("#chat-exp-box").hidden = true;
+  cq("#chat-src-box").hidden = true;
   if (d) {
     chatConv = Math.max(0, d.conversations.length - want.length);
     chatSel = -1;
@@ -647,17 +647,29 @@ cq("#chat-exp-go").onclick = async () => {
 // that one of them has to be signed into first, and that sign-in is three steps —
 // Telegram sends a code and waits for it, so no form can be filled in once.
 
-let chatSrc = "reddit";
+let chatSrc = "export";
 
-cq("#chat-fetch").onclick = async () => {
+// Where a conversation comes from, all of it behind one button. It used to be three
+// in the header — paste, sources, exports — which is three answers to one question
+// with nothing on the screen saying they were the same question: somebody looking for
+// "browse my Telegram" had no reason to press any of them. One door, one row of tabs.
+async function openAdd(tab) {
+  if (!CHAT) return;
   cq("#chat-src-box").hidden = false;
   cq("#chat-src-rows").innerHTML = "";
-  const sorts = cq("#chat-src-sort");
-  sorts.innerHTML = ["hot", "top", "new", "rising"]
+  cq("#chat-src-sort").innerHTML = ["hot", "top", "new", "rising"]
     .map((s) => `<option value="${s}">${s}</option>`).join("");
-  await pickSource(chatSrc);
-};
+  await pickSource(tab || chatSrc);
+}
+
+cq("#chat-add").onclick = () => openAdd();
 cq("#chat-src-cancel").onclick = () => { cq("#chat-src-box").hidden = true; };
+
+cq("#chat-manual-go").onclick = async () => {
+  const d = await chatDo("/conversation", { body: { at: -1 } });
+  cq("#chat-src-box").hidden = true;
+  if (d) { chatConv = d.conversations.length - 1; chatSel = -1; renderChat(); shootChat(); }
+};
 
 cq("#chat-src-tabs").addEventListener("click", (e) => {
   const b = e.target.closest("[data-src]");
@@ -669,16 +681,23 @@ async function pickSource(which) {
   cq("#chat-src-tabs").querySelectorAll("[data-src]").forEach(
     (b) => b.classList.toggle("on", b.dataset.src === which));
   cq("#chat-src-rows").innerHTML = "";
-  const tg = which === "telegram";
-  const made = which === "invent";
-  cq("#chat-src-sort").hidden = tg || made;
-  cq("#chat-src-q").placeholder = tg ? lab("web.chat.src.tgwhere", "@channel") : "r/AskReddit";
-  cq("#chat-tg-login").hidden = !tg;
-  cq("#chat-invent").hidden = !made;
-  // nothing is browsed when the conversation is being written: there is no list of
-  // what is out there, only a topic and a model
-  cq("#chat-src-where").hidden = made || (tg && true);
-  if (tg) await renderTg();
+  // Every pane off, then the one that is wanted on: six states written as one rule
+  // rather than six pairs of flags, which is how a tab ends up showing two of them.
+  for (const [pane, when] of [["#chat-pane-paste", "paste"],
+                              ["#chat-pane-manual", "manual"],
+                              ["#chat-pane-export", "export"],
+                              ["#chat-invent", "invent"],
+                              ["#chat-tg-login", "telegram"]])
+    cq(pane).hidden = which !== when;
+  // the search row belongs to the one source that has something to search; Telegram's
+  // appears only once somebody is signed in, which `renderTg` decides
+  cq("#chat-src-where").hidden = which !== "reddit";
+  cq("#chat-src-sort").hidden = which !== "reddit";
+  cq("#chat-src-q").placeholder = which === "telegram"
+    ? lab("web.chat.src.tgwhere", "@channel") : "r/AskReddit";
+  if (which === "telegram") await renderTg();
+  if (which === "export") await loadExports();
+  if (which === "paste") { cq("#chat-paste-text").value = ""; cq("#chat-paste-text").focus(); }
 }
 
 cq("#chat-invent-go").onclick = async () => {

@@ -369,7 +369,9 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
         root = chat_source.exports_root(context(cp))
         out = []
         for at in sorted(root.rglob("*") if root.is_dir() else []):
-            if not at.is_file():
+            # dotfiles are never exports: the `.gitkeep` that holds the folder in git
+            # is the one that would otherwise be listed as unreadable on every machine
+            if not at.is_file() or at.name.startswith("."):
                 continue
             try:
                 kind = exports.sniff(at.read_bytes()[:1 << 20])
