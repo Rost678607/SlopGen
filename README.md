@@ -9,15 +9,53 @@ Industrial-scale short-form video factory: **idea → script → TTS voiceover �
 ## Requirements
 
 - **Python 3.12+**
-- **ffmpeg** on your `PATH` (the assembly engine)
+- **ffmpeg** (with `ffprobe`) on your `PATH` — the assembly engine
 - Internet access (edge-tts, stock/AI APIs, your LLM provider, YouTube)
 - Optional: `pip install -e '.[azure]'` for the Azure voice engine. Neural weights are **not** dependencies — `slopgen models install …` fetches them on demand.
 
-Install ffmpeg: `winget install Gyan.FFmpeg` (Windows) · `brew install ffmpeg` (macOS) · `sudo apt install ffmpeg` (Debian/Ubuntu) · `sudo pacman -S ffmpeg` (Arch).
+Both of those can be left to the wrapper below. By hand: `winget install Gyan.FFmpeg` (Windows) · `brew install ffmpeg` (macOS) · `sudo apt install ffmpeg` (Debian/Ubuntu) · `sudo pacman -S ffmpeg` (Arch).
 
 ## Install
 
-Works on Linux, macOS, and Windows. Create a virtualenv and install:
+### One wrapper, any platform
+
+```bash
+./slopgen.sh --setup            # Linux, macOS, WSL
+slopgen.bat --setup             # Windows (cmd; from PowerShell: .\slopgen.bat)
+```
+
+This is `shell.nix` for everybody else, written out: it finds a Python 3.12, builds
+`.venv`, installs the requirements and the package, copies `.env` and
+`configs/slopgen.toml` from their examples, and makes sure ffmpeg **and** ffprobe
+exist — offering to fetch a private static build into `.tools/ffmpeg` when the system
+has none, which needs no admin rights and touches nothing outside the repository.
+
+After that the wrapper *is* the command — same arguments, same everything:
+
+```bash
+./slopgen.sh web                          # instead of: slopgen web
+./slopgen.sh info ru facts -n 3
+slopgen.bat drama ru --cast example --parts 3
+```
+
+| Flag | |
+| ------ | --------------------------------------------------------- |
+| `--setup` | install or refresh everything, run nothing |
+| `--check` | report what is and is not in place, change nothing |
+| `--yes` | answer yes to every question, including the ffmpeg download |
+
+It also sets the environment the run needs, which is the other half of what `shell.nix`
+does: `PYTHONUTF8=1` (Windows still defaults text files to the ANSI code page, and
+every script, checkpoint and metadata file here is Russian as often as not),
+`.tools/ffmpeg/bin` on `PATH`, and `SLOPGEN_FONTS` pointed at `assets/fonts/`.
+
+Four variables it reads: `SLOPGEN_VENV` (a virtualenv somewhere other than `.venv`),
+`SLOPGEN_FONTS` (`:`-separated folders searched for typefaces before anything else),
+`SLOPGEN_YES` (same as `--yes`), `SLOPGEN_NO_NIX` (don't hand over to `nix-shell`).
+
+### By hand
+
+Nothing above is required — it is a virtualenv and two `pip install`s:
 
 ```bash
 python -m venv .venv
@@ -31,16 +69,40 @@ pip install -e .
 cp .env.example .env            # fill in your keys (Windows: copy .env.example .env)
 ```
 
+On Windows, set `PYTHONUTF8=1` in that shell if you go this way (`$env:PYTHONUTF8=1`).
+
 <details>
 <summary>Nix / NixOS</summary>
 
-The repo ships a `shell.nix` with Python 3.12, ffmpeg, and DejaVu fonts:
+The repo ships a `shell.nix` with Python 3.12, ffmpeg, sox and the fonts:
 
 ```bash
 nix-shell                       # creates and activates .venv on first entry
 pip install -r requirements.txt && pip install -e .
 ```
 
+Every command goes through it, because the manylinux wheels find `libstdc++` only
+through the `LD_LIBRARY_PATH` it exports: `nix-shell --run '.venv/bin/python -m slopgen web'`.
+`./slopgen.sh` notices NixOS and hands over to `nix-shell` by itself, so it is a
+shorter way of typing the same thing.
+
+</details>
+
+<details>
+<summary>Windows: what is different, and what is merely substituted</summary>
+
+- **Fonts.** There is no fontconfig, so a family is resolved by looking in the
+  platform's font folders, and the four this project asks for (DejaVu Sans, Roboto,
+  Inter, IBM Plex Sans) are substituted with Segoe UI, colour emoji with Segoe UI
+  Emoji. To get the real thing, install the .ttf or drop it in `assets/fonts/`.
+- **`slopgen bot --detach`** works, but a detached Windows process has no console and
+  cannot be signalled, so `--stop` asks through a flag file (`state/bot.stop`) and
+  waits. Either way, `slopgen bot --stop` is the way to stop it.
+- **A path with an apostrophe** in it (`C:\Users\O'Brien\…`) cannot be used: ffmpeg
+  drops the character out of a filter argument and then cannot find the file. The run
+  says so and stops; move the project somewhere without one.
+- **ffplay** (the voice previews in the TUI) comes with the static build and with
+  Gyan's; some minimal ffmpeg packages leave it out.
 </details>
 
 `.env` keys:
@@ -1365,9 +1427,47 @@ Separate the parts with **spaces**; hyphens do not work. Measured in running spe
 
 ## Установка
 
-Нужны **Python 3.12+** и **ffmpeg** в `PATH`. Работает на Linux, macOS и Windows.
+Нужны **Python 3.12+** и **ffmpeg** (вместе с `ffprobe`) в `PATH`. Работает на Linux, macOS и Windows — и то и другое можно поручить обёртке.
 
-ffmpeg: `winget install Gyan.FFmpeg` (Windows) · `brew install ffmpeg` (macOS) · `sudo apt install ffmpeg` / `sudo pacman -S ffmpeg` (Linux).
+### Одна обёртка на всё
+
+```bash
+./slopgen.sh --setup             # Linux, macOS, WSL
+slopgen.bat --setup              # Windows (cmd; из PowerShell: .\slopgen.bat)
+```
+
+Это выписанный по шагам `shell.nix` для всех остальных: находит Python 3.12, собирает
+`.venv`, ставит зависимости и сам пакет, копирует `.env` и `configs/slopgen.toml` из
+примеров и проверяет, что есть ffmpeg **и** ffprobe — а если в системе их нет,
+предлагает скачать статическую сборку в `.tools/ffmpeg`, для чего не нужны ни права
+администратора, ни что-либо вне репозитория.
+
+Дальше обёртка — это и есть команда, с теми же аргументами:
+
+```bash
+./slopgen.sh web                          # вместо: slopgen web
+./slopgen.sh info ru facts -n 3
+slopgen.bat drama ru --cast example --parts 3
+```
+
+| Флаг | |
+| ------ | --------------------------------------------------------- |
+| `--setup` | поставить или обновить всё, ничего не запускать |
+| `--check` | показать, что есть и чего нет, ничего не менять |
+| `--yes` | отвечать «да» на все вопросы, включая скачивание ffmpeg |
+
+Она же выставляет окружение для запуска — вторая половина того, что делает `shell.nix`:
+`PYTHONUTF8=1` (Windows до сих пор пишет текстовые файлы в ANSI-кодировке, а здесь
+каждый сценарий, чекпоинт и файл метадаты — через раз русский), `.tools/ffmpeg/bin`
+в `PATH` и `SLOPGEN_FONTS` на `assets/fonts/`.
+
+Четыре переменные, которые она читает: `SLOPGEN_VENV` (venv не в `.venv`),
+`SLOPGEN_FONTS` (папки со шрифтами через `:`, смотрятся раньше системных),
+`SLOPGEN_YES` (то же, что `--yes`), `SLOPGEN_NO_NIX` (не передавать управление `nix-shell`).
+
+### Руками
+
+Ничего из перечисленного не обязательно — это venv и два `pip install`:
 
 ```bash
 python -m venv .venv
@@ -1377,18 +1477,42 @@ pip install -e .
 cp .env.example .env             # вписать ключи (Windows: copy .env.example .env)
 ```
 
+На Windows при таком пути выстави в той же консоли `$env:PYTHONUTF8=1`.
+
 Опционально: `pip install -e '.[azure]'` — для движка озвучки Azure. Веса нейронок в зависимостях **не** лежат: их по требованию качает `slopgen models install …`.
 
 <details>
 <summary>Nix / NixOS</summary>
 
-В репозитории есть `shell.nix` (Python 3.12 + ffmpeg + шрифты DejaVu):
+В репозитории есть `shell.nix` (Python 3.12 + ffmpeg + sox + шрифты):
 
 ```bash
 nix-shell                        # при первом входе создаст и активирует .venv
 pip install -r requirements.txt && pip install -e .
 ```
 
+Через него идёт каждая команда: колёса manylinux находят `libstdc++` только по
+`LD_LIBRARY_PATH`, который он экспортирует — `nix-shell --run '.venv/bin/python -m slopgen web'`.
+`./slopgen.sh` сам замечает NixOS и передаёт управление `nix-shell`, то есть это
+просто короткая запись того же самого.
+
+</details>
+
+<details>
+<summary>Windows: что работает иначе, а что просто подменяется</summary>
+
+- **Шрифты.** Fontconfig'а нет, поэтому семейство ищется по папкам шрифтов самой
+  системы, а четыре, которые просит проект (DejaVu Sans, Roboto, Inter, IBM Plex
+  Sans), подменяются на Segoe UI, цветные эмодзи — на Segoe UI Emoji. Нужен
+  настоящий — поставь .ttf в систему или положи в `assets/fonts/`.
+- **`slopgen bot --detach`** работает, но у отцепленного процесса на Windows нет
+  консоли и послать ему сигнал нельзя, поэтому `--stop` просит через файл-флаг
+  (`state/bot.stop`) и ждёт. Останавливать всё равно через `slopgen bot --stop`.
+- **Путь с апострофом** (`C:\Users\O'Brien\…`) не годится: ffmpeg выбрасывает этот
+  символ из аргумента фильтра и потом не находит файл. Прогон скажет об этом и
+  остановится — перенеси проект туда, где апострофа нет.
+- **ffplay** (прослушка голосов в TUI) есть и в статической сборке, и у Gyan'а, но
+  в некоторых минимальных пакетах ffmpeg его не кладут.
 </details>
 
 Личное и копирайтное вынесено в `.gitignore`: `assets/music/`, `assets/footage/`, `assets/ads/`, а также `configs/characters/`, `configs/accounts/`, `configs/fandoms/` (кроме мира `example/`) и `configs/ads/*.toml` (кроме `example_vpn.toml`). Занеси свои (правомерные) треки, клипы, персонажей и миры сам — в репозитории лежат только нейтральные шаблоны.

@@ -93,6 +93,13 @@ configs/effects/*
 !configs/effects/arrow.toml
 !configs/effects/arrow.png
 
+# Typefaces are licensed material too, and the ones a run actually wants are named
+# in the config rather than carried here (see src/slopgen/typeface.py). The folder
+# exists so there is somewhere obvious to put them: anything in it is found by name,
+# on any platform, before the system's own fonts.
+assets/fonts/*
+!assets/fonts/.gitkeep
+
 # Media libraries are copyright-sensitive — supply your own.
 assets/music/*
 !assets/music/.gitkeep
@@ -113,3 +120,6 @@ assets/ads/*
 !assets/ads/.gitkeep
 !assets/ads/example_vpn/
 !assets/ads/example_vpn/**
+
+# The private ffmpeg the wrapper fetches when the system has none (scripts/bootstrap.py).
+.tools/
