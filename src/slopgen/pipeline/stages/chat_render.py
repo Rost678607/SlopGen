@@ -331,10 +331,15 @@ def run(job: VideoJob, ctx: AppContext) -> None:
     # name itself — three threads in one video are three different chats.
     bars: dict[int, Path] = {}
     if cfg.header:
-        pic = asset(ctx, AVATARS_DIR, cfg.header_avatar)
         for ci, conv in enumerate(job.conversations):
             title = conv.title or cfg.title or job.chat_title or ""
-            at = out_dir / f"header_{hashlib.sha1(title.encode()).hexdigest()[:12]}.png"
+            # the conversation's own picture first: the one Telegram handed over with
+            # the chat, which is the whole point of fetching it. The run's setting is
+            # the fallback for conversations that arrived without one — an export, or
+            # something typed by hand — and the initials disc is the fallback for that.
+            pic = asset(ctx, AVATARS_DIR, conv.avatar or cfg.header_avatar)
+            key = f"{title}\x00{pic or ''}"
+            at = out_dir / f"header_{hashlib.sha1(key.encode()).hexdigest()[:12]}.png"
             if not at.is_file():
                 planner.canvas.header_image(title, pic).save(at)
             bars[ci] = at

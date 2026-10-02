@@ -493,7 +493,12 @@ class Canvas:
                    (pad + back, y + size // 2 + back)], fill=s.header_text,
                   width=max(2, size // 20), joint="curve")
         x = pad + back + int(s.pad_x * 1.4)
-        self._avatar(img, draw, Person(name=title, colour=s.divider), (x, y), size)
+        # The picture the bar was handed, and the initials disc only when there is
+        # none. This took the argument and dropped it on the floor, which is why the
+        # chat's own photo never appeared in the header however it was set — the one
+        # avatar on the screen that could not be made to show.
+        self._avatar(img, draw, Person(name=title, avatar=avatar, colour=s.divider),
+                     (x, y), size)
         face = fonts.load(s.family, int(s.name_px * 1.12), "medium")
         px = int(s.name_px * 1.12)
         # …through the mixed-run drawer, because a chat is as likely as not to be

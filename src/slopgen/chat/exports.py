@@ -77,10 +77,17 @@ class Line:
 
 @dataclass
 class Piece:
-    """One conversation out of one export: what it is called, and what was said."""
+    """One conversation out of one export: what it is called, and what was said.
+
+    `avatar` is the CHAT's own picture — the one in the header bar, next to the title —
+    and not anybody's. It belongs to the piece for the same reason the title does:
+    three threads in one video are three different chats, and one picture standing
+    over all of them is the tell that the screenshot is fake. Empty for an export,
+    which carries no pictures at all; filled by the readers that can fetch one."""
 
     title: str = ""
     source: str = ""
+    avatar: str = ""
     lines: list[Line] = field(default_factory=list)
 
 

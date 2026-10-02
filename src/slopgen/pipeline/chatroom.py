@@ -132,6 +132,7 @@ def read(job: VideoJob, ctx) -> dict:
                 "c": c,
                 "title": conv.title,
                 "source": conv.source,
+                "avatar": conv.avatar,
                 "lines": len(conv.messages),
                 "messages": [_msg_json(i, m) for i, m in enumerate(conv.messages)],
             }
@@ -234,6 +235,8 @@ def set_conversation(job: VideoJob, c: int, **fields) -> None:
         conv.title = str(fields["title"]).strip()
     if "source" in fields:
         conv.source = str(fields["source"]).strip()
+    if "avatar" in fields:
+        conv.avatar = str(fields["avatar"]).strip()
 
 
 def split(job: VideoJob, c: int, i: int) -> int:

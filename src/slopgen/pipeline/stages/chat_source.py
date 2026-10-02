@@ -23,6 +23,7 @@ from typing import Callable
 
 from pathlib import Path
 
+from . import chat_render
 from ...chat import exports, reddit, telegram
 from ...llm import chat as chat_llm
 from ..context import AppContext
@@ -72,7 +73,7 @@ def take(job: VideoJob, pieces) -> int:
         if not piece.lines:
             continue
         job.conversations.append(Conversation(
-            title=piece.title, source=piece.source,
+            title=piece.title, source=piece.source, avatar=piece.avatar,
             messages=[ChatMsg(persona=ln.who, text=ln.text, stamp=ln.stamp,
                               day=ln.day, avatar=ln.avatar,
                               reply_to=ln.reply_to, reactions=list(ln.reactions),
@@ -144,7 +145,9 @@ def _telegram(job: VideoJob, ctx: AppContext) -> None:
     if not where:
         raise ValueError("this run reads Telegram but was not told which chat")
     try:
-        pieces = asyncio.run(telegram.history(ctx.g.paths.state, where))
+        pieces = asyncio.run(telegram.history(
+            ctx.g.paths.state, where,
+            photos=ctx.g.paths.assets / chat_render.AVATARS_DIR))
     except telegram.TelegramError as e:
         raise ValueError(str(e))
     if not take(job, pieces):

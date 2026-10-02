@@ -423,6 +423,10 @@ class Conversation(BaseModel):
     that an operator looking at four conversations a week later can tell them apart."""
 
     title: str = ""
+    # the chat's own picture for the header bar: a file under `assets/avatars/`, or one
+    # Telegram handed over. Empty falls back to the run's `header_avatar`, and that to
+    # a disc with the title's initial on it.
+    avatar: str = ""
     source: str = ""
     messages: list[ChatMsg] = Field(default_factory=list)
 

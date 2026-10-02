@@ -321,6 +321,13 @@ async def window(state_dir: Path, chat, limit: int = 200, before: int = 0,
         ids: dict[object, int] = {}
         pending: list[tuple[int, object]] = []
         seen_photos: dict = {}
+        # the chat's own picture, for the header bar. `download_profile_photo` takes a
+        # group and a channel as happily as a person — to Telegram they are all
+        # entities with a photo — so the same call that fetches a sender's fetches
+        # this, and `seen_photos` keeps it from being fetched twice when the chat is
+        # a one-to-one and the other person is also a sender.
+        if photos is not None:
+            piece.avatar = await _photo(client, entity, photos, seen_photos)
         oldest = 0
         for msg in reversed(rows):
             oldest = min(oldest, msg.id) if oldest else msg.id
