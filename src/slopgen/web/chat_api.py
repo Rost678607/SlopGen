@@ -53,6 +53,7 @@ log = logging.getLogger(__name__)
 # kinds and nothing about what any particular setting means, so adding one here is the
 # whole of adding one.
 SHEET: list[dict] = [
+    {"head": "web.chat.set.look"},
     {"f": "skin", "kind": "select", "l": "web.f.skin", "opts": "chat_skins"},
     {"f": "header", "kind": "check", "l": "web.f.chathead"},
     {"f": "title", "kind": "text", "l": "web.f.chatname"},
@@ -62,6 +63,7 @@ SHEET: list[dict] = [
      "when": "telegram"},
     {"f": "background", "kind": "select", "l": "web.f.chatbg", "opts": "chat_backgrounds",
      "blank": True, "when": "telegram"},
+    {"head": "web.chat.set.clock"},
     {"f": "scroll", "kind": "select", "l": "web.f.scroll", "opts": "scroll_modes",
      "opt_l": "scr."},
     {"f": "roll_s", "kind": "number", "l": "web.f.rolls", "min": 0, "max": 3, "step": 0.05},
@@ -69,6 +71,7 @@ SHEET: list[dict] = [
     {"f": "gap_s", "kind": "number", "l": "web.f.gaps", "min": 0, "max": 10, "step": 0.1},
     {"f": "chunk", "kind": "number", "l": "web.f.chunk", "min": 0, "max": 400, "step": 10},
     {"f": "chunk_min", "kind": "number", "l": "web.f.chunkmin", "min": 0, "max": 800, "step": 10},
+    {"head": "web.chat.set.extra"},
     {"f": "reactions", "kind": "check", "l": "web.f.chatreact"},
     {"f": "react_s", "kind": "number", "l": "web.f.reacts", "min": 0, "max": 4, "step": 0.1},
     {"f": "translate", "kind": "check", "l": "web.f.chattr"},
@@ -76,7 +79,7 @@ SHEET: list[dict] = [
      "blank_l": "w.sfx.roll"},
     {"f": "sfx_volume", "kind": "number", "l": "web.f.sfxvol", "min": 0, "max": 2,
      "step": 0.05},
-    # the frame, and what shares it
+    {"head": "web.chat.set.frame"},
     {"f": "aspect", "kind": "select", "l": "web.f.aspect", "opts": "aspects"},
     {"f": "split", "kind": "check", "l": "web.f.split"},
     {"f": "split_clip", "kind": "select", "l": "web.f.splitclip", "opts": "chat_clips",
@@ -555,7 +558,10 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
         try:
             if source == "telegram":
                 got, oldest, more = await telegram.window(
-                    store.global_cfg.paths.state, where, before=before)
+                    store.global_cfg.paths.state, where, before=before,
+                    # the pictures land in the avatar base, so they are the same files
+                    # a card points at and the same ones next week's video reuses
+                    photos=store.global_cfg.paths.assets / chat_render.AVATARS_DIR)
                 pieces, cursor = [got], oldest
             elif source == "reddit":
                 pieces, cursor, more = await run_in_threadpool(reddit.thread, where), 0, False
@@ -581,7 +587,7 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
             "more": bool(more),
             "lines": [
                 {"i": n, "who": ln.who, "text": ln.text, "stamp": ln.stamp,
-                 "reply_to": ln.reply_to, "score": ln.score,
+                 "reply_to": ln.reply_to, "score": ln.score, "avatar": ln.avatar,
                  "reactions": [[e, c] for e, c in ln.reactions]}
                 for n, ln in enumerate(got.lines)] if got else [],
         }
@@ -615,6 +621,11 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
                 persona=str(r.get("who", "")).strip(),
                 text=str(r.get("text", "")),
                 stamp=str(r.get("stamp", "")),
+                # The picture rides on the MESSAGE and not on a card, because carding
+                # somebody is the operator's decision and an import must not make it
+                # for them. When they do card the person, the room offers this as the
+                # picture to put on it.
+                avatar=str(r.get("avatar", "")),
                 score=int(r.get("score", 0) or 0),
                 reply_to=moved.get(was, -1) if was >= 0 and moved.get(was, n) != n else -1,
                 reactions=[(str(e), max(1, int(c)))
@@ -687,7 +698,7 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
         run = run_or_404(run_id)
         b = await body_of(request)
         cp, i, job = open_job(run, int(b.get("video", 0)))
-        known = {row["f"] for row in SHEET}
+        known = {row["f"] for row in SHEET if "f" in row}
         fields = {k: v for k, v in b.items() if k in known}
         if fields:
             base = context(cp).chat.model_dump(mode="json")
@@ -701,6 +712,19 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
             cp.data["params"]["manual_chat"] = fresh.model_dump(mode="json")
             cp.save()
         return doc(cp, i, job)
+
+    @app.get("/api/avatar")
+    async def avatar(name: str, slopgen: str | None = Cookie(default=None)):
+        """One picture out of the avatar base, so the room can show what it is offering.
+
+        Inside the folder and nowhere else: the name comes off a form, so it is
+        resolved against the base and checked to still be under it."""
+        guard(slopgen)
+        root = (store.global_cfg.paths.assets / chat_render.AVATARS_DIR).resolve()
+        at = (root / name).resolve()
+        if not str(at).startswith(str(root)) or not at.is_file():
+            raise HTTPException(status_code=404, detail="no such picture")
+        return FileResponse(at, headers={"Cache-Control": "max-age=300"})
 
     # -- what it will look like ---------------------------------------------
 

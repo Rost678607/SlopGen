@@ -230,20 +230,65 @@ function chatEditHTML(m) {
 // Who is in the video, and whether they are anybody outside it. A name with a card
 // behind it has a picture and a voice that survive into the next video; one without is
 // just a name on a bubble, and the button says which.
+let chatWho = "";   // which person is open for editing, by name
+
 function renderChatCast() {
   const d = CHAT.doc;
   cq("#chat-cast").innerHTML =
     `<h4>${esc(lab("web.chat.cast", "кто в переписке"))}</h4>` +
-    (d.cast.length ? d.cast.map((c) => `
-      <div class="chat-person${c.carded ? " carded" : ""}">
-        <b>${esc(c.name)}</b>
-        <span class="dim">${c.lines}</span>
-        <span class="dim">${esc(c.voice || lab("web.chat.silent", "не читается"))}</span>
-        <span class="grow"></span>
-        <button class="ghost" data-card="${esc(c.name)}">${
-          esc(lab(c.carded ? "web.chat.editcard" : "web.chat.makecard", "карточка"))}</button>
-      </div>`).join("")
-     : `<p class="dim">${esc(lab("web.chat.nocast", ""))}</p>`);
+    (d.cast.length ? d.cast.map(personHTML).join("")
+     : `<p class="dim">${esc(lab("web.chat.nocast", ""))}</p>`) +
+    `<button class="ghost" id="chat-who-new">${
+      esc(lab("web.chat.who.new", "＋ человек"))}</button>`;
+  cq("#chat-who-new").onclick = async () => {
+    const name = prompt(lab("web.chat.who.newname", "имя"), "");
+    if (!name || !name.trim()) return;
+    await chatDo("/persona", { method: "PUT", body: { name: name.trim() } });
+    chatWho = name.trim();
+    renderChat();
+  };
+}
+
+// One person, and — when they are the one being looked at — everything a card holds.
+// It was two `prompt()` boxes in a row, which is the shape that asks you to remember
+// what the first one said while you answer the second, and offers no way at all to
+// see what a field currently is.
+function personHTML(c) {
+  const open = c.name === chatWho;
+  const head = `
+    <div class="chat-person${c.carded ? " carded" : ""}${open ? " on" : ""}"
+         data-person="${esc(c.name)}">
+      <b>${esc(c.name)}</b>
+      <span class="dim">${c.lines}</span>
+      <span class="dim">${esc(c.voice || lab("web.chat.silent", "не читается"))}</span>
+      <span class="grow"></span>
+      ${c.avatar ? `<img class="who-pic" src="${tokd(`/api/avatar?name=${
+        encodeURIComponent(c.avatar)}`)}" alt="">` : ""}
+    </div>`;
+  if (!open) return head;
+  const pics = [""].concat(chatOpts.avatars || []);
+  if (c.found && !pics.includes(c.found)) pics.push(c.found);
+  const voices = [""].concat(chatOpts.chat_voices || []);
+  const pick = (list, value, blank) => list.map((v) =>
+    `<option value="${esc(v)}"${v === value ? " selected" : ""}>${
+      esc(v || lab(blank, "— нет —"))}</option>`).join("");
+  return head + `
+    <div class="who-edit">
+      <label>${esc(lab("web.chat.who.voice", "голос"))}
+        <select data-p="voice">${pick(voices, c.voice, "web.chat.silent")}</select></label>
+      <label>${esc(lab("web.chat.who.pic", "аватарка"))}
+        <select data-p="avatar">${pick(pics, c.avatar, "web.chat.who.initials")}</select></label>
+      <div class="row2">
+        <label>${esc(lab("web.chat.who.handle", "@ник"))}
+          <input data-p="handle" value="${esc(c.handle)}"></label>
+        <label>${esc(lab("web.chat.who.colour", "цвет"))}
+          <input data-p="colour" value="${esc(c.colour)}" placeholder="#rrggbb"></label>
+      </div>
+      <div class="chat-acts">
+        <button class="ghost" data-rename="${esc(c.name)}">${
+          esc(lab("web.chat.who.rename", "переименовать"))}</button>
+      </div>
+    </div>`;
 }
 
 // The chain, as the montage room draws it and pressing the very same endpoint: what
@@ -279,6 +324,10 @@ function renderChatSettings() {
   const v = d.settings || {};
   const rows = (d.sheet || []).filter(
     (r) => !r.when || r.when === v.skin).map((r) => {
+    // A heading and not a setting. Twenty-two controls in a narrow column with nothing
+    // between them is a list nobody reaches the bottom of — which is how "there is no
+    // way to turn the split screen on" happens to a screen that has one.
+    if (r.head) return `<h5>${esc(lab(r.head, ""))}</h5>`;
     const val = v[r.f];
     if (r.kind === "check")
       return `<label class="inline"><input type="checkbox" data-s="${r.f}"${
@@ -508,17 +557,25 @@ function parseReactions(text) {
 }
 
 cq("#chat-cast").addEventListener("click", async (e) => {
-  const b = e.target.closest("[data-card]");
-  if (!b) return;
-  const name = b.dataset.card;
-  const was = CHAT.doc.cast.find((c) => c.name === name) || {};
-  // One prompt per field is crude and it is also the honest size of this: a card is
-  // four short strings, and a modal with four inputs would be a modal to maintain.
-  const voice = prompt(lab("web.chat.ask.voice", "голос (пусто — не читается)"), was.voice || "");
-  if (voice === null) return;
-  const avatar = prompt(lab("web.chat.ask.avatar", "аватарка из assets/avatars"), was.avatar || "");
-  if (avatar === null) return;
-  await chatDo("/persona", { method: "PUT", body: { name, voice, avatar } });
+  const re = e.target.closest("[data-rename]");
+  if (re) {
+    const now = prompt(lab("web.chat.who.rename", "переименовать"), re.dataset.rename);
+    if (!now || !now.trim() || now === re.dataset.rename) return;
+    chatWho = now.trim();
+    await chatDo("/rename", { body: { was: re.dataset.rename, now: now.trim() } });
+    return shootChat(chatSel);
+  }
+  const row = e.target.closest("[data-person]");
+  if (!row) return;
+  chatWho = chatWho === row.dataset.person ? "" : row.dataset.person;
+  renderChatCast();
+});
+
+cq("#chat-cast").addEventListener("change", async (e) => {
+  const f = e.target.closest("[data-p]");
+  if (!f || !chatWho) return;
+  await chatDo("/persona", { method: "PUT",
+    body: { name: chatWho, [f.dataset.p]: f.value } });
   shootChat(chatSel);
 });
 
@@ -841,14 +898,20 @@ function renderPick() {
   cq("#chat-pick-title").textContent = PICK.title || lab("web.chat.untitled", "");
   cq("#chat-pick-count").textContent =
     `${picked.size} / ${PICK.lines.length}`;
-  cq("#chat-pick-older").hidden = !PICK.more;
   const sel = cq("#chat-pick-piece");
   sel.hidden = (PICK.pieces || []).length < 2;
   if (!sel.hidden)
     sel.innerHTML = PICK.pieces.map((p) =>
       `<option value="${p.p}"${p.p === PICK.piece ? " selected" : ""}>${
         esc(p.title || lab("web.chat.untitled", ""))} · ${p.lines}</option>`).join("");
-  cq("#chat-pick-rows").innerHTML = PICK.lines.map((ln) => `
+  // The older ones are ABOVE, as they are in any client: the window is the most recent
+  // stretch, so walking back means scrolling up, and the band at the top is what says
+  // there is more up there and that it is on its way.
+  const banner = PICK.more
+    ? `<div class="pick-more${pickBusy ? " busy" : ""}">${
+        esc(lab(pickBusy ? "web.chat.pick.loading" : "web.chat.pick.up", ""))}</div>`
+    : "";
+  cq("#chat-pick-rows").innerHTML = banner + PICK.lines.map((ln) => `
     <div class="pick-row${picked.has(ln.i) ? " on" : ""}" data-pick="${ln.i}">
       <span class="at">${esc(ln.stamp || "")}</span>
       <span class="who">${esc(ln.who || "—")}</span>
@@ -858,14 +921,31 @@ function renderPick() {
     </div>`).join("");
 }
 
+// Loading as you scroll, rather than a button to press. `pickBusy` is both the guard
+// against firing twice on one flick and the thing the banner reads to say it is
+// working — one flag, because two would be two chances to disagree about it.
+let pickBusy = false;
+
+cq("#chat-pick-rows").addEventListener("scroll", async (e) => {
+  const box = e.target;
+  if (pickBusy || !PICK || !PICK.more || box.scrollTop > 80) return;
+  pickBusy = true;
+  renderPick();
+  const was = box.scrollHeight;
+  await openPick(PICK.source, PICK.where, PICK.piece, PICK.before, true);
+  pickBusy = false;
+  renderPick();
+  // hold the reading position: the list grew upwards, so the same message stays under
+  // the same pixel instead of the view jumping to the top of a thousand new lines
+  box.scrollTop = box.scrollHeight - was;
+});
+
 cq("#chat-pick-back").onclick = closePick;
 cq("#chat-pick-all").onclick = () => {
   PICK.lines.forEach((ln) => picked.add(ln.i));
   renderPick();
 };
 cq("#chat-pick-none").onclick = () => { picked.clear(); renderPick(); };
-cq("#chat-pick-older").onclick = () =>
-  openPick(PICK.source, PICK.where, PICK.piece, PICK.before, true);
 cq("#chat-pick-piece").onchange = (e) =>
   openPick(PICK.source, PICK.where, +e.target.value, 0, false);
 

@@ -261,8 +261,39 @@ async def dialogs(state_dir: Path, limit: int = 60) -> list[dict]:
         await client.disconnect()
 
 
-async def window(state_dir: Path, chat, limit: int = 200,
-                 before: int = 0) -> tuple[Piece, int, bool]:
+async def _photo(client, sender, into: Path, seen: dict) -> str:
+    """Somebody's profile picture, saved once, as a file name under `into`.
+
+    Once per person per read and not once per message, which is the whole reason for
+    `seen`: a window of two hundred messages is a dozen people, and a download apiece
+    per message would be two hundred requests to Telegram for twelve pictures. Kept on
+    disk under the account's own id, so the same person in another chat — and in next
+    week's video — is the same file rather than another copy of it.
+
+    A failure is not an error: plenty of accounts have no photo and plenty more hide
+    it, and what that costs is the picture, which the initials disc replaces."""
+    ident = getattr(sender, "id", None)
+    if sender is None or ident is None:
+        return ""
+    if ident in seen:
+        return seen[ident]
+    name = f"tg_{ident}.jpg"
+    at = into / name
+    if at.is_file():
+        seen[ident] = name
+        return name
+    try:
+        into.mkdir(parents=True, exist_ok=True)
+        got = await client.download_profile_photo(sender, file=str(at))
+    except Exception as e:  # noqa: BLE001 — a picture is never worth the read
+        log.info("telegram: no picture for %s (%s)", ident, type(e).__name__)
+        got = None
+    seen[ident] = name if got else ""
+    return seen[ident]
+
+
+async def window(state_dir: Path, chat, limit: int = 200, before: int = 0,
+                 photos: Path | None = None) -> tuple[Piece, int, bool]:
     """One window of a chat's messages, oldest first, and how to ask for the one before.
 
     A chat is ten thousand messages and a video is twenty of them, so there is no such
@@ -289,6 +320,7 @@ async def window(state_dir: Path, chat, limit: int = 200,
         piece = Piece(title=name, source=f"telegram:{chat}")
         ids: dict[object, int] = {}
         pending: list[tuple[int, object]] = []
+        seen_photos: dict = {}
         oldest = 0
         for msg in reversed(rows):
             oldest = min(oldest, msg.id) if oldest else msg.id
@@ -302,6 +334,8 @@ async def window(state_dir: Path, chat, limit: int = 200,
                 who=_sender(msg), text=text,
                 stamp=_clock(msg.date.isoformat() if msg.date else ""),
                 reactions=_reactions(msg),
+                avatar=(await _photo(client, getattr(msg, "sender", None), photos,
+                                     seen_photos) if photos is not None else ""),
             ))
         _settle(piece, ids, pending)
         log.info("telegram: %s — %d of %d in this window", name, len(piece.lines), len(rows))
@@ -310,14 +344,15 @@ async def window(state_dir: Path, chat, limit: int = 200,
         await client.disconnect()
 
 
-async def history(state_dir: Path, chat, limit: int = 120) -> list[Piece]:
+async def history(state_dir: Path, chat, limit: int = 120,
+                  photos: Path | None = None) -> list[Piece]:
     """The last stretch of a chat, for a run that is not being watched.
 
     The blunt answer, and it says so: a run told to read a chat and nothing else takes
     the most recent `limit` messages, because there is nobody there to choose. When
     there IS somebody there, they use :func:`window` and pick (see the chat room),
     which is the honest way and the one the room offers first."""
-    piece, _oldest, _more = await window(state_dir, chat, limit)
+    piece, _oldest, _more = await window(state_dir, chat, limit, photos=photos)
     return [piece] if piece.lines else []
 
 

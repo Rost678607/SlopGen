@@ -220,7 +220,7 @@ class Canvas:
         return int(s.meta_px * 1.2 + s.text_px * s.line_h + s.gap * 0.6)
 
     def _react_h(self) -> int:
-        return int(self.skin.meta_px * 2.1)
+        return int(self.skin.meta_px * 1.72)
 
     # -- painting -----------------------------------------------------------
 
@@ -305,9 +305,15 @@ class Canvas:
         text_colour = s.text_out if b.person.mine else s.text_in
 
         head_x = cx
-        if b.show_head and s.avatar and not (b.person.mine and s.sides):
+        # The picture goes with the TAIL and not with the name: a run of messages from
+        # one person carries the name on the first and the little spur on the last, and
+        # the avatar sits beside the spur, at the foot of the run. Drawn at the top it
+        # floats beside a bubble the person is still in the middle of saying.
+        show_pic = (b.show_tail if s.bubbles else b.show_head)
+        if show_pic and s.avatar and not (b.person.mine and s.sides):
             ax = self.left + s.pad_x + (s.indent * b.depth if s.tree else 0)
-            self._avatar(img, draw, b.person, (ax, y), s.avatar)
+            ay = y if (s.tree or not s.bubbles) else max(y, bottom - s.avatar)
+            self._avatar(img, draw, b.person, (ax, ay), s.avatar)
             if s.tree:
                 # reddit stands the picture ON the author line and runs the comment
                 # underneath it at full width, so only this line steps aside
@@ -382,20 +388,22 @@ class Canvas:
                          cx: int, cy: int) -> None:
         """The pills under a message: one per emoji, with its count beside it."""
         s = self.skin
-        px = int(s.meta_px * 1.15)
-        pad = int(px * 0.38)
+        px = int(s.meta_px * 0.92)
+        pad = int(px * 0.34)
+        ground = s.react_bg or s.divider
+        ink = s.react_ink or s.meta
         x = cx
         for emoji, count in b.reactions:
             label = str(count) if count > 1 else ""
             label_w = (self._probe.textlength(label, font=self.f_meta) + px * 0.32) if label else 0
             pill = int(pad * 2 + px + label_w)
-            draw.rounded_rectangle([x, cy, x + pill, cy + int(px * 1.5)],
-                                   radius=int(px * 0.75), fill=s.divider)
+            draw.rounded_rectangle([x, cy, x + pill, cy + int(px * 1.55)],
+                                   radius=int(px * 0.78), fill=ground)
             richtext.draw_line(img, draw, (x + pad, int(cy + px * 0.22)),
-                               emoji, self.f_meta, s.meta, px)
+                               emoji, self.f_meta, ink, px)
             if label:
                 draw.text((x + pad + px + px * 0.32, cy + px * 0.3), label,
-                          font=self.f_meta, fill=s.meta)
+                          font=self.f_meta, fill=ink)
             x += pill + int(px * 0.4)
 
     def _paint_votes(self, draw: ImageDraw.ImageDraw, b: Block, cx: int, cy: int) -> None:
@@ -423,9 +431,11 @@ class Canvas:
         draw.ellipse([x, y, x + size, y + size], fill=person.colour)
         who = person.initials or person.name
         initials = "".join(w[:1] for w in who.split()[:2]).upper() or "?"
-        face = fonts.load(self.skin.family, int(size * 0.44), "medium")
-        w = self._probe.textlength(initials, font=face)
-        draw.text((x + (size - w) / 2, y + size * 0.26), initials, font=face, fill="#ffffff")
+        px = int(size * 0.44)
+        face = fonts.load(self.skin.family, px, "medium")
+        w = richtext.width(self._probe, initials, face, px)
+        richtext.draw_line(img, draw, (int(x + (size - w) / 2), int(y + size * 0.26)),
+                           initials, face, "#ffffff", px)
 
     def _paint_header(self, img: Image.Image, draw: ImageDraw.ImageDraw,
                       title: str, avatar: Path | None) -> None:
@@ -441,8 +451,12 @@ class Canvas:
         x = pad + back + int(s.pad_x * 1.4)
         self._avatar(img, draw, Person(name=title, colour=s.divider), (x, y), size)
         face = fonts.load(s.family, int(s.name_px * 1.12), "medium")
-        draw.text((x + size + pad, (s.header_h - s.name_px * 1.3) / 2), title,
-                  font=face, fill=s.header_text)
+        px = int(s.name_px * 1.12)
+        # …through the mixed-run drawer, because a chat is as likely as not to be
+        # called `ИС-23 🏔❤️🏔` and the text face has none of those: drawn with
+        # `draw.text` they come out as three empty boxes, which is what this did.
+        richtext.draw_line(img, draw, (x + size + pad, int((s.header_h - px * 1.3) / 2)),
+                           title, face, s.header_text, px)
         dots = self.width - pad - int(size * 0.2)
         for i in range(3):
             r = max(2, size // 26)

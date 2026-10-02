@@ -64,6 +64,10 @@ class Line:
     reply_to: int = -1
     reactions: list[tuple[str, int]] = field(default_factory=list)
     score: int = 0  # reddit karma; meaningless in a messenger and never drawn there
+    # The file this person's picture was saved as, when the source had one. An export
+    # never does — that is the first thing a client leaves out — so this is empty for
+    # everything but a live read, and empty means the initials disc.
+    avatar: str = ""
 
 
 @dataclass

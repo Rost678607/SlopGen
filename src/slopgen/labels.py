@@ -3667,19 +3667,54 @@ RU.update({
     "web.chat.pick.back": "← к списку",
     "web.chat.pick.all": "выбрать все",
     "web.chat.pick.none": "снять",
-    "web.chat.pick.older": "⟲ ещё старее",
+    "web.chat.pick.up": "↑ выше — то, что было раньше",
+    "web.chat.pick.loading": "подгружаю",
     "web.chat.pick.take": "взять выбранные",
     "web.chat.pick.note": "Клик — отметить сообщение, shift+клик — весь кусок от "
-                          "предыдущего отмеченного. «Ещё старее» подгружает то, что "
-                          "было до этого; уже отмеченное остаётся отмеченным.",
+                          "предыдущего отмеченного. Прокрути список вверх — "
+                          "то, что было раньше, подгрузится само; уже отмеченное "
+                          "остаётся отмеченным.",
 })
 EN.update({
     "web.chat.pick.back": "← to the list",
     "web.chat.pick.all": "all of them",
     "web.chat.pick.none": "none",
-    "web.chat.pick.older": "⟲ older still",
+    "web.chat.pick.up": "↑ older messages are up here",
+    "web.chat.pick.loading": "loading",
     "web.chat.pick.take": "take the chosen ones",
     "web.chat.pick.note": "Click marks a message, shift+click takes the run between it "
-                          "and the last one marked. “Older still” loads what came "
-                          "before; anything already marked stays marked.",
+                          "and the last one marked. Scroll to the top and what came "
+                          "before loads itself; anything already marked stays marked.",
+})
+RU.update({
+    "web.chat.who.new": "＋ человек",
+    "web.chat.who.newname": "как его зовут",
+    "web.chat.who.voice": "голос",
+    "web.chat.who.pic": "аватарка",
+    "web.chat.who.initials": "— кружок с инициалами —",
+    "web.chat.who.handle": "@ник",
+    "web.chat.who.colour": "цвет",
+    "web.chat.who.rename": "переименовать",
+})
+EN.update({
+    "web.chat.who.new": "＋ a person",
+    "web.chat.who.newname": "what are they called",
+    "web.chat.who.voice": "voice",
+    "web.chat.who.pic": "picture",
+    "web.chat.who.initials": "— the initials disc —",
+    "web.chat.who.handle": "@handle",
+    "web.chat.who.colour": "colour",
+    "web.chat.who.rename": "rename",
+})
+RU.update({
+    "web.chat.set.look": "как это нарисовано",
+    "web.chat.set.clock": "как это появляется",
+    "web.chat.set.extra": "мелочи",
+    "web.chat.set.frame": "кадр и что его делит",
+})
+EN.update({
+    "web.chat.set.look": "how it is drawn",
+    "web.chat.set.clock": "how it arrives",
+    "web.chat.set.extra": "the trimmings",
+    "web.chat.set.frame": "the frame, and what shares it",
 })

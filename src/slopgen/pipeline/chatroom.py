@@ -101,11 +101,15 @@ def read(job: VideoJob, ctx) -> dict:
     cast = []
     for name in dict.fromkeys(m.persona for m in everyone):
         card = ctx.store.personas.get(name)
+        # what the import found for them, when it found anything: the room offers it
+        # as the picture to put on a card rather than making one behind their back
+        found = next((m.avatar for m in everyone if m.persona == name and m.avatar), "")
         cast.append({
             "name": name,
             "carded": card is not None,
             "handle": card.handle if card else "",
-            "avatar": card.avatar if card else "",
+            "avatar": (card.avatar if card else "") or found,
+            "found": found,
             "voice": card.voice if card else "",
             "colour": card.colour if card else "",
             "lines": sum(1 for m in everyone if m.persona == name),

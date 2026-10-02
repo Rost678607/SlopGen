@@ -65,6 +65,12 @@ class Skin:
     line_h: float  # line spacing as a multiple of the text size
 
     # -- shape -------------------------------------------------------------
+    # What a reaction pill sits on and what its count is written in. Telegram tints
+    # them rather than greying them — a reaction is something somebody pressed, and the
+    # pill says so. Empty falls back to the divider and the meta colour, which is what
+    # a flat skin wants.
+    react_bg: str = ""
+    react_ink: str = ""
     bubbles: bool = True  # False = flat rows (Discord, Reddit)
     sides: bool = True  # False = everything on the left, nobody is "me" (Discord, Reddit)
     tree: bool = False  # True = indent by reply depth and draw guides (Reddit)
@@ -96,8 +102,9 @@ TELEGRAM = Skin(
     bg="#cfd9e3", bubble_in="#ffffff", bubble_out="#effdde",
     text_in="#000000", text_out="#000000", meta="#8a9199", divider="#e4e8eb",
     header_bg="#527da3", header_text="#ffffff", header_h=132,
-    pad_x=22, gap=16, avatar=72, radius=30, bubble_pad_x=28, bubble_pad_y=20,
-    max_w=0.76, indent=0, text_px=42, name_px=36, meta_px=30, line_h=1.26,
+    pad_x=20, gap=13, avatar=76, radius=17, bubble_pad_x=26, bubble_pad_y=15,
+    max_w=0.80, indent=0, text_px=42, name_px=35, meta_px=29, line_h=1.20,
+    react_bg="#e3f0fa", react_ink="#3b8ad1",
     bubbles=True, sides=True, wallpaper=True,
 )
 
