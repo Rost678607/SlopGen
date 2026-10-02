@@ -418,6 +418,8 @@ function renderChatClock() {
     const el = document.createElement("div");
     el.className = "mark" + (seams.has(m.i) ? " swipe" : "");
     el.style.left = `${(m.at / c.total) * 100}%`;
+    el.title = `${m.at.toFixed(1)}s · ${m.who || "—"}: ${m.text || ""}`;
+    el.dataset.at = m.at;
     track.appendChild(el);
   }
   chatHead(chatAt < 0 ? 0 : chatAt);
@@ -475,10 +477,21 @@ cq("#chat-watch").onclick = () => {
   v.src = tokd(`/api/runs/${CHAT.id}/video?x=${Date.now()}`);
   v.hidden = false;
   cq("#chat-shot-img").hidden = true;
-  cq("#chat-time").hidden = true;
+  // The strip STAYS. Hiding it here was the whole of why there was no way to watch
+  // the video against a timeline: the video has only the browser's own scrubber,
+  // which is a bare line with no idea where a message lands or where one chat gives
+  // way to the next — and those marks are the only reason to look at a timeline in
+  // this room at all. So the same strip now drives the video and follows it.
+  cq("#chat-time").hidden = false;
   renderChatWatch();
   v.play().catch(() => {});
 };
+
+// The playhead follows the video while it plays, and the marks under it say what is
+// about to happen: a tick per message, a brighter one per swipe.
+cq("#chat-video").addEventListener("timeupdate", () => {
+  if (chatWatching) chatHead(cq("#chat-video").currentTime);
+});
 
 // -- making the video --------------------------------------------------------
 //
@@ -544,6 +557,10 @@ function scrubTo(e) {
   const box = cq("#chat-track").getBoundingClientRect();
   chatAt = Math.min(Math.max((e.clientX - box.left) / box.width, 0), 1) * c.total;
   chatHead(chatAt);
+  // While the cut is playing the strip is the video's own transport: the states
+  // behind it were drawn from the same clock, so the mark you aim at and the instant
+  // the video lands on are the same instant.
+  if (chatWatching) cq("#chat-video").currentTime = chatAt;
 }
 
 cq("#chat-track").addEventListener("pointerdown", (e) => {
@@ -553,7 +570,10 @@ cq("#chat-track").addEventListener("pointerdown", (e) => {
 cq("#chat-track").addEventListener("pointermove", (e) => {
   if (e.buttons) scrubTo(e);
 });
-cq("#chat-track").addEventListener("pointerup", (e) => { scrubTo(e); shootAt(chatAt); });
+cq("#chat-track").addEventListener("pointerup", (e) => {
+  scrubTo(e);
+  if (!chatWatching) shootAt(chatAt);
+});
 
 function shootAt(at) {
   if (!CHAT) return;

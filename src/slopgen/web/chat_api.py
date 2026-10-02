@@ -174,7 +174,12 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
         marks = []
         for n, msg in enumerate(job.messages):
             if 0 <= msg.scene < len(starts):
-                marks.append({"i": n, "at": starts[msg.scene]})
+                # who and what, so a tick can say what it is: a strip of anonymous
+                # chalk marks tells you a message starts there and nothing about
+                # which, which is no help when what you are looking for is a line
+                marks.append({"i": n, "at": starts[msg.scene],
+                              "who": msg.nick or msg.persona,
+                              "text": (msg.text or "")[:60]})
         return {"total": at, "marks": marks}
 
     def _chain(cp: Checkpoint):
