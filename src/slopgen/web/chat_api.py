@@ -300,7 +300,7 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
         guard(slopgen)
         b = await body_of(request)
         cp, i, job = edited(run_or_404(run_id), b)
-        fields = {k: b[k] for k in ("title", "source") if k in b}
+        fields = {k: b[k] for k in ("title", "source", "avatar") if k in b}
         guarded(chatroom.set_conversation)(job, int(b.get("c", 0)), **fields)
         return answer(cp, i, job)
 
@@ -582,6 +582,9 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
         got = pieces[at] if pieces else None
         return {
             "title": got.title if got else "",
+            # the chat's own picture, so that choosing a stretch of it brings the
+            # header bar's photo along with the messages
+            "avatar": got.avatar if got else "",
             "source": source,
             "where": where,
             # a multi-chat export has more than one; everything else has exactly one
@@ -620,7 +623,8 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
             raise HTTPException(status_code=422, detail="nothing was chosen")
         moved = {int(r.get("i", -1)): n for n, r in enumerate(rows)}
         conv = Conversation(title=str(b.get("title", "")).strip(),
-                            source=str(b.get("source", "")).strip())
+                            source=str(b.get("source", "")).strip(),
+                            avatar=str(b.get("avatar", "")).strip())
         for n, r in enumerate(rows):
             was = int(r.get("reply_to", -1))
             conv.messages.append(ChatMsg(
@@ -859,9 +863,9 @@ def _draw_preview(job, ctx: AppContext, last: int, out: Path) -> None:
     if cfg.header:
         conv = next((c for c in job.conversations
                      if any(m is job.messages[last] for m in c.messages)), None)
-        bar = canvas.header_image((conv.title if conv else "") or cfg.title
-                                  or job.chat_title or "",
-                                  chat_render.asset(ctx, chat_render.AVATARS_DIR,
-                                                    cfg.header_avatar))
+        bar = canvas.header_image(
+            (conv.title if conv else "") or cfg.title or job.chat_title or "",
+            chat_render.asset(ctx, chat_render.AVATARS_DIR,
+                              (conv.avatar if conv else "") or cfg.header_avatar))
         frame.paste(bar, (0, 0), bar)
     _framed(frame, v, top).save(out)

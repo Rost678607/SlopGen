@@ -112,10 +112,21 @@ function renderChat() {
   }
   list.innerHTML =
     `<div class="chat-convhead">
+       <button id="chat-convpic" class="pic" title="${
+         esc(lab("web.chat.convpic", "картинка чата"))}">${
+         conv.avatar
+           ? `<img src="${tokd(`/api/avatar?name=${encodeURIComponent(conv.avatar)}`)}" alt="">`
+           : `<i>${esc((conv.title[0] || "#").toUpperCase())}</i>`}</button>
        <input id="chat-convtitle" value="${esc(conv.title)}" placeholder="${
          esc(lab("web.chat.untitled", "без названия"))}">
        ${conv.source ? `<span class="dim">${esc(conv.source)}</span>` : ""}
      </div>`
+    + (chatConvPic ? `<div class="chat-convpics pic-pick">${
+        [""].concat(chatOpts.avatars || []).map((v) => `
+          <button class="pic${v === conv.avatar ? " on" : ""}" data-convpic="${esc(v)}"
+                  title="${esc(v || lab("web.chat.who.initials", ""))}">${
+            v ? `<img src="${tokd(`/api/avatar?name=${encodeURIComponent(v)}`)}" alt="">`
+              : `<i>#</i>`}</button>`).join("")}</div>` : "")
     + conv.messages.map(chatRowHTML).join("")
     + `<button class="ghost chat-add" data-add="${conv.messages.length}">${
          esc(lab("web.chat.add", "＋ сообщение"))}</button>`;
@@ -174,6 +185,11 @@ function chatRowHTML(m) {
   ${open ? chatEditHTML(m) : ""}
 </div>`;
 }
+
+// Whether the tray of chat pictures under the title is open. One conversation at a
+// time and shut by default: the picture is set once and the row of thumbnails is
+// the width of the list.
+let chatConvPic = false;
 
 const trim = (s, n) => (s || "").length > n ? (s || "").slice(0, n - 1) + "…" : (s || "");
 
@@ -677,6 +693,18 @@ cq("#chat-list").addEventListener("input", (e) => {
   if (area) chatDrafts.set(draftKey(+area.dataset.text), area.value);
 });
 
+cq("#chat-list").addEventListener("click", async (e) => {
+  if (e.target.closest("#chat-convpic")) {
+    chatConvPic = !chatConvPic;
+    return renderChat();
+  }
+  const pic = e.target.closest("[data-convpic]");
+  if (!pic) return;
+  chatConvPic = false;
+  await chatDo("/conversation", { method: "PUT", body: { avatar: pic.dataset.convpic } });
+  shootChat(chatSel);
+});
+
 cq("#chat-list").addEventListener("change", async (e) => {
   const title = e.target.closest("#chat-convtitle");
   if (title) return void await chatDo("/conversation", { method: "PUT", body: { title: title.value } });
@@ -1153,7 +1181,8 @@ cq("#chat-pick-go").onclick = async () => {
   if (!PICK || !picked.size) return;
   const lines = PICK.lines.filter((ln) => picked.has(ln.i));
   const d = await chatDo("/take", { body: {
-    title: PICK.title, source: `${PICK.source}:${PICK.where}`, lines } });
+    title: PICK.title, avatar: PICK.avatar || "",
+    source: `${PICK.source}:${PICK.where}`, lines } });
   if (d) {
     closePick();
     cq("#chat-src-box").hidden = true;

@@ -1317,6 +1317,14 @@ button.danger{border-color:var(--bad);color:var(--bad)}
 .chat-conv b{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .chat-conv button{padding:1px 5px;font-size:11px}
 .chat-convhead{display:flex;gap:8px;align-items:center;margin-bottom:2px}
+/* the chat's own picture, where it sits in the client: left of the title. Same disc
+   as the cast's, which is why it borrows that rule rather than inventing a second. */
+#chat-convpic{width:28px;height:28px;flex:0 0 auto;border-radius:50%;padding:0;
+  overflow:hidden;border:2px solid var(--line);background:var(--bg);cursor:pointer;
+  display:grid;place-items:center}
+#chat-convpic img{width:100%;height:100%;object-fit:cover;display:block}
+#chat-convpic i{font-style:normal;font-size:12px;color:var(--dim)}
+.chat-convpics{padding:4px 0 6px}
 #chat-convtitle{flex:1;font:inherit;font-size:13px;color:var(--ink);background:var(--bg);
   border:1px solid var(--line);border-radius:6px;padding:5px 7px}
 .chat-src{margin:0;font-size:12px}
