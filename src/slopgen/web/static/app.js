@@ -196,6 +196,11 @@ const CFG = [
   ["llm", "js.model-profiles", "list"],
   ["tts", "js.voice-engine", "tts"],
   ["voices", "js.cloned-voices", "voices"],
+  // the voice filters: what one LINE is heard through. An ordinary named config, so it
+  // needs no section of its own — the generic list form is the whole editor here. The
+  // one with the sliders is in the montage room, where a filter can be heard on the
+  // line it is being put on rather than read off a form.
+  ["voicefx", "js.voicefx", "list"],
   ["keys", "js.api-keys", "keys"],
   ["telegram", "js.tg-account", "telegram"],
   ["characters", "js.characters", "list"],
@@ -2108,6 +2113,10 @@ const FIELD_LABELS = {
   motion: "js.photo-motion", continuous: "js.continuous-clip",
   enabled: "js.on", width_pct: "js.width", position: "js.position",
   background: "js.background", foreground: "js.foreground", name: "js.name",
+  // the voice filters (see media/voicefx.py); `description` and `name` above are theirs too
+  effects: "js.vfx.effects", bed: "js.vfx.bed", volume: "js.vfx.volume",
+  fade: "js.vfx.fade", level: "js.vfx.level", retired: "js.vfx.retired",
+  note: "js.vfx.note",
 };
 // A price is two words around a unit — "input price, $/M" — so its entry is the
 // pair, joined here rather than pre-joined in the table.
@@ -4372,6 +4381,7 @@ function commonOf(form) {
     tts_engine: f.get("tts_engine") || "",
     tts_rate: +(f.get("tts_rate") || 0),
     tts_deliveries: f.get("tts_deliveries") === "on",
+    tts_voicefx: f.get("tts_voicefx") === "on",
     subtitle_style: f.get("subtitle_style") || "",
     ad_mode: f.get("ad_mode") || "both",
     visual_notes: f.get("visual_notes") || "",
@@ -4695,9 +4705,17 @@ function moveButtons(on) {
 
 function reviewControl(r, i) {
   if (r.readonly) return `<div>${esc(r.value)}</div>`;
-  if (r.kind === "choice")
-    return `<select data-i="${i}">${["", ...r.options].map((o) =>
-      `<option${o === r.value ? " selected" : ""}>${esc(o)}</option>`).join("")}</select>`;
+  if (r.kind === "choice") {
+    // A row that may legitimately hold NOTHING lists the empty string among its own
+    // options — the voice-filter row does, a scene's generator does not — so the blank
+    // is read OUT of the vocabulary instead of being added to every list. It is drawn
+    // as «— нет —» rather than as an empty line, because an unlabelled gap at the top
+    // of a dropdown reads as a rendering fault and not as an answer.
+    const opts = r.options.includes("") ? r.options : ["", ...r.options];
+    return `<select data-i="${i}">${opts.map((o) =>
+      `<option value="${esc(o)}"${o === r.value ? " selected" : ""}>${
+        o ? esc(o) : esc(lab("w.none", "— нет —"))}</option>`).join("")}</select>`;
+  }
   return `<textarea data-i="${i}" rows="${r.value.length > 90 ? 3 : 1}">${esc(r.value)}</textarea>`;
 }
 

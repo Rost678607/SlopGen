@@ -1,0 +1,11 @@
+description = "вспоминает, а не слышит: далеко, глухо, большое пустое помещение"
+note = "the one card here that is not a machine. Useful on a single line in the middle of forty that are not filtered at all — which is what a per-line filter is for."
+bed = "roomtone"
+volume = 0.22
+fade = 0.25
+level = 1.0
+
+[effects]
+hall = 60
+muffled = 30
+thin = 10

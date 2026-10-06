@@ -5425,7 +5425,17 @@ class BreakpointScreen(Screen):
         i = self.queue[0]
         self.job = self.cp.load_job(i)
         stage = self.cp.review_stage(i)
-        self.doc = review.read(stage, self.job, self.mode) if self.job else review.Doc(stage=stage)
+        self.doc = (review.read(stage, self.job, self.mode, voicefx=self._voicefx())
+                    if self.job else review.Doc(stage=stage))
+
+    def _voicefx(self) -> list[str]:
+        """The voice filters a line may be heard through, by name — the catalogue the
+        `tts` document's filter row offers (see `review._tts_doc`). Read off the app's
+        store, because this module has none of its own."""
+        store = getattr(self.app, "store", None)
+        if store is None:
+            return []
+        return sorted(n for n, c in store.voicefx.items() if c.usable)
 
     def _is_sep(self, group: review.Group) -> bool:
         return group.head.field == review.PART_FIELD
@@ -5559,8 +5569,14 @@ class BreakpointScreen(Screen):
         if row.kind == "number":
             return Number(key, label, value=row.value, default=0.0).build(ns, t)
         if row.kind == "choice":
-            return Choice(key, label, options=[(o, o) for o in row.options],
-                          value=row.value or None).build(ns, t)
+            # A row that may legitimately hold NOTHING says so by listing the empty
+            # string among its options (the `tts` document's filter row does; a
+            # scene's generator does not). Only then does the dropdown get a blank to
+            # go back to — without it, a line heard as it was said would open showing
+            # the first filter in the base and be pinned to it by being read back.
+            blank = "" in row.options
+            return Choice(key, label, options=[(o, o) for o in row.options if o],
+                          value=row.value or None, allow_blank=blank).build(ns, t)
         if row.kind == "chips":
             return self._chip_widgets(index, row)
         large = row.value.count("\n") > 1 or len(row.value) > 300
@@ -5680,7 +5696,8 @@ class BreakpointScreen(Screen):
         # a fresh take means the stage must lay the timeline out again on resume;
         # it costs nothing — the sidecar cache we just wrote is what it will read
         self._forced_rerun = True
-        self.doc = review.read(self.doc.stage, self.job, self.mode)  # picks up the new length
+        # picks up the new length
+        self.doc = review.read(self.doc.stage, self.job, self.mode, voicefx=self._voicefx())
         self.notify(_label(self.app, "bp.regen_done").format(s=secs or 0.0, r=self._rate),
                     timeout=6)
         self.run_worker(self._rebuild(keep=index))

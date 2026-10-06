@@ -687,6 +687,84 @@ class VoiceConfig(BaseModel):
         return list(self.samples)
 
 
+class VoiceFxConfig(BaseModel):
+    """One saved voice filter: what a line is heard THROUGH, and what is heard behind it.
+
+    It lives in `configs/voicefx/<name>.toml`, with any audio it needs beside it — the
+    same arrangement a voice card and its recording have, and an effect and its
+    picture. What the fields MEAN is in :mod:`slopgen.media.voicefx`; this is only the
+    file, so that the config panel's save/rename/delete comes with it for free and the
+    operator's own filters are ordinary named configs rather than a block of settings
+    buried in a run.
+
+    It is a CARD and not a field on a scene for the reason a voice is: the thing being
+    named is reusable. «Плёнка» is one decision about what an old recording sounds
+    like, taken once, and then pointed at from forty lines across six videos — and
+    improving it later improves all of them (which is what the fingerprint in
+    `voicefx.stamp` is for: the lines pointing at a card that moved are re-derived, and
+    no others). A line therefore carries the card's NAME (`job.Scene.voice_fx`) rather
+    than a copy of its settings.
+
+    `description` is the one-liner — what it sounds like, or when to reach for it — and
+    it does two jobs. Every picker shows it beside the name, and it is also the whole of
+    what the casting pass reads (`llm/voicefx.py`, run when `tts_voicefx` is on): given
+    the script and this list, the writer picks the lines whose wording says the sound
+    came from somewhere else and names the card that fits. So a card nobody described is
+    still perfectly usable by hand and simply never gets chosen automatically — which is
+    the honest outcome, exactly as it is for an effect in the effects base: a model
+    cannot guess what «вар3» is supposed to mean.
+    """
+
+    name: str  # the file's stem, filled in by the loader
+    description: str = ""  # what it sounds like, in the operator's language
+    note: str = ""  # why it is in the base at all, for the operator's eye only
+    # the chain: {effect key: dose 1..100}, in `voicefx.CATALOGUE` order whatever order
+    # it was written in. Unknown keys and out-of-range doses are dropped when it is
+    # read (`voicefx.normalise`), because this file is hand-editable and a typo must
+    # cost one effect rather than a run.
+    effects: dict[str, int] = Field(default_factory=dict)
+    # What plays UNDER the line: one of the generated loops (`voicefx.BEDS`) by name,
+    # or a file beside this card. "" is no background at all, which is most cards.
+    bed: str = ""
+    volume: float = 0.35  # how loud the bed sits under the voice, 0-2
+    # How long the bed fades in and out, in seconds. It exists because a bed is per
+    # LINE: two consecutive lines carrying one bed restart it at the seam, and this is
+    # what makes that read as the room breathing instead of as an edit.
+    fade: float = 0.08
+    # The filtered voice's own level. These chains throw spectrum away and no makeup
+    # gain is right for every voice, so a card that still comes out quiet beside its
+    # neighbours is fixed with one number instead of by re-tuning the effects.
+    level: float = 1.0
+    retired: bool = False  # keep it on disk, stop offering it
+    # -- runtime only, filled by the loader; never written back to the TOML --
+    root: Path | None = Field(default=None, exclude=True)  # the voicefx folder
+
+    @property
+    def bed_file(self) -> Path | None:
+        """The loop beside this card, when `bed` names a FILE rather than one of the
+        generated sources.
+
+        Told apart by the dot: every generated bed is one bare word (`projector`,
+        `hiss`), and every file has an extension. That is a rule about naming rather
+        than a probe of the disk on purpose — a card naming `rain.wav` must say «the
+        file is missing» if it is missing, not quietly fall back to the generated
+        `rain` and leave the operator wondering why their recording is not being used.
+        """
+        if not self.bed or "." not in self.bed:
+            return None
+        return (self.root / self.bed) if self.root else Path(self.bed)
+
+    @property
+    def usable(self) -> bool:
+        """Worth offering: not retired, and it does something. A card whose only
+        content is a bed is as whole as one that is only a band-pass — which is why
+        this asks about both and `voicefx.active` is what decides whether a take
+        actually has to be re-rendered."""
+        if self.retired:
+            return False
+        return bool(self.effects) or bool(self.bed) or abs(self.level - 1.0) > 0.005
+
+
 # How well a card has to fit a stretch of narration before it is spent on it. The
 # matcher grades every stretch on this scale (see stages/picture), and the operator's
 # setting is the cutoff: everything at or above it is used, everything below it is a
@@ -1663,6 +1741,17 @@ class RunParams(BaseModel):
     # that wants them alternated, and the operator pinning three lines by hand at the
     # breakpoint is the other perfectly good way to use one.
     tts_deliveries: bool = False
+    # …and whether the writer picks the voice FILTERS the same way (see
+    # `llm/voicefx.py`): the lines whose wording says the sound came from somewhere
+    # else — quoted off a radio, announced across a square, remembered rather than
+    # heard — are pinned to a card out of `configs/voicefx/`, before anything is voiced.
+    #
+    # The same switch as the one above and off for the same reason, with one difference
+    # worth stating: this one is cheap to change your mind about. A delivery is baked
+    # into the take, so unpinning one costs a re-voicing; a filter is derived from the
+    # take beside it, so clearing every line the writer chose costs an ffmpeg pass each
+    # and no synthesis at all (see `stages/tts.refilter_one`).
+    tts_voicefx: bool = False
     # -- drama mode --------------------------------------------------------
     scenario: str = ""  # the drama's premise/plot; empty = the LLM invents one
     parts: int = 1  # drama only: split one drama into this many cliffhanger parts

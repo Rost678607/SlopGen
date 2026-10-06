@@ -1,0 +1,11 @@
+description = "по рации: сжато в кашу, шипение в канале, иногда пропадает"
+note = "the hiss is a bed and not part of the chain on purpose — it is a sound in the channel rather than something done to the voice, so its level is one number you can turn down."
+bed = "hiss"
+volume = 0.3
+fade = 0.06
+level = 0.9
+
+[effects]
+radio = 70
+crush = 20
+dropout = 25

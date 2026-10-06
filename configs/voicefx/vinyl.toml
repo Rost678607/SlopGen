@@ -1,0 +1,12 @@
+description = "как с пластинки: тёплая узкая полоса, треск иглы в дорожке"
+note = "no wobble here — a record runs steadier than film, and that is most of the difference between this card and `tape`."
+bed = "crackle"
+volume = 0.33
+fade = 0.12
+level = 1.08
+
+[effects]
+muffled = 25
+nasal = 10
+lofi = 15
+room = 15

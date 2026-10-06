@@ -2526,9 +2526,14 @@ RU.update({
     "web.mont.apply": "собрать и продолжить",
     "web.mont.blank": "на этом месте картинки ещё нет — выбери кадр слева в дорожке и назначь ему карточку",
     "web.mont.frame": "точный кадр",
+    # Этот кадр считает ffmpeg, и он нарочно похож на набросок под ним — поэтому он
+    # подписывается, иначе нажатие выглядит как будто ничего не произошло.
+    "js.mont.frame.wait": "считаю кадр…",
+    "js.mont.frame.shown": "кадр от ffmpeg · клик — убрать",
+    "js.mont.frame.failed": "кадр не посчитался",
     "web.mont.zoom": "масштаб",
     "web.mont.hint": "клик по слову — с него начинается новый кадр; кадр можно тянуть — он липнет к словам; ✕ на левом краю кадра — убрать этот стык. Самый первый кадр убрать нельзя: ✕ на нём просто снимает картинку. Эффекты тянутся свободно, строка — за шапку, пауза — за правый край",
-    "web.mont.fx.note": "ползунки меняют вид всего ролика. В окошке — набросок: зерно, трубку и разрывы на самом деле считает ffmpeg, поэтому рядом кнопка «точный кадр».",
+    "web.mont.fx.note": "по умолчанию ползунки меняют вид всего ролика; выбери кадр — и их можно поставить на него один. Соседние кадры с одинаковым видом идут одним куском, поэтому полоса ЭЛТ и мерцание плёнки не перезапускаются на каждой. В окошке — набросок: зерно, трубку и разрывы на самом деле считает ffmpeg, поэтому рядом кнопка «точный кадр».",
     "js.mont.shots": "кадров",
     "js.mont.left.unvoiced": "не озвучено строк:",
     "js.mont.left.uncovered": "без картинки кадров:",
@@ -2633,9 +2638,14 @@ EN.update({
     "web.mont.apply": "build it and go on",
     "web.mont.blank": "nothing is up here yet — pick a shot in the track and give it a card",
     "web.mont.frame": "the true frame",
+    # ffmpeg renders this one, and it is meant to look like the sketch underneath — so
+    # it says so, or pressing the button looks like nothing happened at all.
+    "js.mont.frame.wait": "rendering the frame…",
+    "js.mont.frame.shown": "ffmpeg's own frame · click to dismiss",
+    "js.mont.frame.failed": "that frame could not be rendered",
     "web.mont.zoom": "zoom",
     "web.mont.hint": "click a word and a shot starts there; drag a shot and it snaps from word to word; ✕ on a shot's left edge takes that cut back. The opening shot cannot be taken off the track: ✕ there just empties it. Effects drag freely, a line by its head strip, a pause by its right edge",
-    "web.mont.fx.note": "these change how the whole video looks. What you see here is a sketch: grain, the tube and the tearing are ffmpeg's arithmetic, which is what the true-frame button beside it is for.",
+    "web.mont.fx.note": "by default these change how the whole video looks; select a shot and they can be set on that shot alone. Neighbouring shots with the same look run as one stretch, so the tube's bar and the film's flicker do not restart at each. What you see here is a sketch: grain, the tube and the tearing are ffmpeg's arithmetic, which is what the true-frame button beside it is for.",
     "js.mont.shots": "shots",
     "js.mont.left.unvoiced": "lines with no voice:",
     "js.mont.left.uncovered": "shots with no picture:",
@@ -3790,4 +3800,244 @@ RU.update({
 })
 EN.update({
     "web.chat.cast.quiet": "not used anywhere",
+})
+
+# The voice filters: what ONE line is heard through (see media/voicefx.py). Three
+# groups of keys — the catalogue (`vfx.*`), the backgrounds (`vfx.bed.*`) and the
+# editor the montage room opens over itself (`web.vfx.*`) — plus the row the `tts`
+# breakpoint shows for the modes that have no such room.
+RU.update({
+    "bp.field.fx": "через что слышно",
+    "vfx.deep": "ниже голосом",
+    "vfx.thin": "выше голосом",
+    "vfx.nasal": "в нос",
+    "vfx.phone": "по телефону",
+    "vfx.radio": "по рации",
+    "vfx.megaphone": "из громкоговорителя",
+    "vfx.muffled": "через дверь",
+    "vfx.room": "в комнате",
+    "vfx.hall": "в большом зале",
+    "vfx.lofi": "цифровая каша",
+    "vfx.wobble": "плывёт скорость",
+    "vfx.crush": "перегруз",
+    "vfx.dropout": "пропадает",
+    "vfx.bed.projector": "киноплёночный проектор",
+    "vfx.bed.hiss": "шипение плёнки или канала",
+    "vfx.bed.hum": "гул сети, 50 Гц",
+    "vfx.bed.crackle": "треск иглы в дорожке",
+    "vfx.bed.rain": "дождь за окном",
+    "vfx.bed.roomtone": "пустая комната",
+    "web.vfx.head": "фильтры голоса",
+    "web.vfx.note": "Фильтр — это карточка, и выбирается она для ОДНОЙ строки: «по рации» "
+                    "говорит, кто говорит и откуда, а для этого оно должно быть не у всех. "
+                    "Озвучка при этом не трогается — исходная дорожка строки лежит рядом, "
+                    "и фильтр собирается из неё, так что перебрать шесть карточек стоит "
+                    "шесть проходов ffmpeg и ни одной генерации. Правка самой карточки "
+                    "расходится на все строки этого ролика, которые её носят.",
+    "web.vfx.new": "＋ новый",
+    "web.vfx.copy": "копия",
+    "web.vfx.del": "удалить фильтр",
+    "web.vfx.save": "сохранить",
+    "web.vfx.name": "название",
+    "web.vfx.description": "чем звучит",
+    "web.a.vfx.name": "плёнка",
+    "web.a.vfx.description": "как снятое на плёнку, со стрекотом проектора",
+    "web.vfx.chain": "что делается с голосом",
+    "web.vfx.bed": "что слышно позади",
+    "web.vfx.bed.note": "Фон играет под строкой ровно столько, сколько строка длится, и "
+                        "затухает на краях — поэтому на стыке двух строк с одним фоном "
+                        "слышно комнату, а не склейку. Все шесть генерируются самим "
+                        "ffmpeg; чтобы поставить свой звук, положи файл в "
+                        "configs/voicefx/ и впиши его имя с расширением.",
+    "web.vfx.bed.pick": "фон",
+    "web.vfx.volume": "громкость фона",
+    "web.vfx.fade": "затухание по краям, с",
+    "web.vfx.out": "на выходе",
+    "web.vfx.level": "громкость голоса",
+    "web.vfx.level.note": "Фильтры срезают спектр, и строка под фильтром может оказаться "
+                          "тише соседних — выравнивание в конце сборки считает всю дорожку "
+                          "целиком и эту разницу не уберёт. Каталог подогнан так, чтобы "
+                          "разница держалась в пределах двух единиц громкости; это — "
+                          "остаток, который зависит уже от конкретного голоса.",
+    "web.vfx.retired": "в архив: оставить файл, перестать предлагать",
+    "js.mont.fx.through": "слышно через",
+    "js.mont.fx.dry": "— как записано —",
+    "js.mont.fx.hint": "Применяется сразу и только к этой строке. Озвучка не переснимается: "
+                       "исходная дорожка лежит рядом, фильтр собирается из неё.",
+    "js.mont.fx.edit": "настроить карточку фильтра",
+    "js.mont.fx.laying": "накладываю фильтр…",
+    "js.mont.fx.laid": "готово — строка собрана заново",
+    "js.mont.fx.unsaved": "не сохранено",
+    "js.mont.fx.redone": "сохранено · строк пересобрано: {n}",
+    "js.mont.fx.needname": "у фильтра должно быть название",
+    "js.mont.fx.del-sure": "Удалить фильтр «{n}»? Файл карточки будет удалён.",
+    "js.mont.fx.del-worn": "строк этого ролика вернутся к записанному голосу:",
+    "js.mont.fx.deleted": "фильтр удалён",
+})
+EN.update({
+    "bp.field.fx": "heard through",
+    "vfx.deep": "deeper voice",
+    "vfx.thin": "higher voice",
+    "vfx.nasal": "through the nose",
+    "vfx.phone": "on the telephone",
+    "vfx.radio": "on the radio",
+    "vfx.megaphone": "out of a loudhailer",
+    "vfx.muffled": "through a door",
+    "vfx.room": "in a small room",
+    "vfx.hall": "in a big hall",
+    "vfx.lofi": "digital mush",
+    "vfx.wobble": "the speed wandering",
+    "vfx.crush": "overdriven",
+    "vfx.dropout": "cutting out",
+    "vfx.bed.projector": "a film projector",
+    "vfx.bed.hiss": "tape hiss, or an open channel",
+    "vfx.bed.hum": "mains hum at 50 Hz",
+    "vfx.bed.crackle": "a needle in a groove",
+    "vfx.bed.rain": "rain outside the window",
+    "vfx.bed.roomtone": "an empty room",
+    "web.vfx.head": "voice filters",
+    "web.vfx.note": "A filter is a card, and it is chosen for ONE line: «on the radio» "
+                    "says who is speaking and from where, which it cannot do if every "
+                    "line has it. The voice itself is untouched — the line's own take "
+                    "stays on disk and the filter is derived from it, so trying six "
+                    "cards costs six ffmpeg passes and not one synthesis. Editing the "
+                    "card reaches every line of this video wearing it.",
+    "web.vfx.new": "＋ new",
+    "web.vfx.copy": "copy",
+    "web.vfx.del": "delete filter",
+    "web.vfx.save": "save",
+    "web.vfx.name": "name",
+    "web.vfx.description": "what it sounds like",
+    "web.a.vfx.name": "tape",
+    "web.a.vfx.description": "as if shot on film, with the projector running",
+    "web.vfx.chain": "what happens to the voice",
+    "web.vfx.bed": "what is heard behind it",
+    "web.vfx.bed.note": "A background plays under the line for exactly as long as the "
+                        "line lasts, and fades at both ends — so the seam between two "
+                        "lines carrying one background reads as the room and not as an "
+                        "edit. All six are generated by ffmpeg itself; to use a sound of "
+                        "your own, put the file in configs/voicefx/ and name it here with "
+                        "its extension.",
+    "web.vfx.bed.pick": "background",
+    "web.vfx.volume": "background level",
+    "web.vfx.fade": "fade at both ends, s",
+    "web.vfx.out": "on the way out",
+    "web.vfx.level": "voice level",
+    "web.vfx.level.note": "These filters throw spectrum away, and a filtered line can end "
+                          "up quieter than its neighbours — the levelling at the end of "
+                          "the build measures the whole track at once and will not fix "
+                          "that. The catalogue is tuned to hold the difference inside "
+                          "about two loudness units; this is the remainder, which depends "
+                          "on the particular voice.",
+    "web.vfx.retired": "retire it: keep the file, stop offering it",
+    "js.mont.fx.through": "heard through",
+    "js.mont.fx.dry": "— as it was said —",
+    "js.mont.fx.hint": "Applies at once, and to this line only. Nothing is re-voiced: the "
+                       "line's own take stays on disk and the filter is derived from it.",
+    "js.mont.fx.edit": "edit the filter card",
+    "js.mont.fx.laying": "laying the filter on…",
+    "js.mont.fx.laid": "done — the line is rebuilt",
+    "js.mont.fx.unsaved": "not saved",
+    "js.mont.fx.redone": "saved · lines rebuilt: {n}",
+    "js.mont.fx.needname": "a filter needs a name",
+    "js.mont.fx.del-sure": "Delete the filter «{n}»? Its card file goes with it.",
+    "js.mont.fx.del-worn": "lines of this video going back to the voice as said:",
+    "js.mont.fx.deleted": "the filter is gone",
+})
+# …and the same cards in the config panel, which edits them through the generic list
+# form: the keys below are field names, so they are shared with every other kind that
+# happens to have a field of that name (see `FIELD_LABELS` in web/static/app.js).
+RU.update({
+    "js.voicefx": "Фильтры голоса",
+    "js.vfx.effects": "цепочка: {ключ: доза 1–100}",
+    "js.vfx.bed": "фон (projector / hiss / hum / crackle / rain / roomtone, либо файл рядом)",
+    "js.vfx.volume": "громкость фона",
+    "js.vfx.fade": "затухание фона по краям, с",
+    "js.vfx.level": "громкость голоса после фильтра",
+    "js.vfx.retired": "в архив",
+    "js.vfx.note": "заметка для себя",
+})
+EN.update({
+    "js.voicefx": "Voice filters",
+    "js.vfx.effects": "the chain: {key: dose 1-100}",
+    "js.vfx.bed": "background (projector / hiss / hum / crackle / rain / roomtone, or a file beside it)",
+    "js.vfx.volume": "background level",
+    "js.vfx.fade": "background fade at both ends, s",
+    "js.vfx.level": "voice level after the filter",
+    "js.vfx.retired": "retired",
+    "js.vfx.note": "a note to yourself",
+})
+RU.update({"js.mont.fx.newcard": "— новая карточка —"})
+EN.update({"js.mont.fx.newcard": "— a new card —"})
+# …and the switch that lets the writer pick them (see llm/voicefx.py), which is the
+# delivery switch one question over and is worded against it on purpose: one is about
+# HOW a line is said, the other about WHERE it came from.
+RU.update({
+    "web.f.voicefx": "фильтры голоса расставит нейронка",
+    "web.voicefx.note": "Один проход по готовому сценарию перед озвучкой: находит "
+                        "строки, в самом тексте которых сказано, что звук пришёл "
+                        "откуда-то ещё — процитировано из рации, объявлено через "
+                        "громкоговоритель, вспоминается, а не слышится, — и вешает на "
+                        "них карточку из configs/voicefx/. Берёт только то, что "
+                        "написано: просто напряжённая или громкая строка фильтра не "
+                        "получает, и больше четверти ролика под фильтр не уйдёт. "
+                        "Выбранное руками не трогает, а своё — переснимает на каждом "
+                        "заходе в озвучку, и это дёшево: фильтр снимается копией файла, "
+                        "а не переозвучкой.",
+    "js.mont.fx.byai": "фильтр выбрала нейронка — при следующем прогоне озвучки может "
+                       "передумать; выбери сам, и останется твой",
+})
+EN.update({
+    "web.f.voicefx": "let the writer cast the voice filters",
+    "web.voicefx.note": "One pass over the finished script before anything is voiced: it "
+                        "finds the lines whose own wording says the sound came from "
+                        "somewhere else — quoted off a radio, announced over a "
+                        "loudspeaker, remembered rather than heard — and pins each to a "
+                        "card from configs/voicefx/. It goes by what is written: a line "
+                        "that is merely tense or loud gets nothing, and no more than a "
+                        "quarter of the video may be filtered. It never touches a filter "
+                        "you chose yourself, and re-decides its own on every entry to "
+                        "the voicing stage — which is cheap, because taking a filter off "
+                        "is a file copy and not a re-voicing.",
+    "js.mont.fx.byai": "the writer chose this filter — the next voicing run may change "
+                       "its mind; pick one yourself and it stays yours",
+})
+# The look panel's target switch: the whole run, or one shot (see `FrameShot.look`).
+RU.update({
+    "js.mont.look.run": "весь ролик",
+    "js.mont.look.shot": "кадр {n}",
+    "js.mont.look.inherit": "как во всём ролике",
+    "js.mont.look.following": "кадр пока берёт фильтры прогона — подвинь ползунок, и они станут его собственными",
+    "js.mont.look.own": "свои фильтры",
+})
+EN.update({
+    "js.mont.look.run": "the whole video",
+    "js.mont.look.shot": "shot {n}",
+    "js.mont.look.inherit": "back to the video's",
+    "js.mont.look.following": "this shot still takes the run's filters — move a slider and they become its own",
+    "js.mont.look.own": "its own filters",
+})
+RU.update({
+    "js.mont.look.pic": "картинка",
+    "js.mont.look.none": "без фильтров",
+    "js.mont.look.edit": "ползунки для этого кадра — в панели «монтажные фильтры» слева",
+    "js.mont.look.hint": "Каким зритель видит этот кадр. По умолчанию — как весь ролик; "
+                         "поставь «свои фильтры», и ползунки слева будут задавать его один. "
+                         "Вид — свойство картинки, поэтому он и привязан к кадру, а не к "
+                         "строке: строки режутся по дыханию рассказчика и прошли бы ровно "
+                         "посередине кадра. Соседние кадры с одинаковым видом идут одним "
+                         "куском, поэтому полоса ЭЛТ и мерцание плёнки на них не "
+                         "перезапускаются.",
+})
+EN.update({
+    "js.mont.look.pic": "picture",
+    "js.mont.look.none": "no filters",
+    "js.mont.look.edit": "the sliders for this shot are in the «montage filters» panel on the left",
+    "js.mont.look.hint": "How this shot looks. The video's own look by default; switch it to "
+                         "«its own filters» and the sliders on the left set this shot alone. "
+                         "The look belongs to the shot and not to the line because it is a "
+                         "property of the picture: lines are cut where the narrator breathes "
+                         "and would change it in the middle of a still. Neighbouring shots "
+                         "with the same look run as one stretch, so the tube's bar and the "
+                         "film's flicker do not restart on them.",
 })

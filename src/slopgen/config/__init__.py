@@ -45,6 +45,7 @@ from .models import (
     ShapesConfig,
     VisualsConfig,
     VoiceConfig,
+    VoiceFxConfig,
 )
 
 __all__ = [
@@ -92,4 +93,5 @@ __all__ = [
     "ShapesConfig",
     "VisualsConfig",
     "VoiceConfig",
+    "VoiceFxConfig",
 ]

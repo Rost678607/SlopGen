@@ -41,6 +41,28 @@ everything it leaves alone keeps the empty spec and therefore the card's default
 the operator made by hand is never overwritten by it (`Scene.voice_auto`), and an
 automatic pin on a line whose text has since changed is taken back.
 
+**What a line is heard THROUGH is per line too, and it is never baked in.** A voice
+filter (`job.Scene.voice_fx`, catalogue in :mod:`slopgen.media.voicefx`) is a card the
+line names — a telephone band, a room, a projector rattling behind the words — and the
+take it produces is DERIVED: the synthesizer's own voice is kept beside it as
+``scene_NN.dry.<ext>``, exactly as the unstretched reading is kept as
+``scene_NN.raw.<ext>``, and the filter is laid over it by one ffmpeg pass
+(:func:`_settle_fx`). So switching a line's filter, or taking it off, costs that one
+pass and no synthesis — which is the whole point on a sampled cloning engine, where
+generating again would hand back a different reading and lose the take the operator had
+just approved. The filter is deliberately absent from the voiced-line cache key for the
+same reason: a changed filter has nothing to re-voice, so a re-run of this stage
+re-renders exactly the lines whose card moved and speaks none of them.
+
+**And who chooses the filter can be the writer too.** With `tts_voicefx` on, one pass
+over the finished script (`llm/voicefx.py`) finds the lines whose wording says the
+sound came from somewhere else — quoted off a radio, announced across a square,
+remembered rather than heard — and pins each to a card, before anything is voiced
+(:func:`_cast_voicefx`). It is the delivery pass one question over and obeys the same
+rule about whose decision is whose (`Scene.voice_fx_auto`), with one difference worth
+stating: taking back a delivery costs a re-voicing, while taking back a filter costs a
+copy.
+
 **What is spoken is not always what is written.** A few words come out wrong no
 matter how they are spelled in the script — a Cyrillic acronym whose letters form
 a pronounceable syllable gets read as that syllable, so «НЛО» is said "нло"
@@ -68,6 +90,7 @@ import random
 import re
 import shutil
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -285,6 +308,43 @@ def _store_words(audio: Path, text: str, voice: str, rate: str, engine: str,
         pass
 
 
+def _cached_fx(audio: Path) -> str:
+    """Which filter the take beside this sidecar is carrying, as the stamp that was
+    written when it was laid on (`media.voicefx.stamp`).
+
+    Empty for a take nothing was laid on — which includes every take made before voice
+    filters existed, and that is the honest answer about them: the file is the voice as
+    it was said."""
+    try:
+        data = json.loads(_cache_path(audio).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    return str(data.get("fx", "")) if isinstance(data, dict) else ""
+
+
+def _restamp(audio: Path, fx: str) -> None:
+    """Record which filter the take now carries, leaving the word timings beside it
+    alone.
+
+    A read-modify-write rather than a `_store_words`, because the sidecar holds two
+    claims that are withdrawn at different moments: the words go stale when the LINE
+    changes, and the filter when the CARD does. Writing both together would mean a
+    filter change had to re-derive timings it has not touched — a voice filter is
+    forbidden to change a take's length precisely so that it never does."""
+    path = _cache_path(audio)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            data = {}
+    except (OSError, ValueError):
+        data = {}
+    data["fx"] = fx
+    try:
+        path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    except OSError:  # a missing stamp only costs one re-render
+        pass
+
+
 # The rate a RAW take is recorded at in its sidecar: none at all. It is the model's own
 # pace by definition, and keying it on the rate that was asked for would make the one
 # file that is independent of the question look like an answer to it.
@@ -310,6 +370,197 @@ def lay_rate(raw: Path, out: Path, factor: float) -> None:
         shutil.copy2(raw, out)
         return
     stretch_audio(raw, out, factor)
+
+
+def dry_path(take: Path) -> Path:
+    """Where a line's UNFILTERED voice lives: `scene_03.dry.mp3` beside `scene_03.mp3`.
+
+    The same arrangement `raw_path` makes for the pace, one step further down the same
+    chain, and made for the same reason. The take the pipeline reads is DERIVED: from
+    the raw one by the speed, and from the dry one by the filter the line names
+    (`job.Scene.voice_fx`). So switching a line from «плёнка» to «рация», or taking the
+    filter off, costs one ffmpeg pass over one line — not a synthesis, which on a
+    sampled cloning engine would hand back a different reading of the words and lose
+    the take the operator had just approved.
+
+    It exists only for a line that is actually filtered. An unfiltered take IS the
+    voice, so there is nothing to keep beside it and nothing to derive: the file is the
+    one the synthesizer wrote, exactly as it was before any of this (see
+    :func:`_settle_fx`)."""
+    return take.with_name(take.stem + ".dry" + take.suffix)
+
+
+def _forget_dry(take: Path) -> None:
+    """Withdraw the voice kept beside a take, because the take is about to be rewritten
+    from further up the chain.
+
+    Called wherever a NEW voice lands under this name — a synthesis, a re-stretch, a
+    recording handed over. The dry file is a claim that the take beside it was derived
+    from it, and a stale one is the one way this whole arrangement could go wrong: the
+    next filter change would be derived from a reading nobody asked for any more, and
+    the fresh take would be gone."""
+    dry_path(take).unlink(missing_ok=True)
+
+
+def fx_card(store, scene):
+    """The filter THIS line is heard through, or None.
+
+    None covers every reason a line is heard as it was said: it names nothing, it names
+    a card that has been deleted, it names one that has been retired, and it names one
+    that does nothing at all (`voicefx.active`). All four mean the same thing to
+    everything downstream — leave the voice alone — and collapsing them here is what
+    keeps that from being four branches in four places."""
+    from ...media import voicefx
+
+    name = (getattr(scene, "voice_fx", "") or "").strip()
+    card = store.voicefx.get(name) if name else None
+    return card if card is not None and voicefx.active(card) else None
+
+
+@dataclass(frozen=True)
+class Placement:
+    """Where one line sits in its RUN — the stretch of consecutive lines carrying the
+    same filter card. It is what a bed needs to carry across a line boundary instead of
+    starting again at each one (see `media.voicefx.plan`)."""
+
+    at: float = 0.0       # seconds from the run's start to this line's start
+    opens: bool = True    # it is the first line of the run, so the bed fades in
+    closes: bool = True   # …and the last, so it fades out
+
+    @property
+    def key(self) -> str:
+        """What a stamp records about it. Rounded to the millisecond, because that is
+        the precision the bed's own clock is written at: a position that differed in
+        the sixth decimal would re-render every take after any edit at all."""
+        return f"{self.at:.3f}{'<' if self.opens else '-'}{'>' if self.closes else '-'}"
+
+
+LONE = Placement()
+
+
+def fx_runs(scenes, store) -> dict[int, Placement]:
+    """Where each filtered line sits in its run, for every line that has a filter.
+
+    A run is a maximal stretch of consecutive scenes naming the SAME card. Two things
+    about how it is counted are decisions rather than details:
+
+    * **A pause does not end a run.** A projector does not stop because the narrator
+      did, so a pause between two `плёнка` lines leaves them in one run and the clock
+      goes on counting through it. The bed is silent for the pause's length — there is
+      no take there to put it on — and resumes where it would have been, which is a gap
+      rather than a restart. A line in the middle on a DIFFERENT card does end the run,
+      because then something else is genuinely being heard.
+    * **The clock is the line's own length, not the timeline's.** `audio_src_duration`
+      is what the take is, and the take is what the bed is laid on; in a drama the
+      scene's `duration` is the clip's and the voice is stretched to it afterwards, so
+      counting that would walk the bed out of step with the files it is written into.
+    """
+    runs: dict[int, Placement] = {}
+    i = 0
+    scenes = list(scenes)
+    while i < len(scenes):
+        card = fx_card(store, scenes[i])
+        if card is None:
+            i += 1
+            continue
+        # how far the run reaches: the same card, with pauses passed over
+        end = i
+        for j in range(i + 1, len(scenes)):
+            if scenes[j].unvoiced:
+                continue
+            if fx_card(store, scenes[j]) is not card:
+                break
+            end = j
+        members = [k for k in range(i, end + 1) if not scenes[k].unvoiced]
+        at = 0.0
+        for n, k in enumerate(members):
+            runs[k] = Placement(at=at, opens=n == 0, closes=k == members[-1])
+            at += max(float(scenes[k].audio_src_duration or scenes[k].duration), 0.0)
+            # the pauses swallowed between this line and the next also pass under the
+            # bed, so what comes after them is in phase with what came before
+            for gap in range(k + 1, members[n + 1] if n + 1 < len(members) else end + 1):
+                at += max(float(scenes[gap].duration), 0.0)
+        i = end + 1
+    return runs
+
+
+def _settle_fx(scene, take: Path, store, place: Placement = LONE) -> bool:
+    """Make the take agree with the filter the line names. Returns whether anything
+    was actually done.
+
+    This is the one place a filter is ever laid on, and it is deliberately idempotent:
+    it compares the stamp the take carries against the one the card would produce
+    (`voicefx.stamp`) and does nothing when they agree. That is what makes the voicing
+    stage safe to walk into again — a re-run after the operator changed the filter on
+    five lines re-renders exactly those five from the voice already on disk and
+    synthesizes nothing.
+
+    `place` is where the line sits in its run (:func:`fx_runs`), and it is part of the
+    stamp for the same reason the card's own settings are: a line whose NEIGHBOURS
+    changed is heard differently even though nothing about it did. Inserting a line in
+    the middle of a run of `плёнка` moves every line after it along the bed's clock,
+    and each of those has to be re-derived or the background jumps where the new line
+    was put in.
+
+    The three states it moves between:
+
+    * **no dry file.** The take IS the voice — either it was just synthesized, or it
+      predates all of this. With no filter wanted there is nothing to do and, more
+      importantly, nothing to keep: an unfiltered line leaves exactly the files it
+      always did. With a filter wanted, the voice is copied aside first, because from
+      here on it is the thing everything is derived from and it must survive.
+    * **a dry file and a filter.** Render it, which is one ffmpeg pass.
+    * **a dry file and no filter.** The operator took the filter off: put the voice
+      itself back under the take's name. The dry copy stays where it is — the next
+      filter they try is one pass away, and it costs one file per filtered line.
+    """
+    from ...media import ffmpeg, voicefx
+
+    card = fx_card(store, scene)
+    want = voicefx.stamp(card)
+    if want:
+        want = f"{want}@{place.key}"
+    dry = dry_path(take)
+    if not dry.is_file():
+        if not want or not take.is_file():
+            return False
+        shutil.copy2(take, dry)
+    elif take.is_file() and _cached_fx(take) == want:
+        return False
+    if want:
+        ffmpeg.voice_fx(dry, take, card, duration_of(dry),
+                        at=place.at, opens=place.opens, closes=place.closes)
+    else:
+        shutil.copy2(dry, take)
+    _restamp(take, want)
+    log.info("voice filter on %s: %s", take.name, want or "none")
+    return True
+
+
+def settle_fx(job: VideoJob, store) -> int:
+    """Make every take in the video agree with the filter its line names, and say how
+    many had to be re-derived.
+
+    The unit of work is the WHOLE video and not one line, which is the thing runs cost
+    and the thing they are worth. A bed belongs to a stretch of lines (:func:`fx_runs`),
+    so touching one line can move the bed under its neighbours — insert a line into a
+    run of `плёнка` and everything after it is at another point on the projector's
+    clock. Settling line by line could not see that; settling the list can, and it is
+    nearly free to do so, because `_settle_fx` compares a stamp and does nothing on a
+    take that already agrees. A forty-line video where one filter changed is one ffmpeg
+    pass and thirty-nine file reads.
+    """
+    runs = fx_runs(job.scenes, store)
+    done = 0
+    for i, scene in enumerate(job.scenes):
+        if scene.unvoiced or not scene.audio:
+            continue
+        take = Path(scene.audio)
+        if not take.is_file():
+            continue
+        if _settle_fx(scene, take, store, runs.get(i, LONE)):
+            done += 1
+    return done
 
 
 def rescale(words: list[dict], factor: float) -> list[dict]:
@@ -526,6 +777,11 @@ class _Speaker:
         # the model writes where it speaks: into the take itself when the rate was its
         # to apply, and into the raw one when the pace is still to be put on
         heard = raw_path(path) if stretch else path
+        # Whatever filtered take was under this name is about to be replaced by a fresh
+        # voice, so the voice kept beside it is not that voice any more (see
+        # :func:`_forget_dry`). Withdrawn here rather than after, for the same reason
+        # the sidecar below is: a claim must never outlive the file it describes.
+        _forget_dry(path)
         # The sidecar is the CLAIM that the file beside it is this line, said this way.
         # It is withdrawn before the file is overwritten and only made again once the
         # take has been accepted — because a take this engine rolls can be rejected
@@ -597,7 +853,14 @@ def _synth_scene(scene, index: int, path: Path, speaker: "_Speaker", rate: str,
 
     WHO says it is the line's own business too (`Scene.voice`): a line pinned to
     another recording of the same person is voiced with that one, and since the cache
-    key carries the recording, re-pinning a line re-voices that line alone."""
+    key carries the recording, re-pinning a line re-voices that line alone.
+
+    What the line is heard THROUGH is NOT laid on here, and the reason is worth saying:
+    it depends on the line's NEIGHBOURS (a background runs across a stretch of lines —
+    see :func:`fx_runs`), and this function is handed one line. So the filters are
+    settled over the whole video afterwards, by :func:`settle_fx`, which is also where
+    the cache earns its keep a second time: a filter is derived from the voice rather
+    than spoken into it, so a line whose filter changed has nothing to re-synthesize."""
     table = table or {}
     spoken = _spoken(scene.text, table)
     voice = speaker.voice_for(scene.voice)
@@ -730,11 +993,20 @@ def restretch_one(job: VideoJob, ctx: AppContext, index: int, rate: int) -> floa
     if not words:
         return None            # the raw take is not of THIS line any more
     factor = rate_factor(rate_str(int(rate)))
+    # the take is about to be re-derived from the raw one, so the voice kept beside it
+    # for the filter is a reading at the OLD pace and no longer describes it
+    _forget_dry(take)
     lay_rate(raw, take, factor)
     scene.tts_rate = int(rate)
     scene.audio = take
     out = rescale(words, factor)
     _store_words(take, spoken, voice.cache_key, rate_str(int(rate)), engine, out)
+    # …and the filters go back on, over the new pace. Both are derived and the order is
+    # fixed: the pace is part of the reading, the filter is what the reading is heard
+    # through. The WHOLE video and not this line, because a new length moves the bed
+    # under every line after it in the same run (`fx_runs`).
+    scene.audio_src_duration = duration_of(take)
+    settle_fx(job, ctx.store)
     scene.words = [Word(text=w["text"], start=w["start"], end=w["end"]) for w in out]
     seconds = duration_of(take)
     scene.audio_src_duration = seconds
@@ -742,6 +1014,70 @@ def restretch_one(job: VideoJob, ctx: AppContext, index: int, rate: int) -> floa
         scene.duration = seconds
     log.info("TTS scene %d: re-stretched to %s without voicing it again",
              index, rate_str(int(rate)))
+    return seconds
+
+
+def _adopt_delivered(job: VideoJob, index: int, scene) -> None:
+    """Move a recording that was delivered from OUTSIDE the run's own folder in, as
+    this line's dry voice, so a filter can be derived from it.
+
+    The manual inbox, a file the operator handed over — those are the only copy of
+    themselves and are never written over. The filtered take belongs to the run, so it
+    is written under the run's `tts/` by the name this line's position gives it, and
+    the delivered file stays exactly where it was put.
+
+    Does nothing for a take that already lives there, which is every synthesized line.
+    """
+    take = Path(scene.audio)
+    if take.parent == Path(job.workdir) / "tts":
+        return
+    dest = audio_path(job, index, take.suffix.lower() or ".wav")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    # the take goes first and the recording becomes the dry voice: with nothing under
+    # the take's name, `_settle_fx` cannot take a stamp left by an earlier pass for a
+    # description of a derivation that no longer exists
+    dest.unlink(missing_ok=True)
+    shutil.copy2(take, dry_path(dest))
+    scene.audio = dest
+
+
+def refilter_one(job: VideoJob, ctx: AppContext, index: int,
+                 card: str | None = None) -> float | None:
+    """Change what ONE line is heard through, without voicing it again. Returns the
+    take's length afterwards, or None when there is no take to filter.
+
+    `card` is the name of a voice filter (`config.models.VoiceFxConfig`); `""` takes
+    the filter off and puts the voice itself back; None re-settles whatever the line
+    already names, which is how an edit to the CARD reaches the lines pointing at it.
+
+    This is `restretch_one`'s sibling and it exists for the same reason: the thing
+    being asked about was never part of the performance. The pace is an `atempo` over
+    the reading, the filter is a chain over it, and both are derived from a file that
+    is still on disk — so the answer here is one ffmpeg pass and the take the operator
+    listened to and liked is the take they keep. Re-voicing would be a fresh roll of a
+    sampled model and a different reading of the same words.
+
+    The length is returned rather than assumed unchanged. A voice filter is forbidden
+    to change it (see :mod:`slopgen.media.voicefx`), and the measured difference is
+    five microseconds of container rounding — but the montage room moves the clock on
+    this number, and a clock that is re-measured cannot drift away from the file the
+    way one that is trusted can."""
+    scene = job.scenes[index]
+    if scene.unvoiced or not scene.audio:
+        return None
+    if card is not None:
+        scene.voice_fx = str(card)
+    if not Path(scene.audio).is_file():
+        return None
+    _adopt_delivered(job, index, scene)
+    take = Path(scene.audio)
+    # the whole video, because this line joined one run and left another, and both have
+    # to be re-counted along the bed's clock (see `settle_fx`)
+    settle_fx(job, ctx.store)
+    seconds = duration_of(take)
+    scene.audio_src_duration = seconds
+    if not ctx.is_beats:
+        scene.duration = seconds
     return seconds
 
 
@@ -783,9 +1119,17 @@ def _run_manual(job: VideoJob, ctx: AppContext) -> None:
             raw_words = _as_written(aligner.align(path, spoken, align_dir, src), table)
             _store_words(path, spoken, str(path.name), "manual", "manual", raw_words)
         _finish_scene(scene, path, src, raw_words, ctx, offset)
+        # The recording itself is never written over: a line that wants a filter gets
+        # its derivation under the run's own folder and the operator's file becomes its
+        # dry voice. Only the MOVE happens here, per line; the filters themselves are
+        # laid after the loop, for the reason `settle_fx` gives.
+        if fx_card(ctx.store, scene) is not None:
+            _adopt_delivered(job, i, scene)
         if not ctx.is_beats:
             offset += scene.duration
         ctx.progress("tts", i + 1, total)
+    # …and the filters over the finished list, for the reason `settle_fx` gives
+    settle_fx(job, ctx.store)
 
 
 def _finish_scene(scene, path: Path, src: float, raw_words: list[dict],
@@ -875,6 +1219,62 @@ def _cast_deliveries(job: VideoJob, ctx: AppContext, engine: str) -> None:
              len(cast), card.default_name, changed)
 
 
+def _cast_voicefx(job: VideoJob, ctx: AppContext) -> None:
+    """Let the writer choose which lines are heard through something, before anything
+    is voiced.
+
+    `_cast_deliveries` one question over, with the same shape and the same three rules
+    (see `llm/voicefx.py`): only the EXCEPTIONS, only into `Scene.voice_fx`, and never
+    over a pin the operator made themselves (`Scene.voice_fx_auto`).
+
+    It runs on every entry to the stage rather than once, because what it reads is the
+    script and the script is what the breakpoint before this lets the operator rewrite.
+    An automatic pin on a line that no longer reads as a transmission is therefore taken
+    back, and that is cheap in a way the delivery pass is not: a delivery is baked into
+    the take, so taking one back is a re-voicing, while a filter is derived from the
+    voice beside it, so taking one back is a copy (`_settle_fx`).
+
+    Deliberately placed BEFORE the voicing loop all the same. Not for cost — it costs
+    one ffmpeg pass either way — but so that what comes out of the first run of the
+    stage is already the video as it will be heard, rather than a video that changes
+    under the operator while they are listening to it.
+
+    Silent about everything it cannot do: no filters on this machine, no lines, no
+    writer available. All of them mean the video is heard in one voice, which is what it
+    would have been anyway."""
+    if not ctx.params.tts_voicefx:
+        return
+    cards = sorted(n for n, c in ctx.store.voicefx.items() if c.usable)
+    if not cards:
+        return
+    from ...llm import voicefx as fx_ai
+
+    # a pause says nothing and a silent line is never heard, so neither is a thing to
+    # filter — `fixed` rather than filtered out, so the indices the model answers on
+    # stay the scenes' own
+    fixed = {i for i, sc in enumerate(job.scenes)
+             if sc.unvoiced or (sc.voice_fx and not sc.voice_fx_auto)}
+    chosen = fx_ai.cast(
+        ctx.llm,
+        [sc.text for sc in job.scenes],
+        cards,
+        lambda name: ctx.store.voicefx[name].description,
+        fixed=fixed,
+        lang=ctx.params.lang,
+    )
+    changed = 0
+    for i, scene in enumerate(job.scenes):
+        if i in fixed:
+            continue
+        want = chosen.get(i, "")
+        if want != scene.voice_fx:
+            changed += 1
+        scene.voice_fx = want
+        scene.voice_fx_auto = bool(want)
+    log.info("voice filters: the writer put %d line(s) through one (%d changed since "
+             "last time)", len(chosen), changed)
+
+
 def run(job: VideoJob, ctx: AppContext) -> None:
     audio_dir = job.workdir / "tts"
     audio_dir.mkdir(parents=True, exist_ok=True)
@@ -897,6 +1297,10 @@ def run(job: VideoJob, ctx: AppContext) -> None:
     # a line the writer recasts is voiced with that recording on the first attempt and
     # not re-voiced afterwards
     _cast_deliveries(job, ctx, speaker.id)
+    # …and the same question about what each line is heard THROUGH, for the same reason
+    # and in the same place: a line the writer filters comes out of the first take
+    # already filtered, instead of changing under the operator while they listen to it.
+    _cast_voicefx(job, ctx)
     table = _pronounce(ctx)
     offset = 0.0
     total = len(job.scenes)
@@ -918,4 +1322,9 @@ def run(job: VideoJob, ctx: AppContext) -> None:
         if not ctx.is_beats:
             offset += scene.duration
         ctx.progress("tts", i + 1, total)
+    # The filters last, over the finished list. After the loop and not inside it,
+    # because a background belongs to a RUN of lines and the run is not known until
+    # every line's length is (see `settle_fx`). Everything already in place costs a
+    # stamp comparison, so a re-entry on a video nobody re-filtered does nothing at all.
+    settle_fx(job, ctx.store)
     # the target duration is a hint for the LLM, not a hard cap — accept whatever came out

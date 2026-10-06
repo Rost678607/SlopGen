@@ -1,0 +1,10 @@
+description = "по телефону: полоса 300–3400, прижато автоматикой"
+note = "the plain one. A dose of 70 is a landline; drop it to 40 and it is a good mobile connection."
+bed = ""
+volume = 0.35
+fade = 0.08
+level = 1.0
+
+[effects]
+phone = 70
+dropout = 10

@@ -61,6 +61,9 @@ async function openMontage(id, title, video = 0) {
   try {
     d = await api(`/api/runs/${id}/montage?video=${video}`);
   } catch (e) { return say(e.message, true); }
+  // `takeDoc` is not used here on purpose: opening is the one moment with no previous
+  // document to compare against, and the element may still be holding the last run's
+  // track. So the track is loaded outright rather than conditionally.
   MONT = { id, title, video, doc: d };
   montSel = null;
   montPics.clear();
@@ -155,9 +158,9 @@ function renderStages() {
   });
   mq("#mont-byhand").onchange = async (e) => {
     try {
-      MONT.doc = await api(`/api/runs/${MONT.id}/montage/settings`, { method: "PUT",
+      takeDoc(await api(`/api/runs/${MONT.id}/montage/settings`, { method: "PUT",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ video: MONT.video, frame_by_hand: e.target.checked }) });
+        body: JSON.stringify({ video: MONT.video, frame_by_hand: e.target.checked }) }));
     } catch (err) { return say(err.message, true); }
     renderStages();
   };
@@ -249,9 +252,8 @@ async function press(stage) {
     return say(e.message, true);
   }
   rail.classList.remove("busy");
-  MONT.doc = d;
+  takeDoc(d);
   montSel = null;
-  reloadVoice();
   renderMont();
   say(d.waiting ? d.waiting : `${word(stage)} — ${lab("js.mont.stage-done")}`, !!d.waiting);
 }
@@ -312,6 +314,8 @@ function renderMont() {
   renderSilent();
   bindLanes();
   renderInspector();
+  // the look panel points at whatever is selected, so it follows the selection
+  buildFxRows();
   showSelection();
   bindCanvasDrag();
   reloadMusic();
@@ -415,6 +419,7 @@ function shotHTML(s, i, mine = [], rows = null) {
     ${s.move ? `<div class="kind">${esc((s.move.keys || []).length >= 2
         ? lab("mv.keys") : lab("mv." + s.move.kind, s.move.kind))}</div>` : ""}
     ${s.pinned ? `<span class="pin">✔</span>` : ""}
+    ${s.own_look ? `<span class="ownlook" title="${esc(lab("js.mont.look.own"))}">◐</span>` : ""}
     <button class="uncut" title="${esc(lab(opensRegion(s) ? "js.mont.unpicture"
                                                             : "js.mont.uncut"))}">✕</button>
     ${fired}
@@ -444,7 +449,10 @@ function lineHTML(sc) {
       // the WRITER made is marked, because it is the one a re-voicing of the video may
       // take back on its own (see `Scene.voice_auto`) — and because an intonation you do
       // not remember choosing should say where it came from.
-      sc.voice ? ` · ${esc(sc.voice)}${sc.voice_auto ? " ∿" : ""}` : ""}</div>
+      sc.voice ? ` · ${esc(sc.voice)}${sc.voice_auto ? " ∿" : ""}` : ""}${
+      // …and what it is heard THROUGH, marked the same way and for the same reason:
+      // an automatic pin is the one a re-run of the voicing stage may take back
+      sc.fx ? ` · ${esc(sc.fx)}${sc.fx_auto ? " ∿" : ""}` : ""}</div>
     <div class="words">${words}</div>
   </div>`;
 }
@@ -1031,10 +1039,33 @@ async function send(path, opts, after) {
   try {
     d = await api(`/api/runs/${MONT.id}/montage${path}`, o);
   } catch (e) { return say(e.message, true); }
-  MONT.doc = d;
+  takeDoc(d);
   if (after) after(d);
   renderMont();
   return d;
+}
+
+// Put a new document in, and let the SOUND follow it when the sound has changed.
+//
+// Almost every edit in this room answers with the whole document, and some of those
+// edits move the voice track: a line re-voiced, one deleted, one filtered, a pause
+// dragged longer. The preview plays ONE file (`/montage/audio`), so a track that moved
+// and an <audio> element still holding the old file is a screen drawing a timeline the
+// sound does not agree with — and nothing in the room says so, you just hear the
+// picture slide away from the words.
+//
+// It used to be answered by remembering to call `reloadVoice()` at each call site that
+// might have moved it, which is a rule with no mechanism under it: a pause had three
+// controls and none of them remembered, so pauses were silent in the preview until the
+// room was left and re-entered. So the question is asked of the DOCUMENT instead. The
+// server sends a digest of what it would build the track out of (`montage.voice_recipe`
+// — the same string it decides whether to rebuild the file on), and a change in it is
+// exactly the set of edits that move the sound: nothing else re-downloads the file, and
+// nothing that moves it is forgotten, including whatever is added to this room next.
+function takeDoc(d) {
+  const was = MONT.doc && MONT.doc.track;
+  MONT.doc = d;
+  if (d && d.track !== was) reloadVoice();
 }
 
 // -------------------------------------------------------------------- effects
@@ -1543,6 +1574,7 @@ function shotInspector() {
     ${s.card ? `<button class="ghost" id="i-clear">${lab("js.mont.clearshot")}</button>` : ""}
   </div>
   ${s.said ? `<p class="said"><span class="dim">${lab("js.said-here")}</span> ${esc(s.said)}</p>` : ""}
+  <div class="row">${lookRow(s)}</div>
   ${moveBlock(s, card, targets)}
   <h4 class="insp-h">${lab("js.mont.whatshown")}</h4>
   <div class="strip">${strip || `<p class="empty">${lab("js.the-base-is-empty")}</p>`}</div>
@@ -1654,6 +1686,18 @@ function moveNote(lead, span, dur) {
 }
 
 function bindShotInspector() {
+  const shot = MONT.doc.shots[montSel.i];
+  const look = mq("#i-look");
+  if (look) {
+    look.onchange = async () => {
+      // Taking the look over starts from what the shot already shows — the run's doses
+      // — because that is what it looks like now, and «свои» should mean "mine from
+      // here" rather than "wiped". Handing it back is the one that clears.
+      await saveLook(look.value === "own" ? { ...((shot && shot.look) || {}) } : null);
+      if (look.value === "own") showLookPanel();
+    };
+    mq("#i-look-edit").onclick = showLookPanel;
+  }
   // …on the word under the playhead, or the one this shot starts on when the head is
   // somewhere else entirely. An effect is placed on a WORD and the picker says which
   // one it picked, so there is nothing to guess at and nothing to aim a pointer at.
@@ -1852,6 +1896,37 @@ function pickedVoice() {
   return which ? `${pick.value}:${which.value}` : pick.value;
 }
 
+// WHAT this line is heard through — and the one control on a line that commits by
+// itself.
+//
+// Everything else about a voice is pinned by pressing «озвучить заново», because
+// everything else about a voice costs a synthesis. A filter does not: the
+// synthesizer's own take is kept beside the filtered one, so this is one ffmpeg pass
+// over one line (see `media/voicefx.py`). That difference is the feature, so the
+// control is shaped like it: pick a card, hear it, pick another. Waiting for a button
+// would make it feel like the thing it deliberately is not.
+//
+// A card the base no longer offers is kept as an entry of its own — a filter deleted
+// after this line was pinned to it — because the honest reading of that line is still
+// "it names плёнка", even though nothing resolves the name and it is heard dry.
+function fxRow(sc) {
+  const cards = (MONT.doc.voicefx || []).filter((c) => c.usable);
+  const cur = sc.fx || "";
+  const opt = (v, t, title) =>
+    `<option value="${esc(v)}"${v === cur ? " selected" : ""}${
+      title ? ` title="${esc(title)}"` : ""}>${esc(t)}</option>`;
+  const stray = cur && !cards.some((c) => c.name === cur) ? opt(cur, cur) : "";
+  const list = opt("", lab("js.mont.fx.dry")) + stray
+    + cards.map((c) => opt(c.name, c.name, c.description)).join("");
+  // the ∿ the lines lane already uses for a pin the WRITER made, said in full here:
+  // this is the one filter a later run of the voicing stage may change its mind about
+  const mark = sc.fx && sc.fx_auto
+    ? ` <span class="dim" title="${esc(lab("js.mont.fx.byai"))}">∿</span>` : "";
+  return `<label class="inline" title="${esc(lab("js.mont.fx.hint"))}">${lab("js.mont.fx.through")}
+      <select id="i-fx">${list}</select></label>${mark}
+    <button class="ghost" id="i-fx-edit" title="${esc(lab("js.mont.fx.edit"))}">⚙</button>`;
+}
+
 // A pause, in the panel. Everything a line's block offers is about words — the text,
 // the voice, the speed, who says it — and a pause has none of those: it has a length,
 // and the two structural things any item on this track has, a neighbour to add and
@@ -1876,6 +1951,48 @@ function hushInspector(sc) {
              value="${sc.duration.toFixed(1)}"></label>
     <span class="dim">${lab("js.mont.hush.drag")}</span>
   </div>`;
+}
+
+// What this SHOT looks like — and the reason this row sits in the shot's own settings
+// rather than only as a switch over in the filter panel.
+//
+// It belongs to the shot because a look is about the PICTURE, and the picture is what
+// changes here: the two tracks run past each other on purpose, so a look pinned to a
+// LINE would change halfway through a still nobody cut — half a shot inside a tube and
+// half outside it. And it belongs in this panel because every other decision about a
+// shot is made in it: which card is up, where it looks, how it moves. The sliders stay
+// on the left, because dragging a dose while watching the sketch is the whole gesture;
+// what belongs here is the decision and the way across to them.
+function lookRow(sh) {
+  const own = !!sh.own_look;
+  const spec = sh.look || {};
+  const keys = Object.keys(spec);
+  const said = keys.length
+    ? keys.map((k) => `${lab("fx." + k, k)} ${spec[k]}`).join(", ")
+    : lab("js.mont.look.none");
+  const opt = (v, on, t) => `<option value="${v}"${on ? " selected" : ""}>${t}</option>`;
+  return `<label class="inline" title="${esc(lab("js.mont.look.hint"))}">${lab("js.mont.look.pic")}
+      <select id="i-look">
+        ${opt("run", !own, lab("js.mont.look.inherit"))}
+        ${opt("own", own, lab("js.mont.look.own"))}
+      </select></label>
+    <span class="dim">${esc(said)}</span>
+    <span class="grow"></span>
+    <button class="ghost" id="i-look-edit" title="${esc(lab("js.mont.look.edit"))}">⚙</button>`;
+}
+
+// Point the filter panel at this line and say so by flashing it, because it is on the
+// other side of the screen and a control that changed silently somewhere else is a
+// control nobody finds twice.
+function showLookPanel() {
+  fxTarget = "line";
+  buildFxRows();
+  drawFrame();
+  const box = mq("#mont-fx-rows").closest(".mont-fx") || mq("#mont-fx-rows");
+  box.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  box.classList.remove("justnow");
+  void box.offsetWidth;            // restart the animation if it is already running
+  box.classList.add("justnow");
 }
 
 function lineInspector() {
@@ -1903,7 +2020,9 @@ function lineInspector() {
     <div id="i-voicepair" class="voicepair">${voicePair(sc)}</div>
     <button class="primary" id="i-say">${lab("js.mont.revoice")}</button>
   </div>
-  ${sc.voice && sc.voice_auto ? `<p class="dim">∿ ${lab("js.mont.byai")}</p>` : ""}
+  <div class="row">${fxRow(sc)}</div>
+  ${(sc.voice && sc.voice_auto) || (sc.fx && sc.fx_auto)
+      ? `<p class="dim">∿ ${lab("js.mont.byai")}</p>` : ""}
   ${MONT.doc.restretch ? `<p class="dim">${lab("js.mont.rate.restretch")}</p>` : ""}
   <div class="take" id="i-take-voice"><span class="say">${lab("js.mont.ownvoice")}</span>
     <input type="file" hidden accept="audio/*"></div>`;
@@ -1937,10 +2056,44 @@ function bindVoicePair() {
 function bindLineInspector() {
   const i = montSel.i;
   const sc = MONT.doc.scenes[i];
-  if (sc && sc.hush) return bindHushInspector(i);
+  // The same two questions `lineInspector` asks before drawing, asked again before
+  // binding — and the first of them was missing here. A selection pointing past the
+  // end (the line it named was just deleted) draws the «выбери строку» note, which has
+  // none of these controls in it, and the binding then threw on the first null. The
+  // render and the binding have to agree about what is on the screen or the room stops
+  // responding to anything.
+  if (!sc) return;
+  if (sc.hush) return bindHushInspector(i);
   const rate = mq("#i-rate"), out = mq("#i-rate-v");
   rate.oninput = () => (out.textContent = rate.value);
+  // The speed commits when the slider is let go, not when «озвучить заново» is pressed.
+  // It is the cheap half of a take — on an engine that cannot vary its own pace it is an
+  // `atempo` over the reading already on disk, so it costs a second and gives back the
+  // SAME reading faster (`tts.restretch_one`) — and the room's rule is that the cheap
+  // things happen as you touch them. Where the pace IS part of the synthesis (edge,
+  // azure) the server re-voices instead, which is what the slider's own tooltip says.
+  rate.onchange = async () => {
+    if (+rate.value === rateOf(MONT.doc.scenes[i])) return;   // nudged back to where it was
+    say(lab("js.mont.voicing"));
+    await send("/voice", { method: "POST", body: J({ video: MONT.video, scene: i, rate: +rate.value }) },
+               (d) => { reloadVoice();
+                        say(lab(d.how === "restretched" ? "js.mont.restretched" : "js.mont.voiced")); });
+  };
   bindVoicePair();
+  const fx = mq("#i-fx");
+  fx.onchange = async () => {
+    fx.disabled = true;
+    say(lab("js.mont.fx.laying"));
+    await send("/voice/fx",
+               { method: "POST", body: J({ video: MONT.video, scene: i, card: fx.value }) },
+               () => say(lab("js.mont.fx.laid")));
+    const back = mq("#i-fx");
+    if (back) back.disabled = false;
+  };
+  // the editor opens on the card this line is wearing, which is the one the operator
+  // is listening to and therefore the one they want to adjust
+  mq("#i-fx-edit").onclick = () => openVfx(fx.value);
+
   const box = mq("#i-text");
   box.oninput = () => {
     montDrafts.set(i, box.value);
@@ -1964,14 +2117,17 @@ function bindLineInspector() {
     e.target.disabled = true;
     await commitText(i);              // say what is written, not what was written
     say(lab("js.mont.voicing"));
-    // the delivery travels with the request and is PINNED by it, exactly as the speed
-    // is: both are properties of the take being made (see `stages.tts.resynth_one`)
-    const body = { scene: i, rate: +rate.value };
+    // No RATE in the body, and that is the whole meaning of this button: it asks for the
+    // line to be SAID AGAIN. The server takes the re-stretch road whenever it is handed a
+    // pace it can apply to the take already there — which, on an engine that cannot vary
+    // its own speed, is every time — so sending the slider's value here made «озвучить
+    // заново» unable to ever voice anything. The line keeps whatever pace it carries;
+    // the slider above committed that on its own.
+    const body = { video: MONT.video, scene: i };
     const picked = pickedVoice();
     if (picked !== null) body.voice = picked;
     await send("/voice", { method: "POST", body: J(body) },
                (d) => {
-                 reloadVoice();
                  // which road it took, said plainly: on a sampled engine the difference
                  // between "the same reading, faster" and "a new reading" is the whole
                  // question somebody pressing this button is asking about
@@ -1999,14 +2155,13 @@ function bindLineInspector() {
            // presses rather than two presses and a hunt for what to press next
            montSel = d.scenes.length
              ? { kind: "line", i: Math.min(i, d.scenes.length - 1) } : null;
-           reloadVoice();
          });
   dropTarget(mq("#i-take-voice"), async (file) => {
     await commitText(i);  // the recogniser times the recording against this line's TEXT
     const body = new FormData(); body.append("file", file);
     say(lab("js.mont.aligning"));
     await send(`/voice/file?video=${MONT.video}&scene=${i}`, { method: "POST", body },
-               () => { reloadVoice(); say(lab("js.mont.voiced")); });
+               () => say(lab("js.mont.voiced")));
   });
 }
 
@@ -2032,7 +2187,6 @@ function bindHushInspector(i) {
            montDrafts.clear();
            montSel = d.scenes.length
              ? { kind: "line", i: Math.min(i, d.scenes.length - 1) } : null;
-           reloadVoice();
          });
 }
 
@@ -2248,9 +2402,31 @@ function drawFitted(fc, pic, sw, sh, cw, ch, card) {
 // to decide with (is this too much grain, does the tube read) and never close enough to
 // judge a delivery by, which is exactly why the exact-frame button sits beside it.
 
-const dose = (k) => ((MONT.doc.filters || {})[k] || 0) / 100;
+// The look AT THIS MOMENT, not the run's: a SHOT may carry its own
+// (`job.FrameShot.look`), and a sketch that ignored that would be drawing a different
+// video from the one the frame button renders. A shot that has decided nothing reports
+// the run's filters, so the ordinary video answers exactly what it used to — as does a
+// video with no picture lane at all, which has no shots to ask.
+let lookNow = {};
+
+function lookAt(t) {
+  for (const sh of MONT.doc.shots || []) {
+    if (t < sh.start || t >= sh.start + sh.duration) continue;
+    // Its OWN look only where it has made a decision. A shot that follows the run is
+    // sent its resolved look too — the server fills it in so the row can show what the
+    // shot looks like — and reading that here would be reading a SNAPSHOT: dragging the
+    // run's sliders updates `filters` live and the sketch would go on drawing the look
+    // as it stood when the document was fetched. Which is to say the sliders would
+    // appear to do nothing at all on every shot that had not been pinned.
+    return sh.own_look ? (sh.look || {}) : (MONT.doc.filters || {});
+  }
+  return MONT.doc.filters || {};
+}
+
+const dose = (k) => (lookNow[k] || 0) / 100;
 
 function paintLook(ctx, cv, src, sx, sy, sw, sh, t) {
+  lookNow = lookAt(t);
   const bw = dose("bw"), film = dose("film");
   const frame = Math.floor(t * 30);
   const flicker = film ? 1 + 0.05 * film * Math.sin(frame / 2.7) : 1;
@@ -2278,12 +2454,19 @@ function paintLook(ctx, cv, src, sx, sy, sw, sh, t) {
     ctx.restore();
   }
   if (crt || glitch) splitChannels(ctx, cv, src, sx, sy, sw, sh, crt * 3 + glitch * 6);
-  const vig = Math.max(dose("vignette"), film * 0.7, crt * 0.5);
-  if (vig) {
-    const g = ctx.createRadialGradient(cv.width / 2, cv.height / 2, cv.width * 0.25,
-                                       cv.width / 2, cv.height / 2, cv.height * 0.62);
+  // Film, the tube and the vignette itself all darken the edges, and the delivery pass
+  // lays down exactly ONE vignette for all of them, at the widest angle any of them
+  // asked for — three stacked vignettes is how the render used to come out half as
+  // bright as the sketch. Same rule here, same angles as media/filters declares them.
+  const angle = Math.max(dose("vignette") ? 0.20 + 0.95 * dose("vignette") : 0,
+                         film ? 0.15 + 0.65 * film : 0,
+                         crt ? 0.15 + 0.60 * crt : 0);
+  if (angle > 0.001) {
+    const a = Math.min(1, veilLoss(angle) / VEIL_MEAN);
+    const g = ctx.createRadialGradient(cv.width / 2, cv.height / 2, 0,
+                                       cv.width / 2, cv.height / 2, cv.height * 0.56);
     g.addColorStop(0, "rgba(0,0,0,0)");
-    g.addColorStop(1, `rgba(0,0,0,${(0.25 + 0.65 * vig).toFixed(2)})`);
+    g.addColorStop(1, `rgba(0,0,0,${a.toFixed(3)})`);
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, cv.width, cv.height);
   }
@@ -2293,13 +2476,47 @@ function paintLook(ctx, cv, src, sx, sy, sw, sh, t) {
   if (glitch) tear(ctx, cv, src, sx, sy, sw, sh, glitch, frame);
 }
 
-// Red and blue pulled apart — the one thing a tube and a failing signal have in common
-// and the one a plain CSS filter cannot do. Each channel is isolated on its own
-// offscreen (multiply by a pure primary) and then added back, offset.
-const montCh = [document.createElement("canvas"), document.createElement("canvas")];
+// --------------------------------------------------------------- the glitch, sketched
+//
+// This is the one effect whose sketch has to be written with care, because it is the
+// one nobody can judge from its sliders. It mirrors `media/filters._glitch` — the same
+// hash, the same weather window, the same ten band thicknesses, the same vocabulary of
+// faults — not because a canvas can reproduce ffmpeg (it cannot; the real one is a
+// filtergraph and this is ten draw calls) but because a sketch that breaks the picture
+// a DIFFERENT way is worse than no sketch at all. It used to be exactly that: three
+// frames out of every twenty-four, strictly, with one random number driving a tear's
+// position, its thickness AND its slide at once — so a band low on the screen was
+// always the thick one and always slid the same way. Judged from here, the effect could
+// only ever look like the same stripes in the same places, whatever the renderer did.
+const GL_STORM_S = 1.6;
+// thicknesses in thousandths of the frame — `filters.GLITCH_ROWS`, first column
+const GL_ROWS = [3, 5, 8, 12, 18, 26, 40, 60, 90, 130];
+const GL_AIM = [24, 20, 18, 15, 12, 10, 7, 5, 4, 3];
+const GL_REACH = [0.34, 0.52, 0.44, 0.30, 0.62, 0.24, 0.40, 0.18, 0.50, 0.22];
+// 1 is a full-width strip slid sideways; less is a BLOCK, cut out and put down
+// somewhere else on both axes. Half and half, for the reason `filters.GLITCH_ROWS`
+// gives: a strip only ever shows you its seam, and ten seams are ten stripes.
+const GL_WIDE = [1.00, 0.38, 1.00, 0.55, 1.00, 0.27, 0.70, 0.44, 1.00, 0.60];
+const GL_CHANCE = [0.55, 0.48, 0.50, 0.42, 0.40, 0.34, 0.30, 0.24, 0.20, 0.16];
+const GL_RATE = [3.1, 2.4, 2.9, 1.8, 2.2, 1.4, 1.1, 0.8, 0.6, 0.45];
 
-function splitChannels(ctx, cv, src, sx, sy, sw, sh, px) {
-  if (px < 0.4) return;
+// `filters._hash`, to the letter: a number in 0..1 that looks random and is a function
+// of the index, so the same second sketches the same way twice.
+function gh(n, seed) {
+  const v = Math.abs(Math.sin(n * seed) * 43758.5453);
+  return v - Math.floor(v);
+}
+
+// The two channel copies, built once per frame and composited wherever they are wanted.
+// Isolating a channel on a canvas means multiplying by a pure primary onto an
+// offscreen, which is two full draws — doing that per block instead of per frame is
+// what made the old sketch stutter when the dose went up.
+const montCh = [document.createElement("canvas"), document.createElement("canvas")];
+let montChAt = -1;
+
+function chanCopies(cv, src, sx, sy, sw, sh, frame) {
+  if (montChAt === frame && montCh[0].width === cv.width) return;
+  montChAt = frame;
   ["#f00", "#00f"].forEach((tint, k) => {
     const c = montCh[k];
     c.width = cv.width; c.height = cv.height;
@@ -2310,19 +2527,158 @@ function splitChannels(ctx, cv, src, sx, sy, sw, sh, px) {
     cc.globalCompositeOperation = "multiply";
     cc.fillStyle = tint;
     cc.fillRect(0, 0, c.width, c.height);
-    ctx.save();
-    ctx.globalCompositeOperation = "lighter";
-    ctx.globalAlpha = 0.28;
-    ctx.drawImage(c, (k ? -px : px), 0);
-    ctx.restore();
   });
 }
 
-function scanlines(ctx, cv, d, t) {
+// Red and blue pulled apart, inside `rect` — the one thing a tube and a failing signal
+// have in common. Clipped rather than full-frame for the reason the render crops its
+// blocks: a channel shifted across the whole picture leaves a coloured bar down the
+// side of the frame, in the same place every time, and that bar is not a fault.
+function splitInto(ctx, cv, rect, px, alpha) {
+  if (px < 0.4) return;
   ctx.save();
-  ctx.globalAlpha = 0.12 + 0.3 * d;
+  if (rect) { ctx.beginPath(); ctx.rect(rect[0], rect[1], rect[2], rect[3]); ctx.clip(); }
+  ctx.globalCompositeOperation = "lighter";
+  ctx.globalAlpha = alpha === undefined ? 0.28 : alpha;
+  ctx.drawImage(montCh[0], px, 0);
+  ctx.drawImage(montCh[1], -px, 0);
+  ctx.restore();
+}
+
+function splitChannels(ctx, cv, src, sx, sy, sw, sh, px) {
+  chanCopies(cv, src, sx, sy, sw, sh, -1);
+  montChAt = -1;                       // the tube asks every frame; do not cache for it
+  splitInto(ctx, cv, null, px);
+}
+
+function tear(ctx, cv, src, sx, sy, sw, sh, d, frame) {
+  const t = frame / 30;
+  const weather = 0.06 + (0.72 - 0.06) * d;
+  const density = 0.30 + 0.70 * d;
+  const storm = gh(Math.floor(t / GL_STORM_S), 7.1337);
+  const gust = 0.05 + 0.95 * (storm < weather ? 1 : 0);
+  // one chance every 1/rate seconds, taken `chance` of the time while the weather is bad
+  const fires = (rate, chance, seed) =>
+    gh(Math.floor(t * rate), seed) < Math.min(0.95, chance * density) * gust;
+  // a slice of the source, drawn to a rect of the canvas
+  const slab = (y, h, dx) =>
+    ctx.drawImage(src, sx, sy + (y / cv.height) * sh, sw, (h / cv.height) * sh,
+                  dx, y, cv.width, h);
+
+  chanCopies(cv, src, sx, sy, sw, sh, frame);
+
+  // the picture losing its vertical hold: it jumps, and what leaves one edge comes back
+  // at the other
+  if (fires(6.0, 0.14, 33.19)) {
+    const j = Math.round((gh(Math.floor(t * 6.0), 33.19) * 2 - 1) * cv.height
+                         * (0.05 + 0.33 * d));
+    ctx.drawImage(src, sx, sy, sw, sh, 0, j, cv.width, cv.height);
+    ctx.drawImage(src, sx, sy, sw, sh, 0, j >= 0 ? j - cv.height : j + cv.height,
+                  cv.width, cv.height);
+  }
+
+  // blocks: part of the picture is wrong and the rest is fine, which is what a dropped
+  // block of data does. Where it is wrong moves every firing.
+  const block = (share, wide, rate, chance, seed, paint) => {
+    if (!fires(rate, chance, seed)) return;
+    const n = Math.floor(t * rate);
+    const bh = Math.max(8, cv.height * share);
+    const bw = wide >= 0.999 ? cv.width : Math.max(32, cv.width * wide);
+    const by = Math.floor(gh(n, seed + 0.77) * (cv.height - bh));
+    const bx = bw === cv.width ? 0 : Math.floor(gh(n, seed + 1.93) * (cv.width - bw));
+    paint([bx, by, bw, bh], n);
+  };
+  const shade = (r, filter) => {
+    ctx.save();
+    ctx.beginPath(); ctx.rect(r[0], r[1], r[2], r[3]); ctx.clip();
+    ctx.filter = filter;
+    ctx.drawImage(src, sx, sy, sw, sh, 0, 0, cv.width, cv.height);
+    ctx.restore();
+  };
+  block(0.40 - 0.18 * d, 1.0, 4.0, 0.30, 58.209,
+        (r) => shade(r, `saturate(0.2) contrast(${(1.2 + 0.8 * d).toFixed(2)}) brightness(1.05)`));
+  block(0.30 - 0.15 * d, 1.0, 3.0, 0.26, 73.551,
+        (r) => shade(r, `hue-rotate(${Math.round(20 + 100 * d)}deg)`));
+  const hard = 8 + 56 * d;
+  block(0.34 - 0.14 * d, 0.78 - 0.36 * d, 4.5, 0.34, 21.907,
+        (r) => splitInto(ctx, cv, r, hard * 0.5, 0.42));
+  block(0.22 - 0.11 * d, 0.62 - 0.32 * d, 3.5, 0.26, 64.183,
+        (r) => splitInto(ctx, cv, r, hard * 0.3, 0.38));
+  // …and the big one, as close to a whole-frame split as this is allowed to get
+  block(0.86, 0.90, 5.0, 0.42, 12.9898, (r) => splitInto(ctx, cv, r, hard * 0.6, 0.34));
+
+  // the rows, torn out of the picture and put back a step to the side. Ten thicknesses,
+  // and WHETHER a row is torn and WHERE it is torn are two clocks, so a tear flickers
+  // down the frame instead of parking in one place for the length of its slot.
+  for (let i = 0; i < GL_ROWS.length; i++) {
+    const gate = (6.0 + 20.0 * d) * GL_RATE[i];
+    if (!fires(gate, GL_CHANCE[i] * 0.22, 4.7591 + 11.3 * (i + 1))) continue;
+    const move = Math.max(GL_AIM[i] * (0.45 + 0.85 * d), 2.0);
+    const n = Math.floor(t * move);
+    const bh = Math.max(2, Math.round(cv.height * GL_ROWS[i] / 1000));
+    const bw = GL_WIDE[i] >= 0.999 ? cv.width : Math.max(24, Math.round(cv.width * GL_WIDE[i]));
+    const row = Math.floor(gh(n, 12.9898 + 3.7 * (i + 1)) * (cv.height - bh));
+    const amp = cv.width * GL_REACH[i] * (0.3 + 0.7 * d);
+    const dx = (gh(n, 78.233 + 5.1 * (i + 1)) * 2 - 1) * amp;
+    if (bw === cv.width) {
+      slab(row, bh, dx);                      // a strip, and the piece that wrapped
+      slab(row, bh, dx >= 0 ? dx - cv.width : dx + cv.width);
+      splitInto(ctx, cv, [0, row, cv.width, bh], 3 + 6 * d * (0.6 + GL_REACH[i] * 2), 0.5);
+    } else {
+      // A block: cut out of the picture and put down moved on BOTH axes. No wrap — a
+      // piece that has been moved has not run off an edge, it is in the wrong place.
+      // `bx`/`by` are its corner on the canvas; the source rectangle is that corner
+      // mapped back through the window being displayed.
+      const bx = Math.floor(gh(n, 33.711 + 7.3 * (i + 1)) * (cv.width - bw));
+      const by = row;
+      const dy = (gh(n, 95.157 + 6.9 * (i + 1)) * 2 - 1)
+                 * cv.height * GL_REACH[i] * (0.12 + 0.33 * d);
+      ctx.drawImage(src,
+                    sx + (bx / cv.width) * sw, sy + (by / cv.height) * sh,
+                    (bw / cv.width) * sw, (bh / cv.height) * sh,
+                    bx + dx, by + dy, bw, bh);
+      splitInto(ctx, cv, [bx + dx, by + dy, bw, bh],
+                3 + 6 * d * (0.6 + GL_REACH[i] * 2), 0.5);
+    }
+  }
+}
+
+// `vignette=angle=A` keeps this much of a flat grey frame, measured on a 9:16 frame at
+// the angles the catalogue reaches. The falloff is cos-to-the-fourth off the optical
+// axis and not worth reconstructing in here; the numbers are what ffmpeg did.
+const VEIL_KEEPS = [[0, 1.0], [0.15, 0.985], [0.2, 0.974], [0.35, 0.922], [0.5, 0.85],
+                    [0.65, 0.763], [0.8, 0.67], [0.95, 0.578], [1.15, 0.466]];
+// …and the gradient below takes this fraction of the frame at full alpha, so the alpha
+// that loses as much light as the real filter is simply loss / this.
+const VEIL_MEAN = 0.546;
+
+function veilLoss(angle) {
+  for (let i = 1; i < VEIL_KEEPS.length; i++) {
+    const [a0, k0] = VEIL_KEEPS[i - 1], [a1, k1] = VEIL_KEEPS[i];
+    if (angle <= a1 || i === VEIL_KEEPS.length - 1) {
+      const f = Math.min(1, (angle - a0) / (a1 - a0));
+      return 1 - (k0 + (k1 - k0) * f);
+    }
+  }
+  return 0;
+}
+
+function scanlines(ctx, cv, d, t) {
+  // One row in three goes black, same pitch and same alpha as the tube in media/filters
+  const alpha = 0.1 + 0.35 * d;
+  ctx.save();
+  ctx.globalAlpha = alpha;
   ctx.fillStyle = "#000";
   for (let y = 0; y < cv.height; y += 3) ctx.fillRect(0, y, cv.width, 1);
+  ctx.restore();
+  // …and the light those rows ate comes straight back, because nobody reaching for a
+  // tube is asking for a seventh of their exposure. The delivery pass puts it back with
+  // a channel mixer; here the canvas is redrawn through a brightness filter, which is
+  // the same multiplication. Without this the room showed a picture the render did not.
+  const gain = 1 / Math.max(1 - alpha / 3, 0.05);
+  ctx.save();
+  ctx.filter = `brightness(${gain.toFixed(4)})`;
+  ctx.drawImage(ctx.canvas, 0, 0);
   ctx.restore();
   // the band of light sliding down the tube — 7s to cross, as in media/filters
   const y = ((t / 7) % 1) * (cv.height + 200) - 100;
@@ -2346,8 +2702,12 @@ function noise(ctx, cv, d, frame) {
     montNoise.width = montNoise.height = 128;
     const nc = montNoise.getContext("2d");
     const img = nc.createImageData(128, 128);
+    // Centred on mid-grey, because `overlay` leaves a mid-grey base alone and the
+    // delivery pass's `noise=allf=t+u` is zero-mean too. Centred any higher and the
+    // grain is a brightener: an overlay of 0.74 lifts every tone it touches, which is
+    // how the room came out brighter than the render at a heavy grain.
     for (let i = 0; i < img.data.length; i += 4) {
-      const v = 120 + Math.random() * 135;
+      const v = 128 + (Math.random() - 0.5) * 135;
       img.data[i] = img.data[i + 1] = img.data[i + 2] = v;
       img.data[i + 3] = 255;
     }
@@ -2363,23 +2723,6 @@ function noise(ctx, cv, d, frame) {
   ctx.restore();
 }
 
-function tear(ctx, cv, src, sx, sy, sw, sh, d, frame) {
-  // The signal fails in bursts, not continuously: a tear every so many frames, and the
-  // dose decides how often and how far. Seeded off the frame so the same moment tears
-  // the same way twice — a preview that reshuffles while you look at it is unreadable.
-  const period = Math.max(4, Math.round(40 - 30 * d));
-  if (frame % period > 2) return;
-  const rows = 2 + Math.round(6 * d);
-  for (let i = 0; i < rows; i++) {
-    const seed = Math.sin((frame + i * 31) * 12.9898) * 43758.5453;
-    const r = seed - Math.floor(seed);
-    const y = Math.floor(r * cv.height);
-    const h = 6 + Math.floor(r * 40 * d);
-    const dx = (r - 0.5) * cv.width * 0.3 * d;
-    ctx.drawImage(src, sx, sy + (y / cv.height) * sh, sw, (h / cv.height) * sh,
-                  dx, y, cv.width, h);
-  }
-}
 
 // The burned-in caption, approximated: one word at a time, which is the shipped default
 // (`word_pop`). It is here to show SYNC and nothing else — the real one is drawn by
@@ -2525,53 +2868,144 @@ function bindTransport() {
     e.preventDefault();
     a.paused ? a.play() : a.pause();
   });
+  // The frame ffmpeg would actually make, laid over the sketch. It lands looking very
+  // nearly like the sketch it covers — that is the point, and it is also why the button
+  // read as broken for a long time: it swapped one picture for an almost identical one
+  // and said nothing. So it says what it is, and says a click takes it away.
   mq("#mont-frame").onclick = async () => {
     const img = mq("#mont-true");
     const btn = mq("#mont-frame");
+    const tag = mq("#mont-truetag");
+    if (!img.hidden) {                       // a second press puts it away again
+      img.hidden = tag.hidden = true;
+      return;
+    }
     btn.disabled = true;
+    tag.textContent = L("js.mont.frame.wait");
+    tag.hidden = false;
+    img.onload = () => {
+      btn.disabled = false;
+      img.hidden = false;
+      tag.textContent = L("js.mont.frame.shown");
+    };
+    img.onerror = () => {
+      btn.disabled = false;
+      tag.textContent = L("js.mont.frame.failed");
+      setTimeout(() => { if (img.hidden) tag.hidden = true; }, 2500);
+    };
     img.src = tokd(`/api/runs/${MONT.id}/montage/still?video=${MONT.video}&at=${montTime().toFixed(3)}&v=${Date.now()}`);
-    img.hidden = false;
-    img.onload = img.onerror = () => { btn.disabled = false; };
-    // it is a comparison, so it goes away on the next touch of anything
-    img.onclick = () => { img.hidden = true; };
+    img.onclick = () => { img.hidden = tag.hidden = true; };
   };
 }
 
 // ---------------------------------------------------------------- the look, for real
+//
+// One panel, two things it can be pointing at: the whole RUN, which is where the look
+// comes from by default and where it stays for most videos, or the ONE LINE that is
+// selected, which is how a stretch gets something of its own (`FrameShot.look`). The
+// sliders are the same sliders either way — there is one look and one set of doses,
+// and giving the per-line case its own editor would be a second place to learn.
+//
+// The sketch beside it already follows the playhead through whatever the look is at
+// that second, so dragging a line's dose and watching the picture is one gesture.
+let fxTarget = "run";   // "run" | "shot"
+
+// Which SHOT the panel would be editing, or null when none is selected.
+//
+// The shot and not the line, because a look is about the picture and the picture
+// changes here. The two tracks run past each other on purpose, so a look pinned to a
+// line would change halfway through a still nobody cut.
+function fxShot() {
+  if (!montSel || montSel.kind !== "shot") return null;
+  return (MONT.doc.shots || [])[montSel.i] || null;
+}
+
+// What the sliders show. A shot that has decided nothing shows the RUN's doses rather
+// than zeroes — it is what that shot actually looks like, and starting the operator
+// from "nothing" would make the first drag a cliff instead of an adjustment.
+function fxSpec() {
+  const sh = fxShot();
+  if (fxTarget === "shot" && sh) return sh.look || {};
+  return MONT.doc.filters || {};
+}
 
 function buildFxRows() {
   const box = mq("#mont-fx-rows");
-  box.innerHTML = (opts.filters || []).map((f) => `
+  const sh = fxShot();
+  if (!sh && fxTarget === "shot") fxTarget = "run";   // nothing selected to point at
+  const spec = fxSpec();
+  const pinned = !!(sh && sh.own_look);
+  const tabs = sh ? `
+    <div class="row fxwho">
+      <button class="ghost${fxTarget === "run" ? " on" : ""}" data-fxwho="run">${
+        lab("js.mont.look.run")}</button>
+      <button class="ghost${fxTarget === "shot" ? " on" : ""}" data-fxwho="shot">${
+        lab("js.mont.look.shot").replace("{n}", sh.i + 1)}</button>
+      <span class="grow"></span>
+      ${fxTarget === "shot" && pinned
+        ? `<button class="ghost" id="fx-inherit">${lab("js.mont.look.inherit")}</button>` : ""}
+    </div>
+    ${fxTarget === "shot" && !pinned
+      ? `<p class="dim">${lab("js.mont.look.following")}</p>` : ""}` : "";
+  box.innerHTML = tabs + (opts.filters || []).map((f) => `
     <div class="slider" title="${esc(f.note)}">
       <div class="top"><span>${esc(lab("fx." + f.key, f.key))}</span>
-        <span class="grow"></span><span class="dose">${(MONT.doc.filters || {})[f.key] || 0}</span></div>
+        <span class="grow"></span><span class="dose">${spec[f.key] || 0}</span></div>
       <input type="range" data-fx="${esc(f.key)}" min="0" max="100" step="5"
-             value="${(MONT.doc.filters || {})[f.key] || 0}">
+             value="${spec[f.key] || 0}">
     </div>`).join("");
+  box.querySelectorAll("[data-fxwho]").forEach((b) => {
+    b.onclick = () => { fxTarget = b.dataset.fxwho; buildFxRows(); drawFrame(); };
+  });
+  const back = mq("#fx-inherit");
+  if (back) back.onclick = () => saveLook(null);
   box.querySelectorAll("[data-fx]").forEach((r) => {
     const out = r.previousElementSibling.querySelector(".dose");
-    // the sketch follows the finger; the run is only told once it is let go, because
-    // writing the checkpoint on every pixel of a drag is forty writes of a whole job
+    // the sketch follows the finger; the run (or the line) is only told once it is let
+    // go, because writing the checkpoint on every pixel of a drag is forty writes of a
+    // whole job
     r.oninput = () => {
       out.textContent = r.value;
-      MONT.doc.filters = { ...MONT.doc.filters, [r.dataset.fx]: +r.value };
+      const live = { ...fxSpec(), [r.dataset.fx]: +r.value };
+      const shot = fxShot();
+      if (fxTarget === "shot" && shot) shot.look = live;
+      else MONT.doc.filters = live;
       drawFrame();
     };
-    r.onchange = saveFilters;
+    r.onchange = () => (fxTarget === "shot" ? saveLook(readFxRows()) : saveFilters());
   });
 }
 
-async function saveFilters() {
+function readFxRows() {
   const spec = {};
   mq("#mont-fx-rows").querySelectorAll("[data-fx]").forEach((r) => {
     if (+r.value > 0) spec[r.dataset.fx] = +r.value;
   });
+  return spec;
+}
+
+// One shot's own look, or `null` to put it back on the run's. Nothing on the clock
+// moves and nothing is re-rendered: the look is laid in the delivery pass, so this is
+// a note for that pass (see `montage.set_look`).
+async function saveLook(spec) {
+  const sh = fxShot();
+  if (!sh) return;
+  const state = mq("#mont-fx-state");
+  state.textContent = lab("js.saving");
+  const d = await send("/look", { method: "POST",
+                                  body: J({ video: MONT.video, shot: sh.i, look: spec }) });
+  state.textContent = d ? lab("js.mont.fxsaved") : "";
+  buildFxRows();
+}
+
+async function saveFilters() {
+  const spec = readFxRows();
   const state = mq("#mont-fx-state");
   state.textContent = lab("js.saving");
   try {
-    MONT.doc = await api(`/api/runs/${MONT.id}/montage/settings`, { method: "PUT",
+    takeDoc(await api(`/api/runs/${MONT.id}/montage/settings`, { method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ video: MONT.video, filters: spec }) });
+      body: JSON.stringify({ video: MONT.video, filters: spec }) }));
     state.textContent = lab("js.mont.fxsaved");
   } catch (e) { state.textContent = ""; say(e.message, true); }
 }
@@ -2602,6 +3036,8 @@ const SETTINGS = [
       { f: "tts_rate", kind: "range", min: -50, max: 50, step: 5, l: "web.f.rate" },
       { f: "tts_deliveries", kind: "check", l: "web.f.deliveries",
         note: "web.deliveries.note" },
+      { f: "tts_voicefx", kind: "check", l: "web.f.voicefx",
+        note: "web.voicefx.note" },
       { f: "tts_source", kind: "flag", on: "manual", off: "engine",
         l: "web.f.ttsmanual", note: "web.ttsmanual.note" },
     ],
@@ -2725,6 +3161,188 @@ function openSettings() {
   mq("#mont-set").hidden = false;
 }
 
+// -------------------------------------------------- the voice filters, edited here
+//
+// A filter is a CARD (configs/voicefx/), so the sheet does three things: picks which
+// card is open, edits it, and writes or throws it away. It lives in this room and not
+// only in the config panel because a filter cannot be read — it has to be heard, on
+// the line you are actually working on. Save re-derives every line of this video
+// pointing at the card (the server does: see `montage.refilter`), so «подкрутить
+// проектор» is one press and then play.
+//
+// The draft is held here and nothing leaves until save, which is the opposite bargain
+// from the line's own picker above. Picking a card for a line is cheap and reversible;
+// rewriting the card changes every line wearing it, and a slider that committed on
+// every pixel of a drag would be forty rewrites of a file six lines are reading.
+let vfxDraft = null;
+
+const VFX_BLANK = {
+  name: "", description: "", note: "", effects: {},
+  bed: "", volume: 0.35, fade: 0.08, level: 1.0, retired: false,
+};
+
+const vfxCard = (name) => (MONT.doc.voicefx || []).find((c) => c.name === name);
+
+// Opened from a line, so it opens on THAT line's card. A line wearing none opens on
+// the first one in the base rather than on a blank form: ⚙ beside a filter picker is
+// "show me these", and an empty editor is the answer to «＋ новый», which is its own
+// button. Only a base with nothing in it starts blank, and then there is nothing else
+// it could do.
+function openVfx(name) {
+  const card = vfxCard(name) || (MONT.doc.voicefx || [])[0];
+  vfxDraft = card ? { ...card, effects: { ...card.effects } } : { ...VFX_BLANK };
+  mq("#vfx-state").textContent = "";
+  renderVfx();
+  mq("#mont-vfx").hidden = false;
+}
+
+// The dose sliders, the bed and the three numbers — in the catalogue's order, which is
+// the signal path the voice actually goes through (what it IS, what it came through,
+// the room, the medium, the transport). So reading the sheet top to bottom is reading
+// what happens to the line.
+function renderVfx() {
+  const d = vfxDraft || VFX_BLANK;
+  const cards = MONT.doc.voicefx || [];
+  mq("#vfx-pick").innerHTML = cards.map((c) =>
+    `<option value="${esc(c.name)}"${c.name === d.name ? " selected" : ""}>${
+      esc(c.name)}${c.usable ? "" : " ·"}</option>`).join("")
+    || `<option value="">${esc(lab("w.none", "— нет —"))}</option>`;
+  // A draft that is not one of the saved cards — new, a copy, or renamed in the box —
+  // is shown as the selection anyway. Without it the list sits on whatever sorts first
+  // while the name box says something else, and the two controls are describing
+  // different cards at the operator.
+  if (!cards.some((c) => c.name === d.name)) {
+    mq("#vfx-pick").insertAdjacentHTML("afterbegin",
+      `<option value="${esc(d.name)}" selected>${
+        d.name ? esc(d.name) : esc(lab("js.mont.fx.newcard"))}</option>`);
+  }
+  const beds = [""].concat((opts.voicefx_beds || []).map((b) => b.key));
+  const all = d.bed && !beds.includes(d.bed) ? beds.concat([d.bed]) : beds;
+  const bedNote = (key) => {
+    const b = (opts.voicefx_beds || []).find((x) => x.key === key);
+    return b ? b.note : "";
+  };
+  const num = (f, min, max, step) =>
+    `<label class="setrow"><span>${esc(lab("web.vfx." + f))}</span>
+      <input type="number" data-vfx="${f}" min="${min}" max="${max}" step="${step}"
+             value="${esc(String(d[f]))}"></label>`;
+  mq("#vfx-rows").innerHTML = `
+    <section>
+      <label class="setrow"><span>${esc(lab("web.vfx.name"))}</span>
+        <input type="text" data-vfx="name" value="${esc(d.name)}"
+               placeholder="${esc(lab("web.a.vfx.name"))}"></label>
+      <label class="setrow"><span>${esc(lab("web.vfx.description"))}</span>
+        <input type="text" data-vfx="description" value="${esc(d.description)}"
+               placeholder="${esc(lab("web.a.vfx.description"))}"></label>
+    </section>
+    <section><b>${esc(lab("web.vfx.chain"))}</b>
+      ${(opts.voicefx || []).map((e) => `
+        <div class="slider" title="${esc(e.note)}">
+          <div class="top"><span>${esc(lab("vfx." + e.key, e.key))}</span>
+            <span class="grow"></span>
+            <span class="dose">${(d.effects || {})[e.key] || 0}</span></div>
+          <input type="range" data-vfxdose="${esc(e.key)}" min="0" max="100" step="5"
+                 value="${(d.effects || {})[e.key] || 0}"></div>`).join("")}
+    </section>
+    <section><b>${esc(lab("web.vfx.bed"))}</b>
+      <p class="dim">${esc(lab("web.vfx.bed.note"))}</p>
+      <label class="setrow"><span>${esc(lab("web.vfx.bed.pick"))}</span>
+        <select data-vfx="bed">${all.map((k) =>
+          `<option value="${esc(k)}"${k === d.bed ? " selected" : ""} title="${
+            esc(bedNote(k))}">${k ? esc(lab("vfx.bed." + k, k)) : esc(lab("w.none", "— нет —"))
+          }</option>`).join("")}</select></label>
+      ${num("volume", 0, 2, 0.01)}
+      ${num("fade", 0, 2, 0.01)}
+    </section>
+    <section><b>${esc(lab("web.vfx.out"))}</b>
+      <p class="dim">${esc(lab("web.vfx.level.note"))}</p>
+      ${num("level", 0, 3, 0.01)}
+      <label class="inline"><input type="checkbox" data-vfx="retired"${
+        d.retired ? " checked" : ""}><span>${esc(lab("web.vfx.retired"))}</span></label>
+    </section>`;
+  mq("#vfx-rows").querySelectorAll("[data-vfxdose]").forEach((r) => {
+    const out = r.previousElementSibling.querySelector(".dose");
+    r.oninput = () => {
+      out.textContent = r.value;
+      // 0 is "off" and is dropped rather than stored, so a card's file reads as the
+      // list of effects it actually has (same rule as `voicefx.normalise`)
+      if (+r.value > 0) vfxDraft.effects[r.dataset.vfxdose] = +r.value;
+      else delete vfxDraft.effects[r.dataset.vfxdose];
+      mq("#vfx-state").textContent = lab("js.mont.fx.unsaved");
+    };
+  });
+  mq("#vfx-rows").querySelectorAll("[data-vfx]").forEach((el) => {
+    const f = el.dataset.vfx;
+    const read = () => (el.type === "checkbox" ? el.checked
+                        : el.type === "number" ? +el.value : el.value);
+    el.oninput = el.onchange = () => {
+      vfxDraft[f] = read();
+      mq("#vfx-state").textContent = lab("js.mont.fx.unsaved");
+    };
+  });
+  mq("#vfx-del").disabled = !vfxCard(d.name);
+}
+
+function bindVfx() {
+  const close = () => { mq("#mont-vfx").hidden = true; vfxDraft = null; };
+  mq("#vfx-close").onclick = close;
+  mq("#mont-vfx").onclick = (e) => { if (e.target === mq("#mont-vfx")) close(); };
+  // …but choosing the draft's own entry is not a choice, it is the list re-reporting
+  // where it already is — and answering it by opening would throw an unsaved new card away
+  mq("#vfx-pick").onchange = () => {
+    const name = mq("#vfx-pick").value;
+    if (vfxDraft && name === vfxDraft.name) return;
+    openVfx(name);
+  };
+  mq("#vfx-new").onclick = () => { vfxDraft = { ...VFX_BLANK }; renderVfx(); };
+  // A copy and not a rename: the card being copied is on lines of this video and
+  // possibly of five other runs, and «сохранить как» that quietly took those with it
+  // is the one thing a shared card must never do.
+  mq("#vfx-copy").onclick = () => {
+    const d = vfxDraft || VFX_BLANK;
+    vfxDraft = { ...d, effects: { ...d.effects }, name: `${d.name || "fx"}-2` };
+    renderVfx();
+  };
+  mq("#vfx-save").onclick = async () => {
+    const d = vfxDraft;
+    if (!d || !d.name.trim()) return say(lab("js.mont.fx.needname"), true);
+    const btn = mq("#vfx-save");
+    btn.disabled = true;
+    mq("#vfx-state").textContent = lab("js.saving");
+    const body = { ...d, name: undefined, video: MONT.video };
+    const out = await send(`/voicefx/${encodeURIComponent(d.name.trim())}`,
+                           { method: "PUT", body: J(body) });
+    btn.disabled = false;
+    if (!out) { mq("#vfx-state").textContent = ""; return; }
+    // how many lines of THIS video were re-derived, said plainly: an edit to a card is
+    // an edit to every line wearing it, and silence about that is how somebody comes
+    // to believe a filter only applies to new lines
+    mq("#vfx-state").textContent = out.touched
+      ? lab("js.mont.fx.redone").replace("{n}", out.touched) : lab("js.mont.fxsaved");
+    vfxDraft = { ...(vfxCard(d.name.trim()) || d), name: d.name.trim() };
+    vfxDraft.effects = { ...vfxDraft.effects };
+    renderVfx();
+  };
+  mq("#vfx-del").onclick = async () => {
+    const name = (vfxDraft && vfxDraft.name || "").trim();
+    const card = vfxCard(name);
+    if (!card) return;
+    const worn = (MONT.doc.scenes || []).filter((sc) => sc.fx === name).length;
+    if (!await ask({
+      title: lab("web.vfx.del"), what: lab("js.mont.fx.del-sure").replace("{n}", name),
+      lines: worn ? [{ text: `${lab("js.mont.fx.del-worn")} ${worn}`, cls: "warn" }] : [],
+      ok: lab("js.mont.go"), danger: true })) return;
+    const out = await send(`/voicefx/${encodeURIComponent(name)}?video=${MONT.video}`,
+                           { method: "DELETE" });
+    if (!out) return;
+    vfxDraft = { ...VFX_BLANK };
+    renderVfx();
+    say(lab("js.mont.fx.deleted"));
+  };
+}
+
+bindVfx();
+
 // ---------------------------------------------------------------- leaving
 
 function bindMontage() {
@@ -2733,7 +3351,8 @@ function bindMontage() {
   // room hands it to the door
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape" || mq("#mont").hidden) return;
-    if (!mq("#mont-set").hidden) mq("#set-close").click();
+    if (!mq("#mont-vfx").hidden) mq("#vfx-close").click();
+    else if (!mq("#mont-set").hidden) mq("#set-close").click();
     else if (mq("#mont-ask").hidden) mq("#mont-close").click();
   });
   mq("#mont-settings").onclick = openSettings;
@@ -2744,6 +3363,8 @@ function bindMontage() {
   };
   mq("#mont-close").onclick = () => {
     mq("#mont-set").hidden = true;
+    mq("#mont-vfx").hidden = true;
+    vfxDraft = null;
     mq("#mont-audio").pause();
     mq("#mont-music").pause();
     cancelAnimationFrame(montRaf);

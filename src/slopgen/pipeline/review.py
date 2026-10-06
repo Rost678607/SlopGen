@@ -480,7 +480,27 @@ def _entities_doc(job: VideoJob, mode: str) -> Doc:
     )
 
 
-def _tts_doc(job: VideoJob, mode: str) -> Doc:
+def _tts_doc(job: VideoJob, mode: str, voicefx: list[str] | None = None) -> Doc:
+    """The voiced script: what each line says, and what it is heard through.
+
+    The filter row (`Scene.voice_fx`) is the one control on this screen that costs
+    nothing to change. Every other edit here re-voices the lines it touched; a filter
+    is derived from the take already on disk, so the stage's re-run re-renders exactly
+    the lines whose card moved and speaks none of them (see `stages.tts._settle_fx`).
+    That is why it is offered at THIS breakpoint rather than before the voicing: the
+    lines are already there to be listened to, and trying a card is a second-long
+    answer instead of a re-synthesis.
+
+    It is a per-line row and not a run setting, because what a filter says is who is
+    speaking and from where — one line on the radio among forty that are not. The
+    fandom mode has the montage room for the same job, where the card can also be
+    edited and saved while the line is playing; this is that control for info and
+    drama, which have no such room.
+
+    `voicefx` is the run's filter base, by name, and the caller supplies it for the
+    reason `shapes` is supplied to the script document: this module has no store to
+    read a catalogue off. An empty list simply leaves each line's row showing what it
+    already holds."""
     def info(s: Scene) -> str:
         secs = s.audio_src_duration or s.duration
         got = f"{secs:.1f}s" if secs else "—"
@@ -490,9 +510,31 @@ def _tts_doc(job: VideoJob, mode: str) -> Doc:
             got += f" · {s.tts_rate:+d}%"
         return f"{got} · {Path(s.audio).name}" if s.audio else got
 
+    cards = list(voicefx or [])
+    rows: list[Row] = []
+    for i, s in enumerate(job.scenes):
+        if s.hush:
+            rows.append(hush_row(i, s))
+            continue
+        rows.append(Row(label=_scene_label(i, s), value=s.text, src=i, info=info(s)))
+        if not cards and not s.voice_fx:
+            continue  # no filters on this machine: a dropdown of one blank is noise
+        # A card the base no longer offers is still what this line names, so it is kept
+        # as a choice of its own — a filter deleted since the run was voiced must not be
+        # silently swapped for whatever sorts first the moment anything here is applied.
+        offer = cards if (not s.voice_fx or s.voice_fx in cards) else [s.voice_fx] + cards
+        # The empty entry is part of the vocabulary and is listed as such: "heard as it
+        # was said" is an answer, and it is the one every line starts on. Both
+        # frontends read the blank OUT of the options rather than adding one of their
+        # own, so a row that may not be emptied (a scene's generator) still cannot be.
+        rows.append(Row(label=_scene_label(i, s), value=s.voice_fx, src=i, field="fx",
+                        kind="choice", options=[""] + offer,
+                        # the writer's own pin, marked the way the montage room marks
+                        # it: it is the one a later re-run may take back by itself
+                        info="∿" if (s.voice_fx and s.voice_fx_auto) else ""))
     return Doc(
         stage="tts",
-        rows=with_part_rows(_scene_rows(job, info), job.scenes, always=False),
+        rows=with_part_rows(rows, job.scenes, always=False),
         variable=True,
         subject="spoken narration lines",
         note_key="bp.note.tts",
@@ -670,17 +712,20 @@ _READERS = {
 }
 
 
-def read(stage: str, job: VideoJob, mode: str, shapes: list[str] | None = None) -> Doc:
+def read(stage: str, job: VideoJob, mode: str, shapes: list[str] | None = None,
+         voicefx: list[str] | None = None) -> Doc:
     """The editable view of what `stage` left on the job.
 
     `shapes` is the run's catalogue of piece forms, and only the fandom `script`
-    document has any use for it (the plan block's choice of form). It is optional
-    because most callers have no run to read one off, and a plan whose form is not
-    offered as a choice is still perfectly editable — the field simply lists what it
-    already holds."""
+    document has any use for it (the plan block's choice of form). `voicefx` is the
+    filter base, and only the `tts` document has any use for that. Both are optional
+    because most callers have no run to read a catalogue off, and both documents are
+    perfectly editable without one — the field simply lists what it already holds."""
     reader = _READERS.get(stage)
     if reader is _script_doc:
         return _script_doc(job, mode, shapes)
+    if reader is _tts_doc:
+        return _tts_doc(job, mode, voicefx)
     return reader(job, mode) if reader else Doc(stage=stage)
 
 
@@ -905,7 +950,51 @@ def _apply_entities(job: VideoJob, rows: list[Row], mode: str) -> bool:
 
 
 def _apply_tts(job: VideoJob, rows: list[Row], mode: str) -> bool:
-    return _apply_scene_texts(job, rows, resync=True)
+    """Fold the voiced script back: the lines, and what each is heard through.
+
+    Two edits with nothing in common except the screen they share. A changed LINE drops
+    its audio so the stage says it again (`_apply_scene_texts` with `resync`); a changed
+    FILTER keeps every take exactly as it is and only renames the card the line points
+    at — the stage re-derives those takes from the voice on disk and synthesizes
+    nothing.
+
+    Both report the stage stale, which is what makes the second one work at all: the
+    filter is laid on inside the voicing stage, so the stage has to be walked into
+    again for the choice to reach the file. That re-entry is paid for by the sidecar
+    cache — every line whose text is unchanged is a cache hit and costs nothing.
+
+    The filter rows are read BEFORE the texts, off the groups, because
+    `_apply_scene_texts` rebuilds `job.scenes` from the rows and the indices it is
+    keyed on are the ones these rows carry."""
+    wanted: dict[int, str] = {}
+    for group in group_rows(rows):
+        head = group.head
+        if head.field in (PART_FIELD, HUSH_FIELD) or head.src is None:
+            continue
+        for extra in group.extras:
+            if extra.field == "fx":
+                wanted[head.src] = extra.value.strip()
+    moved = any(src < len(job.scenes) and job.scenes[src].voice_fx != card
+                for src, card in wanted.items())
+    for src, card in wanted.items():
+        if src >= len(job.scenes):
+            continue
+        scene = job.scenes[src]
+        if scene.voice_fx != card:
+            # changed on this screen, so it is the operator's and the casting pass may
+            # not take it back (see `Scene.voice_fx_auto`). One the writer chose and the
+            # operator left alone keeps its flag, and goes on being re-decided.
+            scene.voice_fx_auto = False
+        scene.voice_fx = card
+    # The texts last, and the filters survive it: every scene is carried over with
+    # `model_copy`, so what was just written on it comes along.
+    #
+    # Only the head rows are handed over. `_apply_scene_texts` walks a flat list and
+    # reads every row in it as one item's narration — it has no grouping, because until
+    # now this document had one row per line — so a filter row reaching it would be
+    # read as a line saying «tape», and an empty one as a line deleted.
+    heads = [r for r in rows if r.field in HEAD_FIELDS]
+    return _apply_scene_texts(job, heads, resync=True) or moved
 
 
 def _apply_footage(job: VideoJob, rows: list[Row], mode: str) -> bool:

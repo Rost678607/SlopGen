@@ -13,7 +13,7 @@ from typing import Callable
 
 from ..config.models import GlobalConfig, KenBurns
 from ..typeface import find as _find_typeface
-from .filters import graph as filter_graph
+from .filters import Span, graph as filter_graph, graph_spans
 
 
 class FFmpegError(Exception):
@@ -216,6 +216,55 @@ def stretch_audio(src: Path, dst: Path, tempo: float) -> None:
     """Time-stretch an audio file by `tempo` (atempo): >1 speeds up, <1 slows down.
     Used by the AI-drama sync to fit a scene's voiceover to its generated clip."""
     _run(["ffmpeg", "-y", "-i", str(src), "-filter:a", f"atempo={tempo:.4f}", "-vn", str(dst)])
+
+
+# What a filtered take is written with: the container it already was. A voice filter
+# re-renders one line, and re-rendering it into another format would make the take's
+# NAME stop predicting its contents — `scene_03.mp3` is what the stage's cache, the
+# montage room's take-shuffling and the preview track are all addressed by.
+def _audio_enc(out: Path) -> list[str]:
+    ext = out.suffix.lower()
+    if ext == ".mp3":
+        # q:a 2 is ~190 kbit/s VBR: this file is re-encoded again by the delivery pass,
+        # so what matters is that the generation loss is inaudible, not the size.
+        return ["-c:a", "libmp3lame", "-q:a", "2", "-ar", "44100", "-ac", "2"]
+    if ext == ".wav":
+        return ["-c:a", "pcm_s16le", "-ar", "44100", "-ac", "2"]
+    return list(AENC)
+
+
+def voice_fx(dry: Path, out: Path, card, seconds: float, at: float = 0.0,
+             opens: bool = True, closes: bool = True) -> None:
+    """Put one line's voice filter on: read the voice as it was said, write what it is
+    heard as (see :mod:`.voicefx` for what a card means).
+
+    `dry` and `out` are two files on purpose and the whole point of the feature —
+    the synthesizer's take is never written over, so switching a filter, or taking it
+    off, is this one pass and never a re-synthesis.
+
+    `at`, `opens` and `closes` place this line inside its RUN of identically filtered
+    neighbours, which is what keeps a background from restarting at every line (see
+    `voicefx.plan`). A lone line is a run of one and needs none of them.
+
+    Written through a temporary file and moved into place. A take under this name is a
+    CLAIM that the sidecar beside it describes (`stages.tts._settle_fx`), and a half
+    written file left behind by a failed ffmpeg would be handed out later as the
+    operator's good take — which is a worse outcome than the error itself.
+    """
+    from .voicefx import plan
+
+    args, graph = plan(card, seconds, at=at, opens=opens, closes=closes)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    tmp = out.with_name(f"{out.stem}.fx{out.suffix}")
+    try:
+        _run([
+            "ffmpeg", "-y", "-i", str(dry), *args,
+            "-filter_complex", ";".join(graph), "-map", "[out]",
+            *_audio_enc(out), str(tmp),
+        ])
+        os.replace(tmp, out)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def make_video_part(clip: Path, dur: float, out: Path, cfg: GlobalConfig, start: float = 0.0,
@@ -1142,12 +1191,12 @@ def _delivery_cmd(
     music: Path | None,
     overlay: OverlaySpec | None,
     fonts_dir: Path | None,
-    fx: dict[str, int] | None = None,
+    fx: list[Span] | None = None,
     draws: list[EffectDraw] | None = None,
 ) -> list[str]:
     """The one delivery pass: join what is left, run the montage filters over the
-    whole picture, draw the effects, burn subtitles, mix background music and the
-    effects' own sounds, stamp the ad overlay, encode."""
+    picture, draw the effects, burn subtitles, mix background music and the effects'
+    own sounds, stamp the ad overlay, encode."""
     cmd: list[str] = ["ffmpeg", "-y"]
     for seg in segments:
         cmd += ["-i", str(seg)]
@@ -1188,7 +1237,11 @@ def _delivery_cmd(
     # the last one before anything meant to be READ is drawn onto it. Subtitles and
     # the ad overlay follow, and stay out of the effect: hash over a caption costs
     # legibility for nothing, and a partner's logo is not ours to run through a tube.
-    filters.extend(filter_graph(fx or {}, cfg, "[vbase]", "[vfx]"))
+    #
+    # It arrives as SPANS — stretches of the finished clock, each with its own look —
+    # because a shot may ask for something other than the run's (`job.FrameShot.look`).
+    # A video whose look never changes is one span and builds the chain it always did.
+    filters.extend(graph_spans(list(fx or []), cfg, "[vbase]", "[vfx]"))
     vtag = "[vfx]"
     # The effects, in the order they fire. Each takes the picture as it stands and
     # hands on the picture with itself on it, so two overlapping ones stack in time
@@ -1269,7 +1322,7 @@ def finalize(
     music: Path | None = None,
     overlay: OverlaySpec | None = None,
     fonts_dir: Path | None = None,
-    fx: dict[str, int] | None = None,
+    fx: list[Span] | None = None,
     draws: list[EffectDraw] | None = None,
     tmp: Path | None = None,
     on_progress: Callable[[str, int, int], None] | None = None,
@@ -1283,10 +1336,13 @@ def finalize(
     moment the episode exists as one picture on one clock, and an effect is placed on
     a word rather than on a scene.
 
-    ``fx`` is the run's filters as ``{name: dose}`` (see :mod:`.filters`). They are
-    applied in this pass and nowhere else, so they cover the finished video end to
-    end — and, since a part is finalized on its own, every episode of a serial carries
-    the same look for its whole length.
+    ``fx`` is the look, as SPANS of this episode's clock — ``[(seconds, {name: dose})]``
+    (see :mod:`.filters`). Applied in this pass and nowhere else, so a span covers the
+    finished video rather than any one scene's own encode, and the effects that are on
+    a clock of their own run that clock once across the whole stretch they cover.
+    Usually there is exactly one span and it is the run's own filters over the whole
+    episode; a shot that asks for something else (`job.FrameShot.look`) cuts it into more
+    (`stages.assemble.look_spans`).
 
     The join uses the concat *filter*, not the concat demuxer: the demuxer
     stream-copies and merely re-stamps each piece's timestamps, so per-scene

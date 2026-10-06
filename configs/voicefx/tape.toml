@@ -1,0 +1,13 @@
+description = "как снятое на плёнку"
+note = ""
+bed = "projector"
+volume = 0.38
+fade = 0.1
+level = 1.1
+retired = false
+
+[effects]
+phone = 35
+wobble = 40
+lofi = 20
+room = 20

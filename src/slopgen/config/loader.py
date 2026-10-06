@@ -26,6 +26,7 @@ from .models import (
     ShapesConfig,
     VisualsConfig,
     VoiceConfig,
+    VoiceFxConfig,
     VoiceSample,
 )
 
@@ -64,6 +65,11 @@ FRAMES_DIR = "frames"  # the frame base inside a fandom's folder: cards + their 
 # sitting in the same folder is ignored for free — and it has to sit there, the way a
 # card's picture does, because an effect separated from its file is nothing at all.
 EFFECTS_DIR = "effects"
+# The voice filters: one folder of cards, each with whatever audio it needs beside it.
+# Same shape as the effects base above and for the same reason — a bed that is a bought
+# loop has to sit next to the card that names it, and `_load_dir` globs *.toml only, so
+# the audio in there is ignored for free.
+VOICEFX_DIR = "voicefx"
 
 
 def _load_fandoms(subdir: str = "fandoms") -> dict[str, FandomConfig]:
@@ -379,6 +385,12 @@ class ConfigStore:
         self.effects: dict[str, EffectSpec] = _load_dir(EFFECTS_DIR, EffectSpec)
         for e in self.effects.values():
             e.root = CONFIGS_DIR / EFFECTS_DIR
+        # the voice filters a LINE can be heard through (see `media.voicefx`). Told
+        # where they were loaded from for the same reason: a card whose bed is a file
+        # names it beside itself.
+        self.voicefx: dict[str, VoiceFxConfig] = _load_dir(VOICEFX_DIR, VoiceFxConfig)
+        for f in self.voicefx.values():
+            f.root = CONFIGS_DIR / VOICEFX_DIR
         self.fandoms: dict[str, FandomConfig] = _load_fandoms()
 
     def active_llm_profile(self) -> LLMProfile:

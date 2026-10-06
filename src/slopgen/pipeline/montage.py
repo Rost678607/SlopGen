@@ -27,6 +27,16 @@ touches neither the audio nor the clock. Both are legitimate and they are not th
 same edit: a line said one way and captioned another is a normal thing to want, and
 a typo fixed in the caption should not cost a re-synthesis and a re-cut.
 
+There is a third thing a line has, and it is cheaper than either: what it is heard
+THROUGH (:func:`voice_filter`). A voice filter is a card the line names — a telephone
+band, a big empty room, a projector rattling behind the words (see
+:mod:`slopgen.media.voicefx`) — and because the synthesizer's take is kept beside the
+filtered one, changing it is one ffmpeg pass over one line and never a synthesis. That
+is what makes it a control you use while listening: try six cards on one line in the
+time a single re-voicing would take, and the take you approved is still the take you
+have. Editing the CARD reaches every line pointing at it (:func:`refilter`), which is
+most of why a filter is a card at all.
+
 **A cut is a word, not a second.** :class:`~.job.FrameShot` has carried its anchor
 since it was written (``anchor_scene``/``anchor_word``) precisely so this screen
 could exist: the operator points at the word a shot starts on, the previous shot ends
@@ -62,6 +72,8 @@ later re-run of `tts` reuses instead of paying for again.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import random
 import re
@@ -204,6 +216,16 @@ def read(job: VideoJob, params) -> dict:
             # showing because it is the one pin a later re-run may take back on its own
             # (see `Scene.voice_auto` and `llm/delivery.py`)
             "voice_auto": scene.voice_auto,
+            # …and what this ONE line is heard through: the voice filter it names
+            # (`Scene.voice_fx`), "" for the voice as it was said. It is in the
+            # document rather than on the settings sheet because it belongs to the
+            # line, and because it is the one property of a take that can be changed
+            # without voicing anything (see `voice_filter`).
+            "fx": scene.voice_fx,
+            # …and whether the WRITER chose it rather than the operator, which is worth
+            # showing for the reason `voice_auto` is: it is the one pin a later re-run of
+            # the voicing stage may take back on its own (see `llm/voicefx.py`)
+            "fx_auto": scene.voice_fx_auto,
             # a stretch of silence the operator put there rather than a line (see
             # `Scene.hush`): it has a length and nothing else, and the room draws it as
             # a block you take by the edge instead of a line you write in
@@ -218,9 +240,28 @@ def read(job: VideoJob, params) -> dict:
         })
         at += scene.duration
 
-    shots = [_shot_json(i, s) for i, s in enumerate(_ordered(job))]
+    shots = []
+    for i, shot in enumerate(_ordered(job)):
+        row = _shot_json(i, shot)
+        # The look over this shot: what to draw it with, and whether the shot has made
+        # a decision of its own. Both, because a shot showing the run's filters and a
+        # shot pinned to the same filters are the same picture and two different things
+        # to press (see `look_of` and `set_look`).
+        row["look"] = look_of(shot, params)
+        row["own_look"] = shot.look is not None
+        shots.append(row)
     return {
         "total": total,
+        # What the voice track would be built out of, as a digest (see
+        # :func:`voice_recipe`). The room compares it between documents and re-fetches
+        # the preview's audio when it changed — which is how an edit that moves the
+        # SOUND (a pause dragged longer, a line re-voiced, one deleted) reaches the
+        # thing playing it, and how an edit that does not (a cut placed, a card cast)
+        # avoids re-downloading a file that would come back identical.
+        #
+        # A digest and not the recipe itself: it is compared and never read, and the
+        # recipe is a path per line.
+        "track": hashlib.sha1(voice_recipe(job).encode("utf-8")).hexdigest()[:12],
         "regions": [{"start": r.start, "end": r.end} for r in regions],
         "scenes": scenes,
         "shots": shots,
@@ -562,6 +603,13 @@ def voice(job: VideoJob, ctx: AppContext, index: int, rate: int | None = None,
     # the only way to get the SAME reading at another pace, because those engines are
     # sampled and generating again rolls a different one. Only where nothing but the
     # pace is being asked about: a new voice is a new take by definition.
+    #
+    # Which is why `rate` being None has to mean "say it again" and not "say it again at
+    # its current pace". The room's re-voice button sends no rate at all for exactly this
+    # reason: it used to send the slider's value, the condition below was therefore true
+    # on every press, and on an engine that can always be re-stretched the button could
+    # not voice anything — a line the model had misread could never be re-rolled. The
+    # pace is the slider's business and commits on its own.
     if rate is not None and with_voice in (None, scene.voice):
         seconds = tts_stage.restretch_one(job, ctx, index, int(rate))
     how = "restretched" if seconds is not None else "voiced"
@@ -570,6 +618,92 @@ def voice(job: VideoJob, ctx: AppContext, index: int, rate: int | None = None,
     scene.duration = seconds
     _rebind(job, index, before)
     return seconds, how
+
+
+def voice_filter(job: VideoJob, ctx: AppContext, index: int, card: str) -> float:
+    """Change what ONE line is heard through, without voicing it again. Returns the
+    take's length afterwards.
+
+    `card` is a voice filter's name (`config.models.VoiceFxConfig`); `""` takes the
+    filter off and puts the voice itself back. Either way the synthesizer's take is
+    untouched on disk and the filtered one is derived from it
+    (`stages.tts.refilter_one`), which is what makes this a thing you do while
+    listening: one ffmpeg pass over one line, as many times as it takes to find the
+    right card.
+
+    `retime` follows for the same reason it follows a re-voicing, and for a much
+    smaller one: a filter is forbidden to change a take's length, the measured
+    difference is five microseconds of container rounding, and the clock is still
+    re-measured from the file rather than assumed. A room that trusts a number it
+    could have read is a room that eventually shows a cut where there is none."""
+    from .stages import tts as tts_stage
+
+    scene = job.scenes[index]
+    if scene.hush:
+        raise ValueError("this is a pause — there is nothing in it to hear")
+    if scene.unvoiced or not scene.audio:
+        # Nothing to filter YET, which is not a refusal: the choice is remembered and
+        # the voicing stage lays it on the first take it makes (see `stages.tts`). An
+        # error here would make the one order of work that is natural — pick the
+        # filter, then voice the line — the one that does not work.
+        scene.voice_fx = str(card)
+        scene.voice_fx_auto = False
+        return scene.duration
+    before = _anchor_fractions(job, index)
+    seconds = tts_stage.refilter_one(job, ctx, index, str(card))
+    # by hand, so the casting pass may not take it back on the next entry to the stage —
+    # including an empty card, which is the operator saying «слышно как записано» and
+    # not the absence of a decision (see `Scene.voice_fx_auto`)
+    scene.voice_fx_auto = False
+    if seconds is not None:
+        scene.duration = seconds
+    _rebind(job, index, before)
+    return scene.duration
+
+
+def refilter(job: VideoJob, ctx: AppContext, cards: set[str] | None = None) -> int:
+    """Re-derive every voiced line heard through one of `cards`, and say how many.
+    `None` means all of them.
+
+    This is an edit to a CARD reaching the lines that point at it, which is the whole
+    reason a filter is a card and not a copy of some settings: turn the projector down
+    once and the six lines that were already using it are heard with the new one. The
+    lines are re-derived from the voice on disk, so none of them is re-voiced.
+
+    Lines that are NOT voiced yet are skipped rather than complained about: they carry
+    the name and the voicing stage will lay the card on the first take it makes.
+
+    `retime` afterwards for the reason :func:`voice_filter` gives, once for the lot."""
+    from .stages import tts as tts_stage
+
+    # Every line is settled whatever `cards` says, because a background belongs to a
+    # RUN of lines: turning the projector up changes what the lines AROUND a `плёнка`
+    # line hear too, and a pass that visited only the named ones would leave the bed
+    # stepping at their edges. What `cards` decides is the ANSWER — how many lines the
+    # operator is told about — and the rest cost a stamp comparison each.
+    touched = tts_stage.settle_fx(job, ctx.store)
+    named = sum(1 for sc in job.scenes
+                if not sc.unvoiced and sc.audio
+                and (cards is None or (sc.voice_fx or "").strip() in cards))
+    if touched:
+        retime(job)
+    return min(touched, named)
+
+
+def forget_filter(job: VideoJob, name: str) -> int:
+    """Take a deleted filter off every line of this video, and say how many lost it.
+
+    A line pointing at a card that no longer exists is already heard as it was said —
+    nothing resolves the name, so nothing is laid on it (`tts.fx_card`). Clearing it is
+    about the SCREEN rather than the sound: a picker showing «плёнка» on a line whose
+    filter has been deleted is the interface claiming something the render will not do.
+    """
+    gone = 0
+    for scene in job.scenes:
+        if (scene.voice_fx or "").strip() == name:
+            scene.voice_fx = ""
+            gone += 1
+    return gone
 
 
 def take_voice(job: VideoJob, ctx: AppContext, index: int, src: Path) -> float:
@@ -589,12 +723,23 @@ def take_voice(job: VideoJob, ctx: AppContext, index: int, src: Path) -> float:
     align_dir = tts_stage._require_aligner(ctx)
     dest = tts_stage.audio_path(job, index, Path(src).suffix.lower() or ".wav")
     dest.parent.mkdir(parents=True, exist_ok=True)
+    # whatever filtered take stood here, the voice kept beside it was the old voice
+    tts_stage._forget_dry(dest)
     if Path(src) != dest:
         shutil.copy2(src, dest)
     spoken = tts_stage._spoken(scene.text, tts_stage._pronounce(ctx))
     seconds = duration_of(dest)
     raw = tts_stage._as_written(
         aligner.align(dest, spoken, align_dir, seconds), tts_stage._pronounce(ctx))
+    # The filters go on AFTER the aligner, so the recogniser heard the recording itself:
+    # a line with a projector rattling behind it is measurably harder to find words in,
+    # and the timings are what the whole track hangs off. The whole video rather than
+    # this line, because a new recording has a new length and that moves the background
+    # under every line after it in the same run (`tts.settle_fx`).
+    scene.audio = dest
+    scene.audio_src_duration = seconds
+    if tts_stage.settle_fx(job, ctx.store):
+        seconds = duration_of(dest)
     before = _anchor_fractions(job, index)
     scene.audio = dest
     scene.audio_src_duration = seconds
@@ -621,17 +766,22 @@ def _is_take(job: VideoJob, path: Path | None) -> bool:
 def _move_take(src: Path, dst: Path) -> None:
     """Move one take and everything filed beside it under the same name.
 
-    Four files, not one: the take, the word timings cached next to it
-    (`tts._cache_path`), and the same pair again for the UNSTRETCHED take an engine
-    that cannot vary its own speed leaves behind (`tts.raw_path`). The raw one is the
-    half that would go wrong quietly — it is read only when somebody changes a line's
-    pace, so a raw take left under the old number would sit there until that moment and
-    then hand one line another line's voice."""
-    from .stages.tts import raw_path
+    Five files, not one: the take, the word timings cached next to it
+    (`tts._cache_path`), the same pair again for the UNSTRETCHED take an engine that
+    cannot vary its own speed leaves behind (`tts.raw_path`), and the UNFILTERED voice
+    a filtered line keeps (`tts.dry_path`).
+
+    The last two are the halves that would go wrong quietly. Each is read only at one
+    moment — when somebody changes a line's pace, or the filter it is heard through —
+    so a stale one sits under the old number until then and hands that line another
+    line's voice. The visible take is wrong immediately and gets noticed; these are
+    wrong later."""
+    from .stages.tts import dry_path, raw_path
 
     pairs = [(src, dst), (src.with_suffix(".json"), dst.with_suffix(".json"))]
     a_raw, b_raw = raw_path(src), raw_path(dst)
     pairs += [(a_raw, b_raw), (a_raw.with_suffix(".json"), b_raw.with_suffix(".json"))]
+    pairs.append((dry_path(src), dry_path(dst)))
     for a, b in pairs:
         if a.is_file():
             a.replace(b)
@@ -1486,9 +1636,76 @@ def card_at(job: VideoJob, seconds: float) -> tuple[FrameShot | None, float]:
     return (last, max(seconds - last.start, 0.0)) if last else (None, 0.0)
 
 
+def look_of(shot, params) -> dict:
+    """The montage look this SHOT is actually rendered with: its own, or the run's
+    where it names none (`job.FrameShot.look`). The one place that reading lives, so
+    the room, the true-frame button and the delivery pass cannot disagree about it."""
+    own = getattr(shot, "look", None) if shot is not None else None
+    return fxmod.normalise(own if own is not None else (params.filters or {}))
+
+
+def look_at(job: VideoJob, params, seconds: float) -> dict:
+    """The look at one MOMENT of the finished video — what the true-frame button has
+    to render through, since the operator pressed it while standing somewhere. Asked of
+    the shot that is up then, which is the thing the look belongs to."""
+    shot, _into = card_at(job, max(seconds, 0.0))
+    return look_of(shot, params)
+
+
+def set_look(job: VideoJob, index: int, spec: dict | None) -> dict | None:
+    """Give ONE shot its own look, or put it back on the run's (`spec=None`).
+
+    An empty dict is not the same answer as None and both are reachable on purpose:
+    `{}` is «на этом кадре ничего» and stays empty when the run's look is turned up,
+    None is «как во всём ролике» and follows it. The clean shot in the middle of a
+    filtered video is the first thing anybody comes in here for, and it needs the
+    first of those.
+
+    Nothing is re-rendered and nothing on the clock moves: the look is laid in the
+    delivery pass over the finished picture (`stages.assemble.look_spans`), so this is
+    a note for that pass and a redraw of the preview."""
+    shot = _ordered(job)[index]
+    shot.look = None if spec is None else fxmod.normalise(spec)
+    return shot.look
+
+
 def voice_pieces(job: VideoJob) -> list[tuple[Path | None, float]]:
     """Every line's audio and the length the timeline gives it, in order — what
     `media.ffmpeg.voice_track` builds the preview's clock out of. A line with no voice
     yet contributes its silence rather than nothing, so the hole is where it will be."""
     return [(scene.audio if scene.audio and Path(scene.audio).is_file() else None,
              max(scene.duration, 0.01)) for scene in job.scenes]
+
+
+def voice_recipe(job: VideoJob) -> str:
+    """What the preview's voice track is MADE of: which take, in which order, for how
+    long, and as it stood when. Two jobs with the same recipe sound identical, and two
+    with different recipes do not.
+
+    One definition and two readers, which is the point. The server rebuilds the file
+    when this changed (`web/montage_api.voice_track` writes it down beside the file);
+    the ROOM re-fetches the file when this changed (`montage.read` sends its digest, see
+    `track`). Written twice, the two drift apart at exactly the edit nobody tests, and
+    the symptom is the quiet kind: the screen draws a timeline the sound does not agree
+    with, and nothing in the room says so.
+
+    A pause is in here like anything else — an empty path and the seconds it holds —
+    which is what makes dragging one out reach the thing playing it.
+
+    The TIMESTAMP is the third field for a reason the first two cannot cover: a voice
+    filter rewrites a take in place (`stages.tts._settle_fx`), leaving its name and its
+    length exactly as they were. Path and seconds alone call that the same track, so the
+    preview would go on playing the unfiltered line. And it is compared for INEQUALITY
+    rather than for being newer, which is not pedantry either: taking a filter off
+    restores the take by copying the dry voice back over it (`shutil.copy2` carries the
+    source's mtime), so the restored file is OLDER than the one it replaced — a test
+    asking "is anything newer than the track" would answer no and keep playing the
+    filter the operator had just removed."""
+    out = []
+    for path, seconds in voice_pieces(job):
+        try:
+            when = round(path.stat().st_mtime, 3) if path else 0.0
+        except OSError:  # it was there a moment ago; the rebuild will say so properly
+            when = 0.0
+        out.append([str(path) if path else "", round(seconds, 4), when])
+    return json.dumps(out, ensure_ascii=False)

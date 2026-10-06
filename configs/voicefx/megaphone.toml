@@ -1,0 +1,9 @@
+description = "из громкоговорителя через площадь: без низа, с клипом и одним отражением"
+note = "the reflection is inside the chain, so it scales with the dose: at 100 the square is bigger."
+bed = ""
+volume = 0.35
+fade = 0.08
+level = 1.0
+
+[effects]
+megaphone = 80

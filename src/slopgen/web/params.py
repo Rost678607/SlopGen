@@ -66,6 +66,9 @@ def common(b: dict) -> dict:
         # whether the writer casts the intonations (see `llm/delivery.py`); a no-op on
         # any voice that is not a card with several deliveries in it
         "tts_deliveries": bool(b.get("tts_deliveries", False)),
+        # …and whether it picks the voice FILTERS too (see `llm/voicefx.py`); a no-op
+        # on a machine with no filter cards in `configs/voicefx/`
+        "tts_voicefx": bool(b.get("tts_voicefx", False)),
         "keep_temp": bool(b.get("keep_temp", False)),
         # which track plays under the voice; "" = the one the run rolls for itself
         "music": str(b.get("music", "")),
@@ -372,6 +375,7 @@ _FIELDS: list[dict] = [
     {"f": "tts_rate", "kind": "range", "l": "web.f.rate", "min": -50, "max": 50,
      "step": 5},
     {"f": "tts_deliveries", "kind": "check", "l": "web.f.deliveries"},
+    {"f": "tts_voicefx", "kind": "check", "l": "web.f.voicefx"},
     {"f": "subtitle_style", "kind": "select", "l": "web.card.subs",
      "opts": "subtitle_styles", "blank": True},
     {"f": "clean_subtitles", "kind": "check", "l": "web.f.clean"},

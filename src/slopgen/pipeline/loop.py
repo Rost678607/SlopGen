@@ -126,6 +126,7 @@ ALIASES = {
     "clip": "clip_seconds", "clip_s": "clip_seconds",
     "voice": "voice_override", "engine": "tts_engine", "rate": "tts_rate",
     "deliveries": "tts_deliveries", "intonations": "tts_deliveries",
+    "voicefx": "tts_voicefx", "фильтры": "tts_voicefx",
     "subs": "subtitle_style", "clean_subs": "clean_subtitles",
     "metadata": "write_metadata", "meta": "write_metadata",
     "style": "visual_style", "notes": "visual_notes", "fx": "filters",

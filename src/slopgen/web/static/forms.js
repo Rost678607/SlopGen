@@ -259,6 +259,16 @@ const FORMS = {
           "cls": "dim"
         },
         {
+          "f": "tts_voicefx",
+          "kind": "checkbox",
+          "inline": true,
+          "l": "web.f.voicefx"
+        },
+        {
+          "note": "web.voicefx.note",
+          "cls": "dim"
+        },
+        {
           "f": "tts_rate",
           "kind": "range",
           "min": "-50",
@@ -851,6 +861,16 @@ const FORMS = {
           "cls": "dim"
         },
         {
+          "f": "tts_voicefx",
+          "kind": "checkbox",
+          "inline": true,
+          "l": "web.f.voicefx"
+        },
+        {
+          "note": "web.voicefx.note",
+          "cls": "dim"
+        },
+        {
           "f": "tts_rate",
           "kind": "range",
           "min": "-50",
@@ -1274,6 +1294,16 @@ const FORMS = {
         },
         {
           "note": "web.deliveries.note",
+          "cls": "dim"
+        },
+        {
+          "f": "tts_voicefx",
+          "kind": "checkbox",
+          "inline": true,
+          "l": "web.f.voicefx"
+        },
+        {
+          "note": "web.voicefx.note",
           "cls": "dim"
         },
         {
@@ -1824,6 +1854,16 @@ const FORMS = {
         },
         {
           "note": "web.deliveries.note",
+          "cls": "dim"
+        },
+        {
+          "f": "tts_voicefx",
+          "kind": "checkbox",
+          "inline": true,
+          "l": "web.f.voicefx"
+        },
+        {
+          "note": "web.voicefx.note",
           "cls": "dim"
         },
         {

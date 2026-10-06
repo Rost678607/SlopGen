@@ -176,6 +176,29 @@ class Scene(BaseModel):
     # re-decided whenever the casting runs again, and dropped when the line no longer
     # calls for it. It is also what the montage screen shows the difference by.
     voice_auto: bool = False
+    # What this ONE line is heard THROUGH: the name of a voice filter card
+    # (`config.models.VoiceFxConfig`), "" for the voice as it was said. A radio
+    # dispatcher, a recording played back in the room, a line remembered rather than
+    # heard — each of those is one line among forty that are not, which is why it sits
+    # here and not on the run beside the montage look.
+    #
+    # The card's NAME and not a copy of its settings, for the reason `voice` is a spec:
+    # it is the operator's choice, and it has to survive everything the card does
+    # afterwards — turn the projector down in the editor and every line pointing at
+    # «плёнка» is re-derived with the new one.
+    #
+    # Nothing is baked in by it. The synthesizer's own take is kept beside the filtered
+    # one (`stages.tts.dry_path`), so changing this is one ffmpeg pass over one line
+    # and never a re-synthesis — which on a sampled cloning engine is the difference
+    # between the take the operator approved and another reading of the same words.
+    voice_fx: str = ""
+    # …and whether the WRITER chose it rather than the operator (see `llm/voicefx.py`),
+    # which is `voice_auto` one field over and decides the same one thing: whether a
+    # later pass may replace it. A filter the operator put on is theirs — the casting
+    # pass is shown it as context and never returns it — while an automatic one is
+    # re-decided whenever that pass runs again, and dropped when the line no longer
+    # reads as something heard through anything.
+    voice_fx_auto: bool = False
     # A line that is not a line: a stretch of SILENCE the operator put on the track
     # from the montage room. It has a `duration` and nothing else — no text, no voice,
     # no words — so nothing can be anchored inside it, nothing is synthesized for it,
@@ -257,6 +280,27 @@ class FrameShot(BaseModel):
     move: KenBurns | None = None
     pinned: bool = False  # the operator chose this card; selection may not overrule it
     ask_id: str = ""  # the manual-manifest id when this shot is (or was) an ask
+    # The montage LOOK over this shot — `{effect: dose}`, see `media/filters` — or None
+    # to take the run's (`RunParams.filters`), which is what every shot does until one
+    # is changed in the montage room.
+    #
+    # It belongs to the SHOT and not to the line, because it is a property of the
+    # PICTURE and the picture changes here. The two tracks run past each other on
+    # purpose (see :mod:`.framebase`): a line boundary falls wherever the narrator drew
+    # breath, and a look that changed there would change in the middle of a still
+    # nobody cut — half a shot in a tube and half out of it, which is not a tube and not
+    # a transition either, just a seam in the wrong place.
+    #
+    # None and `{}` are deliberately different answers: None is «как во всём ролике»
+    # and follows the run's setting wherever it moves, `{}` is «на этом кадре ничего»
+    # and is a decision that survives the run's look being turned up. A bool could not
+    # express the second, and the second is the useful one — the clean shot in the
+    # middle of a tape-filtered video is what somebody reaches in here for.
+    #
+    # Consecutive shots asking for the same look are rendered as ONE application
+    # (`filters.merge`), so a look covering six shots runs its own clock once across
+    # all six instead of restarting at every cut.
+    look: dict[str, int] | None = None
 
 
 class EffectCue(BaseModel):

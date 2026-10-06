@@ -603,6 +603,34 @@
     </div>
   </div>
 
+  <!-- The voice filters: what ONE line is heard through (configs/voicefx/, see
+       media/voicefx.py). A sheet of its own and not a block in the column, because it
+       is two things at once — a list of cards to pick from, and the editor for the one
+       that is open. It lives here rather than only in the config panel for a reason
+       specific to sound: a filter cannot be judged by reading its sliders. You put it
+       on the line you are listening to, move one dose, press play again — and every
+       step of that is one ffmpeg pass over one line, never a re-voicing. -->
+  <div id="mont-vfx" hidden>
+    <div class="sheet">
+      <h3 data-l="web.vfx.head">фильтры голоса</h3>
+      <p class="what dim" data-l="web.vfx.note"></p>
+      <div class="row">
+        <select id="vfx-pick"></select>
+        <button id="vfx-new" class="ghost" data-l="web.vfx.new">＋ новый</button>
+        <button id="vfx-copy" class="ghost" data-l="web.vfx.copy">копия</button>
+        <span class="grow"></span>
+        <span class="dim" id="vfx-state"></span>
+      </div>
+      <div class="setrows" id="vfx-rows"></div>
+      <div class="row">
+        <button id="vfx-del" class="ghost danger" data-l="web.vfx.del">удалить</button>
+        <span class="grow"></span>
+        <button id="vfx-save" class="primary" data-l="web.vfx.save">сохранить</button>
+        <button id="vfx-close" class="ghost" data-l="web.mont.settings.done">готово</button>
+      </div>
+    </div>
+  </div>
+
   <div class="mont-body">
     <!-- what it looks like: a canvas drawn from the cards and the crop moves, run off
          one audio element holding the whole voice track. Approximate by construction —
@@ -611,6 +639,9 @@
       <div class="mont-screen">
         <canvas id="mont-canvas" width="540" height="960"></canvas>
         <img id="mont-true" hidden alt="">
+        <!-- says whether what you are looking at is the sketch or ffmpeg's own frame,
+             because the two are meant to look alike and otherwise nothing tells you -->
+        <span id="mont-truetag" hidden></span>
         <p id="mont-blank" class="dim" data-l="web.mont.blank">здесь пока нечего показать</p>
       </div>
       <div class="mont-transport">

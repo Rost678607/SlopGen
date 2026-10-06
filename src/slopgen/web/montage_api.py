@@ -41,9 +41,11 @@ from fastapi.responses import FileResponse
 from starlette.concurrency import run_in_threadpool
 
 from ..config import ConfigStore
-from ..config.models import SubtitleStyle
+from ..config.loader import VOICEFX_DIR, delete_config, write_config
+from ..config.models import SubtitleStyle, VoiceFxConfig
 from ..media import ffmpeg
 from ..media import filters as fxmod
+from ..media import voicefx as fxvoice
 from ..media.stock import IMAGE_EXTS, VIDEO_EXTS
 from ..pipeline import effects as fxeff
 from ..pipeline import framebase, montage, orchestrator
@@ -151,6 +153,10 @@ SETTINGS = {
     "tts_source": _pick(lambda store: {"engine", "manual"}, blank="engine"),
     "voice_override": _text,
     "tts_rate": _rate,
+    # whether the writer casts the intonations and the voice filters when `tts` is
+    # pressed from in here (see `llm/delivery.py`, `llm/voicefx.py`)
+    "tts_deliveries": _flag,
+    "tts_voicefx": _flag,
     # what plays under the voice: a track in assets/music/, "" for the one the
     # pipeline rolls for this run, or `none` for silence
     "music": _pick(lambda store: {assemble.track_key(store.global_cfg, p)
@@ -167,6 +173,19 @@ SETTINGS = {
     "dry_run": _flag,
     "keep_temp": _flag,
 }
+
+
+def _voicefx_json(card) -> dict:
+    """One voice filter as the room reads it: its settings, plus whether it is offered.
+
+    `usable` is sent rather than the list being filtered, because this room is also
+    where cards are edited: a retired card still has to be visible to be brought back,
+    and a line already pinned to one has to be able to say so."""
+    data = card.model_dump(mode="json", exclude={"root"})
+    data["effects"] = fxvoice.normalise(card.effects)
+    data["usable"] = card.usable
+    return data
+
 
 # One hand-pressed stage per run at a time. Per RUN and not per process, because two
 # runs being worked on in two tabs is an ordinary thing and neither touches the other's
@@ -323,6 +342,12 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404, card_json,
         # it is not, the pace is an `atempo` over the take already made — which on a
         # sampled engine is the only way to keep the reading you just listened to.
         out["restretch"] = not varies_rate(engine)
+        # Every voice filter a LINE can be heard through, in full rather than by name:
+        # the room does not only pick one, it edits them (see the two routes below), so
+        # it needs every dose and every bed setting of every card. The list is small —
+        # the six shipped ones plus whatever the operator has made — and sent on each
+        # reply because saving a card is one of the things that happens in here.
+        out["voicefx"] = [_voicefx_json(c) for c in store.voicefx.values()]
         out["world"] = run.params.fandom if world is not None else ""
         out["cards"] = [card_json(run.params.fandom, c)
                         for c in (world.frames if world else []) if c.usable]
@@ -471,6 +496,134 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404, card_json,
             raise HTTPException(status_code=502, detail=f"{type(e).__name__}: {e}")
         finally:
             tmp.unlink(missing_ok=True)
+        save(cp, i, job)
+        return doc(run, cp, i, job)
+
+    # -- what a line is heard through --------------------------------------
+    #
+    # Three routes rather than one, because a filter is a CARD: a line points at it,
+    # the card itself is edited, and the card can be thrown away. Saving and deleting
+    # are in this room and not only in the config panel for a reason that is specific
+    # to sound — you cannot judge a filter by reading its sliders. You try it on the
+    # line you are listening to, move one dose, listen again; a round trip through
+    # another screen for every step is a round trip too many, and the lines already
+    # using the card have to be re-derived either way.
+
+    @app.post("/api/runs/{run_id}/montage/voice/fx")
+    async def set_voice_fx(run_id: str, request: Request,
+                           slopgen: str | None = Cookie(default=None)) -> dict:
+        """Put a voice filter on this line, or take it off (`card: ""`).
+
+        Off the request thread like a re-voicing, and for a much smaller version of the
+        same reason: it is an ffmpeg pass rather than a synthesis, so it costs a
+        fraction of a second — but the event loop here is also serving the page that is
+        waiting for it, and a filter is pressed far more often than a take is made."""
+        guard(slopgen)
+        run = run_or_404(run_id)
+        b = await body_of(request)
+        cp, i, job = open_job(run, int(b.get("video", 0)))
+        line = int(b.get("scene", -1))
+        if not 0 <= line < len(job.scenes):
+            raise HTTPException(status_code=404, detail="no such line")
+        card = str(b.get("card", ""))
+        if card and card not in store.voicefx:
+            raise HTTPException(status_code=422, detail=f"no voice filter {card!r}")
+        try:
+            await run_in_threadpool(montage.voice_filter, job, context(cp), line, card)
+        except ValueError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
+        except Exception as e:
+            log.exception("filtering line %d failed", line)
+            raise HTTPException(status_code=502, detail=f"{type(e).__name__}: {e}")
+        save(cp, i, job)
+        return doc(run, cp, i, job)
+
+    @app.put("/api/runs/{run_id}/montage/voicefx/{name}")
+    async def save_voice_fx(run_id: str, name: str, request: Request,
+                            slopgen: str | None = Cookie(default=None)) -> dict:
+        """Create or overwrite one voice filter, then re-derive every line using it.
+
+        The second half is the point and it is not a convenience: a card is shared, so
+        an edit to it is an edit to every line pointing at it, and a room that wrote the
+        file and left the takes alone would be showing one set of sliders and playing
+        another. Nothing is re-voiced — each of those lines is derived again from the
+        voice already on disk.
+
+        The file is written through the same validator and the same writer the config
+        panel uses, so a card saved here and one saved there are the same card."""
+        guard(slopgen)
+        run = run_or_404(run_id)
+        b = await body_of(request)
+        cp, i, job = open_job(run, int(b.get("video", 0)))
+        body = {k: v for k, v in b.items() if k not in ("video", "scene")}
+        body["name"] = name
+        try:
+            card = VoiceFxConfig.model_validate(body)
+        except Exception as e:
+            raise HTTPException(status_code=422, detail=str(e)) from e
+        try:
+            write_config(VOICEFX_DIR, name, card.model_dump(mode="json"))
+        except Exception as e:  # an unusable name, a folder that cannot be written
+            raise HTTPException(status_code=422, detail=str(e)) from e
+        card.root = Path("configs") / VOICEFX_DIR
+        store.voicefx[name] = card
+        touched = await run_in_threadpool(montage.refilter, job, context(cp), {name})
+        save(cp, i, job)
+        out = doc(run, cp, i, job)
+        out["touched"] = touched
+        return out
+
+    @app.delete("/api/runs/{run_id}/montage/voicefx/{name}")
+    async def drop_voice_fx(run_id: str, name: str, video: int = 0,
+                            slopgen: str | None = Cookie(default=None)) -> dict:
+        """Throw a voice filter away, and put the lines of this video that used it back
+        on the voice as it was said.
+
+        Only this video's lines are cleared, which is the honest limit of what a room
+        looking at one timeline can do: another video pointing at the deleted name is
+        already heard unfiltered (nothing resolves it — see `tts.fx_card`), and it will
+        say so the next time anybody opens it."""
+        guard(slopgen)
+        run = run_or_404(run_id)
+        cp, i, job = open_job(run, video)
+        if name not in store.voicefx:
+            raise HTTPException(status_code=404, detail=f"no voice filter {name!r}")
+        delete_config(VOICEFX_DIR, name)
+        store.voicefx.pop(name, None)
+        if montage.forget_filter(job, name):
+            # the takes come back from their dry voices; the name is already gone, so
+            # `refilter` is being asked to settle the lines it just cleared
+            await run_in_threadpool(montage.refilter, job, context(cp), {""})
+        save(cp, i, job)
+        return doc(run, cp, i, job)
+
+    @app.post("/api/runs/{run_id}/montage/look")
+    async def set_look(run_id: str, request: Request,
+                       slopgen: str | None = Cookie(default=None)) -> dict:
+        """Give ONE shot its own montage look, or put it back on the run's.
+
+        The SHOT and not the line: a look is a property of the picture, and the picture
+        changes where the shots change (see `job.FrameShot.look`).
+
+        `look` absent or null is «как во всём ролике» and makes the shot follow
+        `params.filters` wherever it goes; an object — including an empty one — is a
+        decision of this shot's own. The two are different answers and both are
+        reachable on purpose (see `montage.set_look`).
+
+        Nothing is rendered here and nothing on the clock moves: the look is laid over
+        the finished picture in the delivery pass, so this writes a note for that pass
+        and the room redraws its sketch."""
+        guard(slopgen)
+        run = run_or_404(run_id)
+        b = await body_of(request)
+        cp, i, job = open_job(run, int(b.get("video", 0)))
+        shot = int(b.get("shot", -1))
+        if not 0 <= shot < len(job.frame_shots):
+            raise HTTPException(status_code=404, detail="no such shot")
+        spec = b.get("look")
+        if spec is not None and not isinstance(spec, dict):
+            raise HTTPException(status_code=422, detail="a look is an object of doses")
+        montage.set_look(job, shot, spec)
         save(cp, i, job)
         return doc(run, cp, i, job)
 
@@ -931,18 +1084,29 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404, card_json,
         So the recipe is written down beside the file and compared. It covers the same
         re-voicing the mtime did (a new take has a new length), and every other edit
         that changes what the track should be: a line dropped, one inserted, one
-        re-voiced at another speed, a silent line appearing where there was sound."""
+        re-voiced at another speed, a pause dragged longer, a silent line appearing
+        where there was sound.
+
+        The recipe is `montage.voice_recipe` rather than a line of JSON here, because
+        the ROOM needs the same answer: the document carries its digest, and the browser
+        re-fetches this file when it changed. Two copies of "what the track is made of"
+        would drift apart at the edit nobody tests, and the screen would draw a timeline
+        the sound does not agree with."""
         guard(slopgen)
         run = run_or_404(run_id)
         cp, _i, job = open_job(run, video)
         pieces = montage.voice_pieces(job)
         out = Path(job.workdir) / "montage" / "voice.m4a"
-        recipe = json.dumps([[str(p) if p else "", round(s, 4)] for p, s in pieces],
-                            ensure_ascii=False)
+        recipe = montage.voice_recipe(job)
         stamp = out.with_name("voice.recipe.json")
-        newest = max((p.stat().st_mtime for p, _s in pieces if p), default=0.0)
         made = stamp.read_text(encoding="utf-8") if stamp.is_file() else ""
-        if not out.is_file() or out.stat().st_mtime < newest or made != recipe:
+        # ONE comparison, because the recipe now carries each take's timestamp as well.
+        # It used to be two — this, and the track against the newest piece — and the
+        # second was both redundant and wrong in one direction: a take RESTORED from the
+        # voice kept beside it is older than the one it replaced (`shutil.copy2` carries
+        # the source's mtime), so "is anything newer than the track" answered no and the
+        # preview went on playing a filter the operator had taken off.
+        if not out.is_file() or made != recipe:
             try:
                 await run_in_threadpool(ffmpeg.voice_track, pieces, out, store.global_cfg)
                 stamp.parent.mkdir(parents=True, exist_ok=True)
@@ -987,7 +1151,11 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404, card_json,
                 ffmpeg.still_frame, card.path, out, store.global_cfg,
                 seconds=into, shot_s=shot.duration, move=shot.move if photo else None,
                 fit=card.fit, ax=card.fit_x, ay=card.fit_y,
-                fx=cp.params.filters, photo=photo, draws=draws, at=max(at, 0.0))
+                # the look AT THIS MOMENT and not the run's: a line may carry its own
+                # (`job.FrameShot.look`), and this button's whole job is to answer with
+                # what will actually be there
+                fx=montage.look_at(job, cp.params, max(at, 0.0)),
+                photo=photo, draws=draws, at=max(at, 0.0))
         except Exception as e:
             log.exception("rendering a true frame failed")
             raise HTTPException(status_code=502, detail=f"{type(e).__name__}: {e}")

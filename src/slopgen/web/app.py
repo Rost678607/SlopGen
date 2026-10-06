@@ -34,8 +34,8 @@ from starlette.concurrency import run_in_threadpool
 from pydantic import ValidationError
 
 from ..config import ConfigStore, RunParams
-from ..config.loader import (delete_config, effects_dir, fandom_docs, file_sha,
-                             frames_dir, lore_sha, read_lore, update_global,
+from ..config.loader import (VOICEFX_DIR, delete_config, effects_dir, fandom_docs,
+                             file_sha, frames_dir, lore_sha, read_lore, update_global,
                              write_character, write_config, write_effect,
                              write_frame_card)
 from ..config.envfile import set_env_var
@@ -46,6 +46,8 @@ from ..llm import topic as topic_ai
 from ..llm.client import ChatLLM, MODEL_PRESETS, PROVIDERS
 from .. import labels
 from ..media import ffmpeg as ffmpeg_media
+from ..media.voicefx import BEDS as VOICEFX_BEDS
+from ..media.voicefx import CATALOGUE as VOICEFX_CATALOGUE
 from ..media.generate import (PHOTO_MODELS, VIDEO_MODELS, ai_models, env_keys,
                               model_clip_seconds)
 from ..tts import ENGINES as TTS_ENGINES
@@ -58,7 +60,7 @@ from ..config.models import (DEFAULT_DELIVERY,
                              FrameCard, LLMProfile, OrchestrationConfig,
                              OrchestrationConfig, OrchestrationStage, PresetConfig,
                              Rect, VisualsConfig,
-                             VoiceConfig, VoiceSample)
+                             VoiceConfig, VoiceFxConfig, VoiceSample)
 from ..config.models import BgSource, FgSource, Motion
 from ..media.stock import IMAGE_EXTS, VIDEO_EXTS
 from ..chat.skins import SKINS as CHAT_SKINS
@@ -362,6 +364,12 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
             # the montage look: {effect: dose 0-100}, laid over the finished picture
             # rather than asked of any model, which is why every mode offers it
             "filters": [{"key": k, "note": v} for k, v in FILTER_HELP.items()],
+            # …and the voice filters, which are the same idea one clock in and NOT a
+            # property of the run: a card is picked per LINE (see media/voicefx.py).
+            # Two lists, because a card is made out of both — the effects it stacks and
+            # the background it may put behind the line.
+            "voicefx": [{"key": e.key, "note": e.note} for e in VOICEFX_CATALOGUE],
+            "voicefx_beds": [{"key": b.key, "note": b.note} for b in VOICEFX_BEDS],
         }
         # What one QUEUED video may be given of its own, per mode — the controls the
         # loop's queue draws for a single entry. Built off the lists above rather than
@@ -779,12 +787,18 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
         "accounts": (AccountConfig, "accounts"),
         "visuals": (VisualsConfig, "visuals"),
         "characters": (CharacterConfig, "characters"),
+        # the voice filters: what ONE line is heard through (see media/voicefx.py).
+        # An ordinary named config, which is the whole reason it is a folder and not a
+        # block of settings somewhere — save, rename and delete come with it. The
+        # montage room has its own save and delete for the same cards, because a filter
+        # is judged by listening to it on a line and not by reading its sliders.
+        "voicefx": (VoiceFxConfig, VOICEFX_DIR),
     }
 
     def _store_of(kind: str) -> dict:
         return {"llm": store.llm_profiles, "presets": store.presets, "ads": store.ads,
                 "accounts": store.accounts, "visuals": store.visuals,
-                "characters": store.characters}[kind]
+                "characters": store.characters, "voicefx": store.voicefx}[kind]
 
     @app.get("/api/configs/{kind}")
     async def list_configs(kind: str, slopgen: str | None = Cookie(default=None)) -> dict:
@@ -846,6 +860,11 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
             write_character(Path("configs/characters") / f"{name}.toml", cfg)
         else:
             write_config(subdir, name, cfg.model_dump(mode="json"))
+        if kind == "voicefx":
+            # a card whose bed is a FILE resolves it against its own folder, and a card
+            # that never learned where it was loaded from would look for the loop in
+            # the working directory instead (see `VoiceFxConfig.bed_file`)
+            cfg.root = Path("configs") / VOICEFX_DIR
         _store_of(kind)[name] = cfg
         return {**cfg.model_dump(mode="json"), "notes": notes}
 
@@ -2430,7 +2449,10 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
             job = cp.load_job(i)
             if job is None:
                 continue
-            doc = review.read(stage, job, run.params.mode, shapes=run_shapes(run.params))
+            doc = review.read(stage, job, run.params.mode,
+                               shapes=run_shapes(run.params),
+                               voicefx=sorted(n for n, c in store.voicefx.items()
+                                              if c.usable))
             # `review._picture_doc` can only offer the cards the plan already uses: it
             # is handed a job and nothing else, and a job does not know which world it
             # came from. That is exactly backwards on the run that needs it most — one

@@ -16,6 +16,7 @@ import shutil
 from pathlib import Path
 
 from ...media import ffmpeg
+from ...media.filters import Span, merge as merge_spans
 from .. import effects
 from .. import parts
 from ..context import AppContext
@@ -31,6 +32,56 @@ MUSIC_EXTS = {".mp3", ".m4a", ".ogg", ".wav", ".flac"}
 # than a second field: the question has three answers and a select with three entries
 # is how it is asked, so it is one value all the way down.
 MUSIC_NONE = "none"
+
+
+
+def look_spans(job, scenes, default: dict | None) -> list[Span]:
+    """The montage look over one episode, as the stretches of its clock it covers.
+
+    Read off the PICTURE track, because that is what a look is about. A shot carries
+    its own look or None, and None means the run's — so a video nobody touched in the
+    montage room comes out of here as exactly one span with exactly the run's filters
+    in it, which is the graph the delivery pass has always built
+    (`media.filters.graph_spans`).
+
+    Why the shots and not the lines: the two tracks run past each other on purpose (see
+    `pipeline.framebase`). A line boundary falls where the narrator drew breath, and a
+    look that changed there would change in the middle of a still nobody cut — half a
+    shot inside a tube and half outside it. A shot boundary is where the picture
+    already changes, so a look that changes with it changes where the eye expects
+    something to.
+
+    Consecutive shots asking for the same thing are folded into one span by `merge`,
+    and that is not an optimisation: half of these effects are on a clock of their own
+    — the tube's bar sliding down the picture, the film's flicker, the glitch's torn
+    rows — and a chain restarted at every cut would put all of them back to their first
+    frame on every cut. One span is one clock across everything it covers.
+
+    Modes with no picture track at all (info, drama — their background is per scene,
+    not a lane of stills) have no shots to ask, and get the one span they always got.
+    So does any stretch of this episode no shot covers, which is the honest answer:
+    nobody said anything about it, so it is the video's own look.
+    """
+    first, last = effects.span_of(job, scenes)
+    length = max(last - first, 0.0)
+    shots = sorted((s for s in getattr(job, "frame_shots", []) or []),
+                   key=lambda s: s.start)
+    run = dict(default or {})
+    if not shots or length <= 0.0005:
+        return merge_spans([(length, run)])
+    out: list[Span] = []
+    at = first
+    for shot in shots:
+        a, b = max(shot.start, first), min(shot.start + shot.duration, last)
+        if b <= a:
+            continue
+        if a > at:                      # a gap no shot covers: the video's own look
+            out.append((a - at, run))
+        out.append((b - a, shot.look if shot.look is not None else run))
+        at = b
+    if at < last:
+        out.append((last - at, run))
+    return merge_spans(out)
 
 
 def music_root(cfg) -> Path:
@@ -226,8 +277,9 @@ def run(job: VideoJob, ctx: AppContext) -> None:
             music=music,
             overlay=build_overlay_spec(part_job, ctx),
             fonts_dir=fonts,
-            # the run's montage filters, laid over this episode end to end
-            fx=ctx.params.filters,
+            # the look, as the stretches of this episode it actually covers: the run's
+            # filters wherever a line says nothing, and whatever a line does say
+            fx=look_spans(job, scenes, ctx.params.filters),
             # and the effects fired over it, already rebased onto this episode's
             # clock — it starts at zero however far into the serial it sits
             draws=effects.for_part(job, ctx, scenes),
