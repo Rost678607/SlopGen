@@ -22,6 +22,7 @@ import json
 import logging
 import secrets
 import shutil
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING, get_args
@@ -45,6 +46,7 @@ from ..llm import rewrite as bp_ai
 from ..llm import topic as topic_ai
 from ..llm.client import ChatLLM, MODEL_PRESETS, PROVIDERS
 from .. import labels
+from .. import share
 from ..media import ffmpeg as ffmpeg_media
 from ..media.voicefx import BEDS as VOICEFX_BEDS
 from ..media.voicefx import CATALOGUE as VOICEFX_CATALOGUE
@@ -2679,6 +2681,131 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
         return StreamingResponse(stream(), media_type="text/event-stream",
                                  headers={"Cache-Control": "no-cache",
                                           "X-Accel-Buffering": "no"})
+
+    # -- handing things over -----------------------------------------------
+    #
+    # The export half is a picker and a download. The import half is deliberately two
+    # requests: the bundle is uploaded and REPORTED ON, and only a second call with the
+    # operator's decisions writes anything. A bundle is a stranger's zip, and "it told
+    # me what it would do before it did it" is the whole difference between this and
+    # unpacking somebody's archive over your own configs/.
+
+    def _reload_store() -> None:
+        """Re-read every config from disk IN PLACE. Every route in this module closed
+        over this one store object, so handing back a fresh instance would leave them
+        all serving the machine as it was at boot — the fields are copied across
+        instead of the reference swapped."""
+        fresh = ConfigStore()
+        for name, value in vars(fresh).items():
+            setattr(store, name, value)
+
+    def _incoming() -> Path:
+        d = Path(store.global_cfg.paths.state) / "incoming"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def _share_json(it: share.Item) -> dict:
+        return {"kind": it.kind, "name": it.name, "note": it.note,
+                "files": len(it.files), "bytes": it.bytes,
+                "needs": [list(n) for n in it.needs]}
+
+    @app.get("/api/share")
+    async def share_survey(slopgen: str | None = Cookie(default=None)) -> dict:
+        """Everything on this machine that can be handed to somebody else."""
+        guard(slopgen)
+        items = await run_in_threadpool(share.survey)
+        return {"items": [_share_json(i) for i in items],
+                "kinds": list(share.FLAT_KINDS) + list(share.DIR_KINDS) + [share.ASSET]}
+
+    @app.post("/api/share/closure")
+    async def share_closure(request: Request,
+                            slopgen: str | None = Cookie(default=None)) -> dict:
+        """What the picked things need and the picker has not ticked. Asked on every
+        tick, because a bundle that arrives with dangling names is the failure this
+        feature exists to prevent and the operator should see it coming."""
+        guard(slopgen)
+        body = await request.json()
+        picked = [(r[0], r[1]) for r in body.get("picked", [])]
+        items = await run_in_threadpool(share.survey)
+        extra = share.closure(items, picked)
+        have = {i.ref: i for i in items}
+        return {"extra": [_share_json(have[r]) for r in extra if r in have]}
+
+    @app.post("/api/share/pack")
+    async def share_pack(request: Request,
+                         slopgen: str | None = Cookie(default=None)) -> FileResponse:
+        guard(slopgen)
+        body = await request.json()
+        picked = [(r[0], r[1]) for r in body.get("picked", [])]
+        if not picked:
+            raise HTTPException(status_code=400, detail="nothing picked")
+        items = await run_in_threadpool(share.survey)
+        if not body.get("bare"):
+            picked += share.closure(items, picked)
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        dest = _incoming() / f"slopgen-{stamp}.zip"
+        try:
+            await run_in_threadpool(share.pack, dest, items, picked,
+                                    note=str(body.get("note", ""))[:400])
+        except share.ShareError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        return FileResponse(dest, media_type="application/zip",
+                            filename=f"slopgen-{stamp}.zip",
+                            headers={"Cache-Control": "no-store"})
+
+    @app.post("/api/share/peek")
+    async def share_peek(file: UploadFile,
+                         slopgen: str | None = Cookie(default=None)) -> dict:
+        """Take the upload, read its manifest, and say what it would do here. Writes
+        nothing outside `state/incoming`, which is the point."""
+        guard(slopgen)
+        token = secrets.token_hex(8)
+        at = _incoming() / f"{token}.zip"
+        with open(at, "wb") as out:
+            while chunk := await file.read(1 << 20):
+                out.write(chunk)
+        try:
+            man = await run_in_threadpool(share.peek, at)
+            verdicts = await run_in_threadpool(share.plan, man)
+        except share.ShareError as e:
+            at.unlink(missing_ok=True)
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        return {
+            "token": token,
+            "note": man.get("note", ""),
+            "made_at": man.get("made_at", 0),
+            "plan": [{"kind": v.ref[0], "name": v.ref[1], "state": v.state,
+                      "advise": v.advise, "files": len(v.files), "note": v.note,
+                      "held_by": v.held_by} for v in verdicts],
+        }
+
+    @app.post("/api/share/apply")
+    async def share_apply(request: Request,
+                          slopgen: str | None = Cookie(default=None)) -> dict:
+        """Carry out the decisions the operator made against a plan they have read."""
+        guard(slopgen)
+        body = await request.json()
+        token = str(body.get("token", ""))
+        if not token.isalnum():
+            raise HTTPException(status_code=400, detail="bad token")
+        at = _incoming() / f"{token}.zip"
+        if not at.is_file():
+            raise HTTPException(status_code=404, detail="that upload is gone — send it again")
+        choices = {(r[0], r[1]): r[2] for r in body.get("choices", [])
+                   if r[2] in ("take", "skip", "beside", "overwrite")}
+        try:
+            man = await run_in_threadpool(share.peek, at)
+            rep = await run_in_threadpool(share.apply, at, man, choices)
+        except share.ShareError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        at.unlink(missing_ok=True)
+        # the store is a snapshot taken at boot, and a config that just arrived is not
+        # in it: whoever asked for this import has to be handed a reloaded machine
+        await run_in_threadpool(_reload_store)
+        return {"took": [list(r) for r in rep.took], "renamed": rep.renamed,
+                "skipped": [list(r) for r in rep.skipped],
+                "replaced": [list(r) for r in rep.replaced],
+                "wrote": len(rep.wrote), "repointed": rep.repointed}
 
     # -- the page ----------------------------------------------------------
 

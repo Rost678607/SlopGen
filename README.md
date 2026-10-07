@@ -1429,6 +1429,58 @@ Subtitles default to the **DejaVu Sans** font. It's preinstalled on most Linux d
 
 Separate the parts with **spaces**; hyphens do not work. Measured in running speech, «эн-эл-о» takes 0.26s — exactly as long as the broken «НЛО» — because the normalizer collapses a hyphenated run back into one syllable, while the spaced «эн эл о» takes 0.62s and is genuinely spelled out. Which spaced form reads best is per-word: bare letters «Н Л О» run 1.10s here, yet beat the phonetic names on other acronyms, so try both. The table is engine-independent by construction — every engine, including the aligner's recognizer, is fed the same respelled text. Only the voice sees it: the subtitles keep the original word, merged back from the pieces it was spoken as, with its exact start and end — so nothing is re-spread or estimated. This is the mirror of `--clean-subs`, where the voice keeps every word and only the burned-in text changes.
 
+## Handing things over (`slopgen share` / `slopgen take`)
+
+The thing this replaces is a hand-packed zip. You want to send a friend a world and the
+voices that narrate it, so you go into `configs/`, guess which folders matter, `zip -r`
+the lot, and they unpack it over their own `configs/` — which is the same gesture as
+`cp -r` and does the same damage: a preset that happened to share a name is gone, a
+voice card arrives without the audio it names, and nothing anywhere says which of the
+two happened.
+
+**A thing travels with what it needs.** The unit is not a file, it is a NAMED THING plus
+the files it owns plus the names it points at. A preset drags its content type, its ad,
+its visuals profile; the content type drags the voice; the voice drags the `ref`
+recording sitting beside its card. A fandom drags its shapes table and travels as the
+whole folder — lore, cast and frame base. An ad drags the material in its `assets_dir`.
+A chat drags its personas, and a persona drags its avatar. Walked to a fixed point, so a
+preset four references deep still arrives working. `--bare` turns it off for the rare
+case where you really do want only what you named.
+
+**Arriving does not destroy.** `take` without `--go` prints what it WOULD do and stops.
+Per thing the verdict is `new`, `same` or `differs`, and the default on `differs` is to
+land BESIDE what is here under a free name — `Плёнка (2)` — with every reference that
+travelled in the same bundle repointed at the new name. That last clause is the whole
+engineering: rename a thing and leave its referrers pointing at the old name and you get
+a bundle that unpacks cleanly and then fails three stages later. `--overwrite` exists
+and has to be asked for; `--only-new` is the timid one.
+
+**Identical is not a conflict.** A thing whose every file is byte-for-byte what is
+already here is `same`, and `same` is skipped — under ANY local name, so a thing taken
+in once and renamed to `Плёнка (2)` is recognised the next time rather than becoming
+`Плёнка (3)`. Content alone cannot answer that, because the first import rewrites the
+references inside what it writes; `state/imported.json` remembers what arrived and what
+it ended up being called.
+
+```sh
+slopgen share                               # what there is to hand over
+slopgen share --kind fandoms
+slopgen share fandoms/Город voicefx/tape --into ~/bundle.zip --note "для друга"
+slopgen take ~/bundle.zip                   # the plan, and nothing else
+slopgen take ~/bundle.zip --go              # new taken, identical skipped, clashes beside
+slopgen take ~/bundle.zip --go --overwrite  # …or incoming wins
+```
+
+The browser has both halves under **Configuration → handing over**: a picker that tells
+you, as you tick, what else is about to travel, and an import that shows a row per thing
+with its verdict and a choice before anything is written.
+
+A bundle is a plain zip — `slopgen.json` at the root, every file under `files/` at the
+path it lives at in the project — so it opens without slopgen. Runs under `output/` and
+`configs/slopgen.toml` are deliberately **not** carried: a run is a record of one video
+rather than a setting and is measured in gigabytes, and the global config is where the
+API keys live.
+
 ## YouTube setup
 
 1. Google Cloud Console → create a project → enable **YouTube Data API v3**.
@@ -2702,6 +2754,56 @@ slopgen drama ru --tts-engine qwen-local --voice марта:зло        # …�
 **Музыка** — один трек на ролик, подмешанный под голос на громкости `[audio] music_volume`. Какой именно — такая же настройка, как остальные: `--music sweden.m4a` в командной строке, выпадающий список на каждой стартовой форме, своя колонка в очереди цикла для одного ролика из пачки и та же ручка в монтажной, где он ещё и играет. Оставишь пустым — трек выпадет сам, но жребий посеян на прогоне, а не на часах: один и тот же прогон всегда вытягивает один и тот же трек — именно поэтому монтажная играет то, что окажется в рендере. `none` — тишина.
 
 Разложишь папку по **полкам** — и жребий сузится до одной. Любая подпапка `assets/music/`, в которой лежит трек, предлагается отдельным выбором и пишется со слешем на конце: `эпичное/` тянет с этой полки, `эпичное/opening.m4a` — именно этот трек, а трек, лежащий просто в корне, так и остаётся `sweden.m4a` — поэтому всё, что было выбрано до появления полок, по-прежнему находит тот же файл. Вложенность разрешена, и полка покрывает всё, что под ней. Жребий при этом тот же самый: посеян на прогоне, так что и с выбранной полкой монтажная и рендер сходятся на одном треке. Пустая полка не предлагается вовсе — ручка, которую можно поставить только в тишину, не ручка, — а опустевшая с тех пор бросает жребий по всему каталогу.
+
+## Передать другому (`slopgen share` / `slopgen take`)
+
+Это замена архиву, собранному руками. Хочешь передать другу мир и голоса, которые его
+читают, — лезешь в `configs/`, угадываешь, какие папки нужны, `zip -r` всего скопом, а
+друг распаковывает это поверх своего `configs/`. Жест тот же, что `cp -r`, и ущерб тот
+же: пресет, у которого случайно совпало имя, исчез; карточка голоса приехала без записи,
+которую называет; и нигде не написано, что из этого произошло.
+
+**Вещь едет вместе с тем, без чего не работает.** Единица переноса — не файл, а
+ИМЕНОВАННАЯ ВЕЩЬ плюс её файлы плюс имена, на которые она ссылается. Пресет тянет свой
+тип контента, рекламу и профиль видеоряда; тип контента тянет голос; голос тянет запись
+`ref`, лежащую рядом с карточкой. Фандом тянет свою таблицу схем тел и едет целой папкой
+— лор, каст и база кадров. Реклама тянет материал из своей `assets_dir`. Переписка тянет
+своих персон, а персона — свою аватарку. Обход идёт до неподвижной точки, так что пресет
+с четырьмя уровнями ссылок приезжает рабочим. `--bare` это выключает — на редкий случай,
+когда нужно ровно названное и ничего больше.
+
+**Приезд ничего не ломает.** `take` без `--go` печатает, что он СДЕЛАЛ БЫ, и
+останавливается. По каждой вещи вердикт: `новое`, `уже есть` или `конфликт`, и по
+умолчанию конфликт ложится РЯДОМ под свободным именем — `Плёнка (2)`, — причём всё, что
+приехало тем же пакетом и на неё ссылалось, переставляется на новое имя. Вот это
+последнее и есть вся работа: переименовать вещь и оставить ссылающихся смотреть на
+старое имя — значит получить пакет, который распакуется чисто и отвалится тремя стадиями
+позже. `--overwrite` есть, но его надо попросить; `--only-new` — для осторожных.
+
+**Совпадающее — не конфликт.** Вещь, у которой каждый файл побайтово такой же, как
+здешний, помечается «уже есть» и пропускается — причём под ЛЮБЫМ местным именем, так что
+принятая однажды и переименованная в `Плёнка (2)` на второй раз узнаётся, а не
+становится `Плёнка (3)`. По одному содержимому это не решается: первый импорт
+переписывает ссылки внутри того, что кладёт, — поэтому `state/imported.json` помнит, что
+приезжало и как в итоге называется.
+
+```sh
+slopgen share                               # что вообще есть передать
+slopgen share --kind fandoms
+slopgen share fandoms/Город voicefx/tape --into ~/bundle.zip --note "для друга"
+slopgen take ~/bundle.zip                   # только план, и больше ничего
+slopgen take ~/bundle.zip --go              # новое взять, совпавшее пропустить, конфликты рядом
+slopgen take ~/bundle.zip --go --overwrite  # …или пусть входящее побеждает
+```
+
+В браузере обе половины лежат в **Конфигурация → перенос**: слева выбор, который прямо
+по ходу расстановки галочек говорит, что поедет заодно, а справа приём — строка на
+каждую вещь с вердиктом и выбором, и ничего не пишется, пока не нажмёшь «принять».
+
+Пакет — обычный zip (`slopgen.json` в корне, файлы под `files/` по тем же путям, что в
+проекте), и открывается без slopgen. Прогоны из `output/` и `configs/slopgen.toml`
+нарочно **не** переносятся: прогон — это запись об одном ролике, а не настройка, и весит
+гигабайты; а в глобальном конфиге лежат ключи API.
 
 ## Произношение (`[tts.pronounce.<язык>]`)
 

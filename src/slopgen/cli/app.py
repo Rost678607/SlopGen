@@ -30,10 +30,18 @@ A mode is chosen first (before the language), and it shapes the rest of the line
 
     slopgen --list-types / --list-ads / --list-accounts / --list-presets
             / --list-visuals / --list-characters / --list-orchestrations
+
+    slopgen share                               -> what there is to hand to somebody
+    slopgen share fandoms/Город voicefx/tape --into ~/b.zip
+                                                -> …and whatever they need, packed
+    slopgen take ~/b.zip                        -> what it would do here, and nothing else
+    slopgen take ~/b.zip --go                   -> new taken, identical skipped,
+                                                   collisions landed beside
 """
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -922,6 +930,121 @@ def usage(
                    f"{t.get('failed', 0)} failed call(s)[/dim]")
     if not found:
         rprint("[yellow]no usage recorded — the run predates token accounting[/yellow]")
+
+
+# ---------------------------------------------------------------- handing things over
+#
+# Two commands and one rule: `take` without `--go` is a question, never an answer. The
+# thing being replaced is a hand-packed zip unpacked over somebody's `configs/`, so the
+# default has to be that nothing happens until the operator has read what would.
+
+
+@app.command("share")
+def share_cmd(
+    what: list[str] = typer.Argument(None, help="things to pack, as kind/name (`presets/Утро`, `fandoms/Город`, `assets/music/спокойное/утро.m4a`); none = just list what there is"),
+    into: Optional[Path] = typer.Option(None, "--into", "-o", help="where to write the bundle (default: assets/exports/slopgen-<date>.zip)"),
+    note: str = typer.Option("", "--note", help="a line for whoever opens it"),
+    bare: bool = typer.Option(False, "--bare", help="pack ONLY what was named, without what it needs — a bundle that will arrive with dangling names"),
+    kind: Optional[str] = typer.Option(None, "--kind", help="with no arguments: list only this kind"),
+) -> None:
+    """Pack named things — configs, worlds, voices, assets — to hand to somebody else.
+
+    What travels is a thing plus the files it owns plus, unless `--bare`, everything it
+    points at: a preset drags its content type, that drags the voice, and the voice
+    drags the audio sample beside its card. A bundle is a plain zip and can be read
+    without slopgen; `take` is what puts it on another machine without destroying
+    anything already there."""
+    from rich import print as rprint
+
+    from .. import share as sh
+
+    items = sh.survey()
+    if not what:
+        shelves: dict[str, list] = {}
+        for it in items:
+            if kind and it.kind != kind:
+                continue
+            shelves.setdefault(it.kind, []).append(it)
+        for k in sorted(shelves):
+            rprint(f"[bold]{k}[/bold]")
+            for it in shelves[k]:
+                need = f"  [dim]needs {len(it.needs)}[/dim]" if it.needs else ""
+                rprint(f"  {k}/{it.name}{need}")
+        rprint(f"\n[dim]{sum(len(v) for v in shelves.values())} things. "
+               f"Pack some: slopgen share presets/Утро fandoms/Город[/dim]")
+        return
+
+    picked: list[tuple[str, str]] = []
+    have = {f"{i.kind}/{i.name}": i.ref for i in items}
+    for spec in what:
+        if spec in have:
+            picked.append(have[spec])
+            continue
+        kin, _, nm = spec.partition("/")
+        matches = [i.ref for i in items if i.kind == kin and not nm]
+        if matches:  # a whole kind, spelled `presets/` or `presets`
+            picked += matches
+            continue
+        rprint(f"[red]no such thing: {spec}[/red]")
+        raise typer.Exit(1)
+
+    extra = [] if bare else sh.closure(items, picked)
+    if extra:
+        rprint(f"[dim]and what they need:[/dim] "
+               + ", ".join(f"{k}/{n}" for k, n in extra))
+    dest = into or Path("assets/exports") / f"slopgen-{time.strftime('%Y%m%d')}.zip"
+    man = sh.pack(dest, items, picked + extra, note=note)
+    files = sum(len(r["files"]) for r in man["items"])
+    rprint(f"[green]{dest}[/green] — {len(man['items'])} things, {files} files, "
+           f"{dest.stat().st_size / 1e6:.1f} MB")
+
+
+@app.command("take")
+def take_cmd(
+    bundle: Path = typer.Argument(..., help="a bundle written by `slopgen share`"),
+    go: bool = typer.Option(False, "--go", help="actually do it; without this the plan is only printed"),
+    overwrite: bool = typer.Option(False, "--overwrite", help="on a collision, replace what is here instead of landing beside it"),
+    only_new: bool = typer.Option(False, "--only-new", help="take what this machine does not have and leave every collision alone"),
+) -> None:
+    """Put a bundle on this machine without destroying what is already here.
+
+    Prints what it would do and stops. With `--go`, anything new is taken, anything
+    identical is skipped, and anything that collides lands BESIDE what is here under a
+    free name — with every reference that travelled in the same bundle repointed at the
+    new name, so the result runs. `--overwrite` is the other choice and has to be asked
+    for; `--only-new` is the timid one."""
+    from rich import print as rprint
+
+    from .. import share as sh
+
+    man = sh.peek(bundle)
+    if man.get("note"):
+        rprint(f"[dim]«{man['note']}»[/dim]")
+    verdicts = sh.plan(man)
+    colour = {"new": "green", "same": "dim", "differs": "yellow"}
+    choices = {}
+    for v in verdicts:
+        how = v.advise
+        if v.state == "differs":
+            how = "skip" if only_new else ("overwrite" if overwrite else "beside")
+        choices[v.ref] = how
+        held = f" [dim](here as «{v.held_by}»)[/dim]" if v.held_by else ""
+        rprint(f"  [{colour[v.state]}]{v.state:8}[/{colour[v.state]}] "
+               f"{v.ref[0]}/{v.ref[1]}{held}  [dim]-> {how}[/dim]")
+    tally = {s: sum(1 for v in verdicts if v.state == s) for s in colour}
+    rprint(f"\n[dim]{tally['new']} new, {tally['same']} already here, "
+           f"{tally['differs']} collide[/dim]")
+    if not go:
+        rprint("[dim]nothing done. Add --go to carry it out.[/dim]")
+        return
+    rep = sh.apply(bundle, man, choices)
+    for old, new in rep.renamed.items():
+        rprint(f"  [yellow]{old}[/yellow] landed as [green]{new}[/green]")
+    for line in rep.repointed:
+        rprint(f"  [dim]repointed {line}[/dim]")
+    rprint(f"[green]took {len(rep.took)}[/green], skipped {len(rep.skipped)}, "
+           f"{len(rep.wrote)} files written"
+           + (f", [red]{len(rep.replaced)} replaced[/red]" if rep.replaced else ""))
 
 
 def run() -> None:

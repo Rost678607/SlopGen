@@ -229,6 +229,48 @@
       </div>
     </div>
 
+    <!-- Handing things over. Two panels, and the import one is deliberately a plan
+         before it is an action: a bundle is somebody else's zip, and the gesture this
+         replaces was unpacking one over your own configs/ and hoping. -->
+    <div id="cfg-share" hidden>
+      <div class="panel">
+        <h3 data-l="web.share.out">отдать</h3>
+        <p class="dim" data-l="web.share.out.note">Отметь, что передать. Вместе с отмеченным поедет всё, без чего оно не работает: пресет потянет свой тип контента, тот — голос, а голос — запись рядом с карточкой. Пакет — обычный zip, его можно открыть и без slopgen.</p>
+        <div class="row">
+          <input id="sh-find" type="search" data-lp="web.share.find" placeholder="найти">
+          <span class="grow"></span>
+          <span class="dim mono" id="sh-count"></span>
+        </div>
+        <div id="sh-tree"></div>
+        <p id="sh-closure" class="dim" hidden></p>
+        <div class="row">
+          <input id="sh-note" type="text" data-lp="web.share.note" placeholder="записка тому, кто откроет">
+          <button id="sh-pack" class="primary" disabled data-l="web.share.pack">собрать пакет</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h3 data-l="web.share.in">принять</h3>
+        <p class="dim" data-l="web.share.in.note">Пакет сначала только показывает, что он сделает. Ничего не записывается, пока не нажмёшь «принять». То, что уже есть на машине, по умолчанию не затирается — приезжает рядом под свободным именем, и всё, что приехало вместе с ним, переставляется на новое имя, чтобы ссылки не повисли.</p>
+        <div class="row">
+          <input id="sh-file" type="file" accept=".zip">
+          <span class="grow"></span>
+          <span class="dim" id="sh-tally"></span>
+        </div>
+        <p id="sh-said" class="dim" hidden></p>
+        <div id="sh-plan"></div>
+        <div class="row" id="sh-go-row" hidden>
+          <span class="dim" data-l="web.share.all">всем конфликтам:</span>
+          <button class="ghost" data-all="beside" data-l="web.share.beside">рядом</button>
+          <button class="ghost" data-all="overwrite" data-l="web.share.over">перезаписать</button>
+          <button class="ghost" data-all="skip" data-l="web.share.skipall">пропустить</button>
+          <span class="grow"></span>
+          <button id="sh-apply" class="primary" data-l="web.share.apply">принять</button>
+        </div>
+        <div id="sh-done" class="dim" hidden></div>
+      </div>
+    </div>
+
     <div id="cfg-access" hidden>
       <div class="panel">
         <h3 data-l="web.cfg.access">доступ</h3>

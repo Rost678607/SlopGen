@@ -211,6 +211,10 @@ const CFG = [
   ["effects", "js.effects", "effects"],
   ["presets", "js.presets", "list"],
   ["access", "js.access", "access"],
+  // handing things over. Last in the menu because it is about the whole of the
+  // configuration rather than one kind of it, and because it is the one section here
+  // that writes files somebody else chose the names of.
+  ["share", "js.share", "share"],
 ];
 let cfgSection = null;
 const drawCfgMenu = () => ($("#cfg-menu").innerHTML = CFG.map(([k, key, how]) =>
@@ -239,6 +243,7 @@ function openCfg(key) {
   $("#cfg-ads").hidden = how !== "ads";
   $("#cfg-effects").hidden = how !== "effects";
   $("#cfg-access").hidden = how !== "access";
+  $("#cfg-share").hidden = how !== "share";
   $("#cfg-todo").hidden = !!how;
   if (how === "world") openSub(sub);
   else if (how === "keys") loadKeys();
@@ -249,6 +254,7 @@ function openCfg(key) {
   else if (how === "ads") loadAds();
   else if (how === "effects") loadEffects();
   else if (how === "access") loadAccess();
+  else if (how === "share") loadShare();
   else if (how === "list") loadConfigs(key, lab(entry[1]));
   else $("#cfg-todo-title").textContent = lab(entry[1]);
 }
@@ -5782,4 +5788,266 @@ function appendLog(id, line) {
 function esc(s) {
   return String(s ?? "").replace(/[&<>"']/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+// ------------------------------------------------------------------ handing things over
+//
+// Two halves of one screen. The export half is a picker whose only cleverness is that
+// it tells you, as you tick, what ELSE is about to travel — a bundle that arrives with
+// dangling names is the failure this whole feature exists to prevent, and the closure
+// is computed by the server because the reference graph lives next to the models.
+//
+// The import half is a plan before it is an action. The bundle is uploaded and reported
+// on; nothing is written until the operator has read a row per thing and pressed the
+// button. The default on a collision is «рядом» — never a silent overwrite, because the
+// gesture being replaced here is unpacking somebody's zip over your own configs/.
+
+let SH = { items: [], picked: new Set(), open: new Set(), plan: null, token: null };
+
+// The shelves are config FOLDERS, and the rest of this screen has never shown a
+// folder name to anybody — the chip menu above says «Фандомы», not `fandoms`. Most of
+// the names are already in `CFG`; the handful of kinds with no section of their own
+// (a content type, a shapes table, the chat and its people, the asset shelves) are
+// named here, and anything unaccounted for falls back to its folder.
+const SH_KINDS = {
+  content: "js.content-type", chat: "js.chatroom", shapes: "js.share.kind.shapes",
+  personas: "js.share.kind.personas", assets: "js.share.kind.assets",
+};
+const shName = (kind) => {
+  const entry = CFG.find(([k]) => k === kind);
+  if (entry) return lab(entry[1]);
+  return SH_KINDS[kind] ? lab(SH_KINDS[kind]) : kind;
+};
+
+const shKey = (kind, name) => `${kind} ${name}`;
+const shSize = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(0)} MB`
+  : n >= 1e3 ? `${(n / 1e3).toFixed(0)} KB` : `${n} B`);
+
+async function loadShare() {
+  if (!SH.items.length) {
+    const d = await api("/api/share");
+    SH.items = d.items;
+  }
+  drawShTree();
+  bindShare();
+}
+
+// Grouped by kind and collapsed, because one shelf here holds 54 assets and another
+// holds three worlds, and a flat list of a hundred rows is not a picker.
+function drawShTree() {
+  const find = ($("#sh-find").value || "").trim().toLowerCase();
+  const shelves = new Map();
+  for (const it of SH.items) {
+    if (find && !`${it.kind}/${it.name}`.toLowerCase().includes(find)) continue;
+    if (!shelves.has(it.kind)) shelves.set(it.kind, []);
+    shelves.get(it.kind).push(it);
+  }
+  const rows = [];
+  for (const [kind, list] of shelves) {
+    const on = list.filter((i) => SH.picked.has(shKey(i.kind, i.name))).length;
+    const open = SH.open.has(kind) || !!find;
+    rows.push(`<div class="sh-shelf">
+      <button class="sh-head" data-shelf="${esc(kind)}">${open ? "▾" : "▸"} ${esc(shName(kind))}
+        <span class="dim">${list.length}${on ? ` · ${on}` : ""}</span></button>
+      <button class="ghost sh-all" data-shelf-all="${esc(kind)}">${
+        on === list.length ? esc(lab("js.share.none")) : esc(lab("js.share.whole"))}</button>
+    </div>`);
+    if (!open) continue;
+    for (const it of list) {
+      const k = shKey(it.kind, it.name);
+      rows.push(`<label class="sh-row"><input type="checkbox" data-pick="${esc(k)}"${
+        SH.picked.has(k) ? " checked" : ""}>
+        <b>${esc(it.name)}</b>
+        <span class="dim mono">${it.files > 1 ? `${it.files} · ` : ""}${shSize(it.bytes)}</span>
+        ${it.note ? `<span class="dim">${esc(it.note)}</span>` : ""}</label>`);
+    }
+  }
+  $("#sh-tree").innerHTML = rows.join("")
+    || `<p class="dim">${esc(lab("js.share.nothing"))}</p>`;
+  $("#sh-count").textContent = `${SH.picked.size} / ${SH.items.length}`;
+  $("#sh-pack").disabled = !SH.picked.size;
+  $("#sh-tree").querySelectorAll("[data-shelf]").forEach((b) => {
+    b.onclick = () => {
+      if (SH.open.has(b.dataset.shelf)) SH.open.delete(b.dataset.shelf);
+      else SH.open.add(b.dataset.shelf);
+      drawShTree();
+    };
+  });
+  $("#sh-tree").querySelectorAll("[data-shelf-all]").forEach((b) => {
+    b.onclick = () => {
+      const kind = b.dataset.shelfAll;
+      const mine = SH.items.filter((i) => i.kind === kind);
+      const all = mine.every((i) => SH.picked.has(shKey(i.kind, i.name)));
+      mine.forEach((i) => (all ? SH.picked.delete(shKey(i.kind, i.name))
+                               : SH.picked.add(shKey(i.kind, i.name))));
+      drawShTree();
+      showClosure();
+    };
+  });
+  $("#sh-tree").querySelectorAll("[data-pick]").forEach((c) => {
+    c.onchange = () => {
+      if (c.checked) SH.picked.add(c.dataset.pick);
+      else SH.picked.delete(c.dataset.pick);
+      drawShTree();
+      showClosure();
+    };
+  });
+}
+
+const shPicked = () => [...SH.picked].map((k) => {
+  const at = k.indexOf(" ");
+  return [k.slice(0, at), k.slice(at + 1)];
+});
+
+// What else is coming, asked of the server on every tick. Cheap, and it is the one
+// thing the picker can say that a folder of checkboxes cannot.
+async function showClosure() {
+  const box = $("#sh-closure");
+  if (!SH.picked.size) { box.hidden = true; return; }
+  try {
+    const d = await api("/api/share/closure", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ picked: shPicked() }),
+    });
+    box.textContent = d.extra.length
+      ? `${lab("js.share.alsogoes")} ${d.extra.map((i) => `${i.kind}/${i.name}`).join(", ")}`
+      : lab("js.share.selfcontained");
+    box.hidden = false;
+  } catch (e) {
+    box.hidden = true;
+  }
+}
+
+function bindShare() {
+  $("#sh-find").oninput = () => drawShTree();
+  $("#sh-pack").onclick = async () => {
+    const btn = $("#sh-pack");
+    const was = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = lab("js.share.packing");
+    try {
+      // a download rather than a JSON reply: the bundle IS the product, and the
+      // browser's own save dialog is the only route from here to a friend
+      const r = await fetch("/api/share/pack", {
+        method: "POST", credentials: "same-origin",
+        headers: { "Content-Type": "application/json",
+                   ...(TOK ? { "X-Slopgen-Token": TOK } : {}) },
+        body: JSON.stringify({ picked: shPicked(), note: $("#sh-note").value }),
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
+      const blob = await r.blob();
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `slopgen-${new Date().toISOString().slice(0, 10)}.zip`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+      say(`${lab("js.share.packed")} ${shSize(blob.size)}`);
+    } catch (e) {
+      say(String(e.message || e), true);
+    }
+    btn.textContent = was;
+    btn.disabled = !SH.picked.size;
+  };
+
+  $("#sh-file").onchange = async () => {
+    const f = $("#sh-file").files[0];
+    if (!f) return;
+    $("#sh-plan").innerHTML = `<p class="dim">${esc(lab("js.share.reading"))}</p>`;
+    $("#sh-done").hidden = true;
+    const fd = new FormData();
+    fd.append("file", f);
+    try {
+      const r = await fetch("/api/share/peek", {
+        method: "POST", credentials: "same-origin",
+        headers: TOK ? { "X-Slopgen-Token": TOK } : {}, body: fd,
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
+      const d = await r.json();
+      SH.token = d.token;
+      SH.plan = d.plan.map((v) => ({ ...v, how: v.advise }));
+      $("#sh-said").textContent = d.note ? `«${d.note}»` : "";
+      $("#sh-said").hidden = !d.note;
+      drawShPlan();
+    } catch (e) {
+      SH.plan = null;
+      $("#sh-plan").innerHTML = `<p class="bad">${esc(String(e.message || e))}</p>`;
+      $("#sh-go-row").hidden = true;
+    }
+  };
+  $("#sh-go-row").querySelectorAll("[data-all]").forEach((b) => {
+    b.onclick = () => {
+      for (const v of SH.plan || []) if (v.state === "differs") v.how = b.dataset.all;
+      drawShPlan();
+    };
+  });
+  $("#sh-apply").onclick = applyShare;
+}
+
+const SH_STATE = { new: "js.share.new", same: "js.share.same", differs: "js.share.differs" };
+
+function drawShPlan() {
+  const plan = SH.plan || [];
+  if (!plan.length) {
+    $("#sh-plan").innerHTML = `<p class="dim">${esc(lab("js.share.empty"))}</p>`;
+    $("#sh-go-row").hidden = true;
+    return;
+  }
+  const tally = { new: 0, same: 0, differs: 0 };
+  plan.forEach((v) => tally[v.state]++);
+  $("#sh-tally").textContent =
+    `${lab("js.share.new")} ${tally.new} · ${lab("js.share.same")} ${tally.same} `
+    + `· ${lab("js.share.differs")} ${tally.differs}`;
+  const opts = (v) => ["beside", "overwrite", "skip"].map((o) =>
+    `<option value="${o}"${v.how === o ? " selected" : ""}>`
+    + `${esc(lab("js.share." + o))}</option>`).join("");
+  $("#sh-plan").innerHTML = plan.map((v, i) => `<div class="sh-row sh-plan-row">
+    <span class="sh-state sh-${v.state}">${esc(lab(SH_STATE[v.state]))}</span>
+    <b>${esc(v.kind)}/${esc(v.name)}</b>
+    ${v.held_by && v.held_by !== v.name
+      ? `<span class="dim">${esc(lab("js.share.heldby"))} «${esc(v.held_by)}»</span>`
+      : ""}
+    <span class="grow"></span>
+    ${v.state === "differs"
+      ? `<select data-plan="${i}">${opts(v)}</select>`
+      : `<span class="dim mono">${esc(lab("js.share." + v.how))}</span>`}
+  </div>`).join("");
+  $("#sh-plan").querySelectorAll("[data-plan]").forEach((sel) => {
+    sel.onchange = () => { SH.plan[+sel.dataset.plan].how = sel.value; };
+  });
+  $("#sh-go-row").hidden = false;
+}
+
+async function applyShare() {
+  const btn = $("#sh-apply");
+  btn.disabled = true;
+  try {
+    const d = await api("/api/share/apply", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        token: SH.token,
+        choices: (SH.plan || []).map((v) => [v.kind, v.name, v.how]),
+      }),
+    });
+    const lines = [`${lab("js.share.took")} ${d.took.length}, `
+      + `${lab("js.share.files")} ${d.wrote}`];
+    for (const [was, now] of Object.entries(d.renamed)) {
+      lines.push(`${esc(was)} → <b>${esc(now)}</b>`);
+    }
+    for (const line of d.repointed) lines.push(`<span class="dim">${esc(line)}</span>`);
+    if (d.replaced.length) {
+      lines.push(`<span class="bad">${esc(lab("js.share.replaced"))} ${d.replaced.length}</span>`);
+    }
+    $("#sh-done").innerHTML = lines.map((l) => `<div>${l}</div>`).join("");
+    $("#sh-done").hidden = false;
+    $("#sh-plan").innerHTML = "";
+    $("#sh-go-row").hidden = true;
+    $("#sh-file").value = "";
+    SH.items = [];  // the machine changed under us
+    SH.plan = null;
+    await loadShare();
+    say(lab("js.share.done"));
+  } catch (e) {
+    say(String(e.message || e), true);
+  }
+  btn.disabled = false;
 }

@@ -1571,3 +1571,27 @@ button.danger{border-color:var(--bad);color:var(--bad)}
 /* …and the flash that says where the sliders went when a line sends you to them. */
 @keyframes fxfound{from{box-shadow:0 0 0 2px var(--accent)}to{box-shadow:0 0 0 2px transparent}}
 .mont-fx.justnow{animation:fxfound 1.1s ease-out;border-radius:8px}
+
+/* ---------------------------------------------------------- handing things over */
+/* A shelf per kind, collapsed: one shelf here holds fifty assets and another holds
+   three worlds, and a flat hundred-row list is not a picker. */
+.sh-shelf{display:flex;align-items:center;gap:8px;margin-top:8px}
+.sh-head{background:none;border:0;color:inherit;font:inherit;font-weight:600;
+  cursor:pointer;padding:2px 0;text-align:left}
+.sh-head .dim{font-weight:400;margin-left:6px}
+.sh-all{font-size:12px;padding:1px 8px}
+.sh-row{display:flex;align-items:center;gap:8px;padding:2px 0 2px 16px;min-width:0}
+.sh-row b{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sh-row .dim{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sh-plan-row{padding-left:0}
+.sh-plan-row select{font-size:12px}
+/* the verdict, in a fixed column so a plan of thirty rows reads down rather than
+   across: what is new, what is already here, and what the operator has to decide */
+.sh-state{flex:0 0 auto;min-width:84px;font-size:11.5px;padding:1px 7px;border-radius:9px;
+  text-align:center}
+.sh-new{background:rgba(70,180,110,.18);color:#8fe0ad}
+.sh-same{background:rgba(140,140,150,.16);color:var(--dim)}
+.sh-differs{background:rgba(220,170,60,.2);color:#f0cf84}
+#sh-tree{max-height:46vh;overflow-y:auto;margin:4px 0}
+#sh-closure{margin:6px 0 0}
+#sh-done div{padding:1px 0}

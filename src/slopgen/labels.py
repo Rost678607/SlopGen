@@ -1648,6 +1648,92 @@ EN.update({
     "src.auto": 'Generated on its own, a shot per beat. Free, slow and often wide of the mark.',
 })
 
+# Handing things over: the two panels under Configuration, and the words
+# `share.py` needs to report a plan in. See `slopgen.share`.
+RU.update({
+    'js.share': 'перенос',
+    'web.share.out': 'отдать',
+    'web.share.out.note': 'Отметь, что передать. Вместе с отмеченным поедет всё, без чего оно не работает: пресет потянет свой тип контента, тот — голос, а голос — запись рядом с карточкой. Пакет — обычный zip, его можно открыть и без slopgen.',
+    'web.share.find': 'найти',
+    'web.share.note': 'записка тому, кто откроет',
+    'web.share.pack': 'собрать пакет',
+    'web.share.in': 'принять',
+    'web.share.in.note': 'Пакет сначала только показывает, что он сделает. Ничего не записывается, пока не нажмёшь «принять». То, что уже есть на машине, по умолчанию не затирается — приезжает рядом под свободным именем, и всё, что приехало вместе с ним, переставляется на новое имя, чтобы ссылки не повисли.',
+    'web.share.all': 'всем конфликтам:',
+    'web.share.beside': 'рядом',
+    'web.share.over': 'перезаписать',
+    'web.share.skipall': 'пропустить',
+    'web.share.apply': 'принять',
+    'js.share.whole': 'всю полку',
+    'js.share.none': 'снять',
+    'js.share.nothing': 'ничего не нашлось',
+    'js.share.alsogoes': 'вместе с этим поедет:',
+    'js.share.selfcontained': 'всё, что нужно, уже отмечено',
+    'js.share.packing': 'собираю…',
+    'js.share.packed': 'пакет собран,',
+    'js.share.reading': 'читаю пакет…',
+    'js.share.empty': 'в пакете ничего нет',
+    'js.share.new': 'новое',
+    'js.share.same': 'уже есть',
+    'js.share.differs': 'конфликт',
+    'js.share.heldby': 'здесь это лежит как',
+    'js.share.take': 'взять',
+    'js.share.skip': 'пропустить',
+    'js.share.beside': 'положить рядом',
+    'js.share.overwrite': 'перезаписать',
+    'js.share.took': 'взято',
+    'js.share.files': 'файлов записано',
+    'js.share.replaced': 'перезаписано вещей:',
+    'js.share.done': 'пакет принят',
+    # the kinds with no section of their own in the config menu, named for the picker
+    'js.share.kind.shapes': 'схемы тел',
+    'js.share.kind.personas': 'кто пишет в чате',
+    'js.share.kind.assets': 'файлы',
+})
+
+# Handing things over: the two panels under Configuration, and the words
+# `share.py` needs to report a plan in. See `slopgen.share`.
+EN.update({
+    'js.share': 'handing over',
+    'web.share.out': 'give',
+    'web.share.out.note': 'Tick what to hand over. Whatever it needs travels with it: a preset drags its content type, that drags the voice, and the voice drags the recording beside its card. A bundle is a plain zip and opens without slopgen.',
+    'web.share.find': 'find',
+    'web.share.note': 'a line for whoever opens it',
+    'web.share.pack': 'pack it',
+    'web.share.in': 'take',
+    'web.share.in.note': 'A bundle first only says what it would do. Nothing is written until you press take. What this machine already has is not overwritten by default — the newcomer lands beside it under a free name, and everything that travelled with it is repointed at that name so no reference dangles.',
+    'web.share.all': 'every collision:',
+    'web.share.beside': 'beside',
+    'web.share.over': 'overwrite',
+    'web.share.skipall': 'skip',
+    'web.share.apply': 'take it',
+    'js.share.whole': 'the whole shelf',
+    'js.share.none': 'clear',
+    'js.share.nothing': 'nothing matched',
+    'js.share.alsogoes': 'travelling with it:',
+    'js.share.selfcontained': 'everything it needs is already ticked',
+    'js.share.packing': 'packing…',
+    'js.share.packed': 'packed,',
+    'js.share.reading': 'reading the bundle…',
+    'js.share.empty': 'the bundle holds nothing',
+    'js.share.new': 'new',
+    'js.share.same': 'already here',
+    'js.share.differs': 'collides',
+    'js.share.heldby': 'here it is called',
+    'js.share.take': 'take',
+    'js.share.skip': 'skip',
+    'js.share.beside': 'land beside',
+    'js.share.overwrite': 'overwrite',
+    'js.share.took': 'took',
+    'js.share.files': 'files written',
+    'js.share.replaced': 'things replaced:',
+    'js.share.done': 'the bundle is in',
+    # the kinds with no section of their own in the config menu, named for the picker
+    'js.share.kind.shapes': 'body plans',
+    'js.share.kind.personas': 'who writes in a chat',
+    'js.share.kind.assets': 'files',
+})
+
 RU["w.none"] = "— нет —"
 EN["w.none"] = "— none —"
 
