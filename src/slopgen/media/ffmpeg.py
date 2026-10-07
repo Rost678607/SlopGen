@@ -129,6 +129,46 @@ def duration_of(path: Path) -> float:
     return float(probe(path)["format"]["duration"])
 
 
+def stream_end(path: Path, select: str = "v:0") -> float | None:
+    """Where one stream's last packet ends, or None when the file has no such stream.
+
+    Only the tail is read (`-read_intervals 99%`): the question is always about the last
+    packet, and a ten-minute video holds tens of thousands of them. A file too short for
+    ffprobe to seek inside is read whole."""
+    for interval in ("99%", None):
+        cmd = ["ffprobe", "-v", "error", "-select_streams", select,
+               "-show_entries", "packet=pts_time,duration_time", "-print_format", "json"]
+        if interval:
+            cmd += ["-read_intervals", interval]
+        proc = subprocess.run(cmd + [str(path)], capture_output=True, text=True,
+                              encoding="utf-8", errors="replace")
+        try:
+            packets = json.loads(proc.stdout or "{}").get("packets", [])
+        except json.JSONDecodeError:
+            packets = []
+        ends = [float(k.get("pts_time") or 0) + float(k.get("duration_time") or 0)
+                for k in packets if k.get("pts_time") not in (None, "N/A")]
+        if ends:
+            return max(ends)
+    return None
+
+
+def picture_len(path: Path) -> float:
+    """How long the PICTURE runs — not how long the container claims to be.
+
+    The two are different, and the difference is what made a finished video fail its own
+    length check. A container's duration is its LONGEST stream, and in every segment this
+    pipeline builds the sound overhangs the last video frame a little: measured on one
+    run, six segments whose pictures ended at 20.433s had sound ending at 20.631s, and
+    the folded file that came out of them reported 20.689s on the strength of its audio.
+    The delivery pass then runs `-shortest`, so ITS duration is set by the picture —
+    20.600s — and the guard, comparing one against the other, called 0.089s of
+    deliberately trimmed silence a video that had gone missing. 613 frames went in and
+    613 came out. So the spine is measured, and the tail is left to `-shortest`."""
+    end = stream_end(path, "v:0")
+    return end if end is not None else duration_of(path)
+
+
 # How big a picture is, remembered against the FILE rather than the name.
 #
 # The question is asked per card and answered by a subprocess, which is fine once and
@@ -758,7 +798,7 @@ def concat(segments: list[Path], out: Path) -> None:
     rather than being handed a file that changes under it. One piece is copied
     outright — there is no seam to resolve — and the result is measured either way,
     because the way this goes wrong is silence."""
-    want = sum(duration_of(p) for p in segments)
+    want = sum(picture_len(p) for p in segments)
     if len(segments) == 1:
         shutil.copyfile(segments[0], out)
         return
@@ -779,14 +819,30 @@ def concat(segments: list[Path], out: Path) -> None:
 def check_length(out: Path, want: float, what: str, seams: int = 1, fps: float = 30.0) -> None:
     """Refuse to hand back a file that lost time. Nothing here recovers — the point is
     that it STOPS, with the numbers, instead of passing a short video down the line
-    where it will be published as if it were whole."""
-    got = duration_of(out)
+    where it will be published as if it were whole.
+
+    `want` is the PICTURE's length going in (see :func:`picture_len`), and the picture's
+    length is what comes back out, because comparing a container against a container
+    compares whichever stream happens to be longest at each end — and that is not the
+    same stream before and after `-shortest`.
+
+    The sound is then asked a different question, the only one worth asking of it: does
+    it reach the end of the picture? A tail trimmed off the back is the trim doing its
+    job; sound that stops before the last frame is a word cut in half."""
+    got = picture_len(out)
     slack = max(seams, 1) / max(fps, 1.0) + 0.05
     if want - got > slack:
         raise FFmpegError(
-            f"{what}: came out {got:.2f}s where {want:.2f}s went in — "
+            f"{what}: the picture came out {got:.2f}s where {want:.2f}s went in — "
             f"{want - got:.2f}s lost. This is a timestamp fault at a join, not a "
             f"rounding one; the file would be silently short."
+        )
+    sound = stream_end(out, "a:0")
+    if sound is not None and got - sound > slack:
+        raise FFmpegError(
+            f"{what}: the sound stops at {sound:.2f}s under a picture that runs to "
+            f"{got:.2f}s — {got - sound:.2f}s of it is silent. The track was cut short "
+            f"of the video rather than trimmed to it."
         )
 
 
@@ -1364,7 +1420,7 @@ def finalize(
     attempt = 0
     while True:
         ready, batch = _fold_segments(segments, tmp, f"{out.stem}_p{attempt}", batch, target, on_progress)
-        want = sum(duration_of(p) for p in ready)
+        want = sum(picture_len(p) for p in ready)
         try:
             _run(_delivery_cmd(ready, out, cfg, ass, music, overlay, fonts_dir, fx, draws))
             # The delivery pass is the last place anything can go quietly missing, and
