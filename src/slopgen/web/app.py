@@ -35,8 +35,9 @@ from starlette.concurrency import run_in_threadpool
 from pydantic import ValidationError
 
 from ..config import ConfigStore, RunParams
-from ..config.loader import (VOICEFX_DIR, delete_config, effects_dir, fandom_docs,
-                             file_sha, frames_dir, lore_sha, read_lore, update_global,
+from ..config.loader import (FORM_PRESETS_DIR, VOICEFX_DIR, delete_config, effects_dir,
+                             fandom_docs, file_sha, frames_dir, lore_sha,
+                             read_form_presets, read_lore, update_global,
                              write_character, write_config, write_effect,
                              write_frame_card)
 from ..config.envfile import set_env_var
@@ -880,6 +881,44 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
         gone = delete_config(subdir, name)
         _store_of(kind).pop(name, None)
         return {"deleted": gone}
+
+    # -- the generation form's presets ----------------------------------------
+    #
+    # One list per mode, because each mode's form is a different set of controls.
+    # The body is whatever the page read off the form (see `formSnapshot` in app.js);
+    # the server only checks that it is a table and that the name can be a file.
+
+    def _form_mode(mode: str) -> str:
+        if mode not in MODES:
+            raise HTTPException(status_code=404, detail=f"no mode {mode!r}")
+        return mode
+
+    @app.get("/api/form-presets/{mode}")
+    async def list_form_presets(mode: str,
+                                slopgen: str | None = Cookie(default=None)) -> dict:
+        guard(slopgen)
+        return {"items": read_form_presets(_form_mode(mode))}
+
+    @app.put("/api/form-presets/{mode}/{name}")
+    async def save_form_preset(mode: str, name: str, request: Request,
+                               slopgen: str | None = Cookie(default=None)) -> dict:
+        guard(slopgen)
+        kind = f"{FORM_PRESETS_DIR}/{_form_mode(mode)}"
+        name = name.strip()
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=422, detail="a preset is a table of fields")
+        try:
+            write_config(kind, name, body)
+        except Exception as e:  # noqa: BLE001 — an unusable name, or a value TOML refuses
+            raise HTTPException(status_code=422, detail=str(e)) from e
+        return {"name": name}
+
+    @app.delete("/api/form-presets/{mode}/{name}")
+    async def remove_form_preset(mode: str, name: str,
+                                 slopgen: str | None = Cookie(default=None)) -> dict:
+        guard(slopgen)
+        return {"deleted": delete_config(f"{FORM_PRESETS_DIR}/{_form_mode(mode)}", name)}
 
     @app.post("/api/configs/llm/active")
     async def set_active_llm(request: Request,

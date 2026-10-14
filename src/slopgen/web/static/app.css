@@ -682,6 +682,23 @@ button:disabled:hover{border-color:var(--line)}
 .bar{height:4px;background:var(--line);border-radius:3px;overflow:hidden;margin-top:8px}
 .bar i{display:block;height:100%;background:var(--accent);transition:width .4s}
 #mode-menu{margin-bottom:12px}
+/* the mode chips on the left and the form's presets on the right, one line; on a
+   narrow screen the presets drop under the chips rather than squeezing them */
+.genbar{display:flex;flex-wrap:wrap;align-items:flex-start;gap:0 12px}
+.genbar #mode-menu{flex:1 1 auto}
+.presetbar{display:flex;gap:6px;align-items:center;margin-bottom:12px}
+.presetbar select,.presetbar input{font-size:13.5px;padding:5px 9px;height:34px}
+.presetbar select{width:auto;min-width:150px;max-width:220px}
+.presetbar input{width:180px}
+button.sq{width:34px;height:34px;padding:0;display:inline-grid;place-items:center;flex:none}
+button.sq svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;
+  stroke-linecap:round;stroke-linejoin:round}
+#preset-del:hover,#preset-del.armed{border-color:var(--bad);color:var(--bad)}
+#preset-del.armed{background:color-mix(in srgb,var(--bad) 18%,var(--panel))}
+@media (max-width:600px){
+  .presetbar{width:100%}
+  .presetbar select,.presetbar input{flex:1 1 0;min-width:0;width:auto}
+}
 
 .stage-row{display:grid;gap:8px;align-items:end;margin-bottom:8px;
   grid-template-columns:repeat(auto-fit,minmax(120px,1fr)) auto}

@@ -37,11 +37,25 @@
         <button id="editing-cancel" class="ghost" data-l="web.loop.leave">выйти из правки</button></div>
     </div>
 
-    <div class="chips big" id="mode-menu">
-      <button data-mode="fandom" class="on" data-l="web.mode.fandom">фандом</button>
-      <button data-mode="info" data-l="web.mode.info">инфо-ролик</button>
-      <button data-mode="drama" data-l="web.mode.drama">драма</button>
-      <button data-mode="chat" data-l="web.mode.chat">переписка</button>
+    <div class="genbar">
+      <div class="chips big" id="mode-menu">
+        <button data-mode="fandom" class="on" data-l="web.mode.fandom">фандом</button>
+        <button data-mode="info" data-l="web.mode.info">инфо-ролик</button>
+        <button data-mode="drama" data-l="web.mode.drama">драма</button>
+        <button data-mode="chat" data-l="web.mode.chat">переписка</button>
+      </div>
+      <!-- The form's presets, one list per mode: every control on the form except the
+           plot, saved under a name and poured back in. Picking one fills the form and
+           puts its name in the box; saving writes under whatever the box says, so the
+           same box is both "overwrite this one" and "save as a new one". -->
+      <div class="presetbar" id="presetbar">
+        <select id="preset-pick" title="пресет" data-lt="web.preset.pick"></select>
+        <input id="preset-name" placeholder="название пресета" data-lp="web.preset.name">
+        <button type="button" id="preset-save" class="sq" title="сохранить пресет"
+                data-lt="web.preset.save"><svg viewBox="0 0 24 24"><path d="M5 3h11l5 5v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M7 3v5h8V3"/><rect x="7" y="13" width="10" height="8"/></svg></button>
+        <button type="button" id="preset-del" class="sq" title="удалить пресет"
+                data-lt="web.preset.del"><svg viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13"/><path d="M10 11v6M14 11v6"/></svg></button>
+      </div>
     </div>
 
     <form id="startform" class="cards" data-mode="fandom">

@@ -4127,3 +4127,34 @@ EN.update({
                          "with the same look run as one stretch, so the tube's bar and the "
                          "film's flicker do not restart on them.",
 })
+
+# --- the generation form's presets ----------------------------------------
+# A saved copy of everything on one mode's form but the plot, beside the mode chips.
+RU.update({
+    "web.preset.pick": "пресет этого режима",
+    "web.preset.name": "название пресета",
+    "web.preset.save": "сохранить пресет под этим названием",
+    "web.preset.del": "удалить выбранный пресет",
+    "js.preset.none": "— пресет —",
+    "js.preset.noname": "впиши название пресета",
+    "js.preset.badname": "в названии не может быть «/», «\\» и точки в начале",
+    "js.preset.saved": "пресет сохранён:",
+    "js.preset.loaded": "форма заполнена из пресета",
+    "js.preset.deleted": "пресет удалён:",
+    "js.preset.nothing": "нет такого пресета:",
+    "js.preset.confirm": "ещё раз — и удалю",
+})
+EN.update({
+    "web.preset.pick": "this mode's preset",
+    "web.preset.name": "preset name",
+    "web.preset.save": "save the preset under this name",
+    "web.preset.del": "delete the chosen preset",
+    "js.preset.none": "— preset —",
+    "js.preset.noname": "type a name for the preset",
+    "js.preset.badname": "a name cannot hold «/» or «\\», or start with a dot",
+    "js.preset.saved": "preset saved:",
+    "js.preset.loaded": "form filled from the preset",
+    "js.preset.deleted": "preset deleted:",
+    "js.preset.nothing": "no such preset:",
+    "js.preset.confirm": "once more and it is gone",
+})

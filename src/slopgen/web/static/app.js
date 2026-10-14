@@ -3721,6 +3721,7 @@ function setMode(mode) {
     (f.hidden = f.dataset.mode !== genMode));
   savePlace();
   compose();
+  drawPresets();
 }
 
 document.querySelectorAll("#mode-menu [data-mode]").forEach((b) => {
@@ -3980,6 +3981,7 @@ async function loadOptions() {
   // compositor measures cards, and a card measured before its contents arrived is a
   // card placed for a size it no longer has.
   compose();
+  drawPresets();
 }
 
 // What the fandom form MEANS, read once. Two buttons send it now — start the chain,
@@ -4359,6 +4361,128 @@ async function applyToLoop(body) {
   stopEditing();
   openTab("runs");
 }
+
+// ------------------------------------------------------- the form's presets
+//
+// Everything on one mode's form except the plot, under a name, poured back in on a
+// pick — so a series of alike videos is set up once instead of once per video. What is
+// saved is the form as the FORM says it, by control name, rather than as any of the
+// submit builders above read it: a preset is "what was on screen", it has to come back
+// exactly, and the builders change shape whenever the server's parameters do.
+//
+// What a preset leaves alone is what a single video is ABOUT: the plot or the topic,
+// the title, and the loop's queue of topics.
+const PRESET_SKIP = new Set(["scenario", "idea", "title", "loop_topics"]);
+let presets = {};  // the current mode's, by name, as the server last listed them
+
+function formSnapshot(form) {
+  const fields = {};
+  form.querySelectorAll("[name]").forEach((el) => {
+    if (PRESET_SKIP.has(el.name) || el.type === "file") return;
+    fields[el.name] = el.type === "checkbox" ? el.checked : el.value;
+  });
+  const filters = {};
+  form.querySelectorAll("[data-fx]").forEach((r) => (filters[r.dataset.fx] = +r.value));
+  return {
+    fields, filters,
+    cast: [...form.querySelectorAll("[data-who].on")].map((b) => b.dataset.who),
+    breakpoints: [...chosenBps[form.dataset.mode]],
+  };
+}
+
+function fillFromPreset(form, p) {
+  const fields = p.fields || {};
+  const els = [...form.querySelectorAll("[name]")].filter((el) =>
+    el.name in fields && !PRESET_SKIP.has(el.name)
+    // a loop being retuned keeps its own on-switch hidden and on (see `fillForm`), and
+    // a page with nowhere to publish keeps every run a rehearsal
+    && !(editing && el.name === "loop_on")
+    && !(el.name === "dry_run" && !opts.accounts.length));
+  const put = (el, fire) => {
+    const v = fields[el.name];
+    if (el.type === "checkbox") el.checked = !!v;
+    // an answer the list no longer offers (a world since deleted, a model gone) leaves
+    // the control where it was rather than blanking it
+    else if (el.tagName === "SELECT" && ![...el.options].some((o) => o.value === String(v))) return;
+    else el.value = v;
+    if (fire) el.dispatchEvent(new Event("change"));
+  };
+  // Twice. The first pass fires each control's own change handler, which is how a
+  // select that another one depends on rebuilds that one's list (the medium rebuilds
+  // the source list) and how picking a visuals profile prefills the Picture card. The
+  // second, silent, puts back whatever those handlers overwrote on the way.
+  els.forEach((el) => put(el, true));
+  els.forEach((el) => put(el, false));
+  form.querySelectorAll("[data-fx]").forEach((r) => (r.value = (p.filters || {})[r.dataset.fx] || 0));
+  form.querySelectorAll("input[type=range]").forEach((r) => r.dispatchEvent(new Event("input")));
+  const cast = new Set(p.cast || []);
+  form.querySelectorAll("[data-who]").forEach((b) => b.classList.toggle("on", cast.has(b.dataset.who)));
+  const mode = form.dataset.mode;
+  chosenBps[mode] = new Set(p.breakpoints || []);
+  form.querySelectorAll("[data-bp]").forEach((b) =>
+    b.classList.toggle("on", chosenBps[mode].has(b.dataset.bp)));
+  applyConditions(form);
+}
+
+async function drawPresets(keep) {
+  const mode = genMode;
+  try { presets = (await api(`/api/form-presets/${mode}`)).items || {}; }
+  catch { presets = {}; }
+  if (mode !== genMode) return;  // the mode changed while the list was on its way
+  const pick = $("#preset-pick");
+  pick.innerHTML = [`<option value="">${esc(lab("js.preset.none", "— пресет —"))}</option>`]
+    .concat(Object.keys(presets).map((n) => `<option value="${esc(n)}">${esc(n)}</option>`))
+    .join("");
+  pick.value = keep && keep in presets ? keep : "";
+  if (!keep) $("#preset-name").value = "";
+}
+
+$("#preset-pick").onchange = () => {
+  const name = $("#preset-pick").value;
+  $("#preset-name").value = name;
+  if (!name) return;
+  const form = document.querySelector(`form.cards[data-mode="${genMode}"]`);
+  fillFromPreset(form, presets[name]);
+  say(`${lab("js.preset.loaded")} «${name}»`);
+};
+
+$("#preset-save").onclick = async () => {
+  const name = $("#preset-name").value.trim();
+  if (!name) { $("#preset-name").focus(); return say(lab("js.preset.noname"), true); }
+  // the name is the file's name (configs/form_presets/<mode>/<name>.toml)
+  if (/[\/\\]|^\./.test(name)) return say(lab("js.preset.badname"), true);
+  const form = document.querySelector(`form.cards[data-mode="${genMode}"]`);
+  try {
+    await api(`/api/form-presets/${genMode}/${encodeURIComponent(name)}`, { method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(formSnapshot(form)) });
+  } catch (err) { return say(err.message, true); }
+  await drawPresets(name);
+  $("#preset-name").value = name;
+  say(`${lab("js.preset.saved")} «${name}»`);
+};
+
+// Deleting asks twice, in place: the page shows no dialogs (see `say`), so the button
+// itself is the confirmation — a second press within a few seconds.
+$("#preset-del").onclick = async () => {
+  const btn = $("#preset-del");
+  const name = $("#preset-pick").value || $("#preset-name").value.trim();
+  if (!name || !(name in presets)) return say(`${lab("js.preset.nothing")} «${name}»`, true);
+  if (btn.dataset.armed !== name) {
+    btn.dataset.armed = name;
+    btn.classList.add("armed");
+    clearTimeout(btn._t);
+    btn._t = setTimeout(() => { delete btn.dataset.armed; btn.classList.remove("armed"); }, 4000);
+    return say(`${lab("js.preset.confirm")} — «${name}»`);
+  }
+  delete btn.dataset.armed;
+  btn.classList.remove("armed");
+  try {
+    await api(`/api/form-presets/${genMode}/${encodeURIComponent(name)}`, { method: "DELETE" });
+  } catch (err) { return say(err.message, true); }
+  await drawPresets();
+  say(`${lab("js.preset.deleted")} «${name}»`);
+};
 
 // The loop block, read off the card every mode form carries. It is sent with every
 // run: `on` off means what it says, and the server starts a plain run — the loop is

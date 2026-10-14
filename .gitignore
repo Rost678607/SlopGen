@@ -107,6 +107,10 @@ configs/voicefx/*
 !configs/voicefx/vinyl.toml
 !configs/voicefx/memory.toml
 
+# The generation form's presets (configs/form_presets/<mode>/), saved from the web
+# GUI. They name the operator's own worlds, voices and accounts, so they are theirs.
+configs/form_presets/
+
 # Typefaces are licensed material too, and the ones a run actually wants are named
 # in the config rather than carried here (see src/slopgen/typeface.py). The folder
 # exists so there is somewhere obvious to put them: anything in it is found by name,

@@ -201,6 +201,28 @@ def delete_config(kind: str, name: str) -> bool:
     return True
 
 
+# The generation form's own presets (`configs/form_presets/<mode>/<name>.toml`): a
+# snapshot of every control on one mode's form, written by the web GUI and read back
+# into it. Not `PresetConfig` — that one is the CLI's half-dozen run parameters, and
+# a form is thirty-odd controls that differ per mode and change whenever a card does.
+# So the file is what the form said, by field name, unvalidated: a control that has
+# since gone is skipped on the way back in, and one that is new keeps its default.
+FORM_PRESETS_DIR = "form_presets"
+
+
+def read_form_presets(mode: str) -> dict[str, dict]:
+    """Every saved form preset of one mode, by name."""
+    d = CONFIGS_DIR / FORM_PRESETS_DIR / mode
+    out: dict[str, dict] = {}
+    if d.is_dir():
+        for p in sorted(d.glob("*.toml"), key=lambda p: p.stem.lower()):
+            try:
+                out[p.stem] = _read_toml(p)
+            except ConfigError:
+                continue  # a hand-broken file must not take the whole list with it
+    return out
+
+
 def update_global(section: str, values: dict) -> Path:
     """Merge values into one section of `configs/slopgen.toml`.
 
