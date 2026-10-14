@@ -419,7 +419,10 @@ function renderChatSettings() {
       const list = (r.blank ? [""] : []).concat(source);
       const word = (o) => (r.opt_l ? lab(r.opt_l + o, o)
         : (o || lab(r.blank_l || "w.none", "— нет —")));
-      return `<label>${esc(lab(r.l, r.f))}<select data-s="${r.f}">${list.map((o) =>
+      // the two lists that are pictures get a picker that shows them (see `wirePicks`)
+      const pics = { avatars: "avatars", chat_backgrounds: "chat_bg" }[r.opts];
+      return `<label>${esc(lab(r.l, r.f))}<select data-s="${r.f}"${
+        pics ? ` data-pics="${pics}"` : ""}>${list.map((o) =>
         `<option value="${esc(o)}"${o === val ? " selected" : ""}>${esc(word(o))}</option>`
       ).join("")}</select></label>`;
     }
@@ -428,6 +431,7 @@ function renderChatSettings() {
   cq("#chat-set").innerHTML =
     `<h4>${esc(lab("web.chat.settings", "настройки ролика"))}</h4>` + rows.join("") +
     `<p class="dim">${esc(lab("web.chat.settings.note", ""))}</p>`;
+  wirePicks(cq("#chat-set"));
 }
 
 // The clock. Hidden until there is one — a conversation being built has no timings at

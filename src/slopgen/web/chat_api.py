@@ -799,14 +799,12 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
                 return answer(cp, i, job)
         return doc(cp, i, job)
 
-    @app.get("/api/avatar")
-    async def avatar(name: str, slopgen: str | None = Cookie(default=None)):
-        """One picture out of the avatar base, so the room can show what it is offering.
+    def _picture(folder: str, name: str):
+        """One picture out of one of the chat mode's picture folders.
 
         Inside the folder and nowhere else: the name comes off a form, so it is
         resolved against the base and checked to still be under it."""
-        guard(slopgen)
-        root = (store.global_cfg.paths.assets / chat_render.AVATARS_DIR).resolve()
+        root = (store.global_cfg.paths.assets / folder).resolve()
         at = (root / name).resolve()
         if not str(at).startswith(str(root)):
             raise HTTPException(status_code=404, detail="no such picture")
@@ -823,6 +821,24 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
         if not at.is_file():
             raise HTTPException(status_code=404, detail="no such picture")
         return FileResponse(at, headers={"Cache-Control": "max-age=300"})
+
+    @app.get("/api/avatar")
+    async def avatar(name: str, slopgen: str | None = Cookie(default=None)):
+        """One picture out of the avatar base, so the room can show what it is offering."""
+        guard(slopgen)
+        return _picture(chat_render.AVATARS_DIR, name)
+
+    # The shelves a picture picker may show (see `wirePicks` in app.js): the avatars
+    # and the wallpapers, by the name the configs store them under.
+    PICTURE_SHELVES = {"avatars": chat_render.AVATARS_DIR,
+                       "chat_bg": chat_render.BACKGROUNDS_DIR}
+
+    @app.get("/api/picture/{shelf}")
+    async def picture(shelf: str, name: str, slopgen: str | None = Cookie(default=None)):
+        guard(slopgen)
+        if shelf not in PICTURE_SHELVES:
+            raise HTTPException(status_code=404, detail=f"no picture shelf {shelf!r}")
+        return _picture(PICTURE_SHELVES[shelf], name)
 
     # -- what it will look like ---------------------------------------------
 

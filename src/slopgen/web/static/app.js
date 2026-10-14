@@ -2826,7 +2826,7 @@ function listCardFx() {
     return `
     <li data-i="${i}" class="${i === cardFxSel ? "sel" : ""}">
       <div class="row">
-        <select data-f="effect">${base.map((e) =>
+        <select data-f="effect" data-pics="effects">${base.map((e) =>
           `<option value="${esc(e.name)}"${e.name === h.effect ? " selected" : ""}>${esc(e.name)}</option>`).join("")}</select>
         <button data-del="${i}" class="ghost">×</button>
       </div>
@@ -2846,6 +2846,7 @@ function listCardFx() {
         esc(lab("js.fx.placing.hint.frame"))}</p>`}
     </li>`;
   }).join("") || `<li class="dimrow">${lab("js.fx.nohooks")}</li>`;
+  wirePicks($("#card-fx"));
   $("#card-fx").querySelectorAll("li[data-i]").forEach((li) => {
     const i = +li.dataset.i;
     li.onclick = (e) => {
@@ -3166,6 +3167,9 @@ function pictureFrom(p) {
 // one-part drama, invite an answer to a question that is not being asked.
 function applyConditions(form) {
   queueMicrotask(compose);
+  // a picture picker shows the select's value, and the fills that end here (a preset,
+  // a loop being retuned) set values without telling anyone
+  paintPicks(form);
   form.querySelectorAll("[data-when]").forEach((el) => {
     const m = el.dataset.when.match(/^([a-z_]+)\s*(!=|[=><])\s*(.+)$/);
     if (!m) return;
@@ -3182,6 +3186,109 @@ function applyConditions(form) {
     else on = +v < +value;
     el.hidden = !on;
   });
+}
+
+// ------------------------------------------------------------- picture pickers
+//
+// A select whose answers are PICTURES — a wallpaper, a chat's avatar, an effect —
+// read as a list of file names, and a file name is the one thing about a picture
+// nobody remembers. So such a select (`data-pics="<shelf>"`) gets a button that shows
+// the chosen picture and opens a grid of all of them. The select stays where it was,
+// hidden, and stays the value: the forms, the presets and the loop editor all read
+// and write it exactly as before, and a pick here is a change event on it.
+const PIC_SHELVES = {
+  avatars: (v) => v && { kind: "image", url: `/api/picture/avatars?name=${encodeURIComponent(v)}` },
+  chat_bg: (v) => v && { kind: "image", url: `/api/picture/chat_bg?name=${encodeURIComponent(v)}` },
+  // the effects base, as the card editor already holds it: a still, a clip, or a sound
+  effects: (v) => {
+    const e = (fxAll || []).find((x) => x.name === v);
+    if (!e) return null;
+    return e.url ? { kind: e.kind, url: e.url } : { kind: "sound" };
+  },
+};
+
+function picThumb(shelf, v) {
+  const t = (PIC_SHELVES[shelf] || (() => null))(v);
+  if (!t) return `<i class="pp-none">—</i>`;
+  if (t.kind === "sound") return `<i class="pp-none">♪</i>`;
+  if (t.kind === "video")
+    return `<video src="${esc(tokd(t.url))}#t=0.5" muted preload="metadata"></video>`;
+  return `<img src="${esc(tokd(t.url))}" loading="lazy" alt="" onerror="this.hidden=true">`;
+}
+
+function wirePicks(root = document) {
+  root.querySelectorAll("select[data-pics]").forEach((sel) => {
+    if (sel._pp) return sel._pp();
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = `pp-btn pp-${sel.dataset.pics}`;
+    sel.after(btn);
+    sel.classList.add("pp-native");
+    sel._pp = () => {
+      const opt = sel.options[sel.selectedIndex];
+      btn.innerHTML = `<span class="pp-pic">${picThumb(sel.dataset.pics, sel.value)}</span>`
+        + `<span class="pp-name">${esc(opt ? opt.textContent : "")}</span><span class="pp-caret">▾</span>`;
+      btn.disabled = sel.disabled;
+    };
+    sel.addEventListener("change", sel._pp);
+    btn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); openPicks(sel, btn); };
+    sel._pp();
+  });
+}
+
+function paintPicks(root = document) {
+  root.querySelectorAll("select[data-pics]").forEach((sel) => sel._pp && sel._pp());
+}
+
+// One grid for the whole page, laid over everything and placed under the button
+// that opened it — inside a card it would be clipped by the card and push the
+// compositor's measurements around.
+function openPicks(sel, btn) {
+  let menu = $("#pp-menu");
+  if (menu && !menu.hidden && menu._for === sel) return closePicks();
+  if (!menu) {
+    menu = document.createElement("div");
+    menu.id = "pp-menu";
+    document.body.appendChild(menu);
+    document.addEventListener("pointerdown", (e) => {
+      if (!menu.hidden && !menu.contains(e.target) && !e.target.closest(".pp-btn")) closePicks();
+    });
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") closePicks(); });
+    window.addEventListener("resize", closePicks);
+    document.addEventListener("scroll", (e) => { if (!menu.contains(e.target)) closePicks(); }, true);
+  }
+  menu._for = sel;
+  menu.className = `pp-${sel.dataset.pics}`;
+  menu.innerHTML = [...sel.options].map((o) => `
+    <button type="button" class="pp-tile${o.value === sel.value ? " on" : ""}" data-v="${esc(o.value)}"
+            title="${esc(o.textContent)}">
+      <span class="pp-pic">${picThumb(sel.dataset.pics, o.value)}</span>
+      <span class="pp-name">${esc(o.textContent)}</span></button>`).join("");
+  menu.querySelectorAll("[data-v]").forEach((b) => {
+    b.onclick = () => {
+      sel.value = b.dataset.v;
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+      closePicks();
+    };
+  });
+  menu.hidden = false;
+  // under the button, or above it when the bottom of the window is too close; never
+  // wider than the window, and never off its left or right edge
+  const r = btn.getBoundingClientRect();
+  const w = Math.min(window.innerWidth - 16, Math.max(r.width, 300));
+  menu.style.width = `${w}px`;
+  menu.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
+  const below = window.innerHeight - r.bottom - 8;
+  const h = Math.min(menu.scrollHeight, 340);
+  menu.style.top = below >= h || below >= r.top ? `${r.bottom + 4}px` : `${Math.max(8, r.top - h - 4)}px`;
+  menu.style.maxHeight = `${Math.max(120, below >= h || below >= r.top ? below : r.top - 12)}px`;
+  const on = menu.querySelector(".on");
+  if (on) on.scrollIntoView({ block: "nearest" });
+}
+
+function closePicks() {
+  const menu = $("#pp-menu");
+  if (menu) menu.hidden = true;
 }
 
 // re-evaluate whenever anything in a form changes; cheap, and it means a condition
@@ -3803,9 +3910,15 @@ async function loadOptions() {
       `<option value="${esc(v)}">${esc(lab("scr." + v, v))}</option>`).join("");
   });
   document.querySelectorAll(".f-persona").forEach((el) => fill(el, opts.personas || [], true));
-  document.querySelectorAll(".f-avatar").forEach((el) => fill(el, opts.avatars || [], true));
-  document.querySelectorAll(".f-chatbg").forEach(
-    (el) => fill(el, opts.chat_backgrounds || [], true, "w.chatbg.plain"));
+  document.querySelectorAll(".f-avatar").forEach((el) => {
+    fill(el, opts.avatars || [], true);
+    el.dataset.pics = "avatars";
+  });
+  document.querySelectorAll(".f-chatbg").forEach((el) => {
+    fill(el, opts.chat_backgrounds || [], true, "w.chatbg.plain");
+    el.dataset.pics = "chat_bg";
+  });
+  wirePicks();
   document.querySelectorAll(".f-scroll").forEach((el) => {
     const note = (el.closest(".card") || document).querySelector(".scr-note");
     const show = () => { if (note) note.textContent = lab("scr.note." + el.value, ""); };
