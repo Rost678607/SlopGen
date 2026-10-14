@@ -3375,6 +3375,7 @@ RU.update({
     "web.f.scroll": "когда экран кончился",
     "web.f.rolls": "проезд, с",
     "web.f.gaps": "пауза между сообщениями, с",
+    "web.f.medias": "сколько смотреть на картинку без текста, с",
     "web.f.chunk": "кусок показа, символов",
     "web.f.chunkmin": "показывать кусками от, символов",
     "web.f.chathead": "шапка чата",
@@ -3405,6 +3406,7 @@ EN.update({
     "web.f.scroll": "when the screen fills",
     "web.f.rolls": "travel, s",
     "web.f.gaps": "pause between messages, s",
+    "web.f.medias": "how long a picture without words holds, s",
     "web.f.chunk": "reveal piece, characters",
     "web.f.chunkmin": "reveal in pieces from, characters",
     "web.f.chathead": "chat header",
@@ -3596,7 +3598,16 @@ RU.update({
     "web.chat.exports": "экспорты",
     "web.chat.exports.note": "Файлы, выгруженные из клиентов: Telegram (JSON или HTML), "
                              "Discord (DiscordChatExporter), ветка реддита (.json). "
+                             "Выгрузку с картинками, стикерами и голосовыми клади "
+                             "zip-архивом папки целиком. "
                              "Остаются в базе — тот же тред пригодится ещё раз.",
+    "web.chat.media.photo": "фото",
+    "web.chat.media.sticker": "стикер",
+    "web.chat.media.animation": "GIF",
+    "web.chat.media.video": "видео",
+    "web.chat.media.voice": "голосовое",
+    "web.chat.media.round": "кружок",
+    "web.chat.media.drop": "убрать вложение",
     "web.chat.exports.add": "＋ добавить файл в базу",
     "web.chat.exports.take": "добавить выбранное",
     "web.chat.exports.none": "База пуста. Положи сюда выгрузку из клиента.",
@@ -3609,8 +3620,17 @@ EN.update({
     "web.chat.exports": "exports",
     "web.chat.exports.note": "Files exported from the clients: Telegram (JSON or HTML), "
                              "Discord (DiscordChatExporter), a reddit thread's .json. "
+                             "An export with its pictures, stickers and voice messages "
+                             "goes in as a zip of the whole folder. "
                              "They stay in the base — the same thread comes in useful "
                              "more than once.",
+    "web.chat.media.photo": "photo",
+    "web.chat.media.sticker": "sticker",
+    "web.chat.media.animation": "GIF",
+    "web.chat.media.video": "video",
+    "web.chat.media.voice": "voice message",
+    "web.chat.media.round": "video message",
+    "web.chat.media.drop": "remove the attachment",
     "web.chat.exports.add": "＋ put a file in the base",
     "web.chat.exports.take": "add the chosen ones",
     "web.chat.exports.none": "The base is empty. Drop an export from a client in here.",

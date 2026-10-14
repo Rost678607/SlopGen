@@ -24,10 +24,10 @@ from typing import Callable
 from pathlib import Path
 
 from . import chat_render
-from ...chat import exports, reddit, telegram
+from ...chat import exports, media, reddit, telegram
 from ...llm import chat as chat_llm
 from ..context import AppContext
-from ..job import ChatMsg, Conversation, VideoJob
+from ..job import ChatMedia, ChatMsg, Conversation, VideoJob
 
 log = logging.getLogger(__name__)
 
@@ -62,6 +62,39 @@ def pick(ctx: AppContext, name: str) -> Path:
     return at
 
 
+def media_root(ctx: AppContext) -> Path:
+    """The media base: every picture, sticker, clip and voice any conversation has
+    carried in (see `chat.media`)."""
+    return media.root(ctx.g.paths.assets)
+
+
+def settle(ctx: AppContext, pieces) -> None:
+    """Make what the pieces carry into files in the base, and their custom emoji into
+    pictures where a signed-in account can fetch them.
+
+    The step between READING an export and TAKING it: the reader names files where it
+    found them and emoji by id, and a job may hold neither — the export folder is the
+    operator's to move, and an id is not something the drawing can paste."""
+    media.adopt_pieces(pieces, media_root(ctx))
+    ids = telegram.doc_ids(pieces)
+    found = asyncio.run(telegram.custom_emoji(ctx.g.paths.state, ids, media_root(ctx))) \
+        if ids else {}
+    telegram.resolve_custom(pieces, found)
+
+
+def message_of(ln) -> ChatMsg:
+    """One parsed line as the job's message. The one place the reader's shape becomes
+    the pipeline's, so the export, the live read and the room's own taking agree."""
+    m = ln.media
+    return ChatMsg(
+        persona=ln.who, text=ln.text, stamp=ln.stamp, day=ln.day, avatar=ln.avatar,
+        reply_to=ln.reply_to, reactions=list(ln.reactions), score=ln.score,
+        media=(ChatMedia(kind=m.kind, file=m.file, w=m.w, h=m.h, duration=m.duration,
+                         emoji=m.emoji) if m is not None and m.file else None),
+        custom=[(a, f) for a, f in ln.custom if f and not f.startswith("doc:")],
+    )
+
+
 def take(job: VideoJob, pieces) -> int:
     """Put parsed pieces onto the job as conversations. Returns how many landed.
 
@@ -74,11 +107,7 @@ def take(job: VideoJob, pieces) -> int:
             continue
         job.conversations.append(Conversation(
             title=piece.title, source=piece.source, avatar=piece.avatar,
-            messages=[ChatMsg(persona=ln.who, text=ln.text, stamp=ln.stamp,
-                              day=ln.day, avatar=ln.avatar,
-                              reply_to=ln.reply_to, reactions=list(ln.reactions),
-                              score=ln.score)
-                      for ln in piece.lines],
+            messages=[message_of(ln) for ln in piece.lines],
         ))
         n += 1
     return n
@@ -100,6 +129,7 @@ def _import(job: VideoJob, ctx: AppContext) -> None:
         pieces = exports.read(pick(ctx, name))
     except exports.ExportError as e:
         raise ValueError(str(e))
+    settle(ctx, pieces)
     if not take(job, pieces):
         raise ValueError(f"{name} holds no messages this can read")
 
@@ -147,7 +177,8 @@ def _telegram(job: VideoJob, ctx: AppContext) -> None:
     try:
         pieces = asyncio.run(telegram.history(
             ctx.g.paths.state, where,
-            photos=ctx.g.paths.assets / chat_render.AVATARS_DIR))
+            photos=ctx.g.paths.assets / chat_render.AVATARS_DIR,
+            media=media_root(ctx)))
     except telegram.TelegramError as e:
         raise ValueError(str(e))
     if not take(job, pieces):

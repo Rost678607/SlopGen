@@ -1572,6 +1572,12 @@ class ChatConfig(BaseModel):
     # nobody reads aloud it is the whole of how long that message is up, and for one
     # that is read it is the breath after the last word before the next bubble lands.
     gap_s: float = 1.2
+    # How much longer than the gap a message holds when it is ONLY a picture — a
+    # sticker, a photo, a GIF, a video with nothing written under it. Nobody reads it
+    # aloud, so the gap alone would flash it past; this is the time to look at it, and
+    # for a sticker that loops, to see it do so. A voice message and a round video are
+    # not this: they hold for as long as their own recording plays.
+    media_s: float = 1.5
     roll_s: float = 0.45  # how long the view takes to travel (scroll="roll")
     scroll: ScrollMode = "roll"
     # How long the swipe between one conversation and the next takes. The seam is not

@@ -30,7 +30,8 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-from . import fonts, richtext
+from . import fonts, media as media_mod, richtext
+from .exports import split_reaction
 from .skins import Skin, column as skins_column
 
 # How much bigger than life the bubble outline is drawn before being shrunk
@@ -58,6 +59,46 @@ class Person:
     # `u/костя` — and a disc reading "U" for everybody is a disc that identifies
     # nobody. Empty falls back to the name, which is right for the messengers.
     initials: str = ""
+
+
+@dataclass
+class Shown:
+    """What a message carries, laid out: where its picture goes and how it is cut.
+
+    `box` is in canvas coordinates like the block's own. `bare` is the sticker and the
+    round video, which a client draws with no bubble around them at all — the picture
+    IS the message, and a white box behind a sticker is the first thing that would give
+    the screenshot away."""
+
+    kind: str
+    path: Path | None
+    box: tuple[int, int, int, int]
+    shape: tuple = ()
+    bare: bool = False
+    emoji: str = ""
+    duration: float = 0.0
+
+
+@dataclass
+class Moving:
+    """A moving thing as painted onto ONE band: what it is, and where in the band's own
+    pixels its top-left landed. The render stage turns these into the clips laid over
+    the state (see `chat_render`); the band itself holds each one's first frame."""
+
+    path: Path
+    x: int
+    y: int
+    w: int
+    h: int
+    shape: tuple = ()
+    msg: int = -1
+    # A still to lay over the clip rather than a clip: the label on a moving picture,
+    # which the clip would otherwise cover. `path` is then meaningless.
+    image: Image.Image | None = None
+    # The first frame of a see-through moving thing, which was NOT painted into the
+    # band (see `media.hollow`) — kept for whatever needs one picture of it: the
+    # preview, and the swipe that slides the whole screen away.
+    poster: Image.Image | None = None
 
 
 @dataclass
@@ -91,6 +132,9 @@ class Block:
     reactions: list[tuple[str, int]] = field(default_factory=list)
     score: int | None = None  # reddit karma; None = this skin does not vote
     depth: int = 0  # reddit: how deep in the comment tree
+    media: Shown | None = None
+    # the custom emoji of this message's text, in order, as (fallback, file)
+    custom: list[tuple[str, Path]] = field(default_factory=list)
 
     @property
     def bottom(self) -> int:
@@ -101,7 +145,7 @@ class Canvas:
     """A conversation being laid out, and the renderer of what has been laid out."""
 
     def __init__(self, skin: Skin, width: int, *, wallpaper: Path | None = None,
-                 top_inset: int = 0):
+                 top_inset: int = 0, media_root: Path | None = None):
         self.skin = skin
         self.width = width
         # How wide the conversation itself is, and where it starts. The whole frame on
@@ -124,6 +168,13 @@ class Canvas:
         self.f_text = fonts.load(skin.family, skin.text_px)
         self.f_name = fonts.load(skin.family, skin.name_px, "bold")
         self.f_meta = fonts.load(skin.family, skin.meta_px)
+        # Where a message's pictures are, by the names messages store (`chat.media`).
+        # None draws every one of them as what stands in for a missing file.
+        self.media_root = media_root
+        # What moved on the band being painted, collected as it is painted — the one
+        # moment its position on the band is known (see :class:`Moving`).
+        self._moving: list[Moving] | None = None
+        self._msg = -1  # the block being painted, which is whose a moving thing is
 
     # -- laying out ---------------------------------------------------------
 
@@ -152,13 +203,28 @@ class Canvas:
         self.blocks = []
         self.height = self.skin.gap + self.top_inset
 
+    def _file(self, name: str) -> Path | None:
+        if not name or self.media_root is None:
+            return None
+        return media_mod.resolve(self.media_root, name)
+
     def _lay(self, *, top: int, msg: int, person: Person, text: str,
              stamp: str = "", reply: tuple[str, str] | None = None,
              reactions: list[tuple[str, int]] | None = None,
              score: int | None = None, depth: int = 0,
-             show_head: bool = True, separator: str = "") -> Block:
+             show_head: bool = True, separator: str = "",
+             media=None, custom: list[tuple[str, str]] | None = None) -> Block:
         s = self.skin
         reactions = list(reactions or [])
+        carried = media if (media is not None and media.kind in media_mod.KINDS) else None
+        # A sticker or a round video with nothing written under it is drawn BARE —
+        # no bubble, no name over it, no quoted strip — which is what every client
+        # does with them. With words under it, it is a picture in a bubble like any.
+        if carried is not None and carried.kind in ("sticker", "round") and not text.strip():
+            return self._lay_bare(top=top, msg=msg, person=person, stamp=stamp,
+                                  reactions=reactions, score=score, depth=depth,
+                                  show_head=show_head, separator=separator,
+                                  media=carried)
         indent = s.indent * depth if s.tree else 0
         # Where the avatar sits differs in kind, not in size. A messenger stands it in
         # a lane of its own to the left of the bubble; reddit puts a small one on the
@@ -172,16 +238,34 @@ class Canvas:
             reply = None
         limit = int(self.column * s.max_w) - indent - avatar_lane
         inner = limit - 2 * s.bubble_pad_x
-        lines = richtext.wrap(self._probe, text, self.f_text, s.text_px, inner)
+        # A picture with nothing under it is a message with no lines at all, not with
+        # one empty one: the bubble closes under the picture.
+        lines = (richtext.wrap(self._probe, text, self.f_text, s.text_px, inner)
+                 if text.strip() or carried is None else [])
 
         line_h = int(s.text_px * s.line_h)
         sep_h = self._sep_h() if separator else 0
         top += sep_h
-        h = s.bubble_pad_y * 2 + max(len(lines), 1) * line_h
-        if show_head and (s.bubbles and not person.mine or not s.bubbles):
+        head = bool(show_head and (s.bubbles and not person.mine or not s.bubbles))
+        h = s.bubble_pad_y * 2 + (max(len(lines), 1) if carried is None else len(lines)) * line_h
+        if head:
             h += self._head_h()
         if reply:
             h += self._reply_h()
+        # The picture: its own shape, as wide as the bubble may be (a client fills
+        # the bubble with it), and no taller than a share of the screen.
+        pic_w = pic_h = 0
+        if carried is not None:
+            pic_w, pic_h = self._pic_size(carried, limit)
+            h += pic_h + (self._inset() if s.bubbles and lines else 0)
+            if s.bubbles and not head and not reply:
+                # the photo sits a hair inside the bubble's own top edge, and the
+                # padding above it would be a stripe of bubble over the picture
+                h -= s.bubble_pad_y - self._inset()
+            if s.bubbles and not lines:
+                h -= s.bubble_pad_y - self._inset()
+            if not s.bubbles and lines:
+                h += self._flat_gap()
         if reactions and not s.votes:
             h += self._react_h()
         if s.votes and score is not None:
@@ -191,13 +275,18 @@ class Canvas:
         # so narrow that the timestamp hangs off the end of it
         widest = max((richtext.width(self._probe, ln, self.f_text, s.text_px)
                       for ln in lines), default=0)
+        if pic_w:
+            widest = max(widest, pic_w + (2 * self._inset() - 2 * s.bubble_pad_x
+                                          if s.bubbles else 0))
         if show_head and s.bubbles and not person.mine:
             widest = max(widest, self._probe.textlength(person.name, font=self.f_name))
         # Telegram sets the time INSIDE the bubble, on the last line when it fits
         # there and on a line of its own when it does not. Deciding that here is what
         # keeps it off the words: the bubble is either widened to make room beside the
         # last line, or made taller to put the time under it.
-        if stamp and s.bubbles and not (reactions and not s.votes):
+        # …and a picture with no words under it wears the time ON the picture, on a
+        # dark pill in the corner, so it needs no room of its own.
+        if stamp and s.bubbles and not (reactions and not s.votes) and lines:
             stamp_w = self._probe.textlength(stamp, font=self.f_meta)
             last = richtext.width(self._probe, lines[-1], self.f_text, s.text_px) if lines else 0
             need = last + stamp_w + s.bubble_pad_x
@@ -212,10 +301,118 @@ class Canvas:
         else:
             x0 = self.left + s.pad_x + indent + avatar_lane
             x1 = x0 + w
+        shown = None
+        if carried is not None:
+            # where the picture goes inside the box: under the name and the quote,
+            # above the words, flush with the bubble's inset (or the text's left edge
+            # in a flat skin, where there is no bubble to be inside)
+            py = top + (self._inset() if s.bubbles and not head and not reply
+                        else s.bubble_pad_y)
+            if head:
+                py += self._head_h()
+            if reply:
+                py += self._reply_h()
+            if s.bubbles:
+                px = x0 + self._inset()
+                pic_w = min(pic_w, w - 2 * self._inset())
+            else:
+                # a flat skin writes the words first and hangs the attachment under
+                # them, which is how Discord and reddit both show one
+                px = x0
+                py += len(lines) * line_h + (self._flat_gap() if lines else 0)
+            shown = self._shown(carried, (px, py, px + pic_w, py + pic_h))
         return Block(msg=msg, top=top - sep_h, height=h + sep_h, lines=lines,
                      person=person, box=(x0, top, x1, top + h), show_head=show_head,
                      stamp=stamp, reply=reply, reactions=reactions, score=score,
-                     depth=depth, show_tail=True, separator=separator)
+                     depth=depth, show_tail=True, separator=separator, media=shown,
+                     custom=self._customs(custom))
+
+    def _customs(self, custom) -> list[tuple[str, Path]]:
+        out = []
+        for alt, name in custom or []:
+            at = self._file(name)
+            if at is not None:
+                out.append((alt, at))
+        return out
+
+    def _flat_gap(self) -> int:
+        """Between the words and the attachment under them, in a flat skin."""
+        return int(self.skin.text_px * 0.35)
+
+    def _inset(self) -> int:
+        """How far inside the bubble's edge a picture sits. A few pixels, which is the
+        bubble showing as a thin frame round the photo, as it does in Telegram."""
+        return max(2, int(self.skin.bubble_pad_y * 0.3))
+
+    def _pic_size(self, m, limit: int) -> tuple[int, int]:
+        """How big a picture is drawn: its own shape, scaled to the room there is.
+
+        A sticker is a fixed share of the column whatever its file says, because
+        that is how a client sizes one; a round video is a fixed circle; a voice
+        message is a control of fixed size. Everything else fills the bubble's width
+        and gives up width rather than run taller than about two thirds of a phone
+        screen's width — a portrait photo at full width would be the whole screen."""
+        s = self.skin
+        c = self.column
+        if m.kind == "voice":
+            return int(c * 0.56), int(s.text_px * 2.1)
+        if m.kind == "round":
+            d = int(c * 0.52)
+            return d, d
+        aspect = (m.w / m.h) if (m.w and m.h) else (1.0 if m.kind == "sticker" else 4 / 3)
+        if m.kind == "sticker":
+            side = int(c * (0.42 if s.bubbles else 0.3))
+            return (side, max(1, int(side / aspect))) if aspect >= 1 else (int(side * aspect), side)
+        room = (limit - 2 * self._inset()) if s.bubbles else int(c * 0.66)
+        tallest = int(c * (0.78 if s.bubbles else 0.6))
+        w = room
+        h = int(w / aspect)
+        if h > tallest:
+            h = tallest
+            w = int(h * aspect)
+        # never a sliver: a very tall picture still gets a bubble you can see
+        w = max(w, int(c * 0.32))
+        return w, h
+
+    def _shown(self, m, box) -> Shown:
+        s = self.skin
+        r = max(2, s.radius - self._inset()) if s.bubbles else max(4, s.radius // 2)
+        shape = (("round",) if m.kind == "round" else
+                 () if m.kind in ("sticker", "voice") else ("rounded", r))
+        return Shown(kind=m.kind, path=self._file(m.file), box=box, shape=shape,
+                     bare=m.kind in ("sticker", "round"), emoji=m.emoji,
+                     duration=float(m.duration or 0.0))
+
+    def _lay_bare(self, *, top: int, msg: int, person: Person, stamp: str,
+                  reactions: list, score, depth: int, show_head: bool,
+                  separator: str, media) -> Block:
+        """A sticker or a round video: the picture itself, on the ground, with the
+        time on a pill at its foot and the reactions under it."""
+        s = self.skin
+        sep_h = self._sep_h() if separator else 0
+        top += sep_h
+        indent = s.indent * depth if s.tree else 0
+        avatar_lane = (s.avatar + s.pad_x) if (s.avatar and not s.tree) else 0
+        w, h = self._pic_size(media, int(self.column * s.max_w))
+        head = not s.bubbles and show_head
+        full = h + (self._head_h() if head else 0)
+        if reactions and not s.votes:
+            full += self._react_h() + int(s.gap * 0.5)
+        if s.votes and score is not None:
+            full += int(s.meta_px * 1.9)
+        if person.mine and s.sides:
+            x1 = self.left + self.column - s.pad_x
+            x0 = x1 - w
+        else:
+            x0 = self.left + s.pad_x + indent + avatar_lane
+            x1 = x0 + w
+        py = top + (self._head_h() if head else 0)
+        return Block(msg=msg, top=top - sep_h, height=full + sep_h, lines=[],
+                     person=person, box=(x0, top, x1, top + full),
+                     show_head=show_head, stamp=stamp, reply=None,
+                     reactions=reactions, score=score, depth=depth, show_tail=True,
+                     separator=separator,
+                     media=self._shown(media, (x0, py, x0 + w, py + h)))
 
     def _sep_h(self) -> int:
         """The band a date pill occupies, above the first message of its day."""
@@ -255,7 +452,8 @@ class Canvas:
         return img
 
     def band(self, y0: int, height: int, *, header: tuple[str, Path | None] | None = None,
-             reveal: dict[int, int] | None = None, pin: int | None = None) -> Image.Image:
+             reveal: dict[int, int] | None = None, pin: int | None = None,
+             moving: list[Moving] | None = None) -> Image.Image:
         """Render the canvas from `y0` for `height` pixels.
 
         `reveal` caps how many LINES of a block are painted, by message index — which
@@ -265,8 +463,12 @@ class Canvas:
         stop painting.
 
         The header is painted last and does not scroll, because in a real client it
-        does not."""
+        does not.
+
+        `moving`, given, is filled with every moving thing that landed in the band
+        and where (see :class:`Moving`) — the band itself holds their first frames."""
         s = self.skin
+        self._moving = moving
         img = self._ground_for(height).copy() if self.wallpaper else Image.new(
             "RGB", (self.width, height), s.bg)
         draw = ImageDraw.Draw(img, "RGBA")
@@ -279,6 +481,7 @@ class Canvas:
         if header:
             self._paint_header(img, draw, *header)
         del top_guard
+        self._moving = None
         return img
 
     def avatar_of(self, msg: int) -> tuple[Person, int, int, int] | None:
@@ -341,6 +544,7 @@ class Canvas:
     def _paint(self, img: Image.Image, draw: ImageDraw.ImageDraw, b: Block, dy: int,
                cap: int | None = None, hide_pic: bool = False) -> None:
         s = self.skin
+        self._msg = b.msg
         x0, _, x1, _ = b.box
         y = b.box[1] + dy          # the bubble's own top; the block may start higher
         bottom = b.bottom + dy
@@ -354,7 +558,8 @@ class Canvas:
                 gx = self.left + s.pad_x + s.indent * level + s.indent // 2
                 draw.line([(gx, y - s.gap), (gx, bottom)], fill=s.divider, width=max(2, s.indent // 18))
 
-        if s.bubbles:
+        bare = b.media is not None and b.media.bare
+        if s.bubbles and not bare:
             fill = s.bubble_out if b.person.mine else s.bubble_in
             self._bubble(img, b, y, bottom, fill)
 
@@ -376,7 +581,7 @@ class Canvas:
                 # reddit stands the picture ON the author line and runs the comment
                 # underneath it at full width, so only this line steps aside
                 head_x = ax + s.avatar + int(s.pad_x * 0.5)
-        if b.show_head and (not s.bubbles or not b.person.mine):
+        if b.show_head and (not s.bubbles or not b.person.mine) and not (bare and s.bubbles):
             name = b.person.name + (f"  {b.stamp}" if (b.stamp and not s.bubbles) else "")
             head_h = self._head_h()
             ny = cy + (head_h - s.name_px * s.line_h) / 2
@@ -394,20 +599,175 @@ class Canvas:
         if b.reply:
             cy = self._paint_reply(img, draw, b, cx, cy, x1)
 
+        # In a bubble the picture comes first and the words under it; a flat skin
+        # writes first and hangs the picture under the words (see `_lay`), and the
+        # box laid out for it already says which.
+        if b.media is not None and (s.bubbles or bare):
+            self._paint_media(img, draw, b, dy)
+            if not bare:
+                cy = b.media.box[3] + dy + self._inset()
+
         line_h = int(s.text_px * s.line_h)
         shown = b.lines if cap is None else b.lines[:max(cap, 0)]
+        swaps = richtext.Swaps(b.custom, self._paste_custom) if b.custom else None
         for line in shown:
-            richtext.draw_line(img, draw, (cx, cy), line, self.f_text, text_colour, s.text_px)
+            richtext.draw_line(img, draw, (cx, cy), line, self.f_text, text_colour,
+                               s.text_px, swaps=swaps)
             cy += line_h
+        if b.media is not None and not s.bubbles and not bare:
+            self._paint_media(img, draw, b, dy)
 
         if s.votes and b.score is not None:
             self._paint_votes(draw, b, cx, bottom - int(s.meta_px * 1.7))
         elif b.reactions:
-            self._paint_reactions(img, draw, b, cx, bottom - self._react_h() + int(s.meta_px * 0.3))
-        if b.stamp and s.bubbles:
+            rx = b.media.box[0] if bare else cx
+            self._paint_reactions(img, draw, b, rx, bottom - self._react_h() + int(s.meta_px * 0.3))
+        pinned_stamp = s.bubbles and b.media is not None and b.media.kind != "voice" \
+            and not b.lines
+        if b.stamp and pinned_stamp:
+            # on the picture, on a dark pill — the only place a client puts the time
+            # of a message that is nothing but a picture
+            self._stamp_pill(img, b, dy)
+        elif b.stamp and s.bubbles:
             w = self._probe.textlength(b.stamp, font=self.f_meta)
             draw.text((x1 - s.bubble_pad_x - w, bottom - s.bubble_pad_y - s.meta_px * 1.05),
                       b.stamp, font=self.f_meta, fill=s.meta)
+
+    # -- what a message carries ---------------------------------------------
+
+    def _paste_custom(self, img: Image.Image, xy: tuple[int, int], px: int,
+                      path: Path) -> bool:
+        """One custom emoji into the square its fallback would have taken. False when
+        the file will not open, and the fallback is drawn instead."""
+        tile = media_mod.still(path, px, px)
+        if tile is None:
+            return False
+        if not self._moves(path, xy[0], xy[1], px, px, poster=tile):
+            img.paste(tile, xy, tile)
+        return True
+
+    def _moves(self, path: Path, x: int, y: int, w: int, h: int,
+               shape: tuple = (), image: Image.Image | None = None,
+               poster: Image.Image | None = None) -> bool:
+        """Note a moving thing on the band being painted, if anybody is collecting.
+
+        True when the caller must NOT paint its still into the band: it is
+        see-through and will be the clip alone (see `media.hollow`). Nobody
+        collecting — a preview — always paints, since nothing will move there."""
+        if self._moving is None:
+            return False
+        if image is None and not media_mod.facts(path)[3]:
+            return False
+        empty = image is None and poster is not None and media_mod.hollow(path)
+        self._moving.append(Moving(path=path, x=int(x), y=int(y), w=int(w), h=int(h),
+                                   shape=shape, msg=self._msg, image=image,
+                                   poster=poster if empty else None))
+        return empty
+
+    def _paint_media(self, img: Image.Image, draw: ImageDraw.ImageDraw, b: Block,
+                     dy: int) -> None:
+        m = b.media
+        x0, y0, x1, y1 = m.box
+        y0, y1 = y0 + dy, y1 + dy
+        w, h = x1 - x0, y1 - y0
+        if w <= 0 or h <= 0:
+            return
+        if m.kind == "voice":
+            self._paint_voice(img, draw, b, (x0, y0, x1, y1))
+            return
+        pic = media_mod.still(m.path, w, h, m.shape) if m.path is not None else None
+        if pic is not None:
+            if not self._moves(m.path, x0, y0, w, h, m.shape, poster=pic):
+                img.paste(pic, (x0, y0), pic)
+        else:
+            self._stand_in(img, draw, m, (x0, y0, x1, y1))
+        if m.kind == "video" and m.duration:
+            # the length in the corner, as a client marks a video it is autoplaying
+            self._pill(img, _clock_of(m.duration), (x0, y0), corner="tl",
+                       moving=pic is not None and media_mod.facts(m.path)[3])
+
+    def _stand_in(self, img: Image.Image, draw: ImageDraw.ImageDraw, m: Shown,
+                  box: tuple[int, int, int, int]) -> None:
+        """What is drawn where a file is missing: a sticker's own emoji, else a box of
+        the picture's shape in the skin's quiet colour — never nothing, because the
+        layout made room for it and an empty gap reads as a rendering fault."""
+        x0, y0, x1, y1 = box
+        if m.kind == "sticker" and m.emoji:
+            side = min(x1 - x0, y1 - y0)
+            tile = richtext.emoji_image(richtext._graphemes(m.emoji)[0], int(side * 0.8))
+            if tile is not None:
+                img.paste(tile, (x0 + (x1 - x0 - tile.width) // 2,
+                                 y0 + (y1 - y0 - tile.height) // 2), tile)
+                return
+        if m.shape and m.shape[0] == "round":
+            draw.ellipse([x0, y0, x1, y1], fill=self.skin.divider)
+        else:
+            r = m.shape[1] if len(m.shape) > 1 else self.skin.radius // 2
+            draw.rounded_rectangle([x0, y0, x1, y1], radius=r, fill=self.skin.divider)
+
+    def _paint_voice(self, img: Image.Image, draw: ImageDraw.ImageDraw, b: Block,
+                     box: tuple[int, int, int, int]) -> None:
+        """A voice message as a client draws one: the round play button, the bars of
+        its waveform, and its length under them."""
+        s = self.skin
+        m = b.media
+        x0, y0, x1, y1 = box
+        h = y1 - y0
+        accent = ("#4fae4e" if (b.person.mine and s.sides) else
+                  (s.react_ink or "#5865f2"))
+        d = int(h * 0.86)
+        cy = y0 + (h - d) // 2
+        draw.ellipse([x0, cy, x0 + d, cy + d], fill=accent)
+        t = d * 0.22
+        mx, my = x0 + d * 0.54, cy + d / 2
+        draw.polygon([(mx - t * 0.8, my - t), (mx - t * 0.8, my + t), (mx + t, my)],
+                     fill="#ffffff")
+        bx = x0 + d + int(d * 0.28)
+        bar = max(2, s.text_px // 10)
+        step = bar * 2
+        count = max(8, (x1 - bx) // step)
+        peaks = (media_mod.waveform(m.path, count) if m.path is not None
+                 else tuple([0.3] * count))
+        base = y0 + int(h * 0.52)
+        tall = h * 0.42
+        for i, k in enumerate(peaks[:count]):
+            bh = max(bar, int(tall * k))
+            x = bx + i * step
+            draw.rounded_rectangle([x, base - bh, x + bar, base], radius=bar // 2,
+                                   fill=accent)
+        draw.text((bx, base + int(h * 0.08)), _clock_of(m.duration), font=self.f_meta,
+                  fill=s.meta)
+
+    def _stamp_pill(self, img: Image.Image, b: Block, dy: int) -> None:
+        x0, y0, x1, y1 = b.media.box
+        moving = b.media.path is not None and media_mod.facts(b.media.path)[3]
+        self._pill(img, b.stamp, (x1, y1 + dy), corner="br", moving=moving)
+
+    def _pill(self, img: Image.Image, label: str, at: tuple[int, int], corner: str,
+              moving: bool = False) -> None:
+        """A label on a dark see-through pill over a picture: the time on a photo, the
+        length on a video. When the picture under it moves, the pill is ALSO handed
+        to the render as a still to lay over the clip — otherwise the clip, laid over
+        the drawing, would cover it."""
+        s = self.skin
+        px = int(s.meta_px * 0.9)
+        face = fonts.load(s.family, px)
+        tw = int(self._probe.textlength(label, font=face))
+        pad = int(px * 0.5)
+        pw, ph = tw + 2 * pad, int(px * 1.5)
+        margin = int(px * 0.45)
+        x, y = at
+        if corner == "br":
+            x, y = x - pw - margin, y - ph - margin
+        else:
+            x, y = x + margin, y + margin
+        pill = Image.new("RGBA", (pw, ph), (0, 0, 0, 0))
+        pd = ImageDraw.Draw(pill, "RGBA")
+        pd.rounded_rectangle([0, 0, pw - 1, ph - 1], radius=ph // 2, fill=(0, 0, 0, 110))
+        pd.text((pad, int(ph * 0.14)), label, font=face, fill="#ffffff")
+        img.paste(pill, (int(x), int(y)), pill)
+        if moving:
+            self._moves(Path(""), x, y, pw, ph, image=pill)
 
     def _paint_separator(self, img: Image.Image, draw: ImageDraw.ImageDraw,
                          text: str, top: int) -> None:
@@ -533,13 +893,17 @@ class Canvas:
         ink = s.react_ink or s.meta
         x = cx
         for emoji, count in b.reactions:
+            alt, ref = split_reaction(emoji)
+            custom = self._file(ref) if ref else None
             label = str(count) if count > 1 else ""
             label_w = (self._probe.textlength(label, font=self.f_meta) + px * 0.32) if label else 0
             pill = int(pad * 2 + px + label_w)
             draw.rounded_rectangle([x, cy, x + pill, cy + int(px * 1.55)],
                                    radius=int(px * 0.78), fill=ground)
-            richtext.draw_line(img, draw, (x + pad, int(cy + px * 0.22)),
-                               emoji, self.f_meta, ink, px)
+            if custom is None or not self._paste_custom(
+                    img, (int(x + pad), int(cy + px * 0.22)), px, custom):
+                richtext.draw_line(img, draw, (x + pad, int(cy + px * 0.22)),
+                                   alt, self.f_meta, ink, px)
             if label:
                 draw.text((x + pad + px + px * 0.32, cy + px * 0.3), label,
                           font=self.f_meta, fill=ink)
@@ -630,6 +994,12 @@ def _corners(md: ImageDraw.ImageDraw, x0: int, y0: int, x1: int, y1: int,
         md.rectangle(list(box), fill=0)
         cx, cy = centre
         md.pieslice([cx - r, cy - r, cx + r, cy + r], arc[0], arc[1], fill=255)
+
+
+def _clock_of(seconds: float) -> str:
+    """`0:07`, `1:23` — a length the way every client writes one."""
+    n = max(0, int(round(seconds or 0)))
+    return f"{n // 60}:{n % 60:02d}"
 
 
 def _rgba(colour: str, alpha: int) -> tuple[int, int, int, int]:

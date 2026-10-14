@@ -32,7 +32,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from .exports import Line, Piece, _clock, _day, _settle
+from . import media as media_mod
+from .exports import Line, Media, Piece, _clock, _day, _settle, custom_reaction
 
 log = logging.getLogger(__name__)
 
@@ -293,7 +294,8 @@ async def _photo(client, sender, into: Path, seen: dict) -> str:
 
 
 async def window(state_dir: Path, chat, limit: int = 200, before: int = 0,
-                 photos: Path | None = None) -> tuple[Piece, int, bool]:
+                 photos: Path | None = None,
+                 media: Path | None = None) -> tuple[Piece, int, bool]:
     """One window of a chat's messages, oldest first, and how to ask for the one before.
 
     A chat is ten thousand messages and a video is twenty of them, so there is no such
@@ -304,7 +306,12 @@ async def window(state_dir: Path, chat, limit: int = 200, before: int = 0,
     conversation happened in and the order a video reads it; telethon hands them back
     newest first, which is the order a client SCROLLS and nothing else.
 
-    `chat` is whatever Telegram itself accepts: a numeric id, a `@username`, a link."""
+    `chat` is whatever Telegram itself accepts: a numeric id, a `@username`, a link.
+
+    `media` is the media base. Given, each message's picture, sticker, clip or voice is
+    downloaded into it (once — the file is named after Telegram's own id for it) and
+    its custom emoji are fetched beside it; not given, those messages keep their words
+    and a message that had none is skipped, which is what this read did before."""
     client = await _connected(state_dir)
     try:
         try:
@@ -332,13 +339,15 @@ async def window(state_dir: Path, chat, limit: int = 200, before: int = 0,
         for msg in reversed(rows):
             oldest = min(oldest, msg.id) if oldest else msg.id
             text = str(getattr(msg, "message", "") or "")
-            if not text.strip():
-                continue  # a sticker, a photo, a service line: nothing to read or draw
+            carried = await _media(client, msg, media) if media is not None else None
+            if not text.strip() and carried is None:
+                continue  # a service line, a poll, a file: nothing to read or draw
             ids[msg.id] = len(piece.lines)
             if getattr(msg, "reply_to_msg_id", None):
                 pending.append((len(piece.lines), msg.reply_to_msg_id))
             piece.lines.append(Line(
-                who=_sender(msg), text=text,
+                who=_sender(msg), text=text, media=carried,
+                custom=_custom(msg, text),
                 stamp=_clock(msg.date.isoformat() if msg.date else ""),
                 day=_day(msg.date.isoformat() if msg.date else ""),
                 reactions=_reactions(msg),
@@ -346,6 +355,11 @@ async def window(state_dir: Path, chat, limit: int = 200, before: int = 0,
                                      seen_photos) if photos is not None else ""),
             ))
         _settle(piece, ids, pending)
+        if media is not None:
+            # on the connection already open, rather than a second sign-in for the
+            # emoji: a window is one conversation with Telegram, not two
+            found = await _fetch_emoji(client, doc_ids([piece]), media)
+            resolve_custom([piece], found)
         log.info("telegram: %s — %d of %d in this window", name, len(piece.lines), len(rows))
         return piece, oldest, len(rows) >= want
     finally:
@@ -353,14 +367,14 @@ async def window(state_dir: Path, chat, limit: int = 200, before: int = 0,
 
 
 async def history(state_dir: Path, chat, limit: int = 120,
-                  photos: Path | None = None) -> list[Piece]:
+                  photos: Path | None = None, media: Path | None = None) -> list[Piece]:
     """The last stretch of a chat, for a run that is not being watched.
 
     The blunt answer, and it says so: a run told to read a chat and nothing else takes
     the most recent `limit` messages, because there is nobody there to choose. When
     there IS somebody there, they use :func:`window` and pick (see the chat room),
     which is the honest way and the one the room offers first."""
-    piece, _oldest, _more = await window(state_dir, chat, limit, photos=photos)
+    piece, _oldest, _more = await window(state_dir, chat, limit, photos=photos, media=media)
     return [piece] if piece.lines else []
 
 
@@ -409,13 +423,188 @@ def _sender(msg) -> str:
 def _reactions(msg) -> list[tuple[str, int]]:
     """The emoji on a message, in the order Telegram lists them.
 
-    Custom (premium) reactions are documents rather than characters — there is no
-    glyph to draw and the picture is not in the API's answer — so they are dropped,
-    exactly as a custom Discord emoji is."""
+    A custom (premium) reaction is a document rather than a character, so it comes
+    back as a reference to be fetched (see :func:`resolve_custom`) with 👍 as what it
+    falls back to — a client without the pack draws something there too."""
     raw = getattr(msg, "reactions", None)
     out: list[tuple[str, int]] = []
     for r in getattr(raw, "results", None) or []:
-        emoticon = getattr(getattr(r, "reaction", None), "emoticon", None)
+        reaction = getattr(r, "reaction", None)
+        count = max(1, int(getattr(r, "count", 1) or 1))
+        emoticon = getattr(reaction, "emoticon", None)
+        doc = getattr(reaction, "document_id", None)
         if emoticon:
-            out.append((str(emoticon), max(1, int(getattr(r, "count", 1) or 1))))
+            out.append((str(emoticon), count))
+        elif doc:
+            out.append((custom_reaction(f"doc:{doc}", "👍"), count))
     return out
+
+
+def _custom(msg, text: str) -> list[tuple[str, str]]:
+    """The custom emoji in a message, in order, as (fallback, `doc:<id>`).
+
+    Telegram counts entity offsets in UTF-16 code units, which is not what a Python
+    string counts — every emoji outside the basic plane is two of them — so the
+    fallback is cut out of the UTF-16 form of the text and not out of the text."""
+    out: list[tuple[str, str]] = []
+    wide = text.encode("utf-16-le")
+    for ent in getattr(msg, "entities", None) or []:
+        doc = getattr(ent, "document_id", None)
+        if doc is None or type(ent).__name__ != "MessageEntityCustomEmoji":
+            continue
+        a, n = int(ent.offset) * 2, int(ent.length) * 2
+        alt = wide[a:a + n].decode("utf-16-le", errors="ignore").strip()
+        if alt:
+            out.append((alt, f"doc:{doc}"))
+    return out
+
+
+# What a download is called, by what Telegram says it is: the name says what decoder
+# opens it (see `chat.media`), and a `.tgs` saved as `.bin` is a sticker nobody draws.
+_MIME_EXT = {"application/x-tgsticker": ".tgs", "video/webm": ".webm",
+             "image/webp": ".webp", "video/mp4": ".mp4", "audio/ogg": ".ogg",
+             "audio/mpeg": ".mp3", "image/jpeg": ".jpg", "image/png": ".png",
+             "image/gif": ".gif", "video/quicktime": ".mov"}
+# Past this, the message keeps its words and loses its picture: a chat video shows a
+# clip for four seconds, and a two-gigabyte film attached to a message is not worth
+# the download to show four seconds of it.
+MEDIA_CAP = 60 * 1024 * 1024
+
+
+async def _media(client, msg, into: Path) -> Media | None:
+    """What this message carries, downloaded into the media base. None for nothing, a
+    file nobody can draw, or anything too big to be worth fetching.
+
+    Named after Telegram's own id for the file, so the same sticker in forty messages
+    — and in next week's read — is one download."""
+    kind = ("round" if getattr(msg, "video_note", None) else
+            "voice" if getattr(msg, "voice", None) else
+            "sticker" if getattr(msg, "sticker", None) else
+            "animation" if getattr(msg, "gif", None) else
+            "video" if getattr(msg, "video", None) else
+            "photo" if getattr(msg, "photo", None) else "")
+    doc = getattr(msg, "document", None)
+    if not kind and doc is not None and str(getattr(doc, "mime_type", "")).startswith("image/"):
+        kind = "photo"  # a picture sent "as a file"
+    if not kind:
+        return None
+    if kind == "photo" and getattr(msg, "photo", None) is not None:
+        ident, ext, size = msg.photo.id, ".jpg", 0
+    else:
+        ident = getattr(doc, "id", None)
+        ext = _MIME_EXT.get(str(getattr(doc, "mime_type", "")), "")
+        size = int(getattr(doc, "size", 0) or 0)
+        if ident is None or not ext:
+            return None
+    if size > MEDIA_CAP:
+        log.info("telegram: message %s carries %d MB — keeping the words only",
+                 msg.id, size >> 20)
+        return None
+    into.mkdir(parents=True, exist_ok=True)
+    at = into / f"tg_{ident}{ext}"
+    if not at.is_file():
+        try:
+            await client.download_media(msg, file=str(at))
+        except Exception as e:  # noqa: BLE001 — one picture is never worth the read
+            log.info("telegram: message %s: no media (%s)", msg.id, type(e).__name__)
+            at.unlink(missing_ok=True)
+            return None
+    emoji = ""
+    for attr in getattr(doc, "attributes", None) or []:
+        if type(attr).__name__ == "DocumentAttributeSticker":
+            emoji = str(getattr(attr, "alt", "") or "")
+    w, h, dur, _moves = media_mod.facts(at)
+    return Media(kind=kind, path=str(at), w=w, h=h, duration=dur, emoji=emoji,
+                 file=at.name)
+
+
+def doc_ids(pieces) -> set[str]:
+    """Every custom emoji id these pieces still have to have fetched."""
+    out: set[str] = set()
+    for piece in pieces:
+        for ln in piece.lines:
+            out.update(ref[4:] for _alt, ref in ln.custom if ref.startswith("doc:"))
+            for emoji, _n in ln.reactions:
+                ref = emoji.partition("|")[0]
+                if "doc:" in ref:
+                    out.add(ref.split("doc:", 1)[1])
+    return out
+
+
+def resolve_custom(pieces, found: dict[str, str]) -> None:
+    """Put fetched files where the ids were — and the plain fallback where nothing
+    was fetched, because a reference nobody can draw is worse than the emoji the
+    client would have shown."""
+    from .exports import split_reaction
+
+    for piece in pieces:
+        for ln in piece.lines:
+            ln.custom = [(alt, found[ref[4:]]) for alt, ref in ln.custom
+                         if not ref.startswith("doc:") or ref[4:] in found]
+            out = []
+            for emoji, n in ln.reactions:
+                alt, ref = split_reaction(emoji)
+                if ref.startswith("doc:"):
+                    file = found.get(ref[4:])
+                    emoji = custom_reaction(file, alt) if file else alt
+                out.append((emoji, n))
+            ln.reactions = out
+
+
+def _cached_emoji(ids, into: Path) -> dict[str, str]:
+    out = {}
+    for ident in ids:
+        hit = next(iter(sorted(into.glob(f"ce_{ident}.*"))), None) if into.is_dir() else None
+        if hit is not None:
+            out[ident] = hit.name
+    return out
+
+
+async def _fetch_emoji(client, ids, into: Path) -> dict[str, str]:
+    found = _cached_emoji(ids, into)
+    missing = [int(i) for i in ids if i not in found and str(i).isdigit()]
+    if not missing:
+        return found
+    try:
+        from telethon.tl.functions.messages import GetCustomEmojiDocumentsRequest
+    except ImportError:
+        return found
+    into.mkdir(parents=True, exist_ok=True)
+    for k in range(0, len(missing), 100):
+        try:
+            docs = await client(GetCustomEmojiDocumentsRequest(document_id=missing[k:k + 100]))
+        except Exception as e:  # noqa: BLE001 — the fallback emoji is still an emoji
+            log.info("telegram: custom emoji not fetched (%s)", type(e).__name__)
+            break
+        for doc in docs or []:
+            ext = _MIME_EXT.get(str(getattr(doc, "mime_type", "")), "")
+            if not ext:
+                continue
+            at = into / f"ce_{doc.id}{ext}"
+            try:
+                await client.download_media(doc, file=str(at))
+                found[str(doc.id)] = at.name
+            except Exception as e:  # noqa: BLE001
+                log.info("telegram: emoji %s: %s", doc.id, type(e).__name__)
+                at.unlink(missing_ok=True)
+    return found
+
+
+async def custom_emoji(state_dir: Path, ids, into: Path) -> dict[str, str]:
+    """Fetch custom emoji by id into the media base: `{id: file name}` for those that
+    came. What an EXPORT needs, since it names its custom emoji and carries none of
+    them. Whatever was fetched before is answered from disk without a connection, and
+    no account at all is not an error — the fallback emoji is what gets drawn."""
+    ids = {str(i) for i in ids}
+    found = _cached_emoji(ids, into)
+    if not ids - set(found):
+        return found
+    try:
+        client = await _connected(state_dir)
+    except TelegramError as e:
+        log.info("telegram: custom emoji stay plain (%s)", e)
+        return found
+    try:
+        return await _fetch_emoji(client, ids, into)
+    finally:
+        await client.disconnect()

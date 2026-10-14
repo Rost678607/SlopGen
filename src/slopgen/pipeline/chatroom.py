@@ -180,6 +180,8 @@ def _msg_json(i: int, m: ChatMsg) -> dict:
         "nick": m.nick,
         "avatar": m.avatar,
         "pinned": m.pinned,
+        "media": m.media.model_dump() if m.media is not None else None,
+        "custom": len(m.custom),
         # which line of the timeline this message became, once there is one. -1 until
         # `script` has laid them, which is the ordinary state of a video being built.
         "scene": m.scene,
@@ -195,7 +197,8 @@ def blocking(job: VideoJob, ctx) -> list[str]:
     out: list[str] = []
     if not job.messages:
         out.append("empty")
-    if any(not m.text.strip() for m in job.messages):
+    # a sticker with nothing written under it is a message; an empty bubble is not
+    if any(not m.text.strip() and m.media is None for m in job.messages):
         out.append("blank_line")
     if any(not c.messages for c in job.conversations):
         out.append("empty_conversation")
@@ -372,6 +375,12 @@ def edit(job: VideoJob, c: int, i: int, **fields) -> None:
         msg.clear_before = bool(fields["clear_before"])
     if "pinned" in fields:
         msg.pinned = bool(fields["pinned"])
+    # Only ever taken away here, never given: what a message carries comes in with
+    # the export or the read it arrived in, and a file picked off a form would be a
+    # second way into the media base with none of the checks the first one has.
+    if fields.get("drop_media"):
+        msg.media = None
+        msg.custom = []
 
 
 def _answers(conv: Conversation, start: int, target: int) -> bool:

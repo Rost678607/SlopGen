@@ -21,11 +21,12 @@ like*, and only the real renderer answers it.
 
 from __future__ import annotations
 
+import io
 import logging
 from pathlib import Path
 
 from fastapi import Cookie, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from starlette.concurrency import run_in_threadpool
 
 from PIL import Image
@@ -37,9 +38,9 @@ from ..config import ChatConfig, ConfigStore, PersonaConfig
 from ..config.loader import delete_config, write_config
 from ..pipeline import chatroom
 from ..pipeline.checkpoint import Checkpoint
-from ..pipeline.job import ChatMsg, Conversation
+from ..pipeline.job import ChatMedia, ChatMsg, Conversation
 from ..pipeline.context import AppContext
-from ..chat import exports, reddit, telegram
+from ..chat import exports, media as chat_media, reddit, telegram
 from ..llm import chat as chat_llm
 from ..pipeline.stages import chat_render, chat_source
 
@@ -75,6 +76,7 @@ SHEET: list[dict] = [
     {"f": "roll_s", "kind": "number", "l": "web.f.rolls", "min": 0, "max": 3, "step": 0.05},
     {"f": "swipe_s", "kind": "number", "l": "web.f.swipes", "min": 0, "max": 3, "step": 0.05},
     {"f": "gap_s", "kind": "number", "l": "web.f.gaps", "min": 0, "max": 10, "step": 0.1},
+    {"f": "media_s", "kind": "number", "l": "web.f.medias", "min": 0, "max": 10, "step": 0.1},
     {"f": "chunk", "kind": "number", "l": "web.f.chunk", "min": 0, "max": 400, "step": 10},
     {"f": "chunk_min", "kind": "number", "l": "web.f.chunkmin", "min": 0, "max": 800, "step": 10},
     {"head": "web.chat.set.extra"},
@@ -121,6 +123,63 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
         if job is None:
             raise HTTPException(status_code=404, detail=f"no video {video} in this run")
         return cp, video, job
+
+    # -- what a message carries, between seeing it and taking it --------------
+    #
+    # A message being looked at in the picker carries a REFERENCE to its file and not
+    # the file: an export's chat is a year of somebody's pictures, and copying all of
+    # them into the media base to show nine would be the slowest way to open a list.
+    # `export:<path inside the exports base>` is a file still sitting in an unpacked
+    # export; `media:<name>` is one already in the base (a live read downloads there
+    # directly). Taking the message is what copies it in, and both kinds are resolved
+    # against their own folder and nowhere else — the reference comes back off the
+    # browser, and a message is not a way to read `../../.env`.
+
+    def media_base() -> Path:
+        return chat_media.root(store.global_cfg.paths.assets)
+
+    def ref_of(m) -> str:
+        if m is None:
+            return ""
+        if m.file:
+            return f"media:{m.file}"
+        root = (store.global_cfg.paths.assets / chat_source.EXPORTS_DIR).resolve()
+        try:
+            return f"export:{Path(m.path).resolve().relative_to(root).as_posix()}"
+        except ValueError:
+            return ""
+
+    def ref_path(ref: str) -> Path | None:
+        kind, _, rest = str(ref or "").partition(":")
+        if kind == "media":
+            return chat_media.resolve(media_base(), rest)
+        if kind == "export":
+            root = (store.global_cfg.paths.assets / chat_source.EXPORTS_DIR).resolve()
+            at = (root / rest).resolve()
+            return at if root in at.parents and at.is_file() else None
+        return None
+
+    def media_json(m) -> dict | None:
+        ref = ref_of(m)
+        if m is None or not ref:
+            return None
+        return {"kind": m.kind, "ref": ref, "w": m.w, "h": m.h,
+                "duration": m.duration, "emoji": m.emoji}
+
+    def take_media(row) -> ChatMedia | None:
+        """The media a taken line came back with, copied into the base."""
+        if not isinstance(row, dict):
+            return None
+        src = ref_path(str(row.get("ref", "")))
+        kind = str(row.get("kind", ""))
+        if src is None or kind not in chat_media.KINDS:
+            return None
+        name = chat_media.adopt(src, media_base())
+        w, h, dur, _moves = chat_media.facts(media_base() / name)
+        return ChatMedia(kind=kind, file=name, w=int(row.get("w") or 0) or w,
+                         h=int(row.get("h") or 0) or h,
+                         duration=float(row.get("duration") or 0.0) or dur,
+                         emoji=str(row.get("emoji", ""))[:16])
 
     def save(cp: Checkpoint, i: int, job) -> None:
         """Write the edited conversation back and leave the run as parked as it was.
@@ -266,7 +325,7 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
             guarded(chatroom.set_reactions)(job, c, at, b["reactions"])
         fields = {k: b[k] for k in
                   ("persona", "reply_to", "stamp", "day", "nick", "avatar", "score",
-                   "clear_before", "pinned") if k in b}
+                   "clear_before", "pinned", "drop_media") if k in b}
         if fields:
             guarded(chatroom.edit)(job, c, at, **fields)
         return answer(cp, i, job)
@@ -394,9 +453,17 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
             # is the one that would otherwise be listed as unreadable on every machine
             if not at.is_file() or at.name.startswith("."):
                 continue
+            nested = len(at.relative_to(root).parts) > 1
+            # An unpacked export is a folder of a thousand photos beside one
+            # `result.json`; inside a folder only what reads as an export is listed,
+            # or the list is the photos. The pictures are what the export POINTS at.
+            if nested and at.suffix.lower() not in (".json", ".html"):
+                continue
             try:
                 kind = exports.sniff(at.read_bytes()[:1 << 20])
             except OSError:
+                continue
+            if nested and kind is None:
                 continue
             out.append({"name": at.relative_to(root).as_posix(),
                         "format": kind or "", "size": at.stat().st_size})
@@ -421,6 +488,16 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
         root.mkdir(parents=True, exist_ok=True)
         at = root / name
         body = await file.read()
+        if name.lower().endswith(".zip"):
+            # The export WITH its pictures, which is a folder and so arrives zipped.
+            # Unpacked into a folder of its own beside the others, and answered with
+            # the export file found inside it.
+            try:
+                found = await run_in_threadpool(_unzip_export, body, root, Path(name).stem)
+            except ValueError as e:
+                raise HTTPException(status_code=422, detail=str(e))
+            return {"name": found, "size": len(body),
+                    "format": exports.sniff((root / found).read_bytes()[:1 << 20]) or ""}
         if exports.sniff(body[:1 << 20]) is None:
             raise HTTPException(
                 status_code=422,
@@ -578,7 +655,8 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
                     store.global_cfg.paths.state, where, before=before,
                     # the pictures land in the avatar base, so they are the same files
                     # a card points at and the same ones next week's video reuses
-                    photos=store.global_cfg.paths.assets / chat_render.AVATARS_DIR)
+                    photos=store.global_cfg.paths.assets / chat_render.AVATARS_DIR,
+                    media=media_base())
                 pieces, cursor = [got], oldest
             elif source == "reddit":
                 pieces, cursor, more = await run_in_threadpool(reddit.thread, where), 0, False
@@ -592,6 +670,13 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
             raise HTTPException(status_code=422, detail=str(e))
         at = max(0, min(int(piece), len(pieces) - 1)) if pieces else 0
         got = pieces[at] if pieces else None
+        if got is not None and source == "export":
+            # the custom emoji of the piece being looked at, fetched through the
+            # signed-in account if there is one; the plain fallback if not
+            ids = telegram.doc_ids([got])
+            found = (await telegram.custom_emoji(store.global_cfg.paths.state, ids,
+                                                 media_base()) if ids else {})
+            telegram.resolve_custom([got], found)
         return {
             "title": got.title if got else "",
             # the chat's own picture, so that choosing a stretch of it brings the
@@ -609,6 +694,8 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
                 {"i": n, "who": ln.who, "text": ln.text, "stamp": ln.stamp,
                  "reply_to": ln.reply_to, "score": ln.score, "avatar": ln.avatar,
                  "day": ln.day,
+                 "media": media_json(ln.media),
+                 "custom": [[a, f] for a, f in ln.custom if not f.startswith("doc:")],
                  "reactions": [[e, c] for e, c in ln.reactions]}
                 for n, ln in enumerate(got.lines)] if got else [],
         }
@@ -631,15 +718,24 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
         b = await body_of(request)
         cp, i, job = edited(run_or_404(run_id), b)
         rows = [r for r in (b.get("lines") or []) if isinstance(r, dict)]
-        if not rows:
+        # what each line carries, copied into the media base now that it is taken —
+        # and a line that was only a picture whose file did not come is not a line
+        carried_all = [await run_in_threadpool(take_media, r.get("media")) for r in rows]
+        kept = [(r, m) for r, m in zip(rows, carried_all)
+                if str(r.get("text", "")).strip() or m is not None]
+        if not kept:
             raise HTTPException(status_code=422, detail="nothing was chosen")
-        moved = {int(r.get("i", -1)): n for n, r in enumerate(rows)}
+        moved = {int(r.get("i", -1)): n for n, (r, _m) in enumerate(kept)}
         conv = Conversation(title=str(b.get("title", "")).strip(),
                             source=str(b.get("source", "")).strip(),
                             avatar=str(b.get("avatar", "")).strip())
-        for n, r in enumerate(rows):
+        base = media_base()
+        for n, (r, carried) in enumerate(kept):
             was = int(r.get("reply_to", -1))
+            custom = [(str(a), str(f)) for a, f in (r.get("custom") or [])
+                      if chat_media.resolve(base, str(f)) is not None]
             conv.messages.append(ChatMsg(
+                media=carried, custom=custom,
                 persona=str(r.get("who", "")).strip(),
                 text=str(r.get("text", "")),
                 stamp=str(r.get("stamp", "")),
@@ -651,7 +747,7 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
                 avatar=str(r.get("avatar", "")),
                 score=int(r.get("score", 0) or 0),
                 reply_to=moved.get(was, -1) if was >= 0 and moved.get(was, n) != n else -1,
-                reactions=[(str(e), max(1, int(c)))
+                reactions=[(_safe_reaction(str(e), base), max(1, int(c)))
                            for e, c in (r.get("reactions") or []) if str(e).strip()],
             ))
         job.conversations.append(conv)
@@ -841,6 +937,38 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
             raise HTTPException(status_code=404, detail=f"no picture shelf {shelf!r}")
         return _picture(PICTURE_SHELVES[shelf], name)
 
+    @app.get("/api/chat/media")
+    async def media_thumb(ref: str = "", name: str = "", size: int = 160,
+                          slopgen: str | None = Cookie(default=None)):
+        """A small picture of what a message carries, for the lists that show one.
+
+        A PNG of the first frame whatever the file is — a `.tgs` sticker, a WebM, a
+        voice message's — because the browser can show a PNG and cannot show half of
+        these. `ref` is a picker's reference, `name` a stored message's file."""
+        guard(slopgen)
+        at = ref_path(ref) if ref else chat_media.resolve(media_base(), name)
+        if at is None:
+            raise HTTPException(status_code=404, detail="no such file")
+        side = max(32, min(int(size), 512))
+
+        def draw() -> bytes | None:
+            w, h, _dur, _moves = chat_media.facts(at)
+            if not w or not h:
+                return None
+            k = side / max(w, h)
+            pic = chat_media.still(at, max(1, int(w * k)), max(1, int(h * k)))
+            if pic is None:
+                return None
+            buf = io.BytesIO()
+            pic.save(buf, "PNG")
+            return buf.getvalue()
+
+        png = await run_in_threadpool(draw)
+        if png is None:
+            raise HTTPException(status_code=404, detail="nothing to show")
+        return Response(png, media_type="image/png",
+                        headers={"Cache-Control": "max-age=3600"})
+
     # -- what it will look like ---------------------------------------------
 
     @app.get("/api/runs/{run_id}/chat/preview")
@@ -895,6 +1023,56 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
                             headers={"Cache-Control": "no-store"})
 
 
+def _safe_reaction(emoji: str, base: Path) -> str:
+    """A reaction off the browser, with a custom one kept only if its file is really
+    in the media base — otherwise it is its plain fallback."""
+    alt, ref = exports.split_reaction(emoji)
+    if not ref:
+        return emoji
+    return emoji if chat_media.resolve(base, ref) is not None else alt
+
+
+def _unzip_export(body: bytes, root: Path, stem: str) -> str:
+    """Unpack a zipped export into a folder of its own under the base, and return the
+    export file inside it (as a name relative to the base).
+
+    Every member is checked to land inside that folder: a zip is somebody else's
+    archive, and `../../` in a member name is the oldest way out of one."""
+    import zipfile
+
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(body))
+    except zipfile.BadZipFile:
+        raise ValueError("that zip will not open")
+    safe = "".join(ch for ch in stem if ch.isalnum() or ch in "-_. ").strip() or "export"
+    dest = root / safe
+    n = 1
+    while dest.exists():
+        n += 1
+        dest = root / f"{safe}_{n}"
+    dest.mkdir(parents=True)
+    inside = dest.resolve()
+    for info in zf.infolist():
+        if info.is_dir():
+            continue
+        at = (dest / info.filename).resolve()
+        if inside not in at.parents:
+            continue
+        at.parent.mkdir(parents=True, exist_ok=True)
+        with zf.open(info) as src, open(at, "wb") as out:
+            while chunk := src.read(1 << 20):
+                out.write(chunk)
+    found = sorted((p for p in dest.rglob("*") if p.suffix.lower() in (".json", ".html")),
+                   key=lambda p: (len(p.parts), p.name != "result.json", p.name))
+    for p in found:
+        if exports.sniff(p.read_bytes()[:1 << 20]) is not None:
+            return p.relative_to(root).as_posix()
+    import shutil
+
+    shutil.rmtree(dest, ignore_errors=True)
+    raise ValueError("nothing in that zip is an export this reads")
+
+
 def _message_at(job, when: float) -> int:
     """Which message is up at `when`, by the scene clock the strip is marked with.
 
@@ -936,6 +1114,9 @@ def _frame_at(job, ctx: AppContext, when: float, out: Path) -> None:
     x = (v.width * k) if st.swipe else 0.0
     x = min(max(x, 0), max(img.width - v.width, 0))
     y = min(max(y, 0), max(img.height - top, 0))
+    if not st.swipe:
+        # the stickers that are only their clip in the drawing (see `media.hollow`)
+        img = chat_render.with_posters(img, st.tiles)
     frame = img.crop((int(x), int(y), int(x) + v.width, int(y) + top))
     # A swipe already carries both bars inside the picture; everything else wears its
     # own as an overlay, exactly as the assembler lays it (see `chat_render`).

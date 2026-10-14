@@ -134,6 +134,9 @@ assets/chat_sfx/*
 !assets/chat_sfx/.gitkeep
 assets/exports/*
 !assets/exports/.gitkeep
+# What conversations carried in: photos, stickers, voice messages (see chat/media.py).
+assets/chat_media/*
+!assets/chat_media/.gitkeep
 assets/ads/*
 !assets/ads/.gitkeep
 !assets/ads/example_vpn/

@@ -15,6 +15,27 @@ class Word(BaseModel):
     end: float
 
 
+class ChatTile(BaseModel):
+    """One moving thing laid over a drawn chat state: a sticker, a GIF, a round video,
+    an animated emoji — at its place on the drawing, scrolling with it.
+
+    A clip and not a frame of the drawing, because the drawing is one PNG per state
+    and these move inside a state. The PNG already holds the clip's first frame at
+    exactly this place, so the assembler lays the clip over it and nothing else about
+    a chat part changes (see `ffmpeg.make_chat_part`)."""
+
+    path: Path  # the clip, with alpha, of exactly (w, h) — see `chat.media.clip`
+    x: float  # where its top-left sits, in the pixels of the state's drawing
+    y: float
+    w: int
+    h: int
+    # How far into its own loop the clip is when the piece BEGINS. A sticker that has
+    # been playing for three seconds when the next message lands must not restart on
+    # that message, so each piece seeks to where the loop has got to by then.
+    seek: float = 0.0
+    length: float = 0.0  # the clip's own length, which the seek is taken modulo
+
+
 class BgAsset(BaseModel):
     """One background piece of a scene: a video clip or a Ken-Burns photo slice."""
 
@@ -74,6 +95,8 @@ class BgAsset(BaseModel):
     # asset rather than looked up at render time for the reason `fit` is: by then the
     # conversation is gone, and the assembler is handed a path and a duration.
     overlay: Path | None = None
+    # What moves on this piece of the drawing (see :class:`ChatTile`).
+    tiles: list[ChatTile] = []
 
 
 class InsertCue(BaseModel):
@@ -382,6 +405,26 @@ class FrameAsk(BaseModel):
     card: str = ""  # the card it became, once delivered and filed
 
 
+class ChatMedia(BaseModel):
+    """What a message carries besides its words, as the drawing and the clock need it.
+
+    `file` is a NAME under `assets/chat_media/` (see `chat.media`), never a path: the
+    job outlives wherever the export was unpacked, and a name inside one base is the
+    same promise the avatars make. The size is the picture's own, written down when it
+    arrived, so laying out a hundred messages does not open a hundred files to ask.
+
+    A missing file is not an error anywhere. A sticker whose file is gone is drawn as
+    its emoji, a photo as a grey box of its own shape, a voice message keeps its
+    waveform flat and its length — the conversation is still the conversation."""
+
+    kind: str = ""  # photo | sticker | animation | video | voice | round (`chat.media.KINDS`)
+    file: str = ""
+    w: int = 0
+    h: int = 0
+    duration: float = 0.0  # seconds, for the things that have a length
+    emoji: str = ""  # what a sticker stands for, drawn in its place if the file is gone
+
+
 class ChatMsg(BaseModel):
     """One message of a conversation: who wrote it, what it says, and what is drawn
     around it.
@@ -440,6 +483,17 @@ class ChatMsg(BaseModel):
     # without earning a card of its own.
     nick: str = ""
     avatar: str = ""
+    # The picture, sticker, clip or voice this message carries, if any. One and not a
+    # list, because that is what a message is in every client this reads: an album is
+    # several messages that happen to be drawn together.
+    media: ChatMedia | None = None
+    # The custom emoji in `text`, in the order they occur: each is the plain emoji
+    # the client falls back to, and the file it stands for (under `assets/chat_media/`).
+    # By ORDER and not by offset, because the text is the operator's to edit and the
+    # translation's to rewrite, and an emoji survives both where a character offset
+    # survives neither — the drawing walks the text and swaps the n-th 🔥 it meets for
+    # the n-th custom one that says 🔥 (see `chat.draw`).
+    custom: list[tuple[str, str]] = Field(default_factory=list)
     # The operator has touched this message, so no automatic pass may rewrite it —
     # the same promise `FrameShot.pinned` and `EffectCue.pinned` make. It is what
     # keeps a re-run of the translation from undoing a line somebody fixed by hand.
@@ -507,6 +561,10 @@ class ChatState(BaseModel):
     # the bar is part of the sliding picture, because moving to another chat moves the
     # whole screen and a bar that stayed put would be the one thing that gave it away.
     overlay: Path | None = None
+    # The moving things on this drawing, where they sit on it, and the moment of the
+    # video each one started moving — so a later state picks its loop up where the
+    # earlier one left it rather than restarting it (see `ChatTile.seek`).
+    tiles: list[dict] = Field(default_factory=list)
     # The crop window over the drawn canvas, at the start and at the end of the state,
     # as fractions of it. Equal = the view is still; different = it travels, and
     # `ChatConfig.roll_s` is how long the travel takes out of `duration`.

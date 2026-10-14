@@ -470,7 +470,7 @@ def make_chat_part(img: Path, dur: float, out: Path, cfg: GlobalConfig,
                    header: Path | None = None,
                    x_from: float = 0.0, x_to: float = 0.0,
                    filler: Path | None = None, filler_seek: float = 0.0,
-                   chat_h: int = 0) -> None:
+                   chat_h: int = 0, tiles: list | None = None) -> None:
     """One piece of the chat track: a drawn state, with the view sliding down it.
 
     Not `make_photo_part` with a move, and the difference is not cosmetic. A
@@ -504,6 +504,30 @@ def make_chat_part(img: Path, dur: float, out: Path, cfg: GlobalConfig,
     )
     args = ["-loop", "1", "-i", str(img)]
     nxt = 1
+    if tiles:
+        # What moves on the drawing — a sticker, a GIF, a round video, an animated
+        # emoji — laid over its own first frame at the place the drawing has it, and
+        # scrolled by exactly the window the crop above is cut with. The crop clamps
+        # its offset to the padded picture, so the same clamp is written out here in
+        # numbers: a tile that followed the unclamped ramp would slide off its own
+        # still at the bottom of the conversation, where the clamp bites.
+        iw, ih = video_dims(img)
+        cx = f"clip({x},0,{max(iw, v.width) - v.width})"
+        cy = f"clip({y},0,{max(ih, top) - top})"
+        for k, tile in enumerate(tiles):
+            if tile.length > 0:
+                seek = ["-ss", f"{tile.seek:.3f}"] if tile.seek > 0.01 else []
+                # libvpx and not ffmpeg's own VP9 decoder, which drops the alpha
+                # plane and would lay every sticker down on a black square
+                dec = (["-c:v", "libvpx-vp9"] if Path(tile.path).suffix == ".webm"
+                       else [])
+                args += ["-stream_loop", "-1", *seek, *dec, "-i", str(tile.path)]
+            else:
+                args += ["-loop", "1", "-i", str(tile.path)]
+            graph += (f"[t{k}];[{nxt}:v]fps={v.fps},format=rgba[m{k}];"
+                      f"[t{k}][m{k}]overlay=x='{tile.x:.1f}-{cx}':y='{tile.y:.1f}-{cy}'"
+                      f":eval=frame")
+            nxt += 1
     if header is not None:
         # the bar is laid on the FRAME and not on the drawing, which is the whole
         # reason it is a second input: in a real client the conversation scrolls

@@ -24,11 +24,11 @@ from pathlib import Path
 
 from PIL import Image
 
-from ...chat import skins
-from ...chat.draw import Canvas, Person
+from ...chat import media as media_mod, skins
+from ...chat.draw import Canvas, Moving, Person
 from ...chat.scroll import Planner, State, scene_starts
 from ..context import AppContext
-from ..job import BgAsset, ChatState, VideoJob
+from ..job import BgAsset, ChatState, ChatTile, VideoJob
 
 log = logging.getLogger(__name__)
 
@@ -192,7 +192,72 @@ def _stamp(canvas: Canvas, state: ChatState, height: int, pinned=None) -> str:
         h.update(f"|{b.msg}|{b.top}|{b.height}|{b.show_head}|{b.depth}|{b.stamp}|".encode())
         h.update("".join(b.lines).encode())
         h.update(f"{b.reactions}|{b.score}|{b.person.name}|{b.person.mine}".encode())
+        if b.media is not None:
+            h.update(f"|{b.media.kind}|{b.media.path}|{b.media.box}|{b.media.shape}".encode())
+        h.update(f"|{[(a, str(p)) for a, p in b.custom]}".encode())
     return h.hexdigest()[:16]
+
+
+def _tiles(moving: list[Moving], out_dir: Path, fps: float, at: float,
+           born: dict) -> list[dict]:
+    """The moving things one state's band holds, as the clips to lay over it.
+
+    Each one's clip is made once for its file, size and outline, and shared by every
+    state and every message that shows the same thing at the same size. `born` is when
+    each moving thing was first on screen, keyed by whose it is and where in that
+    message: a sticker plays on from wherever it had got to when the next message
+    lands, and restarting it at every state would make it twitch on every line."""
+    out: list[dict] = []
+    seen: dict = {}
+    for mv in moving:
+        if mv.image is not None:
+            # a label riding on a moving picture: a still, laid above its clip
+            key = hashlib.sha1(mv.image.tobytes()).hexdigest()[:16]
+            at_png = out_dir / f"deco_{key}.png"
+            if not at_png.is_file():
+                mv.image.save(at_png)
+            out.append({"path": str(at_png), "x": mv.x, "y": mv.y, "w": mv.w,
+                        "h": mv.h, "t0": at, "length": 0.0})
+            continue
+        made = media_mod.clip(mv.path, mv.w, mv.h, fps, out_dir / "tiles", mv.shape)
+        if made is None:
+            continue
+        poster = ""
+        if mv.poster is not None:
+            key = hashlib.sha1(mv.poster.tobytes()).hexdigest()[:16]
+            at_png = out_dir / f"poster_{key}.png"
+            if not at_png.is_file():
+                mv.poster.save(at_png)
+            poster = str(at_png)
+        clip, length = made
+        # the n-th moving thing of this message at this size: a custom emoji used
+        # twice in one line is two of them, and each keeps its own clock
+        ident = (mv.msg, str(mv.path), mv.w, mv.h)
+        seen[ident] = seen.get(ident, 0) + 1
+        key = (*ident, seen[ident])
+        t0 = born.setdefault(key, at)
+        out.append({"path": str(clip), "x": mv.x, "y": mv.y, "w": mv.w, "h": mv.h,
+                    "t0": t0, "length": length, "poster": poster})
+    return out
+
+
+def with_posters(img: "Image.Image", tiles: list[dict], dx: float = 0.0,
+                 dy: float = 0.0) -> "Image.Image":
+    """The drawing with the first frames of its see-through moving things put back —
+    for whatever shows ONE picture of a state: the preview, and the swipe. `dx`/`dy`
+    is where the picture's own origin sits on the drawing the tiles were placed on."""
+    posters = [t for t in tiles if t.get("poster")]
+    if not posters:
+        return img
+    out = img.copy()
+    for t in posters:
+        try:
+            with Image.open(t["poster"]) as p:
+                p = p.convert("RGBA")
+                out.paste(p, (int(t["x"] - dx), int(t["y"] - dy)), p)
+        except OSError:
+            continue
+    return out
 
 
 def _overlay(canvas: "Canvas", out_dir: Path, width: int, height: int,
@@ -289,6 +354,11 @@ def compile_assets(job: VideoJob, states: list[ChatState], roll_s: float,
                 scroll_at=st.start - lo,
                 scroll_s=swipe_s if st.swipe else (roll_s if moves else 0.0),
                 overlay=st.overlay,
+                tiles=[] if st.swipe else [
+                    ChatTile(path=Path(t["path"]), x=t["x"], y=t["y"], w=t["w"],
+                             h=t["h"], length=t["length"],
+                             seek=((lo - t["t0"]) % t["length"]) if t["length"] > 0 else 0.0)
+                    for t in st.tiles],
                 filler=under, start=float(seek or 0.0),
                 chat_h=chat_h if under is not None else 0,
             ))
@@ -327,6 +397,7 @@ def run(job: VideoJob, ctx: AppContext) -> None:
     # drawing, and re-opening the previous PNG to crop the same window out of it again
     # would be the same pixels at the cost of a decode per seam.
     seen: dict[str, object] = {"view": None, "bar": None, "msg": None}
+    born: dict = {}  # when each moving thing was first on screen (see `_tiles`)
 
     def paint(canvas: Canvas, state: State) -> None:
         y0 = int(min(state.from_y, state.to_y))
@@ -349,11 +420,21 @@ def run(job: VideoJob, ctx: AppContext) -> None:
             pinned = None
         # the block whose picture was lifted, which is not always the state's own
         # message: it is whichever block the picture actually belongs to
-        band = canvas.band(y0, band_h, pin=None if pinned is None else pinned[4])
+        moving: list[Moving] = []
+        band = canvas.band(y0, band_h, pin=None if pinned is None else pinned[4],
+                           moving=moving)
         # the window as it will rest at the END of this state, which is what the next
         # one slides away from
         rest = int(min(max(state.to_y - y0, 0), max(band_h - height, 0)))
-        view = band.crop((0, rest, width, rest + height))
+        # what the screen looks like at rest, stickers and all: the swipe slides THIS
+        # away, and a swipe has no clips laid over it
+        drawn = band
+        if any(mv.poster is not None for mv in moving):
+            drawn = band.copy()
+            for mv in moving:
+                if mv.poster is not None:
+                    drawn.paste(mv.poster, (mv.x, mv.y), mv.poster)
+        view = drawn.crop((0, rest, width, rest + height))
 
         ci = where[state.msg] if 0 <= state.msg < len(where) else 0
         picture, name = band, _stamp(canvas, state, height, pinned)
@@ -376,6 +457,9 @@ def run(job: VideoJob, ctx: AppContext) -> None:
             # the window is recorded against the BAND, whose top is where it began
             state.from_y -= y0
             state.to_y -= y0
+            # …and so is everything moving on it, which is exactly where the band
+            # painted it
+            state.tiles = _tiles(moving, out_dir, float(video.fps), state.start, born)
 
         path = out_dir / f"state_{name}.png"
         if path.is_file():
@@ -415,7 +499,7 @@ def run(job: VideoJob, ctx: AppContext) -> None:
     job.chat_states = [
         ChatState(path=s.path, start=s.start, duration=s.duration, msg=s.msg,
                   anchor_scene=s.anchor_scene, from_y=s.from_y, to_y=s.to_y,
-                  swipe=s.swipe, overlay=s.overlay)
+                  swipe=s.swipe, overlay=s.overlay, tiles=list(s.tiles))
         for s in planner.plan()
     ]
     compile_assets(job, job.chat_states, cfg.roll_s,

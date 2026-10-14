@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import logging
 
+from ...chat import media as media_mod
 from ..context import AppContext
 from ..job import ChatMsg, Scene, VideoJob
 
@@ -79,6 +80,11 @@ def lay(job: VideoJob, ctx: AppContext) -> None:
     # the same length whether anybody reacted or not.
     flurry = (max(0.0, float(cfg.react_s))
               if cfg.reactions and not ctx.chat_skin.votes else 0.0)
+    # How long a message that is ONLY a picture holds, on top of the gap: there is
+    # nothing to read and the picture still has to be looked at — and a sticker that
+    # loops wants to be seen doing it at least once.
+    look = max(0.0, float(getattr(cfg, "media_s", 0.0)))
+    root = media_mod.root(ctx.g.paths.assets)
     scenes: list[Scene] = []
     # Across the conversations in order, because the video is all of them one after
     # another: the timeline is the video's and the seams are drawn by the renderer
@@ -87,6 +93,28 @@ def lay(job: VideoJob, ctx: AppContext) -> None:
         spec = voice_for(msg, ctx)
         extra = flurry if msg.reactions else 0.0
         scene = Scene(text=msg.text)
+        heard = _heard(msg, root)
+        if heard is not None:
+            # A voice message, or a round video: its OWN sound is the line. Nobody
+            # synthesizes it — the scene is silent to the voicing stage and carries
+            # its audio already, which the assembler mixes like any voiced take — and
+            # it is as long as the recording, then the breath after it like any line.
+            scene.text = ""
+            scene.silent = True
+            scene.audio, scene.duration = heard
+            msg.scene = len(scenes)
+            scenes.append(scene)
+            if gap + extra > 0:
+                scenes.append(Scene(text="", hush=True, duration=gap + extra))
+            continue
+        if msg.media is not None and not msg.text.strip():
+            # a picture with nothing written under it: nobody reads it, and it holds
+            # for the gap and for the look
+            scene.silent = True
+            scene.duration = gap + look + extra
+            msg.scene = len(scenes)
+            scenes.append(scene)
+            continue
         if spec:
             scene.voice = spec
             # cast by the run rather than by a person pointing at this line, so a
@@ -106,6 +134,22 @@ def lay(job: VideoJob, ctx: AppContext) -> None:
         if spec and gap + extra > 0:
             scenes.append(Scene(text="", hush=True, duration=gap + extra))
     job.scenes = scenes
+
+
+def _heard(msg: ChatMsg, root):
+    """(the sound, how long) of a message whose own recording is what is heard, or
+    None. A voice message whose file is gone is not one — it falls back to being a
+    silent bubble with a waveform, which is better than a scene of nothing."""
+    m = msg.media
+    if m is None or m.kind not in media_mod.AUDIBLE:
+        return None
+    src = media_mod.resolve(root, m.file)
+    if src is None:
+        return None
+    got = media_mod.audio_of(src)
+    if got is None:
+        return None
+    return got
 
 
 def run(job: VideoJob, ctx: AppContext) -> None:

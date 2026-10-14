@@ -4207,6 +4207,7 @@ function chatBody(form) {
   source: f.get("source") || "manual", chat_from: f.get("chat_from") || "",
   skin: f.get("skin"), scroll: f.get("scroll"),
   roll_s: +(f.get("roll_s") || 0.45), gap_s: +(f.get("gap_s") || 1.2),
+  media_s: +(f.get("media_s") ?? 1.5),
   chunk: +(f.get("chunk") || 0), chunk_min: +(f.get("chunk_min") || 0),
   react_s: +(f.get("react_s") || 0.5),
   header: f.get("header") === "on",

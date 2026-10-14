@@ -406,6 +406,8 @@ _FIELDS: list[dict] = [
      "step": 0.05, "modes": ["chat"]},
     {"f": "gap_s", "kind": "number", "l": "web.f.gaps", "min": 0, "max": 10,
      "step": 0.1, "modes": ["chat"]},
+    {"f": "media_s", "kind": "number", "l": "web.f.medias", "min": 0, "max": 10,
+     "step": 0.1, "modes": ["chat"]},
     {"f": "chunk", "kind": "number", "l": "web.f.chunk", "min": 0, "max": 400,
      "modes": ["chat"]},
     {"f": "chunk_min", "kind": "number", "l": "web.f.chunkmin", "min": 0, "max": 800,

@@ -1727,6 +1727,15 @@ const FORMS = {
           "value": "1.2",
           "l": "web.f.gaps"
         },
+        {
+          "f": "media_s",
+          "kind": "number",
+          "min": "0",
+          "max": "10",
+          "step": "0.1",
+          "value": "1.5",
+          "l": "web.f.medias"
+        },
         [
           "row2",
           {

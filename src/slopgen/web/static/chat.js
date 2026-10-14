@@ -165,6 +165,21 @@ function renderChatConvs() {
     `<button class="ghost" data-cact="add">${esc(lab("web.chat.addconv", "＋ переписка"))}</button>`;
 }
 
+// What a message carries, as a thumbnail and a word. The picture is the server's
+// first frame of it (see `/api/chat/media`), because half of what Telegram sends — a
+// `.tgs` sticker, a WebM, a voice message — is nothing a browser can show by itself.
+function mediaChip(md, big = false) {
+  if (!md) return "";
+  const q = md.ref ? `ref=${encodeURIComponent(md.ref)}` : `name=${encodeURIComponent(md.file)}`;
+  const word = lab(`web.chat.media.${md.kind}`, md.kind);
+  const len = md.duration ? ` ${Math.floor(md.duration / 60)}:${
+    String(Math.round(md.duration % 60)).padStart(2, "0")}` : "";
+  const pic = md.kind === "voice" ? "" :
+    `<img src="/api/chat/media?${q}&size=${big ? 240 : 96}" alt="" loading="lazy">`;
+  return `<span class="chat-media${big ? " big" : ""}">${pic}<i>${
+    esc((md.emoji ? md.emoji + " " : "") + word + len)}</i></span>`;
+}
+
 function chatRowHTML(m) {
   const conv = chatActive();
   const open = m.i === chatSel;
@@ -173,12 +188,13 @@ function chatRowHTML(m) {
   const reply = m.reply_to >= 0 && conv.messages[m.reply_to]
     ? `<span class="chat-reply">↳ ${esc(trim(conv.messages[m.reply_to].text, 40))}</span>` : "";
   const react = (m.reactions || [])
-    .map(([e, n]) => `<span class="chat-react">${esc(e)}${n > 1 ? n : ""}</span>`).join("");
+    .map(([e, n]) => `<span class="chat-react">${esc(rxLabel(e))}${n > 1 ? n : ""}</span>`).join("");
   return head + `
 <div class="chat-row${open ? " on" : ""}${m.pinned ? " pinned" : ""}" data-i="${m.i}"
      draggable="true">
   <div class="chat-line" data-open="${m.i}">
     <b class="chat-who">${esc(m.nick || m.persona || lab("web.chat.nobody", "—"))}</b>
+    ${mediaChip(m.media)}
     <span class="chat-text">${esc(trim(chatDraft(m), 160))}</span>
     ${reply}${react}
   </div>
@@ -190,6 +206,10 @@ function chatRowHTML(m) {
 // time and shut by default: the picture is set once and the row of thumbnails is
 // the width of the list.
 let chatConvPic = false;
+
+// A custom reaction is stored as `custom:<file>|<fallback>`; the lists show the
+// fallback, which is what it stands for.
+const rxLabel = (e) => e.startsWith("custom:") ? (e.split("|")[1] || "★") : e;
 
 const trim = (s, n) => (s || "").length > n ? (s || "").slice(0, n - 1) + "…" : (s || "");
 
@@ -209,6 +229,9 @@ function chatEditHTML(m) {
         esc(`${o.persona}: ${trim(o.text, 30)}`)}</option>`)).join("");
   return `
 <div class="chat-edit">
+  ${m.media ? `<div class="chat-media-row">${mediaChip(m.media, true)}
+    <button class="ghost danger" data-act="unmedia" data-i="${m.i}">${
+      esc(lab("web.chat.media.drop", "убрать вложение"))}</button></div>` : ""}
   <textarea class="chat-area" data-text="${m.i}" rows="3">${esc(chatDraft(m))}</textarea>
   ${m.source_text ? `<p class="dim chat-src">${esc(lab("web.chat.wassaid", "было"))}: ${
     esc(trim(m.source_text, 180))}</p>` : ""}
@@ -225,7 +248,7 @@ function chatEditHTML(m) {
       <span class="rx-edit">${(m.reactions || []).map(([e, n], k) => `
         <span class="rx-chip">
           <button class="rx-emoji" data-rx="pick" data-k="${k}" title="${
-            esc(lab("web.chat.rx.swap", ""))}">${esc(e)}</button>
+            esc(lab("web.chat.rx.swap", ""))}">${esc(rxLabel(e))}</button>
           <button data-rx="less" data-k="${k}">−</button>
           <b>${n}</b>
           <button data-rx="more" data-k="${k}">+</button>
@@ -677,6 +700,9 @@ cq("#chat-list").addEventListener("click", async (e) => {
   const what = act.dataset.act;
   if (what === "drop") { chatSel = -1; await chatDo("/message", { method: "DELETE", body: { i } }); }
   else if (what === "restamp") { await chatDo("/restamp", { body: { step: 1 } }); }
+  else if (what === "unmedia") {
+    await chatDo("/message", { method: "PUT", body: { i, drop_media: true } });
+  }
   else if (what === "split") {
     chatSel = -1;
     const was = chatConv;
@@ -1209,9 +1235,10 @@ function renderPick() {
     <div class="pick-row${picked.has(ln.i) ? " on" : ""}" data-pick="${ln.i}">
       <span class="at">${esc(ln.stamp || "")}</span>
       <span class="who">${esc(ln.who || "—")}</span>
+      ${mediaChip(ln.media)}
       <span class="what">${esc(ln.text)}</span>
       ${ln.reactions.length ? `<span class="rx">${
-        esc(ln.reactions.map(([e, n]) => n > 1 ? `${e}${n}` : e).join(" "))}</span>` : ""}
+        esc(ln.reactions.map(([e, n]) => rxLabel(e) + (n > 1 ? n : "")).join(" "))}</span>` : ""}
     </div>`).join("");
 }
 

@@ -26,9 +26,10 @@ knows this mode exists.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import media as media_mod
 from .draw import Canvas, Person
 
 log = logging.getLogger(__name__)
@@ -72,6 +73,9 @@ class State:
     # here on its way to the assembler — but it belongs to the state rather than to
     # the run, because which bar is up is a property of which conversation is.
     overlay: object = None
+    # What moves on this state's drawing, filled in by whoever painted it, as the
+    # render stage's own records (see `chat_render._tiles`).
+    tiles: list = field(default_factory=list)
 
 
 def scene_starts(scenes: list) -> list[float]:
@@ -158,6 +162,23 @@ def react_times(read_end: float, room: float, count: int, span: float) -> list[f
     return [read_end + step * (i + 1) for i in range(count)]
 
 
+# What a quoted strip says about a message that was only a picture, in the two
+# languages this program speaks. A table rather than the client's own strings, which
+# are not ours to copy and say the same thing.
+MEDIA_WORDS = {
+    "ru": {"photo": "Фото", "sticker": "Стикер", "animation": "GIF", "video": "Видео",
+           "voice": "Голосовое сообщение", "round": "Видеосообщение"},
+    "en": {"photo": "Photo", "sticker": "Sticker", "animation": "GIF", "video": "Video",
+           "voice": "Voice message", "round": "Video message"},
+}
+
+
+def media_label(m, lang: str) -> str:
+    words = MEDIA_WORDS.get(lang, MEDIA_WORDS["en"])
+    word = words.get(m.kind, "")
+    return f"{m.emoji} {word}".strip() if m.kind == "sticker" and m.emoji else word
+
+
 class Planner:
     """Walks the conversation once, laying the canvas out and recording the states."""
 
@@ -170,7 +191,8 @@ class Planner:
         self.job = job
         self.height = height
         self.people = people
-        self.canvas = Canvas(self.skin, width, wallpaper=wallpaper, top_inset=top_inset)
+        self.canvas = Canvas(self.skin, width, wallpaper=wallpaper, top_inset=top_inset,
+                             media_root=ctx.g.paths.assets / media_mod.DIR)
         self.states: list[State] = []
         self.window = 0.0  # where the view is looking right now, in canvas pixels
         # Called with (canvas, state) the moment a state is recorded, which is the
@@ -252,7 +274,7 @@ class Planner:
             # between then and the next message. For a spoken line that is the pause
             # after it, which is a scene of its own (see `stages.chat_script.lay`);
             # for one nobody reads, the message's own hold is all there is.
-            if scene.silent:
+            if scene.silent and not scene.audio:
                 # Read against the hold WITHOUT the flurry, which `chat_script.lay`
                 # adds on top of it: the extra time is the reactions', and spending
                 # 45% of it on "reading" would hand them back the squeeze it bought
@@ -261,6 +283,7 @@ class Planner:
                 read_end = start + max(scene.duration - span, 0.0) * SILENT_READ
                 room = end - read_end
             else:
+                # spoken, or heard off its own recording: read when it ends
                 read_end = end
                 room = (self.job.scenes[si + 1].duration
                         if si + 1 < len(self.job.scenes) and self.job.scenes[si + 1].hush
@@ -385,6 +408,8 @@ class Planner:
                 prev and prev.persona == msg.persona and not msg.clear_before),
             reply=self._reply(conv, msg),
             separator=sep,
+            media=getattr(msg, "media", None),
+            custom=list(getattr(msg, "custom", None) or []),
         )
         here = bool(self.canvas.blocks) and self.canvas.blocks[-1].msg == i
         return self.canvas.amend(**kw) if here else self.canvas.append(**kw)
@@ -410,7 +435,13 @@ class Planner:
         if conv is None or not (0 <= at < len(conv.messages)):
             return None
         parent = conv.messages[at]
-        return (parent.nick or parent.persona, parent.text)
+        said = parent.text
+        carried = getattr(parent, "media", None)
+        if not said.strip() and carried is not None:
+            # a reply to a picture quotes what it was, as a client does: there are no
+            # words to quote, and an empty strip reads as a reply to nothing
+            said = media_label(carried, getattr(self.ctx.params, "lang", "en"))
+        return (parent.nick or parent.persona, said)
 
     def _settle(self) -> None:
         """Give every state its length, now that the next one's start is known.

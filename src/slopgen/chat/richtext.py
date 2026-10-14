@@ -98,8 +98,34 @@ def _graphemes(piece: str) -> list[str]:
     return out
 
 
+class Swaps:
+    """The custom emoji of one message, handed out in the order the text meets them.
+
+    A custom emoji is drawn in the square its plain fallback would have taken, so it
+    changes nothing about the layout — which is why this is a question asked only
+    while PAINTING, of each emoji as it is reached: is this the next custom one? The
+    match is by the fallback character and by order, the same promise
+    `ChatMsg.custom` makes, so an edit to the words around it does not lose it.
+
+    `paint(img, xy, px, path)` is the caller's, and puts the picture down — the
+    drawing knows how to open a sticker and this module does not need to."""
+
+    def __init__(self, pairs, paint):
+        self.todo = list(pairs)
+        self.paint = paint
+
+    @staticmethod
+    def _bare(ch: str) -> str:
+        return ch.replace("\ufe0f", "")
+
+    def take(self, ch: str):
+        if self.todo and self._bare(self.todo[0][0]) == self._bare(ch):
+            return self.todo.pop(0)[1]
+        return None
+
+
 def draw_line(img: Image.Image, draw: ImageDraw.ImageDraw, xy: tuple[int, int],
-              text: str, font, fill: str, px: int) -> float:
+              text: str, font, fill: str, px: int, swaps: Swaps | None = None) -> float:
     """Draw one line of mixed text and emoji. Returns how wide it came out.
 
     `xy` is the TOP-left, not the baseline: every box here is laid out from its top,
@@ -112,6 +138,10 @@ def draw_line(img: Image.Image, draw: ImageDraw.ImageDraw, xy: tuple[int, int],
             x += draw.textlength(piece, font=font)
             continue
         for ch in _graphemes(piece):
+            custom = swaps.take(ch) if swaps is not None else None
+            if custom is not None and swaps.paint(img, (int(x), int(y)), px, custom):
+                x += px
+                continue
             tile = emoji_image(ch, px)
             if tile is None:
                 draw.text((x, y), ch, font=font, fill=fill)
