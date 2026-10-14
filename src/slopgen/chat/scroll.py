@@ -253,7 +253,12 @@ class Planner:
             # after it, which is a scene of its own (see `stages.chat_script.lay`);
             # for one nobody reads, the message's own hold is all there is.
             if scene.silent:
-                read_end = start + scene.duration * SILENT_READ
+                # Read against the hold WITHOUT the flurry, which `chat_script.lay`
+                # adds on top of it: the extra time is the reactions', and spending
+                # 45% of it on "reading" would hand them back the squeeze it bought
+                # them out of.
+                span = cfg.react_s if (cfg.reactions and msg.reactions) else 0.0
+                read_end = start + max(scene.duration - span, 0.0) * SILENT_READ
                 room = end - read_end
             else:
                 read_end = end

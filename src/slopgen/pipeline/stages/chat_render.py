@@ -318,7 +318,7 @@ def run(job: VideoJob, ctx: AppContext) -> None:
     # in over it. An image rather than a path: the swipe needs the two screens in ONE
     # drawing, and re-opening the previous PNG to crop the same window out of it again
     # would be the same pixels at the cost of a decode per seam.
-    seen: dict[str, object] = {"view": None, "bar": None}
+    seen: dict[str, object] = {"view": None, "bar": None, "msg": None}
 
     def paint(canvas: Canvas, state: State) -> None:
         y0 = int(min(state.from_y, state.to_y))
@@ -328,7 +328,17 @@ def run(job: VideoJob, ctx: AppContext) -> None:
         # is the exception and keeps it in the picture: there the whole screen moves,
         # and a face that stayed put while the chat slid out from under it would be
         # the one thing giving the shot away.
+        #
+        # And only a picture that was ALREADY on screen: one carried down from the
+        # message above (the run goes on) or from this message's own earlier state (a
+        # reveal, a reaction). The first message of a run brings its picture with it —
+        # pinned, the face stood waiting at its resting place while the bubble it
+        # belongs to was still rolling up from below. Left in the band, it rides in
+        # beside the bubble, which is what a client does.
         pinned = None if state.swipe else canvas.avatar_of(state.msg)
+        if pinned is not None and canvas.blocks[-1].show_head \
+                and seen["msg"] != state.msg:
+            pinned = None
         # the block whose picture was lifted, which is not always the state's own
         # message: it is whichever block the picture actually belongs to
         band = canvas.band(y0, band_h, pin=None if pinned is None else pinned[4])
@@ -366,7 +376,7 @@ def run(job: VideoJob, ctx: AppContext) -> None:
             picture.save(path, compress_level=1)
             tally["drawn"] += 1
         state.path = path
-        seen["view"], seen["bar"] = view, bars.get(ci)
+        seen["view"], seen["bar"], seen["msg"] = view, bars.get(ci), state.msg
         ctx.progress("render", tally["drawn"] + tally["reused"], len(job.messages))
 
     planner = Planner(

@@ -69,12 +69,23 @@ def lay(job: VideoJob, ctx: AppContext) -> None:
     them, because the voicing stage caches on the line and not on its index."""
     cfg = ctx.chat
     gap = max(0.0, float(cfg.gap_s))
+    # The reactions get the clock they were promised, ON TOP of the gap rather than
+    # out of it. They pop once the message has been read, which is exactly where the
+    # gap is — and squeezed into it, a two-second flurry over a 1.2s gap came out as
+    # pops a fifth of a second apart with the last one up for a single frame before
+    # the next bubble covered it, which on screen is every reaction at once and
+    # whatever `react_s` said. So a message that carries reactions holds for the
+    # flurry first and then for the gap, and the breath before the next message is
+    # the same length whether anybody reacted or not.
+    flurry = (max(0.0, float(cfg.react_s))
+              if cfg.reactions and not ctx.chat_skin.votes else 0.0)
     scenes: list[Scene] = []
     # Across the conversations in order, because the video is all of them one after
     # another: the timeline is the video's and the seams are drawn by the renderer
     # (see `chat.scroll`), not carved into the clock.
     for msg in (m for c in job.conversations for m in c.messages):
         spec = voice_for(msg, ctx)
+        extra = flurry if msg.reactions else 0.0
         scene = Scene(text=msg.text)
         if spec:
             scene.voice = spec
@@ -86,14 +97,14 @@ def lay(job: VideoJob, ctx: AppContext) -> None:
             # Nobody reads it, so its length is the only thing that says how long it
             # is up — and that is the gap, which is what the operator set the gap FOR.
             scene.silent = True
-            scene.duration = gap
+            scene.duration = gap + extra
         msg.scene = len(scenes)
         scenes.append(scene)
         # The breath after a line that was actually spoken. An unread message has
         # already held for the gap above, and giving it a second one would make the
         # silent half of a mixed conversation run at half the pace of the spoken half.
-        if spec and gap > 0:
-            scenes.append(Scene(text="", hush=True, duration=gap))
+        if spec and gap + extra > 0:
+            scenes.append(Scene(text="", hush=True, duration=gap + extra))
     job.scenes = scenes
 
 

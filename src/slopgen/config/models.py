@@ -1580,7 +1580,9 @@ class ChatConfig(BaseModel):
     # -- the trimmings -----------------------------------------------------
     # Reactions land when their message has been read to the end, one after another,
     # quickly — and faster the more of them there are, so that eight reactions do not
-    # take eight times as long as one. `react_s` is the whole flurry, not one pop.
+    # take eight times as long as one. `react_s` is the whole flurry, not one pop, and
+    # a message carrying reactions holds that much longer: the flurry comes first and
+    # the gap after it, so the reactions are not squeezed into the pause.
     reactions: bool = True
     react_s: float = 0.5
     # The send sound, a file under `assets/chat_sfx/`. Spelled the way the music
