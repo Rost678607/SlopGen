@@ -29,10 +29,11 @@ sfx = ""            # a file under assets/chat_sfx/; "none" is silence, "" rolls
 sfx_volume = 0.5
 translate = true    # into the run's language, by the configured model (see llm/chat.py)
 
-# the split: the chat above, something moving below, for the people who need it.
-# `split_clip` is named the way a music track is — a file under assets/footage/, a
-# folder of them with a trailing slash, or "" for a roll over everything there.
+# the split, in a 9:16 video only: the chat in a 16:9 window across the top, and a
+# clip from the footage base under it for the whole rest of the height. Ignored at
+# 16:9. `split_clip` is named the way a music track is — a file under
+# assets/footage/, a folder of them with a trailing slash, or "" for a roll over
+# everything there.
 split = false
 split_clip = ""
-split_share = 0.62      # how much of the height the chat takes
 split_change_s = 0.0    # 0 = one clip played straight through, so the action carries

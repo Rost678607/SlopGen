@@ -4215,7 +4215,7 @@ function chatBody(form) {
   header_avatar: f.get("header_avatar") || "", me: f.get("me") || "",
   background: f.get("background") || "",
   aspect: f.get("aspect") || "9:16", split: f.get("split") === "on",
-  split_clip: f.get("split_clip") || "", split_share: +(f.get("split_share") || 0.62),
+  split_clip: f.get("split_clip") || "",
   count: +f.get("count"), profanity: +f.get("profanity"),
   ad: f.get("ad"), push: f.get("push"),
   dry_run: f.get("dry_run") === "on", breakpoints: [...chosenBps.chat],

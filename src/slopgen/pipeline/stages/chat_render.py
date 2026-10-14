@@ -64,16 +64,24 @@ FOOTAGE_DIR = "footage"
 VIDEO_EXTS = {".mp4", ".mov", ".webm", ".mkv", ".m4v"}
 
 
+def split_on(ctx: AppContext) -> bool:
+    """Whether something plays under the chat. Only in a frame taller than it is wide:
+    the chat's window is 16:9, and in a 16:9 frame that window is the whole frame."""
+    v = ctx.g.video
+    return bool(ctx.chat.split) and v.height > v.width
+
+
 def chat_height(ctx: AppContext) -> int:
-    """How tall the chat half is. The whole frame unless something plays under it.
+    """How tall the chat is. The whole frame unless something plays under it, and then
+    a 16:9 window at the frame's width — 608 of 1920 in a 1080-wide video — with
+    everything below it going to the clip.
 
     Even, because an odd height is a frame half of x264's encoders refuse outright,
     and the one place to round it is the one place that decides it."""
     v = ctx.g.video
-    if not ctx.chat.split:
+    if not split_on(ctx):
         return v.height
-    share = min(max(float(ctx.chat.split_share), 0.2), 0.95)
-    return max(2, int(v.height * share) // 2 * 2)
+    return max(2, round(v.width * 9 / 16 / 2) * 2)
 
 
 def fillers(ctx: AppContext) -> list[Path]:
@@ -305,8 +313,8 @@ def run(job: VideoJob, ctx: AppContext) -> None:
     # number — how much fits before the view has to travel, where it rests — so it is
     # decided once, here, and handed to the planner as the screen's height.
     width, height = video.width, chat_height(ctx)
-    pool = fillers(ctx) if cfg.split else []
-    if cfg.split and not pool:
+    pool = fillers(ctx) if split_on(ctx) else []
+    if split_on(ctx) and not pool:
         log.warning("chat: the split is on and assets/footage holds no clips — "
                     "the lower half would be black, so it is skipped")
     out_dir = Path(job.workdir) / "chat"

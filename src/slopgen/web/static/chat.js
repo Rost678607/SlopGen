@@ -395,7 +395,7 @@ function renderChatSettings() {
   const d = CHAT.doc;
   const v = d.settings || {};
   const rows = (d.sheet || []).filter(
-    (r) => !r.when || r.when === v.skin).map((r) => {
+    (r) => (!r.when || r.when === v.skin) && (!r.aspect || r.aspect === v.aspect)).map((r) => {
     // A heading and not a setting. Twenty-two controls in a narrow column with nothing
     // between them is a list nobody reaches the bottom of — which is how "there is no
     // way to turn the split screen on" happens to a screen that has one.

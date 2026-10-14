@@ -3580,7 +3580,6 @@ RU.update({
     "web.f.split": "разделённый экран",
     "web.f.splitclip": "что внизу",
     "w.clip.roll": "— как выпадет —",
-    "web.f.splitshare": "доля переписки, 0–1",
     "web.f.splitchange": "менять клип каждые, с",
 })
 EN.update({
@@ -3591,7 +3590,6 @@ EN.update({
     "web.f.split": "split screen",
     "web.f.splitclip": "what plays below",
     "w.clip.roll": "— whatever it rolls —",
-    "web.f.splitshare": "the chat's share, 0–1",
     "web.f.splitchange": "change the clip every, s",
 })
 RU.update({
@@ -3872,12 +3870,12 @@ EN.update({
                             "later, in the order they are now in.",
 })
 RU.update({
-    "web.f.split.note": "Клипы берутся из assets/footage/. Доля — сколько высоты "
-                        "занимает переписка; остальное отдаётся клипу.",
+    "web.f.split.note": "Переписка — окно 16:9 сверху, вся высота под ним отдаётся "
+                        "клипу из assets/footage/. Только для вертикального ролика.",
 })
 EN.update({
-    "web.f.split.note": "The clips come from assets/footage/. The share is how much of "
-                        "the height the chat takes; the rest goes to the clip.",
+    "web.f.split.note": "The chat is a 16:9 window across the top, and all the height "
+                        "below it goes to a clip from assets/footage/. Vertical video only.",
 })
 RU.update({
     "web.chat.cast.quiet": "не задействованы",

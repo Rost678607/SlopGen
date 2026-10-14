@@ -87,13 +87,14 @@ SHEET: list[dict] = [
      "step": 0.05},
     {"head": "web.chat.set.frame"},
     {"f": "aspect", "kind": "select", "l": "web.f.aspect", "opts": "aspects"},
-    {"f": "split", "kind": "check", "l": "web.f.split"},
+    # the split exists in a vertical frame only (see `chat_render.split_on`), so its
+    # rows are drawn only while the aspect says so — `aspect` is to these what `when`
+    # is to the rows of one skin
+    {"f": "split", "kind": "check", "l": "web.f.split", "aspect": "9:16"},
     {"f": "split_clip", "kind": "select", "l": "web.f.splitclip", "opts": "chat_clips",
-     "blank": True, "blank_l": "w.clip.roll"},
-    {"f": "split_share", "kind": "number", "l": "web.f.splitshare", "min": 0.2,
-     "max": 0.95, "step": 0.01},
+     "blank": True, "blank_l": "w.clip.roll", "aspect": "9:16"},
     {"f": "split_change_s", "kind": "number", "l": "web.f.splitchange", "min": 0,
-     "max": 120, "step": 5},
+     "max": 120, "step": 5, "aspect": "9:16"},
 ]
 
 

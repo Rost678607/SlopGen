@@ -1527,7 +1527,11 @@ class ChatConfig(BaseModel):
     # knowing about it: every stage already reads the frame from there, so the whole
     # video changes shape at once and the subtitles keep their share of the height.
     aspect: Literal["9:16", "16:9"] = "9:16"
-    # The attention-span split: the chat above, something moving below. What plays
+    # The attention-span split, in a vertical video only: the chat in a 16:9 window
+    # across the top, and the rest of the height a loop from the footage base. A
+    # wide video has no "rest" worth the name — a 16:9 chat in a 16:9 frame is the
+    # whole frame — so the split is not offered there and is ignored if set (see
+    # `stages.chat_render.split_on`). What plays
     # underneath is named the way a music track is (`stages.assemble.MUSIC_NONE`) —
     # a file under `assets/footage/`, a FOLDER of them with a trailing slash, or ""
     # for a roll over everything there. Not a visuals profile: a profile is a question
@@ -1535,7 +1539,6 @@ class ChatConfig(BaseModel):
     # a chat is a loop nobody is meant to look at. It is picked once and played on.
     split: bool = False
     split_clip: str = ""
-    split_share: float = 0.62  # how much of the height the chat takes
     # How often the lower half changes, when it is rolling over a folder. 0 is one
     # clip for the whole video, played straight through so the action is continuous —
     # which is what the gameplay loops this exists for are usually used as.

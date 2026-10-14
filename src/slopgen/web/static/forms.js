@@ -1663,32 +1663,28 @@ const FORMS = {
           "l": "web.f.aspect"
         },
         {
-          "f": "split",
-          "kind": "checkbox",
-          "inline": true,
-          "l": "web.f.split"
-        },
-        {
-          "when": "split=*",
+          "when": "aspect=9:16",
           "rows": [
             {
-              "f": "split_clip",
-              "kind": "select",
-              "cls": "f-splitclip",
-              "l": "web.f.splitclip"
+              "f": "split",
+              "kind": "checkbox",
+              "inline": true,
+              "l": "web.f.split"
             },
             {
-              "f": "split_share",
-              "kind": "number",
-              "min": "0.2",
-              "max": "0.95",
-              "step": "0.01",
-              "value": "0.62",
-              "l": "web.f.splitshare"
-            },
-            {
-              "note": "web.f.split.note",
-              "cls": "dim"
+              "when": "split=*",
+              "rows": [
+                {
+                  "f": "split_clip",
+                  "kind": "select",
+                  "cls": "f-splitclip",
+                  "l": "web.f.splitclip"
+                },
+                {
+                  "note": "web.f.split.note",
+                  "cls": "dim"
+                }
+              ]
             }
           ]
         }
