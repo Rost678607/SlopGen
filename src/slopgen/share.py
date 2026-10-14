@@ -72,6 +72,13 @@ FLAT_KINDS = ("presets", "content", "ads", "accounts", "visuals", "llm", "charac
               "voicefx")
 DIR_KINDS = ("fandoms",)
 
+# The browser's generation-form presets, which are one level deeper than a flat kind:
+# `configs/form_presets/<mode>/<name>.toml`, one shelf per mode because each mode's
+# form is a different set of controls. The item's name carries the mode in front of it
+# (`fandom/Утро`), so a fandom preset and a chat preset may share a name without being
+# one thing, and a rename on arrival keeps the mode and changes only the last part.
+NESTED_KINDS = ("form_presets",)
+
 # The kinds whose item owns FILES BESIDE IT in the shared folder. `_load_dir` globs
 # `*.toml` only, so the material in there is invisible to the loader — which is what
 # makes the folder work as a base, and what makes this table necessary: without it a
@@ -92,6 +99,14 @@ REFS: dict[str, tuple[tuple[str, str], ...]] = {
     "personas": (("voice", "voices"),),
     "content": (("voices.*", "voices"),),
     "chat": (("cast.*", "personas"),),
+    # a form preset is the form as it was on screen, by control name — and most of
+    # what a form names is a config. The mode decides which of these the file has.
+    "form_presets": (("fields.fandom", "fandoms"), ("fields.fandom_shapes", "shapes"),
+                     ("fields.content_type", "content"), ("fields.visuals", "visuals"),
+                     ("fields.orchestration", "orchestration"), ("fields.ad", "ads"),
+                     ("fields.push", "accounts"), ("fields.voice_override", "voices"),
+                     ("fields.chat_voice", "voices"), ("fields.me", "personas"),
+                     ("cast.*", "characters")),
 }
 
 # …and where one names a FILE under `assets/`. These are not config references and
@@ -102,6 +117,8 @@ ASSET_REFS: dict[str, tuple[tuple[str, str], ...]] = {
     "personas": (("avatar", "avatars"),),
     "chat": (("header_avatar", "avatars"), ("background", "chat_bg"),
              ("sfx", "chat_sfx"), ("split_clip", "footage")),
+    "form_presets": (("fields.music", "music"), ("fields.split_clip", "footage"),
+                     ("fields.header_avatar", "avatars"), ("fields.background", "chat_bg")),
 }
 
 # The asset shelves, as selectable things in their own right. `exports` and `fonts` are
@@ -192,8 +209,17 @@ def _dig(data, path: str) -> list:
     return [c for c in cur if c not in (None, "")]
 
 
-def _poke(data, path: str, old, new) -> bool:
-    """Replace `old` with `new` at a dotted path. Returns whether anything moved."""
+def _voice(v) -> str:
+    """The card a voice spec names: `марта:зло` is the delivery «зло» OF «марта», so
+    what has to travel — and what a rename has to follow — is the card."""
+    return str(v).split(":", 1)[0]
+
+
+def _poke(data, path: str, old, new, *, spec: bool = False) -> bool:
+    """Replace `old` with `new` at a dotted path. Returns whether anything moved.
+
+    `spec` is for voices: a value `old:delivery` is the same card and becomes
+    `new:delivery`, so a rename does not unpin the lines pinned to a delivery."""
     steps = path.split(".")
     last = steps[-1]
     cur = [data]
@@ -208,6 +234,13 @@ def _poke(data, path: str, old, new) -> bool:
             elif isinstance(node, dict) and step in node:
                 nxt.append(node[step])
         cur = nxt
+    def swap(v):
+        if v == old:
+            return new
+        if spec and isinstance(v, str) and v.startswith(f"{old}:"):
+            return new + v[len(old):]
+        return v
+
     hit = False
     for node in cur:
         if last == "*":
@@ -215,16 +248,16 @@ def _poke(data, path: str, old, new) -> bool:
             # type's `voices` — the names sit in the list or in the dict's values
             if isinstance(node, list):
                 for i, v in enumerate(node):
-                    if v == old:
-                        node[i] = new
+                    if swap(v) != v:
+                        node[i] = swap(v)
                         hit = True
             elif isinstance(node, dict):
                 for k, v in node.items():
-                    if v == old:
-                        node[k] = new
+                    if swap(v) != v:
+                        node[k] = swap(v)
                         hit = True
-        elif isinstance(node, dict) and node.get(last) == old:
-            node[last] = new
+        elif isinstance(node, dict) and last in node and swap(node[last]) != node[last]:
+            node[last] = swap(node[last])
             hit = True
     return hit
 
@@ -260,6 +293,34 @@ def _under(d: Path, assets: Path) -> list[Ref]:
     return out
 
 
+def _asset_needs(assets: Path, bucket: str, val: str) -> list[Ref]:
+    """What one asset reference points at. Three spellings reach a file: a shelf with a
+    trailing slash, a file by its name, and — for the chat mode's pictures, which are
+    found by stem so a PNG can be swapped for a JPEG — a name with no extension at all,
+    which is every picture on that shelf with that stem."""
+    if val.endswith("/"):  # a shelf, not a file
+        return _under(assets / bucket / val, assets)
+    d = assets / bucket
+    if not (d / val).is_file() and not PurePosixPath(val).suffix and d.is_dir():
+        hits = [(ASSET, f"{bucket}/{q.name}") for q in sorted(d.iterdir())
+                if q.is_file() and q.stem == val]
+        if hits:
+            return hits
+    return [(ASSET, f"{bucket}/{val}")]
+
+
+def _needs(kind: str, body: dict, assets: Path) -> list[Ref]:
+    """Every name one config's body points at, configs and assets both."""
+    needs: list[Ref] = []
+    for fld, target in REFS.get(kind, ()):
+        needs += [(target, _voice(v) if target == "voices" else str(v))
+                  for v in _dig(body, fld)]
+    for fld, bucket in ASSET_REFS.get(kind, ()):
+        for v in _dig(body, fld):
+            needs += _asset_needs(assets, bucket, str(v))
+    return needs
+
+
 def _flat(kind: str, root: Path, assets: Path) -> list[Item]:
     d = root / kind
     if not d.is_dir():
@@ -274,16 +335,7 @@ def _flat(kind: str, root: Path, assets: Path) -> list[Item]:
                 beside = d / str(val)
                 if beside.is_file():
                     files.append(_rel(beside))
-        needs: list[Ref] = []
-        for fld, target in REFS.get(kind, ()):
-            needs += [(target, str(v)) for v in _dig(body, fld)]
-        for fld, bucket in ASSET_REFS.get(kind, ()):
-            for v in _dig(body, fld):
-                val = str(v)
-                if val.endswith("/"):  # a shelf, not a file
-                    needs += _under(assets / bucket / val, assets)
-                else:
-                    needs.append((ASSET, f"{bucket}/{val}"))
+        needs = _needs(kind, body, assets)
         # an ad's material is a whole folder, and it is spelled as a path from the
         # PROJECT root rather than from the assets root the way every other reference is
         for fld in ("overlay.assets_dir", "native.assets_dir"):
@@ -294,6 +346,21 @@ def _flat(kind: str, root: Path, assets: Path) -> list[Item]:
         note = body.get("description", "")
         out.append(Item(kind, p.stem, tuple(files), tuple(dict.fromkeys(needs)),
                         note[:120] if isinstance(note, str) else ""))
+    return out
+
+
+def _nested(kind: str, root: Path, assets: Path) -> list[Item]:
+    """A kind one folder deeper than a flat one (see `NESTED_KINDS`): named
+    `<folder>/<stem>`."""
+    d = root / kind
+    if not d.is_dir():
+        return []
+    out = []
+    for sub in sorted(x for x in d.iterdir() if x.is_dir()):
+        for p in sorted(sub.glob("*.toml")):
+            body = _read(p)
+            out.append(Item(kind, f"{sub.name}/{p.stem}", (_rel(p),),
+                            tuple(dict.fromkeys(_needs(kind, body, assets)))))
     return out
 
 
@@ -332,6 +399,8 @@ def survey(root: Path | None = None, assets: Path | None = None) -> list[Item]:
     out: list[Item] = []
     for kind in FLAT_KINDS:
         out += _flat(kind, root, assets)
+    for kind in NESTED_KINDS:
+        out += _nested(kind, root, assets)
     out += _fandoms(root)
     out += _assets(assets)
     return out
@@ -528,6 +597,7 @@ def _within(path: str, name: str) -> str:
     content. Not the basename: a fandom holds `characters/x.toml` and `frames/x.toml`,
     and keying by basename would call one the other and miss a difference."""
     parts = list(Path(path).parts)
+    name = name.rsplit("/", 1)[-1]  # a nested kind's name ends in the file's stem
     for i, part in enumerate(parts):
         if part == name or Path(part).stem == name:
             return Path(*parts[i + 1:]).as_posix() or "."
@@ -559,6 +629,8 @@ def _retarget(path: str, old: str, new: str) -> str:
     """The same file path with the item's own name swapped in its stem or its folder."""
     p = Path(path)
     parts = list(p.parts)
+    if "/" in old:  # a nested kind: `mode/name`, and only the name is the file's
+        return p.with_name(new.rsplit("/", 1)[-1] + p.suffix).as_posix()
     for i, part in enumerate(parts):
         if part == old:  # a fandom: the folder names it
             parts[i] = new
@@ -658,7 +730,7 @@ def _patch(path: Path, kind: str, rename: str | None, final: dict[Ref, str],
     who = label or rename or path.stem
     for fld, target in REFS.get(kind, ()):
         for (k, old), new in moved.items():
-            if k == target and _poke(body, fld, old, new):
+            if k == target and _poke(body, fld, old, new, spec=target == "voices"):
                 hit = True
                 rep.repointed.append(f"{kind}/{who}: {fld} {old} -> {new}")
     # …and the files under `assets/`, which are named relative to their shelf: a
@@ -670,8 +742,13 @@ def _patch(path: Path, kind: str, rename: str | None, final: dict[Ref, str],
             if k != ASSET:
                 continue
             head = f"{bucket}/"
-            if old.startswith(head) and new.startswith(head) and \
-                    _poke(body, fld, old[len(head):], new[len(head):]):
+            if not (old.startswith(head) and new.startswith(head)):
+                continue
+            was, now = old[len(head):], new[len(head):]
+            # …by name, or by stem where the field names a picture without its
+            # extension (see `_asset_needs`)
+            if _poke(body, fld, was, now) or ("/" not in was and _poke(
+                    body, fld, PurePosixPath(was).stem, PurePosixPath(now).stem)):
                 hit = True
                 rep.repointed.append(f"{kind}/{who}: {fld} {old} -> {new}")
     if hit:

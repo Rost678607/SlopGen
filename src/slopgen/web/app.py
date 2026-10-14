@@ -282,9 +282,8 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
             # world's own, else the shipped default" (see fandom_script.catalogue).
             "shape_catalogues": sorted(store.shapes),
             "fits": ["exact", "close", "loose", "any"],
-            # the chat mode: its saved presets, the clients it can impersonate, and
-            # what the view does when the messages reach the bottom of the frame
-            "chats": sorted(store.chats),
+            # the chat mode: the clients it can impersonate, and what the view does
+            # when the messages reach the bottom of the frame
             "chat_skins": list(CHAT_SKINS),
             # the two picture bases this mode offers by name: round pictures for the
             # people, and wallpapers for the one client that has them. Plain folders
@@ -2754,7 +2753,8 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
         guard(slopgen)
         items = await run_in_threadpool(share.survey)
         return {"items": [_share_json(i) for i in items],
-                "kinds": list(share.FLAT_KINDS) + list(share.DIR_KINDS) + [share.ASSET]}
+                "kinds": list(share.FLAT_KINDS) + list(share.NESTED_KINDS)
+                         + list(share.DIR_KINDS) + [share.ASSET]}
 
     @app.post("/api/share/closure")
     async def share_closure(request: Request,

@@ -396,8 +396,6 @@ _FIELDS: list[dict] = [
     {"f": "cut_sensitivity", "kind": "range", "l": "web.f.cutrate", "min": 0, "max": 1,
      "step": 0.05, "modes": ["fandom"]},
     {"f": "frame_by_hand", "kind": "check", "l": "web.f.byhand", "modes": ["fandom"]},
-    {"f": "chat", "kind": "select", "l": "web.f.chatpreset", "opts": "chats",
-     "blank": True, "modes": ["chat"]},
     {"f": "chat_voice", "kind": "select", "l": "web.f.chatvoice", "opts": "chat_voices",
      "blank": True, "modes": ["chat"]},
     {"f": "skin", "kind": "select", "l": "web.f.skin", "opts": "chat_skins",
@@ -424,20 +422,20 @@ _FIELDS: list[dict] = [
 
 
 def manual_chat(b: dict) -> ChatConfig | None:
-    """The chat settings typed into the form rather than picked by name.
+    """The chat settings typed into the form.
 
-    The same arrangement `manual_ad` and `manual_visuals` are, and it exists for the
-    same reason: a series of alike videos names a saved preset, while a one-off is
-    typed in and belongs to nothing. A body that names a preset and changes nothing
-    returns None, so the run carries the NAME and keeps following that preset as it is
-    edited — which is most of the point of having presets."""
+    The browser does not name a saved `configs/chat/` file the way the terminal's
+    `--chat` does: it used to offer one in a dropdown, but the form sends every setting
+    it shows, so the typed values always won and the picked file never reached the run
+    — not even the parts the form has no field for. A series of alike videos is the
+    form's own presets now (`configs/form_presets/chat/`), and what the form sends is
+    the whole answer. A body with none of these fields gets the mode's defaults."""
     fields = set(ChatConfig.model_fields) - {"name"}
     touched = {k: b[k] for k in fields if k in b}
     if not touched:
         return None
-    base = b.get("chat_base")
     try:
-        return ChatConfig(name="", **{**(base if isinstance(base, dict) else {}), **touched})
+        return ChatConfig(name="", **touched)
     except ValidationError as e:
         raise HTTPException(status_code=422, detail=f"chat settings: {e.errors()[0]['msg']}")
 
@@ -446,15 +444,12 @@ def chat_params(store: ConfigStore, b: dict) -> RunParams:
     """A chat run, from the form's body.
 
     Shorter than the other three because almost everything this mode can be told is a
-    property of the PRESET rather than of the run (see `ChatConfig`): what is left
-    here is where the conversation comes from, who reads it, and the settings every
-    mode shares."""
-    preset = str(b.get("chat", ""))
-    if preset and preset not in store.chats:
-        raise HTTPException(status_code=404, detail=f"no chat preset named {preset!r}")
+    property of the chat settings rather than of the run (see `ChatConfig`): what is
+    left here is where the conversation comes from, who reads it, and the settings
+    every mode shares."""
     return RunParams(
         lang=str(b.get("lang", "ru")), content_type="", mode="chat",
-        chat=preset, manual_chat=manual_chat(b),
+        manual_chat=manual_chat(b),
         chat_from=str(b.get("chat_from", "")),
         chat_voice=str(b.get("chat_voice", "")),
         # A conversation is as long as it is: there is no length to buy, and a number

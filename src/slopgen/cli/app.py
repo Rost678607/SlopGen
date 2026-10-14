@@ -941,7 +941,7 @@ def usage(
 
 @app.command("share")
 def share_cmd(
-    what: list[str] = typer.Argument(None, help="things to pack, as kind/name (`presets/Утро`, `fandoms/Город`, `assets/music/спокойное/утро.m4a`); none = just list what there is"),
+    what: list[str] = typer.Argument(None, help="things to pack, as kind/name (`presets/Утро`, `fandoms/Город`, `form_presets/chat/Утро`, `assets/music/спокойное/утро.m4a`); none = just list what there is"),
     into: Optional[Path] = typer.Option(None, "--into", "-o", help="where to write the bundle (default: assets/exports/slopgen-<date>.zip)"),
     note: str = typer.Option("", "--note", help="a line for whoever opens it"),
     bare: bool = typer.Option(False, "--bare", help="pack ONLY what was named, without what it needs — a bundle that will arrive with dangling names"),
@@ -981,8 +981,11 @@ def share_cmd(
             picked.append(have[spec])
             continue
         kin, _, nm = spec.partition("/")
-        matches = [i.ref for i in items if i.kind == kin and not nm]
-        if matches:  # a whole kind, spelled `presets/` or `presets`
+        nm = nm.rstrip("/")
+        matches = [i.ref for i in items if i.kind == kin
+                   and (not nm or i.name.startswith(f"{nm}/"))]
+        if matches:  # a whole kind, spelled `presets/` or `presets` — or one mode's
+            # shelf of a nested kind, `form_presets/chat`
             picked += matches
             continue
         rprint(f"[red]no such thing: {spec}[/red]")

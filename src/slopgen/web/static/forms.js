@@ -1564,21 +1564,12 @@ const FORMS = {
       ],
       "title": "web.card.chat",
       "rows": [
-        [
-          "row2",
-          {
-            "f": "lang",
-            "kind": "select",
-            "cls": "f-lang",
-            "l": "web.f.lang"
-          },
-          {
-            "f": "chat",
-            "kind": "select",
-            "cls": "f-chatpreset",
-            "l": "web.f.chatpreset"
-          }
-        ],
+        {
+          "f": "lang",
+          "kind": "select",
+          "cls": "f-lang",
+          "l": "web.f.lang"
+        },
         {
           "f": "source",
           "kind": "select",

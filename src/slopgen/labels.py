@@ -3362,14 +3362,13 @@ EN.update({
 
 # --- the chat mode --------------------------------------------------------
 # A conversation read aloud and drawn in a messenger's own interface. Its settings are
-# mostly a saved preset (`config.models.ChatConfig`), so what is named here is the
-# handful a single video changes plus the words for the three scroll answers.
+# one `config.models.ChatConfig`, so what is named here is the handful of its fields
+# the form shows plus the words for the three scroll answers.
 RU.update({
     "web.mode.chat": "переписка",
     "web.card.chat": "переписка",
     "web.card.chatlook": "как это нарисовано",
     "web.card.chatclock": "как это появляется",
-    "web.f.chatpreset": "набор настроек",
     "web.f.chatvoice": "кто читает",
     "web.f.chatfrom": "откуда брать",
     "web.f.skin": "интерфейс",
@@ -3400,7 +3399,6 @@ EN.update({
     "web.card.chat": "the conversation",
     "web.card.chatlook": "how it is drawn",
     "web.card.chatclock": "how it arrives",
-    "web.f.chatpreset": "settings preset",
     "web.f.chatvoice": "who reads it",
     "web.f.chatfrom": "where from",
     "web.f.skin": "interface",
@@ -4143,6 +4141,7 @@ RU.update({
     "js.preset.deleted": "пресет удалён:",
     "js.preset.nothing": "нет такого пресета:",
     "js.preset.confirm": "ещё раз — и удалю",
+    "js.share.kind.formpresets": "Пресеты формы",
 })
 EN.update({
     "web.preset.pick": "this mode's preset",
@@ -4157,4 +4156,5 @@ EN.update({
     "js.preset.deleted": "preset deleted:",
     "js.preset.nothing": "no such preset:",
     "js.preset.confirm": "once more and it is gone",
+    "js.share.kind.formpresets": "Form presets",
 })

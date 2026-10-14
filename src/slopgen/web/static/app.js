@@ -3786,8 +3786,6 @@ async function loadOptions() {
   // The chat mode's own lists. `word` is what turns `roll`/`jump`/`clear` into words,
   // so the scroll select gets its note the way the invent slider does: a line under
   // the control that says what the chosen answer actually does.
-  fillAll(".f-chatpreset", opts.chats);
-  document.querySelectorAll(".f-chatpreset").forEach((el) => fill(el, opts.chats, true));
   document.querySelectorAll(".f-chatvoice").forEach(
     (el) => fill(el, opts.chat_voices || [], true, "w.cards.own"));
   document.querySelectorAll(".f-chatsrc").forEach(
@@ -4091,7 +4089,7 @@ $("#infoform").onsubmit = (e) => submitRun(e, "info", (f) => ({
 function chatBody(form) {
   const f = new FormData(form);
   return {
-  lang: f.get("lang"), chat: f.get("chat") || "", title: f.get("title"),
+  lang: f.get("lang"), title: f.get("title"),
   chat_voice: f.get("chat_voice") || "", want: +(f.get("want") || 1),
   source: f.get("source") || "manual", chat_from: f.get("chat_from") || "",
   skin: f.get("skin"), scroll: f.get("scroll"),
@@ -5935,6 +5933,7 @@ let SH = { items: [], picked: new Set(), open: new Set(), plan: null, token: nul
 // named here, and anything unaccounted for falls back to its folder.
 const SH_KINDS = {
   content: "js.content-type", chat: "js.chatroom", shapes: "js.share.kind.shapes",
+  form_presets: "js.share.kind.formpresets",
   personas: "js.share.kind.personas", assets: "js.share.kind.assets",
 };
 const shName = (kind) => {
