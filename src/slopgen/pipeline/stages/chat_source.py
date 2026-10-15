@@ -57,7 +57,8 @@ def pick(ctx: AppContext, name: str) -> Path:
     still be under it: a run is not a place to read `../../.env` from."""
     root = exports_root(ctx).resolve()
     at = (root / name).resolve()
-    if not str(at).startswith(str(root)) or not at.is_file():
+    # a folder too: an HTML export is one (see `chat.exports.entries`)
+    if root not in at.parents or not (at.is_file() or at.is_dir()):
         raise ValueError(f"there is no export called {name!r} in assets/{EXPORTS_DIR}/")
     return at
 

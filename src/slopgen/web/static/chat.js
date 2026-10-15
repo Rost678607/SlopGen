@@ -958,6 +958,7 @@ async function loadExports() {
       f.format ? ` data-exp="${esc(f.name)}"` : ""}>
       <b>${esc(f.name)}</b>
       <span class="fmt">${esc(f.format || lab("web.chat.exports.unknown", "?"))}</span>
+      ${f.chats > 1 ? `<span class="dim">${f.chats} ${esc(lab("web.chat.exports.chats", "чатов"))}</span>` : ""}
       <span class="grow"></span>
       <span class="dim">${Math.max(1, Math.round(f.size / 1024))} KB</span>
     </div>`).join("")
@@ -987,30 +988,49 @@ cq("#chat-exp-list").addEventListener("click", async (e) => {
                   `&name=${encodeURIComponent(chatExpFile)}`);
   } catch (err) { return say(err.message, true); }
   chatExpPieces = d.pieces;
+  // One chat is simply opened: there is nothing to choose between.
+  if (chatExpPieces.length === 1) return openPick("export", chatExpFile, chatExpPieces[0].p);
   await loadExports();
+  cq("#chat-exp-pieces").innerHTML = "";  // a fresh list: no filter left from the last one
+  renderExpPieces();
+});
+
+// The chats of a multi-chat export, one row each, opened by clicking — an account
+// export is forty chats, and ticking boxes to then open only the first ticked one
+// was a form where a list belonged. The filter is for the same forty.
+function renderExpPieces() {
   const box = cq("#chat-exp-pieces");
-  box.innerHTML = chatExpPieces.length ? chatExpPieces.map((p) => `
-    <label class="exp-piece">
-      <input type="checkbox" data-piece="${p.p}" checked>
+  const q = (cq("#chat-exp-find") && cq("#chat-exp-find").value || "").trim().toLowerCase();
+  const shown = chatExpPieces.filter((p) => !q ||
+    `${p.title} ${p.who.join(" ")}`.toLowerCase().includes(q));
+  const find = chatExpPieces.length > 6
+    ? `<input id="chat-exp-find" type="search" value="${esc(q)}" placeholder="${
+        esc(lab("web.chat.exports.find", "найти чат"))}">` : "";
+  if (!cq("#chat-exp-find") || chatExpPieces.length <= 6) box.innerHTML = find + `<div id="chat-exp-rows"></div>`;
+  cq("#chat-exp-rows").innerHTML = chatExpPieces.length ? shown.map((p) => `
+    <div class="exp-piece" data-piece="${p.p}">
       <span class="what">
         <b>${esc(p.title || lab("web.chat.untitled", "без названия"))} · ${p.lines}</b>
         <i>${esc(p.who.join(", "))}</i>
         <i>${esc(p.first)}</i>
       </span>
-    </label>`).join("")
+    </div>`).join("")
     : `<p class="dim">${esc(lab("web.chat.exports.empty", ""))}</p>`;
-  cq("#chat-exp-go").hidden = !chatExpPieces.length;
+  cq("#chat-exp-go").hidden = true;
+}
+
+cq("#chat-exp-pieces").addEventListener("input", (e) => {
+  if (e.target.id === "chat-exp-find") renderExpPieces();
 });
 
 // An export's pieces are opened and chosen from like everything else. Taking a whole
 // one unread was the same mistake in a smaller coat: an exported chat is a year of
 // somebody's messages and the video wants nine of them.
-cq("#chat-exp-go").onclick = async () => {
-  const first = [...cq("#chat-exp-pieces").querySelectorAll("[data-piece]")]
-    .filter((b) => b.checked).map((b) => +b.dataset.piece)[0];
-  if (first === undefined || !CHAT) return;
-  await openPick("export", chatExpFile, first);
-};
+cq("#chat-exp-pieces").addEventListener("click", async (e) => {
+  const row = e.target.closest("[data-piece]");
+  if (!row || !CHAT) return;
+  await openPick("export", chatExpFile, +row.dataset.piece);
+});
 
 // -- the live sources ------------------------------------------------------
 //

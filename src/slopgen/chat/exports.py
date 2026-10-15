@@ -47,6 +47,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -146,11 +147,23 @@ class Piece:
 
 
 def read(path: Path) -> list[Piece]:
-    """Everything in one export file, as pieces of conversation.
+    """Everything in one export, as pieces of conversation.
 
     One piece for a messenger export (a chat is a chat) and one for a reddit thread.
-    A list all the same, because a format that one day holds several — a folder of
-    channels, a multireddit — should not change the shape of this."""
+    A list all the same, because a whole-account export holds forty.
+
+    `path` may be a FOLDER, which is what an HTML export is: Telegram writes a chat as
+    `messages.html`, `messages2.html`, … a thousand messages to a page, and a whole
+    account as `chats/chat_NN/` one folder per chat. A page on its own is a third of
+    a conversation, so a page is read as the folder it is in (see :func:`entries`)."""
+    if path.is_dir() or _HTML_PAGE.fullmatch(path.name):
+        folder = path if path.is_dir() else path.parent
+        pieces = _html_folder(folder)
+        for p in pieces:
+            p.source = p.source or folder.name
+        log.info("export %s: telegram_html, %d piece(s), %d line(s)", folder.name,
+                 len(pieces), sum(len(p.lines) for p in pieces))
+        return pieces
     raw = path.read_bytes()
     kind = sniff(raw)
     if kind is None:
@@ -190,7 +203,10 @@ def sniff(raw: bytes) -> str | None:
     try:
         data = json.loads(raw.decode("utf-8", errors="replace"))
     except ValueError:
-        return None
+        # Most likely not broken but CUT: a caller sniffing a list of files reads the
+        # first megabyte of each, and a whole-account export is ten times that. So
+        # the shape is read off the keys at the head instead of off a parse.
+        return _sniff_head(raw[:1 << 20].decode("utf-8", errors="replace"))
     if isinstance(data, list):
         # reddit hands back a pair of Listings: the post, then its comments
         if any(isinstance(x, dict) and x.get("kind") == "Listing" for x in data):
@@ -208,6 +224,154 @@ def sniff(raw: bytes) -> str | None:
     if isinstance(data.get("chats"), dict):
         return "telegram_json"
     return None
+
+
+def _sniff_head(text: str) -> str | None:
+    head = text.lstrip("\ufeff \t\r\n")
+    if head.startswith("["):
+        return "reddit_json" if re.search(r'"kind"\s*:\s*"Listing"', head) else None
+    if not head.startswith("{"):
+        return None
+    if re.search(r'"messages"\s*:\s*\[', head):
+        return ("discord_json" if re.search(r'"(guild|channel)"\s*:\s*\{', head)
+                else "telegram_json")
+    if re.search(r'"chats"\s*:\s*\{', head):
+        return "telegram_json"
+    if re.search(r'"kind"\s*:\s*"Listing"', head):
+        return "reddit_json"
+    return None
+
+
+# --------------------------------------------------------------------------
+# what the base holds
+# --------------------------------------------------------------------------
+
+# One page of Telegram's HTML export: `messages.html`, `messages2.html`, …
+_HTML_PAGE = re.compile(r"messages(\d*)\.html")
+
+
+def entries(root: Path) -> list[dict]:
+    """What the exports base holds, ONE ROW PER EXPORT and not per file.
+
+    An unpacked Telegram export is a tree: a whole account written both ways is a
+    `result.json` beside `chats/chat_01/messages.html`, `messages2.html`, … for forty
+    chats, with photos and stickers under each. Listed file by file it is a hundred
+    rows, a chat torn into its pages, and the same chat twice — so it is grouped here
+    into what a person would call it:
+
+    - a `result.json` (or any export JSON) inside a folder stands for that whole
+      folder, and the HTML under it is not listed again — the JSON says more: sticker
+      emoji, custom emoji, sizes and lengths the HTML does not carry;
+    - HTML pages are grouped by the chat folder they sit in, and the `chats/chat_NN/`
+      folders of an account export by the account;
+    - anything else at the top of the base is listed as itself, readable or not,
+      because a file somebody put there and that cannot be read is worth being told.
+
+    Each row: `name` (what :func:`read` is handed, relative to `root`), `format`,
+    `size` in bytes, and `chats` — how many conversations it holds, where that is
+    cheap to know."""
+    if not root.is_dir():
+        return []
+    files = sorted(p for p in root.rglob("*") if p.is_file()
+                   and not any(x.startswith(".") for x in p.relative_to(root).parts))
+    claimed: list[Path] = []
+    out: list[dict] = []
+
+    def under(p: Path) -> bool:
+        return any(c in p.parents for c in claimed)
+
+    for p in sorted((f for f in files if f.suffix.lower() == ".json"),
+                    key=lambda f: len(f.parts)):
+        if under(p):
+            continue
+        kind = _sniff_file(p)
+        if kind is None:
+            continue
+        if p.parent != root:
+            claimed.append(p.parent)
+        out.append({"name": p.relative_to(root).as_posix(), "format": kind,
+                    "size": p.stat().st_size, "chats": _json_chats(p, kind)})
+    groups: dict[Path, dict] = {}
+    for p in files:
+        if not _HTML_PAGE.fullmatch(p.name) or under(p):
+            continue
+        chat = p.parent
+        account = chat.parent.parent if chat.parent.name == "chats" else None
+        key = account if account is not None and account != root.parent else chat
+        g = groups.setdefault(key, {"chats": set(), "size": 0, "first": p})
+        g["chats"].add(chat)
+        g["size"] += p.stat().st_size
+    for key, g in groups.items():
+        # a chat dropped loose at the top of the base is named by its first page,
+        # since the base itself has no name to give it
+        name = (g["first"].relative_to(root).as_posix() if key == root
+                else key.relative_to(root).as_posix())
+        out.append({"name": name, "format": "telegram_html", "size": g["size"],
+                    "chats": len(g["chats"])})
+        claimed.append(key)
+    for p in files:
+        if p.parent != root or under(p) or p.suffix.lower() == ".json" \
+                or _HTML_PAGE.fullmatch(p.name):
+            continue
+        out.append({"name": p.name, "format": _sniff_file(p) or "", "size": p.stat().st_size,
+                    "chats": 0})
+    out.sort(key=lambda e: e["name"].casefold())
+    return out
+
+
+def _sniff_file(p: Path) -> str | None:
+    try:
+        with open(p, "rb") as f:
+            return sniff(f.read(1 << 20))
+    except OSError:
+        return None
+
+
+def _json_chats(p: Path, kind: str) -> int:
+    if kind != "telegram_json":
+        return 1
+    try:
+        return _count_chats(str(p), p.stat().st_mtime)
+    except OSError:
+        return 0
+
+
+@lru_cache(maxsize=32)
+def _count_chats(path_s: str, mtime: float) -> int:
+    """How many chats a Telegram JSON holds — parsed once per version of the file,
+    because the list is asked for every time the sheet opens."""
+    try:
+        data = json.loads(Path(path_s).read_bytes().decode("utf-8", errors="replace"))
+    except (OSError, ValueError):
+        return 0
+    # counted by the reader itself, so the number on the row is the number of chats
+    # the row opens into — a chat of nothing but joins and calls is not one of them
+    return (len(telegram_json(data, Path(path_s).parent)) if isinstance(data, dict)
+            else 0)
+
+
+def _html_folder(folder: Path) -> list[Piece]:
+    """An HTML export as a folder: an account (`chats/chat_NN/`), or one chat."""
+    chats = folder / "chats"
+    if chats.is_dir():
+        out = []
+        for d in sorted(x for x in chats.iterdir() if x.is_dir()):
+            out.extend(_html_chat(d))
+        return out
+    return _html_chat(folder)
+
+
+def _html_chat(folder: Path) -> list[Piece]:
+    """One chat out of its pages, in order — `messages.html` is page 1, and the
+    rest are numbered — read as ONE conversation, so a reply on page 3 to a line on
+    page 2 still finds it."""
+    pages = []
+    for p in folder.iterdir():
+        hit = _HTML_PAGE.fullmatch(p.name)
+        if hit and p.is_file():
+            pages.append((int(hit.group(1) or 1), p))
+    texts = [p.read_bytes().decode("utf-8", errors="replace") for _n, p in sorted(pages)]
+    return telegram_html_pages(texts, folder) if texts else []
 
 
 # --------------------------------------------------------------------------
@@ -366,18 +530,25 @@ _HTML_KINDS = (("sticker_wrap", "sticker"), ("animated_wrap", "animation"),
 
 
 def telegram_html(text: str, base: Path | None = None) -> list[Piece]:
-    """Telegram Desktop's `messages.html`, including the `messages2.html` beside it.
+    """One page of Telegram Desktop's HTML export, as a conversation."""
+    return telegram_html_pages([text], base)
+
+
+def telegram_html_pages(texts: list[str], base: Path | None = None) -> list[Piece]:
+    """The pages of one chat — `messages.html`, `messages2.html`, … — as ONE
+    conversation.
 
     A run of messages from one person carries the author on the FIRST only and
     `joined` on the rest, which is the export's own way of saying what the bubbles
     already say. So the author is carried forward, or a conversation comes back with
-    nine tenths of its lines from nobody."""
-    title = _HTML_TITLE.search(text)
+    nine tenths of its lines from nobody — and carried across the page break too,
+    because a page ends wherever the thousandth message falls."""
+    title = _HTML_TITLE.search(texts[0]) if texts else None
     piece = Piece(title=_plain(title.group("title")) if title else "")
     ids: dict[object, int] = {}
     pending: list[tuple[int, object]] = []
     last_who = ""
-    for m in _HTML_MSG.finditer(text):
+    for m in (m for text in texts for m in _HTML_MSG.finditer(text)):
         body = m.group("body")
         who_m = _HTML_FROM.search(body)
         who = _plain(who_m.group("who")) if who_m else ""

@@ -447,26 +447,9 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
         guard(slopgen)
         cp, i, job = open_job(run_or_404(run_id), video)
         root = chat_source.exports_root(context(cp))
-        out = []
-        for at in sorted(root.rglob("*") if root.is_dir() else []):
-            # dotfiles are never exports: the `.gitkeep` that holds the folder in git
-            # is the one that would otherwise be listed as unreadable on every machine
-            if not at.is_file() or at.name.startswith("."):
-                continue
-            nested = len(at.relative_to(root).parts) > 1
-            # An unpacked export is a folder of a thousand photos beside one
-            # `result.json`; inside a folder only what reads as an export is listed,
-            # or the list is the photos. The pictures are what the export POINTS at.
-            if nested and at.suffix.lower() not in (".json", ".html"):
-                continue
-            try:
-                kind = exports.sniff(at.read_bytes()[:1 << 20])
-            except OSError:
-                continue
-            if nested and kind is None:
-                continue
-            out.append({"name": at.relative_to(root).as_posix(),
-                        "format": kind or "", "size": at.stat().st_size})
+        # one row per EXPORT, not per file: an unpacked account is a hundred files
+        # and forty chats torn into pages (see `chat.exports.entries`)
+        out = await run_in_threadpool(exports.entries, root)
         return {"exports": out}
 
     @app.post("/api/runs/{run_id}/chat/exports")
@@ -496,8 +479,8 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
                 found = await run_in_threadpool(_unzip_export, body, root, Path(name).stem)
             except ValueError as e:
                 raise HTTPException(status_code=422, detail=str(e))
-            return {"name": found, "size": len(body),
-                    "format": exports.sniff((root / found).read_bytes()[:1 << 20]) or ""}
+            row = next(e for e in exports.entries(root) if e["name"] == found)
+            return {"name": found, "size": len(body), "format": row["format"]}
         if exports.sniff(body[:1 << 20]) is None:
             raise HTTPException(
                 status_code=422,
@@ -1062,11 +1045,12 @@ def _unzip_export(body: bytes, root: Path, stem: str) -> str:
         with zf.open(info) as src, open(at, "wb") as out:
             while chunk := src.read(1 << 20):
                 out.write(chunk)
-    found = sorted((p for p in dest.rglob("*") if p.suffix.lower() in (".json", ".html")),
-                   key=lambda p: (len(p.parts), p.name != "result.json", p.name))
-    for p in found:
-        if exports.sniff(p.read_bytes()[:1 << 20]) is not None:
-            return p.relative_to(root).as_posix()
+    # whatever the base now lists inside the new folder — the folder itself for an
+    # HTML export, its `result.json` for a JSON one
+    inside_name = dest.relative_to(root).as_posix()
+    for e in exports.entries(root):
+        if e["format"] and (e["name"] == inside_name or e["name"].startswith(inside_name + "/")):
+            return e["name"]
     import shutil
 
     shutil.rmtree(dest, ignore_errors=True)
