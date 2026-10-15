@@ -961,6 +961,8 @@ async function loadExports() {
       ${f.chats > 1 ? `<span class="dim">${f.chats} ${esc(lab("web.chat.exports.chats", "чатов"))}</span>` : ""}
       <span class="grow"></span>
       <span class="dim">${Math.max(1, Math.round(f.size / 1024))} KB</span>
+      <button class="ghost exp-del" data-del="${esc(f.unit)}" title="${
+        esc(lab("web.cfg.exports.del", ""))}">✕</button>
     </div>`).join("")
     : `<p class="dim">${esc(lab("web.chat.exports.none", ""))}</p>`;
 }
@@ -972,13 +974,23 @@ cq("#chat-exp-file").onchange = async (e) => {
   body.append("file", file);
   try {
     const out = await api(`/api/runs/${CHAT.id}/chat/exports`, { method: "POST", body });
-    say(`${out.name} · ${out.format}`);
+    say(out.already ? `${out.name} — ${lab("web.cfg.exports.already")}` : `${out.name} · ${out.format}`);
   } catch (err) { say(err.message, true); }
   e.target.value = "";
   await loadExports();
 };
 
 cq("#chat-exp-list").addEventListener("click", async (e) => {
+  // the ✕ first, so that removing an export does not also open it
+  const del = e.target.closest("[data-del]");
+  if (del) {
+    if (await dropChatExport(del, del.dataset.del)) {
+      if (chatExpFile === del.dataset.del || chatExpFile.startsWith(del.dataset.del + "/"))
+        chatExpFile = "";
+      loadExports();
+    }
+    return;
+  }
   const row = e.target.closest("[data-exp]");
   if (!row || !CHAT) return;
   chatExpFile = row.dataset.exp;

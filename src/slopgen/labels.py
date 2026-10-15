@@ -3610,6 +3610,28 @@ RU.update({
     "web.chat.media.drop": "убрать вложение",
     "web.chat.exports.chats": "чатов",
     "web.chat.exports.find": "найти чат",
+    "js.chat-exports": "выгрузки чатов",
+    "web.cfg.exports": "выгрузки чатов",
+    "web.cfg.exports.note": "Выгрузки из клиентов, из которых берутся переписки. Размер — "
+                            "вместе с фото и стикерами рядом. Удаление убирает папку "
+                            "выгрузки целиком; уже сделанные ролики не пострадают — "
+                            "взятые из неё сообщения хранят свои вложения отдельно.",
+    "web.cfg.exports.del": "удалить выгрузку",
+    "web.cfg.exports.sure": "нажми ещё раз, чтобы удалить",
+    "web.cfg.exports.gone": "удалено",
+    "web.cfg.exports.already": "эта выгрузка уже в базе",
+    "web.cfg.exports.uploading": "загружаю…",
+    "web.cfg.media": "вложения сообщений",
+    "web.cfg.media.note": "Картинки, стикеры и голосовые сообщений, взятых в ролики. "
+                          "Неиспользуемые — те, на которые не ссылается ни один "
+                          "сохранённый прогон: просмотренные и не взятые, или из "
+                          "удалённых прогонов.",
+    "web.cfg.media.files": "файлов",
+    "web.cfg.media.look": "найти неиспользуемое",
+    "web.cfg.media.clean": "убрать неиспользуемое",
+    "web.cfg.media.allused": "всё используется — убирать нечего",
+    "web.cfg.media.sure": "нажми ещё раз, чтобы удалить неиспользуемые вложения",
+    "web.cfg.media.cleaned": "убрано",
     "web.chat.exports.add": "＋ добавить файл в базу",
     "web.chat.exports.take": "добавить выбранное",
     "web.chat.exports.none": "База пуста. Положи сюда выгрузку из клиента.",
@@ -3635,6 +3657,28 @@ EN.update({
     "web.chat.media.drop": "remove the attachment",
     "web.chat.exports.chats": "chats",
     "web.chat.exports.find": "find a chat",
+    "js.chat-exports": "chat exports",
+    "web.cfg.exports": "chat exports",
+    "web.cfg.exports.note": "The exports from the clients conversations are taken from. "
+                            "The size includes the photos and stickers beside each. "
+                            "Removing one removes its whole folder; videos already made "
+                            "do not suffer — the messages taken from it keep their "
+                            "attachments separately.",
+    "web.cfg.exports.del": "remove this export",
+    "web.cfg.exports.sure": "press again to remove",
+    "web.cfg.exports.gone": "removed",
+    "web.cfg.exports.already": "this export is already in the base",
+    "web.cfg.exports.uploading": "uploading…",
+    "web.cfg.media": "message attachments",
+    "web.cfg.media.note": "Pictures, stickers and voice messages of the messages taken "
+                          "into videos. Unused ones are those no saved run refers to: "
+                          "looked at and not taken, or from runs since deleted.",
+    "web.cfg.media.files": "files",
+    "web.cfg.media.look": "find unused",
+    "web.cfg.media.clean": "remove unused",
+    "web.cfg.media.allused": "everything is in use — nothing to remove",
+    "web.cfg.media.sure": "press again to remove the unused attachments",
+    "web.cfg.media.cleaned": "removed",
     "web.chat.exports.add": "＋ put a file in the base",
     "web.chat.exports.take": "add the chosen ones",
     "web.chat.exports.none": "The base is empty. Drop an export from a client in here.",

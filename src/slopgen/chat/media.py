@@ -605,3 +605,36 @@ def waveform(path: Path, bars: int) -> tuple[float, ...]:
         return tuple([0.3] * bars)
     return _wave(str(path), mtime, bars)
 
+
+# --------------------------------------------------------------------------
+# keeping the base tidy
+# --------------------------------------------------------------------------
+
+
+def stem(name: str) -> str:
+    """The part of a stored name every file made from it shares: `m_ab12.ogg` and the
+    `m_ab12.voice.m4a` cut out of it are one thing, and go or stay together."""
+    return name.split(".", 1)[0]
+
+
+def unused(base: Path, documents) -> list[Path]:
+    """The files in the base nothing refers to any more.
+
+    `documents` is the text of every saved job there is — each run's
+    `checkpoint.json` — and a file is in use when its stem appears in one followed by
+    a dot, which is how every name here is spelled. Text and not parsed jobs, because
+    a job written by an older version of this program is still a job whose pictures
+    must not vanish, and a search for a name does not care which version wrote it."""
+    if not base.is_dir():
+        return []
+    files = [p for p in base.iterdir() if p.is_file() and not p.name.startswith(".")]
+    wanted = {stem(p.name) for p in files}
+    used: set[str] = set()
+    for text in documents:
+        for s in wanted - used:
+            if f"{s}." in text:
+                used.add(s)
+        if used == wanted:
+            break
+    return sorted(p for p in files if stem(p.name) not in used)
+

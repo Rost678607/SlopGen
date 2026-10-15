@@ -268,8 +268,9 @@ def entries(root: Path) -> list[dict]:
       because a file somebody put there and that cannot be read is worth being told.
 
     Each row: `name` (what :func:`read` is handed, relative to `root`), `format`,
-    `size` in bytes, and `chats` — how many conversations it holds, where that is
-    cheap to know."""
+    `size` in bytes, `chats` — how many conversations it holds — and `unit`: what
+    removing this export removes, which is its whole folder (the photos and stickers
+    with it) and never only the file the row is named after."""
     if not root.is_dir():
         return []
     files = sorted(p for p in root.rglob("*") if p.is_file()
@@ -290,7 +291,8 @@ def entries(root: Path) -> list[dict]:
         if p.parent != root:
             claimed.append(p.parent)
         out.append({"name": p.relative_to(root).as_posix(), "format": kind,
-                    "size": p.stat().st_size, "chats": _json_chats(p, kind)})
+                    "size": p.stat().st_size, "chats": _json_chats(p, kind),
+                    "unit": (p.parent if p.parent != root else p).relative_to(root).as_posix()})
     groups: dict[Path, dict] = {}
     for p in files:
         if not _HTML_PAGE.fullmatch(p.name) or under(p):
@@ -307,16 +309,23 @@ def entries(root: Path) -> list[dict]:
         name = (g["first"].relative_to(root).as_posix() if key == root
                 else key.relative_to(root).as_posix())
         out.append({"name": name, "format": "telegram_html", "size": g["size"],
-                    "chats": len(g["chats"])})
+                    "chats": len(g["chats"]), "unit": name})
         claimed.append(key)
     for p in files:
         if p.parent != root or under(p) or p.suffix.lower() == ".json" \
                 or _HTML_PAGE.fullmatch(p.name):
             continue
         out.append({"name": p.name, "format": _sniff_file(p) or "", "size": p.stat().st_size,
-                    "chats": 0})
+                    "chats": 0, "unit": p.name})
     out.sort(key=lambda e: e["name"].casefold())
     return out
+
+
+def disk_size(at: Path) -> int:
+    """What a file or a folder takes on disk, all of it."""
+    if at.is_file():
+        return at.stat().st_size
+    return sum(p.stat().st_size for p in at.rglob("*") if p.is_file())
 
 
 def _sniff_file(p: Path) -> str | None:

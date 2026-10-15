@@ -1465,16 +1465,21 @@ button.danger{border-color:var(--bad);color:var(--bad)}
   border-radius:10px;padding:16px;width:min(720px,94vw);max-height:88vh;overflow:auto;
   display:grid;gap:10px;box-shadow:0 12px 40px #000a}
 #chat-exp-box h3{margin:0;font-size:15px}
-#chat-exp-box .upload{display:inline-flex;align-items:center;gap:8px;cursor:pointer;
+#chat-exp-box .upload,#cfg-chatexports .upload{display:inline-flex;align-items:center;gap:8px;cursor:pointer;
   border:1px dashed var(--line);border-radius:7px;padding:8px 12px;font-size:13px;
   color:var(--dim);justify-self:start}
-#chat-exp-box .upload:hover{border-color:var(--accent);color:var(--ink)}
+#chat-exp-box .upload:hover,#cfg-chatexports .upload:hover{border-color:var(--accent);color:var(--ink)}
 #chat-exp-list,#chat-exp-pieces{display:grid;gap:5px}
 .exp-file{display:flex;gap:8px;align-items:center;font-size:13px;cursor:pointer;
   border:1px solid var(--line);border-radius:7px;padding:6px 9px}
 .exp-file.on{border-color:var(--accent)}
 .exp-file .fmt{font:11px/1 var(--mono);color:var(--dim)}
 .exp-file.bad{opacity:.55;cursor:default}
+.exp-del{padding:1px 7px;font-size:12px;line-height:1.4}
+.exp-del:hover,.exp-del.armed{border-color:var(--bad);color:var(--bad)}
+.exp-del.armed{background:color-mix(in srgb,var(--bad) 18%,var(--panel))}
+#cx-list{display:grid;gap:5px;margin-top:8px}
+#cx-clean.armed{background:color-mix(in srgb,var(--bad) 18%,var(--panel))}
 .exp-piece{display:flex;gap:9px;align-items:flex-start;font-size:13px;cursor:pointer;
   border:1px solid var(--line);border-radius:7px;padding:7px 9px}
 .exp-piece:hover{border-color:var(--accent)}

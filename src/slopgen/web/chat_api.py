@@ -462,33 +462,139 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
         operator's evening. Refused if nothing in it can be read: a base of files that
         turn out not to be exports is a base you have to remember things about."""
         guard(slopgen)
-        run = run_or_404(run_id)
-        cp, _i, _job = open_job(run, 0)
+        open_job(run_or_404(run_id), 0)
+        return await store_export(file)
+
+    # -- the exports base as a thing of its own, for the configuration panel --
+    #
+    # The base belongs to the machine and not to a run, so it is managed where the
+    # machine's other holdings are (Configuration → chat exports), by routes that need
+    # no run. The room's own list is the same list, and its ✕ the same delete.
+
+    def exports_dir() -> Path:
+        return store.global_cfg.paths.assets / chat_source.EXPORTS_DIR
+
+    async def store_export(file: UploadFile) -> dict:
         name = Path(str(file.filename or "export")).name
         if not name or name.startswith("."):
             raise HTTPException(status_code=422, detail="that file has no usable name")
-        root = chat_source.exports_root(context(cp))
+        root = exports_dir()
         root.mkdir(parents=True, exist_ok=True)
-        at = root / name
         body = await file.read()
         if name.lower().endswith(".zip"):
             # The export WITH its pictures, which is a folder and so arrives zipped.
             # Unpacked into a folder of its own beside the others, and answered with
-            # the export file found inside it.
+            # the export found inside it — or with the one already there, when this
+            # very zip was handed over before.
             try:
-                found = await run_in_threadpool(_unzip_export, body, root, Path(name).stem)
+                found, again = await run_in_threadpool(_unzip_export, body, root,
+                                                       Path(name).stem)
             except ValueError as e:
                 raise HTTPException(status_code=422, detail=str(e))
             row = next(e for e in exports.entries(root) if e["name"] == found)
-            return {"name": found, "size": len(body), "format": row["format"]}
+            return {"name": found, "size": len(body), "format": row["format"],
+                    "already": again}
         if exports.sniff(body[:1 << 20]) is None:
             raise HTTPException(
                 status_code=422,
                 detail=f"{name} is not an export this reads: expected Telegram's JSON "
                        "or HTML, a DiscordChatExporter JSON, or a reddit thread's .json")
+        at = root / name
+        again = at.is_file() and at.read_bytes() == body
         at.write_bytes(body)
         return {"name": name, "size": len(body),
-                "format": exports.sniff(body[:1 << 20]) or ""}
+                "format": exports.sniff(body[:1 << 20]) or "", "already": again}
+
+    @app.get("/api/chat/exports")
+    async def all_exports(slopgen: str | None = Cookie(default=None)) -> dict:
+        """The base, one export to a row, with what each takes on disk — the photos
+        and stickers beside it included, since that is what removing it frees — and
+        the media base the taken messages' pictures live in."""
+        guard(slopgen)
+        root = exports_dir()
+
+        def look() -> dict:
+            rows = exports.entries(root)
+            for r in rows:
+                r["disk"] = exports.disk_size(root / r["unit"])
+            base = media_base()
+            files = [p for p in base.iterdir() if p.is_file()
+                     and not p.name.startswith(".")] if base.is_dir() else []
+            return {"exports": rows,
+                    "media": {"files": len(files), "size": sum(p.stat().st_size for p in files)}}
+
+        return await run_in_threadpool(look)
+
+    @app.post("/api/chat/exports")
+    async def add_any_export(file: UploadFile,
+                             slopgen: str | None = Cookie(default=None)) -> dict:
+        guard(slopgen)
+        return await store_export(file)
+
+    @app.delete("/api/chat/exports")
+    async def drop_export(unit: str, slopgen: str | None = Cookie(default=None)) -> dict:
+        """Remove one export — its whole folder, pictures and all.
+
+        What the videos already made from it keep: the messages taken out of it had
+        their pictures copied into the media base when they were taken, so nothing
+        that was made goes blank. `unit` is resolved inside the base and nowhere else."""
+        guard(slopgen)
+        root = exports_dir().resolve()
+        at = (root / unit).resolve()
+        if root not in at.parents or not at.exists():
+            raise HTTPException(status_code=404, detail=f"no export {unit!r} in the base")
+
+        def remove() -> int:
+            import shutil
+
+            freed = exports.disk_size(at)
+            if at.is_dir():
+                shutil.rmtree(at)
+            else:
+                at.unlink()
+            # and the folders that held only it, up to the base
+            up = at.parent
+            while up != root and up.is_dir() and not any(up.iterdir()):
+                up.rmdir()
+                up = up.parent
+            return freed
+
+        freed = await run_in_threadpool(remove)
+        return {"removed": unit, "freed": freed}
+
+    def documents():
+        """The text of every saved job there is, for what refers to what."""
+        out = Path(store.global_cfg.paths.output)
+        for cp in out.rglob("checkpoint.json") if out.is_dir() else []:
+            try:
+                yield cp.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+
+    @app.get("/api/chat/media/unused")
+    async def media_unused(slopgen: str | None = Cookie(default=None)) -> dict:
+        """What a tidy-up of the media base would take: the files no saved video
+        refers to — pictures of messages looked at and not taken, or of runs since
+        deleted."""
+        guard(slopgen)
+        spare = await run_in_threadpool(lambda: chat_media.unused(media_base(), documents()))
+        return {"files": len(spare), "size": sum(p.stat().st_size for p in spare)}
+
+    @app.post("/api/chat/media/clean")
+    async def media_clean(slopgen: str | None = Cookie(default=None)) -> dict:
+        """Remove those files. Recomputed here rather than taken from the browser, so
+        a run saved between the look and the press keeps its pictures."""
+        guard(slopgen)
+
+        def clean() -> dict:
+            spare = chat_media.unused(media_base(), documents())
+            size = 0
+            for p in spare:
+                size += p.stat().st_size
+                p.unlink(missing_ok=True)
+            return {"files": len(spare), "size": size}
+
+        return await run_in_threadpool(clean)
 
     @app.get("/api/runs/{run_id}/chat/exports/read")
     async def read_export(run_id: str, name: str, video: int = 0,
@@ -1015,14 +1121,32 @@ def _safe_reaction(emoji: str, base: Path) -> str:
     return emoji if chat_media.resolve(base, ref) is not None else alt
 
 
-def _unzip_export(body: bytes, root: Path, stem: str) -> str:
+# Written into each folder a zip was unpacked into: the zip's own hash, so the same
+# zip handed over twice is recognised instead of unpacked a second time beside itself
+# as `name_2` — which is how a base ends up holding a 120 MB export twice.
+ZIP_MARK = ".slopgen-zip"
+
+
+def _unzip_export(body: bytes, root: Path, stem: str) -> tuple[str, bool]:
     """Unpack a zipped export into a folder of its own under the base, and return the
-    export file inside it (as a name relative to the base).
+    export inside it (as a name relative to the base) and whether it was already
+    there.
 
     Every member is checked to land inside that folder: a zip is somebody else's
     archive, and `../../` in a member name is the oldest way out of one."""
+    import hashlib
     import zipfile
 
+    digest = hashlib.sha1(body).hexdigest()
+    for mark in root.glob(f"*/{ZIP_MARK}"):
+        try:
+            same = mark.read_text().strip() == digest
+        except OSError:
+            same = False
+        if same:
+            name = _export_in(root, mark.parent)
+            if name:
+                return name, True
     try:
         zf = zipfile.ZipFile(io.BytesIO(body))
     except zipfile.BadZipFile:
@@ -1045,16 +1169,24 @@ def _unzip_export(body: bytes, root: Path, stem: str) -> str:
         with zf.open(info) as src, open(at, "wb") as out:
             while chunk := src.read(1 << 20):
                 out.write(chunk)
-    # whatever the base now lists inside the new folder — the folder itself for an
-    # HTML export, its `result.json` for a JSON one
-    inside_name = dest.relative_to(root).as_posix()
-    for e in exports.entries(root):
-        if e["format"] and (e["name"] == inside_name or e["name"].startswith(inside_name + "/")):
-            return e["name"]
+    name = _export_in(root, dest)
+    if name:
+        (dest / ZIP_MARK).write_text(digest)
+        return name, False
     import shutil
 
     shutil.rmtree(dest, ignore_errors=True)
     raise ValueError("nothing in that zip is an export this reads")
+
+
+def _export_in(root: Path, folder: Path) -> str:
+    """Whatever the base lists inside this folder — the folder itself for an HTML
+    export, its `result.json` for a JSON one — or "" for nothing readable."""
+    inside = folder.relative_to(root).as_posix()
+    for e in exports.entries(root):
+        if e["format"] and (e["name"] == inside or e["name"].startswith(inside + "/")):
+            return e["name"]
+    return ""
 
 
 def _message_at(job, when: float) -> int:

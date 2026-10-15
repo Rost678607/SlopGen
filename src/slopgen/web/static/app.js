@@ -203,6 +203,7 @@ const CFG = [
   ["voicefx", "js.voicefx", "list"],
   ["keys", "js.api-keys", "keys"],
   ["telegram", "js.tg-account", "telegram"],
+  ["chatexports", "js.chat-exports", "chatexports"],
   ["characters", "js.characters", "list"],
   ["visuals", "js.footage-profiles", "list"],
   ["ads", "js.ad-contracts", "ads"],
@@ -236,6 +237,7 @@ function openCfg(key) {
   $("#cfg-fandoms").hidden = how !== "world";
   $("#cfg-keys").hidden = how !== "keys";
   $("#cfg-telegram").hidden = how !== "telegram";
+  $("#cfg-chatexports").hidden = how !== "chatexports";
   $("#cfg-list").hidden = how !== "list";
   $("#cfg-tts").hidden = how !== "tts";
   $("#cfg-voices").hidden = how !== "voices";
@@ -248,6 +250,7 @@ function openCfg(key) {
   if (how === "world") openSub(sub);
   else if (how === "keys") loadKeys();
   else if (how === "telegram") loadTgAccount();
+  else if (how === "chatexports") loadChatExports();
   else if (how === "tts") loadTts();
   else if (how === "voices") loadVoices();
   else if (how === "orch") loadOrch();
@@ -377,6 +380,92 @@ async function loadKeys() {
 //
 // It lives in the configuration because that is what it IS — something this machine
 // holds, once, for every run that will ever need it. The chat room only reports it.
+// ------------------------------------------------------------------ chat exports
+//
+// The base of exports and the base of message attachments, managed where the
+// machine's other holdings are. Removing asks twice, in place, like a preset: the
+// button itself is the confirmation, a second press within a few seconds.
+
+function armTwice(btn, key, sure) {
+  if (btn.dataset.armed === key) {
+    delete btn.dataset.armed;
+    btn.classList.remove("armed");
+    return true;
+  }
+  btn.dataset.armed = key;
+  btn.classList.add("armed");
+  clearTimeout(btn._t);
+  btn._t = setTimeout(() => { delete btn.dataset.armed; btn.classList.remove("armed"); }, 4000);
+  say(sure);
+  return false;
+}
+
+async function dropChatExport(btn, unit) {
+  if (!armTwice(btn, unit, `${lab("web.cfg.exports.sure")} — ${unit}`)) return false;
+  try {
+    const out = await api(`/api/chat/exports?unit=${encodeURIComponent(unit)}`,
+                          { method: "DELETE" });
+    say(`${unit} — ${lab("web.cfg.exports.gone")} (${shSize(out.freed)})`);
+    return true;
+  } catch (e) { say(e.message, true); return false; }
+}
+
+async function loadChatExports() {
+  let d;
+  try { d = await api("/api/chat/exports"); } catch (e) { return say(e.message, true); }
+  $("#cx-list").innerHTML = d.exports.length ? d.exports.map((f) => `
+    <div class="exp-file${f.format ? "" : " bad"}">
+      <b>${esc(f.unit)}</b>
+      <span class="fmt">${esc(f.format || lab("web.chat.exports.unknown", "?"))}</span>
+      ${f.chats > 1 ? `<span class="dim">${f.chats} ${esc(lab("web.chat.exports.chats"))}</span>` : ""}
+      <span class="grow"></span>
+      <span class="dim">${shSize(f.disk)}</span>
+      <button class="ghost exp-del" data-del="${esc(f.unit)}" title="${
+        esc(lab("web.cfg.exports.del"))}">✕</button>
+    </div>`).join("")
+    : `<p class="dim">${esc(lab("web.chat.exports.none", ""))}</p>`;
+  $("#cx-media").textContent =
+    `${d.media.files} ${lab("web.cfg.media.files")} · ${shSize(d.media.size)}`;
+  $("#cx-clean").hidden = true;
+}
+
+$("#cx-list").addEventListener("click", async (e) => {
+  const btn = e.target.closest("[data-del]");
+  if (btn && await dropChatExport(btn, btn.dataset.del)) loadChatExports();
+});
+
+$("#cx-file").onchange = async (e) => {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+  const body = new FormData();
+  body.append("file", file);
+  say(lab("web.cfg.exports.uploading"));
+  try {
+    const out = await api("/api/chat/exports", { method: "POST", body });
+    say(out.already ? `${out.name} — ${lab("web.cfg.exports.already")}` : `${out.name} · ${out.format}`);
+  } catch (err) { say(err.message, true); }
+  e.target.value = "";
+  loadChatExports();
+};
+
+$("#cx-look").onclick = async () => {
+  let d;
+  try { d = await api("/api/chat/media/unused"); } catch (e) { return say(e.message, true); }
+  const btn = $("#cx-clean");
+  if (!d.files) { btn.hidden = true; return say(lab("web.cfg.media.allused")); }
+  btn.hidden = false;
+  btn.textContent = `${lab("web.cfg.media.clean")}: ${d.files} · ${shSize(d.size)}`;
+};
+
+$("#cx-clean").onclick = async (e) => {
+  if (!armTwice(e.currentTarget, "clean", lab("web.cfg.media.sure"))) return;
+  try {
+    const out = await api("/api/chat/media/clean", { method: "POST" });
+    say(`${lab("web.cfg.media.cleaned")}: ${out.files} · ${shSize(out.size)}`);
+  } catch (err) { say(err.message, true); }
+  loadChatExports();
+};
+
 async function loadTgAccount() {
   let s;
   try { s = await api("/api/chat/telegram"); } catch (e) { return say(e.message, true); }
