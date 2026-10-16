@@ -274,6 +274,7 @@ function chatEditHTML(m) {
     <label>${esc(lab("web.chat.answers", "отвечает на"))}
       <select data-f="reply_to" data-i="${m.i}">${answers}</select></label>
   </div>
+  ${chatVoiceHTML(m)}
   <div class="row2">
     <label>${esc(lab("web.chat.stamp", "время"))}
       <input type="time" data-f="stamp" data-i="${m.i}" value="${esc(m.stamp)}"></label>
@@ -312,6 +313,53 @@ function chatEditHTML(m) {
     <button class="ghost danger" data-act="drop" data-i="${m.i}">${esc(lab("web.chat.drop", "убрать"))}</button>
   </div>
 </div>`;
+}
+
+// Who reads this message, how, and whether it has been read. Two selects that write
+// ONE field (`ChatMsg.voice`, a voice spec): the voice, and which of its recordings —
+// a delivery is the only intonation a cloning engine has (`config.models.VoiceConfig`)
+// and it is spelled `card:delivery`, so both selects simply offer whole specs. Empty
+// is "as this person reads", which the label spells out, since it is invisible
+// otherwise.
+function chatVoiceHTML(m) {
+  const cards = chatOpts.voice_cards || [];
+  const own = m.voice || "";
+  const base = (spec) => (spec || "").split(":")[0];
+  const card = cards.find((c) => c.name === base(own === "none" ? "" : own || m.speaks));
+  // what this message would be read with if it chose nothing: the run's one voice
+  // for everybody when there is one (`none` is nobody), otherwise the person's card
+  const run = (CHAT.doc.run_settings || {}).chat_voice || "";
+  const card0 = (CHAT.doc.cast.find((c) => c.name === m.persona) || {}).voice || "";
+  const fallback = run === "none" ? "" : (run || card0);
+  const sel = (value, list) => list.map(([v, w]) =>
+    `<option value="${esc(v)}"${v === value ? " selected" : ""}>${esc(w)}</option>`).join("");
+  const voices = [["", `${lab("web.chat.voice.theirs", "как у человека")}: ${
+      fallback || lab("web.chat.silent", "не читается")}`],
+    ["none", lab("web.chat.voice.none", "— не читать —")]]
+    .concat(cards.map((c) => [c.name, c.name]));
+  // the voice select shows the CARD of the message's own voice, delivery or not
+  const shown = own === "none" ? "none" : base(own);
+  const ways = card && card.deliveries.length
+    ? [[own && own !== "none" ? base(own) : "", `${lab("web.chat.voice.usual", "как обычно")} (${
+        card.default})`]].concat(card.deliveries.map((d) => [d.spec, d.which]))
+    : [];
+  const wayNow = own.includes(":") ? own : (ways[0] || [""])[0];
+  const state = !m.speaks ? lab("web.chat.take.mute", "")
+    : (!m.laid ? lab("web.chat.take.unlaid", "")
+      : (m.take ? lab("web.chat.take.has", "") : lab("web.chat.take.none", "")));
+  return `
+  <div class="row2">
+    <label>${esc(lab("web.chat.voice", "голос"))}
+      <select data-f="voice" data-i="${m.i}">${sel(shown, voices)}</select></label>
+    <label title="${esc(lab("web.chat.voice.way.why", ""))}">${esc(lab("web.chat.voice.way", "интонация"))}
+      <select data-f="voice" data-i="${m.i}"${ways.length > 1 ? "" : " disabled"}>${
+        sel(wayNow, ways)}</select></label>
+  </div>
+  <div class="chat-acts chat-take">
+    <button class="ghost" data-act="revoice" data-i="${m.i}"${
+      m.speaks && m.laid ? "" : " disabled"}>${esc(lab("web.chat.revoice", "🔊 переозвучить"))}</button>
+    <span class="dim">${esc(state)}</span>
+  </div>`;
 }
 
 // Who is in the video, and whether they are anybody outside it. A name with a card
@@ -941,6 +989,13 @@ cq("#chat-list").addEventListener("click", async (e) => {
   if (!act) return;
   const i = +act.dataset.i;
   const what = act.dataset.act;
+  if (what === "revoice") {
+    // one line of synthesis is seconds to a minute, so the button says it is working
+    act.disabled = true;
+    act.textContent = lab("web.chat.revoicing", "озвучиваю…");
+    await chatDo("/voice", { body: { i } });
+    return shootChat(chatSel);
+  }
   if (what === "drop") { chatSel = -1; await chatDo("/message", { method: "DELETE", body: { i } }); }
   else if (what === "restamp") { await chatDo("/restamp", { body: { step: 1 } }); }
   else if (what === "unmedia") {
@@ -1164,6 +1219,18 @@ cq("#chat-stages").addEventListener("click", async (e) => {
   const b = e.target.closest("[data-stage]");
   if (!b || !CHAT) return;
   b.disabled = true;
+  // The stage reports on the RUN's own stream (see `montage_api.run_stage`), which
+  // the runs list draws as a bar and this screen did not look at: voicing forty lines
+  // was a minute of a grey button. It is read from the same place and written on the
+  // button itself — "озвучка 12/40".
+  const id = CHAT.id;
+  const tick = setInterval(async () => {
+    try {
+      const row = (await api("/api/runs")).find((r) => r.id === id);
+      const p = row && row.progress;
+      if (p && p.total) b.textContent = `${word(b.dataset.stage)} ${p.done}/${p.total}`;
+    } catch (err) { /* the bar is a courtesy; the stage goes on without it */ }
+  }, 800);
   try {
     await api(`/api/runs/${CHAT.id}/montage/stage`, {
       method: "POST", headers: { "content-type": "application/json" },
@@ -1171,7 +1238,11 @@ cq("#chat-stages").addEventListener("click", async (e) => {
     });
     say(`${word(b.dataset.stage)} ✓`);
   } catch (err) { say(err.message, true); }
-  finally { b.disabled = false; }
+  finally {
+    clearInterval(tick);
+    b.disabled = false;
+    b.textContent = word(b.dataset.stage);
+  }
   await reloadChat();
   if (!chatWatching) shootChat(chatSel);
 });

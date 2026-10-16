@@ -230,10 +230,27 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
         out["stages"] = [name for name, _ in _chain(cp)]
         out["sheet"] = SHEET
         out["settings"] = ctx.chat.model_dump(mode="json")
+        # What each message is read with now and whether it has been read: the voice
+        # the casting would give it (its own, the run's or its card's), and whether
+        # its scene holds a take of what it now says. The room's voice controls show
+        # the first and its re-voice button is about the second.
+        from ..pipeline.stages.chat_script import voice_for
+        flat = iter(job.messages)
+        for conv in out["conversations"]:
+            for row in conv["messages"]:
+                m = next(flat)
+                sc = job.scenes[m.scene] if 0 <= m.scene < len(job.scenes) else None
+                row["speaks"] = voice_for(m, ctx)
+                row["laid"] = sc is not None and not sc.hush
+                row["take"] = bool(sc is not None and sc.audio and sc.text == m.text
+                                   and Path(sc.audio).is_file())
         # the run's own rows of the sheet (see `RUN_FIELDS`)
         out["run_settings"] = {
             "subtitle_style": cp.params.subtitle_style or "",
             "clean_subtitles": bool(cp.params.clean_subtitles),
+            # not a row of the sheet — it is the start form's — but the message's
+            # voice select says what "as the person reads" currently means
+            "chat_voice": cp.params.chat_voice or "",
         }
         # The clock, once there is one. A conversation being built has no timings at
         # all — they do not exist until something has voiced it and drawn it — so the
@@ -373,8 +390,8 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
         if "reactions" in b:
             guarded(chatroom.set_reactions)(job, c, at, b["reactions"])
         fields = {k: b[k] for k in
-                  ("persona", "reply_to", "stamp", "day", "nick", "avatar", "score",
-                   "clear_before", "pinned", "drop_media") if k in b}
+                  ("persona", "reply_to", "stamp", "day", "nick", "avatar", "voice",
+                   "score", "clear_before", "pinned", "drop_media") if k in b}
         if fields:
             guarded(chatroom.edit)(job, c, at, **fields)
         return answer(cp, i, job)
@@ -927,6 +944,64 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
                    for j in jobs):
                 return True
         return False
+
+    # -- saying one message again ------------------------------------------
+    voice_locks: dict[str, asyncio.Lock] = {}
+
+    @app.post("/api/runs/{run_id}/chat/voice")
+    async def revoice_message(run_id: str, request: Request,
+                              slopgen: str | None = Cookie(default=None)) -> dict:
+        """Voice ONE message again, now, with whatever voice it is cast with.
+
+        The montage room's re-voice does this for the modes whose word timings are
+        kept per line. A chat's are on the whole video's clock (`stages.tts`, as for
+        an info video), so the take's words are put at the line's start and every
+        line after it moves by however much longer or shorter the new take is —
+        otherwise the subtitles and the piece-by-piece reveal of every later message
+        would run against the wrong voice. The drawing and the cut, both made against
+        the old clock, are thrown away for the same reason.
+
+        A message retyped since `script` laid it is voiced as it reads NOW: saying it
+        again is exactly what makes the scene and the message agree. One that was not
+        laid at all (added afterwards) has no line to voice yet — that is `script`."""
+        from ..pipeline.stages import chat_script
+
+        guard(slopgen)
+        b = await body_of(request)
+        run = run_or_404(run_id)
+        cp, i, job = edited(run, b)
+        c, at = int(b.get("c", 0)), int(b.get("i", -1))
+        conv = guarded(chatroom.conv_at)(job, c)
+        if not 0 <= at < len(conv.messages):
+            raise HTTPException(status_code=404, detail="no such message")
+        msg = conv.messages[at]
+        ctx = context(cp)
+        spec = chat_script.voice_for(msg, ctx)
+        if not spec:
+            raise HTTPException(status_code=409,
+                                detail="this message has no voice — give it one, or "
+                                       "give its person one on their card")
+        idx = msg.scene
+        if not (0 <= idx < len(job.scenes)) or job.scenes[idx].hush:
+            raise HTTPException(status_code=409,
+                                detail="this message is not laid on the timeline yet — "
+                                       "run «сценарий» first")
+        if not msg.text.strip():
+            raise HTTPException(status_code=409, detail="there are no words here to say")
+        lock = voice_locks.setdefault(run_id, asyncio.Lock())
+        if lock.locked():
+            raise HTTPException(status_code=409, detail="already voicing a line here")
+        async with lock:
+            try:
+                await run_in_threadpool(chat_script.revoice, job, ctx, msg, spec)
+            except Exception as e:  # noqa: BLE001
+                log.exception("re-voicing message %d failed", at)
+                raise HTTPException(status_code=502, detail=f"{type(e).__name__}: {e}")
+            job.chat_states = []
+            for part in job.parts:
+                part.file = None
+                part.ass = None
+            return answer(cp, i, job)
 
     @app.post("/api/runs/{run_id}/chat/rename")
     async def rename_person(run_id: str, request: Request,

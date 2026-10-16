@@ -3920,6 +3920,20 @@ RU.update({
     "web.chat.rail": "таймлайн: щёлкните или тяните, чтобы перейти",
     "web.chat.reel.busy": "рисую анимацию…",
     "web.chat.subs.default": "как в общих настройках",
+    "web.chat.voice": "голос",
+    "web.chat.voice.theirs": "как у человека",
+    "web.chat.voice.none": "— не читать —",
+    "web.chat.voice.way": "интонация",
+    "web.chat.voice.usual": "как обычно",
+    "web.chat.voice.way.why": "Какой записью голоса читать это сообщение — злой, "
+                              "быстрой и т. п. Есть только у голосов, где записано "
+                              "несколько интонаций.",
+    "web.chat.revoice": "🔊 переозвучить",
+    "web.chat.revoicing": "озвучиваю…",
+    "web.chat.take.has": "озвучено",
+    "web.chat.take.none": "ещё не озвучено — или текст поменялся после озвучки",
+    "web.chat.take.unlaid": "сначала нажмите «сценарий» — сообщение ещё не на таймлайне",
+    "web.chat.take.mute": "никто не читает",
     "web.chat.subs.note": "Субтитры — это ПРОИЗНЕСЁННЫЕ слова: строки, которые никто "
                           "не читает вслух, без субтитров. Чтобы они были, дайте "
                           "людям голос в их карточках справа.",
@@ -3932,6 +3946,20 @@ EN.update({
     "web.chat.rail": "the timeline: click or drag to go there",
     "web.chat.reel.busy": "drawing the animation…",
     "web.chat.subs.default": "as in the general settings",
+    "web.chat.voice": "voice",
+    "web.chat.voice.theirs": "as the person reads",
+    "web.chat.voice.none": "— not read —",
+    "web.chat.voice.way": "delivery",
+    "web.chat.voice.usual": "usual",
+    "web.chat.voice.way.why": "Which recording of the voice reads this message — "
+                              "angry, fast and so on. Only voices recorded in "
+                              "several deliveries have any.",
+    "web.chat.revoice": "🔊 voice again",
+    "web.chat.revoicing": "voicing…",
+    "web.chat.take.has": "voiced",
+    "web.chat.take.none": "not voiced yet — or the text changed since",
+    "web.chat.take.unlaid": "press «script» first — this message is not on the timeline yet",
+    "web.chat.take.mute": "nobody reads it",
     "web.chat.subs.note": "Subtitles are the SPOKEN words: a line nobody reads aloud "
                           "has none. To have them, give people a voice on their "
                           "cards on the right.",

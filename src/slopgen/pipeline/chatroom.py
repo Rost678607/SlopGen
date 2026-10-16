@@ -179,6 +179,7 @@ def _msg_json(i: int, m: ChatMsg) -> dict:
         "clear_before": m.clear_before,
         "nick": m.nick,
         "avatar": m.avatar,
+        "voice": m.voice,
         "pinned": m.pinned,
         "media": m.media.model_dump() if m.media is not None else None,
         "custom": len(m.custom),
@@ -369,6 +370,8 @@ def edit(job: VideoJob, c: int, i: int, **fields) -> None:
         msg.nick = str(fields["nick"])
     if "avatar" in fields:
         msg.avatar = str(fields["avatar"])
+    if "voice" in fields:
+        msg.voice = str(fields["voice"]).strip()
     if "score" in fields:
         msg.score = int(fields["score"])
     if "clear_before" in fields:

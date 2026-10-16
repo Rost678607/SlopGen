@@ -488,6 +488,12 @@ class ChatMsg(BaseModel):
     # without earning a card of its own.
     nick: str = ""
     avatar: str = ""
+    # Who reads THIS message aloud, as a voice spec (`марта`, or `марта:зло` for one
+    # delivery of her) — over the card's voice and the run's. Empty is the ordinary
+    # case: whatever the person's card, or the run, says. It is how one line is said
+    # angrily without recasting the person, and it lives on the message because the
+    # scenes are rebuilt from the messages and anything kept only there is lost.
+    voice: str = ""
     # The picture, sticker, clip or voice this message carries, if any. One and not a
     # list, because that is what a message is in every client this reads: an album is
     # several messages that happen to be drawn together.
