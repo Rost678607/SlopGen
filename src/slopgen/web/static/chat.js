@@ -158,7 +158,12 @@ function chatSectionHTML(conv) {
         : `<p class="dim chat-empty">${esc(lab("web.chat.empty", ""))}</p>`)
     + `<button class="ghost chat-add" data-add="${conv.messages.length}">${
          esc(lab("web.chat.add", "＋ сообщение"))}</button>
-  </section>`;
+  </section>`
+    // the native ad after this chat, as the stretch of the list — and of the rail —
+    // it is in the video
+    + (conv.ad_after && CHAT.doc.native_ad && c < chatConvs().length - 1 && conv.messages.length
+      ? `<div class="chat-adsep" data-ad-after="${chatFirst(c) + conv.messages.length - 1}">${
+          esc(lab("web.chat.ad.here", "📢 реклама"))}</div>` : "");
 }
 
 // Bring a conversation's section into view: the buttons on the left are a table of
@@ -194,8 +199,20 @@ function renderChatConvs() {
         ${c.c ? `<button class="ghost" data-cact="join" data-c="${c.c}">${
           esc(lab("web.chat.join", "склеить"))}</button>` : ""}
         <button class="ghost danger" data-cact="drop" data-c="${c.c}">✕</button>
-      </div>`).join("") +
+      </div>${chatAdSlotHTML(c)}`).join("") +
     `<button class="ghost" data-cact="add">${esc(lab("web.chat.addconv", "＋ переписка"))}</button>`;
+}
+
+// The place between this chat and the next, where the native ad may go. Offered only
+// between two chats — the ad is a swipe away from one and into the other — and only
+// when the run's contract has a clip and its mode lets one in.
+function chatAdSlotHTML(c) {
+  if (c.c >= chatConvs().length - 1) return "";
+  if (!CHAT.doc.native_ad && !c.ad_after) return "";
+  const on = c.ad_after;
+  return `<button class="ghost chat-adslot${on ? " on" : ""}" data-adslot="${c.c}"${
+    CHAT.doc.native_ad ? "" : " disabled"} title="${esc(lab("web.chat.ad.slot.why", ""))}">${
+    esc(lab(on ? "web.chat.ad.slot.on" : "web.chat.ad.slot", on ? "📢 реклама ✕" : "＋ реклама"))}</button>`;
 }
 
 // What a message carries, as a thumbnail and a word. The picture is the server's
@@ -602,6 +619,7 @@ const chatPace = () => (REEL
   ? { exact: REEL.exact, total: REEL.total, at: REEL.marks, dur: REEL.durs }
   : (CHAT && CHAT.doc.pace) || { exact: false, total: 0, at: [], dur: [] });
 let chatGeo = [];     // n -> {top, h}: where that message's row is, down the list
+let chatAdGeo = new Map();  // message an ad follows -> {top, h, row} of its separator
 let chatLoopAt = 0;   // performance.now() of the last step
 
 function drawRail() {
@@ -623,6 +641,17 @@ function drawRail() {
     seg.style.height = `${b.height}px`;
     if (p.at[n] !== undefined)
       seg.title = `${p.at[n].toFixed(1)}s · ${p.dur[n].toFixed(1)}s`;
+    rail.appendChild(seg);
+  });
+  // the native ads, each a stretch of the rail where its separator is in the list
+  chatAdGeo = new Map();
+  msgs.querySelectorAll(".chat-adsep[data-ad-after]").forEach((row) => {
+    const b = row.getBoundingClientRect();
+    chatAdGeo.set(+row.dataset.adAfter, { top: b.top - top, h: b.height, row });
+    const seg = document.createElement("div");
+    seg.className = "seg ad";
+    seg.style.top = `${b.top - top}px`;
+    seg.style.height = `${b.height}px`;
     rail.appendChild(seg);
   });
   rail.hidden = !chatGeo.length;
@@ -649,8 +678,19 @@ function chatPlace(quiet = false) {
   const n = lo;
   const g = chatGeo[n];
   head.hidden = !g;
-  if (g) {
-    const k = p.dur[n] > 0 ? Math.min(Math.max((chatT - p.at[n]) / p.dur[n], 0), 1) : 0;
+  // inside a native ad the head is on the ad's own stretch, not crawling down the
+  // last message of the chat before it
+  const ad = REEL && (REEL.ads || []).find((a) => chatT >= a.at && chatT < a.at + a.dur);
+  const ag = ad && chatAdGeo.get(ad.after);
+  cq("#chat-msgs").querySelectorAll(".chat-adsep.now").forEach((r) => r.classList.remove("now"));
+  if (ag) {
+    head.style.top = `${ag.top + ((chatT - ad.at) / ad.dur) * ag.h}px`;
+    ag.row.classList.add("now");
+  } else if (g) {
+    const end = (REEL && (REEL.ads || []).find((a) => a.after === n)) || null;
+    // the message before an ad holds until the ad starts, not until the next message
+    const span = end ? Math.max(end.at - p.at[n], 1e-3) : p.dur[n];
+    const k = span > 0 ? Math.min(Math.max((chatT - p.at[n]) / span, 0), 1) : 0;
     head.style.top = `${g.top + k * g.h}px`;
   }
   if (n !== chatNow) {
@@ -767,6 +807,17 @@ function chatSeekY(e) {
   if (!chatGeo.length) return;
   const p = chatPace();
   const y = e.clientY - cq("#chat-msgs").getBoundingClientRect().top;
+  // a point on an ad's separator is a moment of that ad
+  for (const [after, ag] of chatAdGeo) {
+    const ad = REEL && (REEL.ads || []).find((a) => a.after === after);
+    if (ad && y >= ag.top && y < ag.top + ag.h) {
+      chatT = ad.at + ((y - ag.top) / ag.h) * ad.dur;
+      if (chatWatching) cq("#chat-video").currentTime = chatT;
+      chatPlace();
+      chatJumped();
+      return;
+    }
+  }
   let n = chatGeo.findIndex((g) => g && y < g.top + g.h);
   if (n < 0) n = chatGeo.length - 1;
   const g = chatGeo[n];
@@ -922,6 +973,13 @@ cq("#chat-set").addEventListener("change", async (e) => {
 });
 
 cq("#chat-convs").addEventListener("click", async (e) => {
+  const slot = e.target.closest("[data-adslot]");
+  if (slot) {
+    const c = +slot.dataset.adslot;
+    const on = !(chatConvs()[c] || {}).ad_after;
+    await chatDo("/conversation/ad", { method: "PUT", body: { c, on } });
+    return;
+  }
   const act = e.target.closest("[data-cact]");
   if (act) {
     const c = +act.dataset.c;

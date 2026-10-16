@@ -145,6 +145,7 @@ def read(job: VideoJob, ctx) -> dict:
                 "source": conv.source,
                 "avatar": conv.avatar,
                 "lines": len(conv.messages),
+                "ad_after": conv.ad_after,
                 "messages": [_msg_json(i, m) for i, m in enumerate(conv.messages)],
             }
             for c, conv in enumerate(job.conversations)

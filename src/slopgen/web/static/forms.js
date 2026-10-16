@@ -366,12 +366,6 @@ const FORMS = {
               "kind": "text",
               "l": "web.f.ovtext"
             },
-            {
-              "f": "ov_pos",
-              "kind": "select",
-              "cls": "f-ovpos",
-              "l": "web.f.ovpos"
-            },
             [
               "row2",
               {
@@ -966,12 +960,6 @@ const FORMS = {
               "kind": "text",
               "l": "web.f.ovtext"
             },
-            {
-              "f": "ov_pos",
-              "kind": "select",
-              "cls": "f-ovpos",
-              "l": "web.f.ovpos"
-            },
             [
               "row2",
               {
@@ -1401,12 +1389,6 @@ const FORMS = {
               "f": "ov_text",
               "kind": "text",
               "l": "web.f.ovtext"
-            },
-            {
-              "f": "ov_pos",
-              "kind": "select",
-              "cls": "f-ovpos",
-              "l": "web.f.ovpos"
             },
             [
               "row2",
@@ -1939,12 +1921,6 @@ const FORMS = {
               "f": "ov_text",
               "kind": "text",
               "l": "web.f.ovtext"
-            },
-            {
-              "f": "ov_pos",
-              "kind": "select",
-              "cls": "f-ovpos",
-              "l": "web.f.ovpos"
             },
             [
               "row2",

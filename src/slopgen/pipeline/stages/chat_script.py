@@ -104,8 +104,12 @@ def lay(job: VideoJob, ctx: AppContext, carry: bool = False) -> None:
     scenes: list[Scene] = []
     # Across the conversations in order, because the video is all of them one after
     # another: the timeline is the video's and the seams are drawn by the renderer
-    # (see `chat.scroll`), not carved into the clock.
-    for msg in (m for c in job.conversations for m in c.messages):
+    # (see `chat.scroll`), not carved into the clock — except where a native ad sits
+    # between two of them, which is a stretch of the clock of its own (`_ad_scene`).
+    last = len(job.conversations) - 1
+    for msg, ci, end in ((m, ci, k == len(c.messages) - 1)
+                         for ci, c in enumerate(job.conversations)
+                         for k, m in enumerate(c.messages)):
         spec = voice_for(msg, ctx)
         extra = flurry if msg.reactions else 0.0
         scene = Scene(text=msg.text)
@@ -122,6 +126,7 @@ def lay(job: VideoJob, ctx: AppContext, carry: bool = False) -> None:
             scenes.append(scene)
             if gap + extra > 0:
                 scenes.append(Scene(text="", hush=True, duration=gap + extra))
+            _ad_after(job, ctx, scenes, ci, end, last)
             continue
         if msg.media is not None and not msg.text.strip():
             # a picture with nothing written under it: nobody reads it, and it holds
@@ -130,6 +135,7 @@ def lay(job: VideoJob, ctx: AppContext, carry: bool = False) -> None:
             scene.duration = gap + look + extra
             msg.scene = len(scenes)
             scenes.append(scene)
+            _ad_after(job, ctx, scenes, ci, end, last)
             continue
         if spec:
             scene.voice = spec
@@ -150,9 +156,52 @@ def lay(job: VideoJob, ctx: AppContext, carry: bool = False) -> None:
         # silent half of a mixed conversation run at half the pace of the spoken half.
         if spec and gap + extra > 0:
             scenes.append(Scene(text="", hush=True, duration=gap + extra))
+        _ad_after(job, ctx, scenes, ci, end, last)
     if carry:
         _carry_takes(was, scenes)
     job.scenes = scenes
+
+
+def _ad_after(job: VideoJob, ctx: AppContext, scenes: list, ci: int, end: bool,
+              last: int) -> None:
+    """Close conversation `ci` with the native ad, when it asked for one and is not
+    the last: the ad goes BETWEEN chats."""
+    if end and ci < last and job.conversations[ci].ad_after:
+        ad = ad_scene(job, ctx, ci)
+        if ad is not None:
+            scenes.append(ad)
+
+
+def ad_clip(job: VideoJob, ctx: AppContext, ci: int) -> Path | None:
+    """Which of the contract's native clips plays after conversation `ci` — seeded on
+    the run and the place, so the preview and the cut pick the same one, and two ads
+    in one video need not be the same clip twice."""
+    import random
+
+    if not ctx.native_ad_on:
+        return None
+    root = ctx.ad.native.assets_dir
+    clips = sorted(p for p in root.iterdir()
+                   if p.suffix.lower() in media_mod.VIDEO_EXTS) if root.is_dir() else []
+    if not clips:
+        log.warning("chat: the native ad has no clips in %s — skipped", root)
+        return None
+    return random.Random(f"ad|{job.workdir}|{ci}").choice(clips)
+
+
+def ad_scene(job: VideoJob, ctx: AppContext, ci: int) -> Scene | None:
+    """The native ad as a stretch of the clock: as long as its clip, heard with the
+    clip's own sound, read by nobody. The picture is the render stage's (`chat_render`
+    lays the clip between the two chats and swipes in and out of it)."""
+    clip = ad_clip(job, ctx, ci)
+    if clip is None:
+        return None
+    _w, _h, dur, _moves = media_mod.facts(clip)
+    scene = Scene(text="", is_ad=True, silent=True, clip=clip, duration=max(dur, 0.5))
+    heard = media_mod.audio_of(clip)
+    if heard is not None:
+        scene.audio, scene.duration = heard[0], max(heard[1], 0.5)
+    return scene
 
 
 def _carry_takes(was: list[Scene], now: list[Scene]) -> None:

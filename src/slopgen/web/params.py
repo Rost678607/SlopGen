@@ -55,6 +55,9 @@ def common(b: dict) -> dict:
         # contract's name or a contract, and `ads["manual"]` is not a file on disk.
         "ad": "" if str(b.get("ad", "")) == AD_MANUAL else str(b.get("ad", "")),
         "ad_mode": b.get("ad_mode", "both"),
+        # where the banner goes in this video, dragged into place on the form; None
+        # leaves it where the contract's corner puts it (see `config.models.AdBox`)
+        "ad_box": b.get("ad_box") if isinstance(b.get("ad_box"), dict) else None,
         "push": str(b.get("push", "")),
         "visual_notes": str(b.get("visual_notes", "")),
         "visual_style": str(b.get("visual_style", "")),

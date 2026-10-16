@@ -122,10 +122,13 @@ SHEET: list[dict] = [
      "opt_l": "w.", "blank": True, "blank_l": "web.chat.subs.default", "run": "subs"},
     {"f": "clean_subtitles", "kind": "check", "l": "web.f.clean", "run": "subs"},
     {"head": "web.card.ad"},
+    {"note": "web.chat.ad.note"},
     {"f": "ad", "kind": "select", "l": "web.f.contract", "opts": "ads", "blank": True,
-     "words": True, "run": "cut"},
+     "words": True, "run": "lay"},
     {"f": "ad_mode", "kind": "select", "l": "web.f.mode", "opts": "ad_modes",
-     "words": True, "run": "cut"},
+     "words": True, "run": "lay"},
+    # the banner's place, set by dragging it on the frame rather than by a control
+    {"f": "ad_box", "kind": "box", "hide": True, "run": "cut"},
     {"head": "web.chat.set.post"},
     {"f": "push", "kind": "select", "l": "web.f.publish", "opts": "accounts", "blank": True,
      "words": True, "run": "post"},
@@ -137,6 +140,8 @@ SHEET: list[dict] = [
 #   voice — who reads and how: the lines are cast again (`chat_script.lay`, carrying
 #           every take that still fits), so «озвучка» voices what changed and reuses
 #           the rest; the drawing and the cut, timed on the old voices, go
+#   lay   — the ad: the same re-lay, because a native ad is a stretch of the clock
+#           between two chats, and a contract or mode changed takes it in or out
 #   subs  — what is burned on: the subtitles and the cut made with them
 #   cut   — what is mixed or laid over at the end: the cut alone
 #   post  — what happens after the video exists: nothing in it
@@ -259,6 +264,10 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
         out["stages"] = [name for name, _ in _chain(cp)]
         out["sheet"] = SHEET
         out["settings"] = ctx.chat.model_dump(mode="json")
+        # whether a native ad can go between chats at all: the run's contract has
+        # clips for it and the run's mode lets it in (see `chat_script.ad_clip`)
+        from ..pipeline.stages.chat_script import ad_clip
+        out["native_ad"] = ad_clip(job, ctx, 0) is not None
         # What each message is read with now and whether it has been read: the voice
         # the casting would give it (its own, the run's or its card's), and whether
         # its scene holds a take of what it now says. The room's voice controls show
@@ -324,7 +333,7 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
             starts.append(at)
             at += scene.duration
         # Exact only while the scenes still ARE these messages (see `chat_reel.laid`).
-        laid = is_laid(job)
+        laid = is_laid(job, ctx)
         if laid:
             begin = [starts[m.scene] for m in msgs]
             dur = [e - b for b, e in zip(begin, begin[1:] + [at])]
@@ -1028,6 +1037,29 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
                 part.ass = None
             return answer(cp, i, job)
 
+    @app.put("/api/runs/{run_id}/chat/conversation/ad")
+    async def ad_after_conversation(run_id: str, request: Request,
+                                    slopgen: str | None = Cookie(default=None)) -> dict:
+        """Put the native ad after this chat, or take it away.
+
+        The lines are laid again when they already were: an ad is a stretch of the
+        clock, and a timeline laid without it would be counted as done and cut without
+        it — the same carry as a change of voice keeps every take."""
+        from ..pipeline.stages import chat_script
+
+        guard(slopgen)
+        b = await body_of(request)
+        cp, i, job = edited(run_or_404(run_id), b)
+        conv = guarded(chatroom.conv_at)(job, int(b.get("c", 0)))
+        conv.ad_after = bool(b.get("on", not conv.ad_after))
+        if job.scenes:
+            chat_script.lay(job, context(cp), carry=True)
+            job.chat_states = []
+            for part in job.parts:
+                part.ass = None
+                part.file = None
+        return answer(cp, i, job)
+
     @app.post("/api/runs/{run_id}/chat/rename")
     async def rename_person(run_id: str, request: Request,
                             slopgen: str | None = Cookie(default=None)) -> dict:
@@ -1167,15 +1199,15 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
                 cp.data["params"][k] = dumped[k]
                 setattr(run.params, k, getattr(fresh, k))
             stale = {RUN_FIELDS[k] for k in runs}
-            if "voice" in stale and job.scenes:
+            if stale & {"voice", "lay"} and job.scenes:
                 from ..pipeline.stages import chat_script
 
                 chat_script.lay(job, context(cp), carry=True)
                 job.chat_states = []
-            if stale & {"voice", "subs"}:
+            if stale & {"voice", "lay", "subs"}:
                 for part in job.parts:
                     part.ass = None
-            if stale & {"voice", "subs", "cut"}:
+            if stale & {"voice", "lay", "subs", "cut"}:
                 for part in job.parts:
                     part.file = None
             cp.save()
@@ -1411,9 +1443,17 @@ def _reel_json(run_id: str, reel: dict, files: dict) -> dict:
         return f"/api/runs/{run_id}/chat/reel/f/{fid}"
 
     out = {k: reel[k] for k in ("exact", "total", "width", "height", "top", "marks", "durs",
-                                "subs")}
+                                "subs", "ads")}
+    ov = reel.get("overlay")
+    out["overlay"] = None if ov is None else {
+        **{k: ov[k] for k in ("start", "dur", "text", "aspect", "default")},
+        "src": url(ov["path"], "clip" if ov["path"].suffix.lower() in (".mp4", ".webm", ".mov")
+                   else "image"),
+        "video": ov["path"].suffix.lower() in (".mp4", ".webm", ".mov"),
+    }
     out["states"] = [{
         **{k: st[k] for k in ("start", "dur", "msg", "from_y", "to_y", "swipe", "travel")},
+        "ad": url(st["ad"], "clip") if st.get("ad") else None,
         "src": url(st["path"], "state"),
         "overlay": url(st["overlay"], "image") if st["overlay"] else None,
         "ground": url(st["ground"], "image") if st["ground"] else None,

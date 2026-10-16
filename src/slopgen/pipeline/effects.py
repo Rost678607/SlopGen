@@ -1069,6 +1069,8 @@ def chat_sounds(job: VideoJob, ctx, start: float, end: float) -> list[Draw]:
     seen: set[int] = set()
     out: list[Draw] = []
     for st in job.chat_states:
+        if st.msg < 0:
+            continue   # a native ad: no message lands, so nothing pops
         if st.msg in seen or not (start - 1e-6 <= st.start <= end + 1e-6):
             seen.add(st.msg)
             continue

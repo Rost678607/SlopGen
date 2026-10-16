@@ -417,6 +417,22 @@ class AdOverlayConfig(BaseModel):
     width: int = 340
 
 
+class AdBox(BaseModel):
+    """Where the overlay ad sits in ONE video, and how big it is: its top-left corner
+    and its width, each a share of the frame, so the same box means the same place in
+    a vertical and a wide video alike.
+
+    The video's and not the contract's. A contract is a deal with a partner — the
+    picture, the words, the link — while where the banner can go depends on what is
+    on the screen: a chat's header bar, a subtitle line, the face in a shot. So the
+    contract's corner and width (`AdOverlayConfig.position`/`width`) are only what a
+    run that never placed its banner falls back on."""
+
+    x: float = 0.6
+    y: float = 0.07
+    w: float = 0.3
+
+
 class AdNativeConfig(BaseModel):
     assets_dir: Path
     talking_points: str
@@ -1685,6 +1701,9 @@ class RunParams(BaseModel):
     ad: str = ""  # ad config name, empty = no ads
     manual_ad: AdConfig | None = None  # ad-hoc contract built in the TUI wizard
     ad_mode: AdMode = "both"
+    # where the overlay ad sits in this video, dragged into place; None = the
+    # contract's corner and width (see `AdBox`)
+    ad_box: AdBox | None = None
     push: str = ""  # account name, empty = local save only
     count: int = 1
     out: Path | None = None  # output dir override

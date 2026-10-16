@@ -26,7 +26,7 @@ from PIL import Image
 
 from ...chat import media as media_mod, skins
 from ...chat.draw import Canvas, Moving, Person
-from ...chat.scroll import Planner, State, scene_starts
+from ...chat.scroll import MIN_STATE_S, Planner, State, scene_starts
 from ..context import AppContext
 from ..job import BgAsset, ChatState, ChatTile, VideoJob
 
@@ -325,6 +325,37 @@ def _barred(view: "Image.Image", bar: Path | None) -> "Image.Image":
     return out
 
 
+def _ad_before(job: VideoJob, msg: int) -> int | None:
+    """The native ad scene just before this message, if the message opens a chat that
+    an ad leads into (see `chat_script.ad_scene`)."""
+    flat = job.messages
+    si = flat[msg].scene if 0 <= msg < len(flat) else -1
+    if si > 0 and job.scenes[si - 1].is_ad and job.scenes[si - 1].clip:
+        return si - 1
+    return None
+
+
+def _lay_ads(job: VideoJob, ads: dict[int, Path]) -> None:
+    """Put each native ad on the clock as a state of its own, where its scene is.
+
+    The planner walks messages and an ad is none, so until here the last screen of
+    the chat before it simply stayed up through the ad's seconds; it is cut short to
+    where the ad begins, and the ad's state — the clip between the two chats — takes
+    the stretch."""
+    if not ads:
+        return
+    starts = scene_starts(job.scenes)
+    states = list(job.chat_states)
+    for si, pair in ads.items():
+        at, dur = starts[si], job.scenes[si].duration
+        for st in states:
+            if st.start < at < st.start + st.duration:
+                st.duration = max(at - st.start, MIN_STATE_S)
+        states.append(ChatState(path=pair, start=at, duration=dur, msg=-1,
+                                anchor_scene=si, ad_clip=job.scenes[si].clip))
+    job.chat_states = sorted(states, key=lambda s: s.start)
+
+
 def compile_assets(job: VideoJob, states: list[ChatState], roll_s: float,
                    swipe_s: float = 0.35, width: int = 1080,
                    pool: list[Path] | None = None, chat_h: int = 0,
@@ -347,6 +378,20 @@ def compile_assets(job: VideoJob, states: list[ChatState], roll_s: float,
             if hi - lo <= 1e-3:
                 continue
             moves = abs(st.to_y - st.from_y) > 0.5
+            if st.ad_clip is not None:
+                # the native ad: the clip between the two chats' screens, swiped into
+                # and out of (`ffmpeg.make_chat_part`), over whatever plays underneath
+                under = seek = None
+                if pool:
+                    turn = int(lo / change_s) if change_s > 0 else 0
+                    under = pool[random.Random(f"{seed}|{turn}").randrange(len(pool))]
+                    seek = (lo - turn * change_s) if change_s > 0 else lo
+                scene.bg_assets.append(BgAsset(
+                    path=st.path, duration=hi - lo, is_photo=True, scroll=True,
+                    chat_ad=Path(st.ad_clip), scroll_at=st.start - lo,
+                    scroll_s=swipe_s, start=float(seek or 0.0), filler=under,
+                    chat_h=chat_h if under is not None else 0))
+                continue
             # What plays underneath, and where in it. One clip held for the whole
             # video is the ordinary answer and the one the gameplay loops want — the
             # seek is the piece's own place on the clock, so the action carries across
@@ -417,6 +462,7 @@ def run(job: VideoJob, ctx: AppContext) -> None:
     # would be the same pixels at the cost of a decode per seam.
     seen: dict[str, object] = {"view": None, "bar": None, "msg": None}
     born: dict = {}  # when each moving thing was first on screen (see `_tiles`)
+    ads: dict[int, Path] = {}  # ad scene -> its two-chat picture (see `paint`)
 
     def paint(canvas: Canvas, state: State) -> None:
         y0 = int(min(state.from_y, state.to_y))
@@ -465,6 +511,7 @@ def run(job: VideoJob, ctx: AppContext) -> None:
             # a see-through drawing is another file than the same screen painted on
             # its wallpaper, and must not be handed back for it
             name = f"lay_{name}"
+        ad = _ad_before(job, state.msg) if state.swipe else None
         if state.swipe and seen["view"] is not None:
             # the old screen and the new one side by side, in one drawing. The window
             # then travels across the join, which is a swipe — and is the same crop
@@ -472,12 +519,23 @@ def run(job: VideoJob, ctx: AppContext) -> None:
             # INTO the picture here: moving to another chat moves the whole screen, and
             # a bar that stayed put while everything under it slid would be the one
             # thing that gave the screenshot away.
-            picture = Image.new("RGB", (width * 2, height), skin.bg)
-            picture.paste(_barred(seen["view"], seen["bar"]), (0, 0))
-            picture.paste(_barred(view, bars.get(ci)), (width, 0))
-            name = f"swipe_{name}"
-            state.from_y = state.to_y = 0.0
-        else:
+            pair = Image.new("RGB", (width * 2, height), skin.bg)
+            pair.paste(_barred(seen["view"], seen["bar"]), (0, 0))
+            pair.paste(_barred(view, bars.get(ci)), (width, 0))
+            if ad is None:
+                picture, name = pair, f"swipe_{name}"
+                state.from_y = state.to_y = 0.0
+            else:
+                # A native ad sits in this seam. The pair is ITS picture — the clip
+                # plays between the two halves, swiping in over the old chat and out
+                # to the new one — and this state, which the viewer has by then already
+                # swiped into, is an ordinary screen of the new chat.
+                at = out_dir / f"adswipe_{name}.png"
+                if not at.is_file():
+                    pair.save(at, compress_level=1)
+                ads[ad] = at
+                state.swipe = False
+        if not (state.swipe and seen["view"] is not None):
             state.swipe = False  # nothing to slide away from: the first screen of all
             state.overlay = _overlay(canvas, out_dir, width, height, bars.get(ci),
                                      pinned, y0 + rest)
@@ -538,6 +596,7 @@ def run(job: VideoJob, ctx: AppContext) -> None:
                   tiles=list(s.tiles))
         for s in planner.plan()
     ]
+    _lay_ads(job, ads)
     compile_assets(job, job.chat_states, cfg.roll_s,
                    swipe_s=max(0.0, float(cfg.swipe_s)), width=width,
                    pool=pool, chat_h=height,

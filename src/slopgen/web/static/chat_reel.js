@@ -60,6 +60,7 @@ async function reelLoad() {
   REEL.clips = new Map();
   reelPrimeSound();
   reelShowing();
+  reelBoxSetup();
   reelSay();
   // the reel's clock is now the room's, and the rail is laid out on it
   drawRail();
@@ -79,6 +80,7 @@ function reelSay() {
 // The canvas is the picture while there is a reel and the cut is not playing.
 function reelShowing() {
   const on = !!REEL && !chatWatching;
+  if (reelBox) requestAnimationFrame(() => reelBox.place());
   cq("#chat-reel").hidden = !on;
   cq("#chat-shot-img").hidden = on || chatWatching;
   if (on) {
@@ -181,10 +183,11 @@ function reelDraw(t) {
   if (!reelReady(im)) return;
   const used = new Set();
 
+  const local = t - st.start;
+  if (st.ad) return reelDrawAd(g, st, im, local, t, used);
   // The window, by `make_chat_part`'s arithmetic: a straight ramp over `travel`
   // seconds from where the state begins, clamped to the picture padded out to at
   // least one screen.
-  const local = t - st.start;
   const r = st.travel > 0 ? Math.min(Math.max(local / st.travel, 0), 1) : 1;
   const iw = Math.max(im.naturalWidth, W), ih = Math.max(im.naturalHeight, top);
   let x = 0, y;
@@ -227,7 +230,13 @@ function reelDraw(t) {
   }
   g.restore();
 
-  // the loop under a split screen, cropped to fill its strip as the assembler does
+  reelUnder(g, t, used);
+  reelFinish(g, t, used);
+}
+
+// the loop under a split screen, cropped to fill its strip as the assembler does
+function reelUnder(g, t, used) {
+  const W = REEL.width, H = REEL.height, top = REEL.top;
   if (top < H) {
     const u = REEL.under.find((p) => p.at <= t + 1e-6 && t < p.at + p.dur) || REEL.under[REEL.under.length - 1];
     if (u) {
@@ -243,9 +252,143 @@ function reelDraw(t) {
       }
     }
   }
+}
+
+// What goes over everything, and the bookkeeping after: the subtitles, then the
+// banner on top of them as the delivery pass lays it, then every clip that is not on
+// screen stopped.
+function reelFinish(g, t, used) {
   reelSubs(g, t);
-  // whatever is not on screen stops playing
+  reelBanner(g, t, used);
   for (const [key, v] of REEL.clips) if (!used.has(key) && !v.paused) v.pause();
+}
+
+// The native ad between two chats, by `make_chat_part`'s arithmetic for it: the old
+// screen, the clip and the new screen side by side, and the window swiping across the
+// first join, holding on the clip, swiping across the second.
+function reelDrawAd(g, st, pair, local, t, used) {
+  const W = REEL.width, H = REEL.height, top = REEL.top;
+  const sw = Math.min(Math.max(st.travel, 1e-3), st.dur / 2);
+  let x;
+  if (local < sw) x = W * (local / sw);
+  else if (local < st.dur - sw) x = W;
+  else x = W + W * Math.min((local - (st.dur - sw)) / sw, 1);
+  const key = `ad|${st.ad}|${st.start}`;
+  const v = reelClip(st.ad, key);
+  used.add(key);
+  reelHold(v, local, chatPlaying);
+  g.fillStyle = "#000";
+  g.fillRect(0, 0, W, H);
+  g.save();
+  g.beginPath();
+  g.rect(0, 0, W, top);
+  g.clip();
+  g.drawImage(pair, 0, 0, W, top, -x, 0, W, top);
+  if (v.readyState >= 2) {
+    // cover the chat's window, as `scale…increase,crop` does
+    const s = Math.max(W / v.videoWidth, top / v.videoHeight);
+    const sw2 = W / s, sh2 = top / s;
+    g.drawImage(v, (v.videoWidth - sw2) / 2, (v.videoHeight - sh2) / 2, sw2, sh2, W - x, 0, W, top);
+  }
+  g.drawImage(pair, W, 0, W, top, 2 * W - x, 0, W, top);
+  g.restore();
+  reelUnder(g, t, used);
+  reelFinish(g, t, used);
+}
+
+// -- the banner ------------------------------------------------------------------
+//
+// Where it goes is the run's (`RunParams.ad_box`), dragged into place on this very
+// frame; the reel knows only where it falls back to. Drawn in its window of the clock,
+// and whenever it is being moved, so that it can be placed from any moment.
+let reelBoxBusy = false;
+let reelBox = null;   // the draggable box over the picture (see `boxEditor`)
+
+// The banner's box over the room's picture: dragged, it moves the banner on the canvas
+// as it goes; let go, it is written onto the run — straight to the route and not
+// through `chatDo`, because a new place for the banner changes nothing in the
+// conversation and must not throw the reel away.
+function reelBoxSetup() {
+  if (reelBox) return reelBox.place();
+  const frame = cq("#chat-frame");
+  reelBox = boxEditor(frame, {
+    rect: () => {
+      const c = cq("#chat-reel");
+      if (!REEL || !REEL.overlay || chatWatching || c.hidden) return null;
+      // the canvas is fitted into its box (`object-fit: contain`), so the frame is
+      // the fitted rectangle inside it and not the element's own
+      const fr = frame.getBoundingClientRect(), cr = c.getBoundingClientRect();
+      const s = Math.min(cr.width / REEL.width, cr.height / REEL.height);
+      const w = REEL.width * s, h = REEL.height * s;
+      return { left: cr.left - fr.left + (cr.width - w) / 2,
+               top: cr.top - fr.top + (cr.height - h) / 2, width: w, height: h };
+    },
+    aspect: () => REEL.overlay.aspect * REEL.width / REEL.height,
+    get: () => reelBoxNow(),
+    set: (b) => { CHAT.doc.run_settings.ad_box = b; reelBoxBusy = true; reelDraw(chatT); },
+    commit: (b) => { reelBoxBusy = false; reelBoxSave(b); },
+    reset: () => { CHAT.doc.run_settings.ad_box = ""; reelBoxSave(""); },
+  });
+  new ResizeObserver(() => reelBox.place()).observe(cq("#chat-reel"));
+  reelBox.place();
+}
+
+async function reelBoxSave(b) {
+  try {
+    const d = await api(`/api/runs/${CHAT.id}/chat/settings`, {
+      method: "PUT", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ video: CHAT.video, ad_box: b }),
+    });
+    CHAT.doc.run_settings = d.run_settings;
+    CHAT.doc.completed = d.completed;
+    renderChatStages();
+  } catch (e) { say(e.message, true); }
+  reelDraw(chatT);
+  reelBox.place();
+}
+
+function reelBoxNow() {
+  const ov = REEL && REEL.overlay;
+  if (!ov) return null;
+  const set = (CHAT.doc.run_settings || {}).ad_box;
+  return set && typeof set === "object" ? set : ov.default;
+}
+
+function reelBanner(g, t, used) {
+  const ov = REEL.overlay;
+  if (!ov) return;
+  const on = (t >= ov.start && t <= ov.start + ov.dur) || reelBoxBusy;
+  if (!on) return;
+  const b = reelBoxNow();
+  const W = REEL.width, H = REEL.height;
+  const w = b.w * W, h = w * ov.aspect, x = b.x * W, y = b.y * H;
+  let pic = null;
+  if (ov.video) {
+    const key = `banner|${ov.src}`;
+    pic = reelClip(ov.src, key);
+    used.add(key);
+    reelHold(pic, t - ov.start, chatPlaying);
+    if (pic.readyState < 2) pic = null;
+  } else {
+    pic = reelImg(ov.src);
+    if (!reelReady(pic)) pic = null;
+  }
+  if (pic) g.drawImage(pic, x, y, w, h);
+  if (ov.text) {
+    // under the banner, or over it when it sits too low — as `ffmpeg.finalize` does
+    g.save();
+    g.font = `44px "DejaVu Sans", sans-serif`;
+    g.textBaseline = "top";
+    g.lineJoin = "round";
+    g.lineWidth = 6;
+    g.strokeStyle = "#000";
+    g.fillStyle = "#fff";
+    const below = y + h + 14;
+    const ty = below + 60 < H ? below : Math.max(y - 58, 0);
+    g.strokeText(ov.text, x, ty);
+    g.fillText(ov.text, x, ty);
+    g.restore();
+  }
 }
 
 // -- the subtitles -------------------------------------------------------------------

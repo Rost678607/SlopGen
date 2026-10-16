@@ -90,6 +90,9 @@ class BgAsset(BaseModel):
     # which is the field continuous background mode already uses for exactly this —
     # each piece reads the next slice, so the action carries instead of restarting.
     filler: Path | None = None
+    # A native ad between two chats: the clip that plays between the two halves of
+    # `path` (see `ChatState.ad_clip` and `ffmpeg.make_chat_part`).
+    chat_ad: Path | None = None
     chat_h: int = 0  # how tall the chat half is; 0 = it is the whole frame
     # The client's top bar, drawn once and laid over every frame of the piece. On the
     # asset rather than looked up at render time for the reason `fit` is: by then the
@@ -538,6 +541,11 @@ class Conversation(BaseModel):
     avatar: str = ""
     source: str = ""
     messages: list[ChatMsg] = Field(default_factory=list)
+    # The native ad plays AFTER this piece, before the next one, swiping in and out
+    # the way one chat gives way to another. On the piece rather than as a list of
+    # numbers on the run, so it moves with the piece when the pieces are reordered.
+    # Meaningless on the last piece: the ad goes BETWEEN chats.
+    ad_after: bool = False
 
 
 class ChatState(BaseModel):
@@ -566,6 +574,10 @@ class ChatState(BaseModel):
     anchor_word: int = -1
     msg: int = -1  # which message this state is a picture of, for the screen to show
     swipe: bool = False  # the first state of a new conversation: it slides in
+    # The native ad between two chats (see `Conversation.ad_after`): `path` is the
+    # old screen and the new one side by side, as a swipe's is, and this is the clip
+    # that plays between them — swiping in over the first, out to the second.
+    ad_clip: Path | None = None
     # The header bar laid over this state, which is the bar of the conversation it
     # belongs to — a video holding three chats has three names on it, and one name
     # over all of them is the tell that the screenshot is fake. None on a swipe: there

@@ -1260,6 +1260,23 @@ button.danger{border-color:var(--bad);color:var(--bad)}
 /* the picture beside the numbers that describe it, and under each other once there is
    no room to put them side by side */
 .ad-split{display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap}
+/* The banner's place in one video: a box on a frame, moved by its body and resized by
+   its corner (`boxEditor`). The same box over the chat room's picture and on the start
+   form's stand-in frame, where it also carries the banner itself. */
+.ad-box{position:absolute;z-index:3;border:2px dashed var(--accent);border-radius:4px;
+  cursor:move;touch-action:none;box-sizing:border-box;
+  background:color-mix(in srgb, var(--accent) 8%, transparent)}
+.ad-box.busy{border-style:solid}
+.ad-box img,.ad-box video{width:100%;height:100%;object-fit:fill;display:block;
+  pointer-events:none}
+.ad-box-grip{position:absolute;right:-7px;bottom:-7px;width:14px;height:14px;
+  border-radius:50%;background:var(--accent);border:2px solid var(--bg);cursor:nwse-resize}
+.ad-place{display:grid;gap:5px;margin-top:4px}
+.ad-place-l{font-size:12px;color:var(--dim)}
+.ad-place-frame{position:relative;width:min(170px,45vw);background:
+  repeating-linear-gradient(45deg, var(--panel) 0 8px, var(--bg) 8px 16px);
+  border:1px solid var(--line);border-radius:6px}
+.ad-place p{margin:0;font-size:11.5px}
 .ad-fields{flex:1 1 280px;min-width:0;display:grid;gap:10px;align-content:start}
 .ad-fields .row{gap:8px}
 .ad-fields .row input[type=range]{flex:1;min-width:120px}
@@ -1398,7 +1415,16 @@ button.danger{border-color:var(--bad);color:var(--bad)}
    way to it — squeezed to the height of its header bar, which in a room that now
    PLAYS the conversation hid exactly the part that moves. The cast scrolls instead. */
 #chat-frame{background:#000;border:1px solid var(--line);border-radius:8px;overflow:hidden;
-  display:grid;place-items:center;min-height:120px;flex:none}
+  display:grid;place-items:center;min-height:120px;flex:none;position:relative}
+/* the native ad: a place between two chats in the list of pieces, and its stretch in
+   the list of messages and on the rail */
+.chat-adslot{justify-self:center;font-size:11.5px;padding:1px 9px;margin:-2px 0;
+  border-style:dashed}
+.chat-adslot.on{border-style:solid;border-color:var(--warn, #e0a030);color:var(--warn, #e0a030)}
+.chat-adsep{margin-top:12px;padding:10px;border:2px dashed var(--warn, #e0a030);
+  border-radius:8px;text-align:center;font-size:13px;color:var(--warn, #e0a030)}
+.chat-adsep.now{background:color-mix(in srgb, var(--warn, #e0a030) 15%, var(--panel))}
+#chat-rail .seg.ad{background:var(--warn, #e0a030);opacity:.7}
 #chat-frame img,#chat-frame canvas{width:100%;max-height:72vh;object-fit:contain;display:block}
 #chat-reel-state{font-size:12px}
 .chat-empty{margin:4px 2px}

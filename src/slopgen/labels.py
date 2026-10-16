@@ -3921,6 +3921,20 @@ RU.update({
     "web.chat.reel.busy": "рисую анимацию…",
     "web.chat.subs.default": "как в общих настройках",
     "web.chat.set.music": "музыка",
+    "web.ad.place": "где плашка",
+    "web.ad.place.how": "Тащите плашку, чтобы передвинуть; угол — размер; двойной "
+                        "щелчок — вернуть как в контракте.",
+    "web.ad.place.moved": "Где плашка и какого она размера, теперь задаётся в самом "
+                          "ролике: перетаскиванием в форме запуска или поверх "
+                          "предпросмотра в комнате.",
+    "web.chat.ad.note": "Плашку двигают и растягивают прямо на кадре предпросмотра. "
+                        "Ролик из «native» вставляется между чатами, отмеченными в "
+                        "списке переписок слева.",
+    "web.chat.ad.slot": "＋ реклама",
+    "web.chat.ad.slot.on": "📢 реклама ✕",
+    "web.chat.ad.slot.why": "Вставить рекламный ролик между этим чатом и следующим — "
+                            "со свайпом туда и обратно, как между чатами.",
+    "web.chat.ad.here": "📢 реклама",
     "web.chat.set.post": "публикация",
     "web.chat.set.voice.note": "Смена здесь заново раздаёт голоса строкам; готовые "
                                "дубли, которые подходят, сохраняются, а остальное "
@@ -3952,6 +3966,20 @@ EN.update({
     "web.chat.reel.busy": "drawing the animation…",
     "web.chat.subs.default": "as in the general settings",
     "web.chat.set.music": "music",
+    "web.ad.place": "where the banner goes",
+    "web.ad.place.how": "Drag the banner to move it; its corner resizes it; double "
+                        "click puts it back where the contract has it.",
+    "web.ad.place.moved": "Where the banner goes and how big it is are now set in the "
+                          "video itself: dragged into place on the start form, or over "
+                          "the preview in the room.",
+    "web.chat.ad.note": "Drag and stretch the banner right on the preview frame. The "
+                        "«native» clip plays between the chats marked in the list of "
+                        "pieces on the left.",
+    "web.chat.ad.slot": "＋ ad",
+    "web.chat.ad.slot.on": "📢 ad ✕",
+    "web.chat.ad.slot.why": "Play the ad clip between this chat and the next — swiping "
+                            "in and out of it, as between two chats.",
+    "web.chat.ad.here": "📢 ad",
     "web.chat.set.post": "publishing",
     "web.chat.set.voice.note": "Changing these casts the lines again; takes that still "
                                "fit are kept, and the next «tts» voices the rest.",

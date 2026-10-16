@@ -257,6 +257,65 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
         language reaches these too."""
         return labels.t(key, store.global_cfg.ui.lang)
 
+    # -- the banner a contract carries, for placing it ------------------------
+    #
+    # The banner's place is the video's (`RunParams.ad_box`) and it is set by dragging
+    # the banner itself around a frame — on the start form for every mode, and over the
+    # picture in the chat room. Both need the picture and where it starts out, which is
+    # the contract's corner and width as the delivery pass would read them.
+
+    def _ad_overlay(name: str):
+        from .params import AD_MANUAL, MANUAL_AD_DIR
+        from ..config.models import AdOverlayConfig
+
+        if name == AD_MANUAL:
+            return AdOverlayConfig(assets_dir=MANUAL_AD_DIR / "overlay")
+        ad = store.ads.get(name)
+        return ad.overlay if ad is not None else None
+
+    def _ad_picture(ov) -> Path | None:
+        from ..pipeline.stages.ads import OVERLAY_EXTS
+
+        d = Path(ov.assets_dir)
+        found = sorted(p for p in d.iterdir() if p.suffix.lower() in OVERLAY_EXTS) \
+            if d.is_dir() else []
+        return found[0] if found else None
+
+    @app.get("/api/ads/banner")
+    async def ad_banner(name: str, aspect: str = "9:16",
+                        slopgen: str | None = Cookie(default=None)) -> dict:
+        """The contract's banner — a URL for it, its shape, and the box it falls back
+        on (as shares of a frame of `aspect`), or `null` for a contract without one."""
+        guard(slopgen)
+        ov = _ad_overlay(name)
+        pic = _ad_picture(ov) if ov is not None else None
+        if pic is None:
+            return {"banner": None}
+        v = store.global_cfg.video
+        W, H = (max(v.width, v.height), min(v.width, v.height)) if aspect == "16:9" \
+            else (min(v.width, v.height), max(v.width, v.height))
+        aw, ah = await run_in_threadpool(ffmpeg_media.video_dims, pic)
+        k = (ah / aw) if aw else 1.0
+        w = min(ov.width, W)
+        h = round(w * k)
+        x = 40 if ov.position.endswith("left") else W - w - 40
+        y = 140 if ov.position.startswith("top") else H - h - 420
+        return {"banner": {
+            "src": f"/api/ads/banner/file?name={quote(name)}",
+            "video": pic.suffix.lower() in (".mp4", ".webm", ".mov"),
+            "aspect": k * W / H,   # the box's height over its width, in shares of the frame
+            "ratio": k, "frame": [W, H], "text": ov.text,
+            "default": {"x": x / W, "y": max(y, 0) / H, "w": w / W}}}
+
+    @app.get("/api/ads/banner/file")
+    async def ad_banner_file(name: str, slopgen: str | None = Cookie(default=None)):
+        guard(slopgen)
+        ov = _ad_overlay(name)
+        pic = _ad_picture(ov) if ov is not None else None
+        if pic is None:
+            raise HTTPException(status_code=404, detail="this contract has no banner")
+        return FileResponse(pic, headers={"Cache-Control": "no-cache"})
+
     @app.get("/api/options")
     async def options(slopgen: str | None = Cookie(default=None)) -> dict:
         """Everything the start form has to offer, straight out of `configs/`.

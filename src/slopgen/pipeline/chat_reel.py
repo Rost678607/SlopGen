@@ -35,17 +35,33 @@ from .job import VideoJob, Word
 log = logging.getLogger(__name__)
 
 
-def laid(job: VideoJob) -> bool:
+def laid(job: VideoJob, ctx: AppContext | None = None) -> bool:
     """Whether the job's scenes are a clock for exactly these messages.
 
     The room edits conversations without re-laying them (see `chatroom`), so a line
     typed after `script` ran points at nothing, a line retyped points at a scene saying
-    something else, and a line laid but not yet voiced is a scene 0s long."""
+    something else, and a line laid but not yet voiced is a scene 0s long. With `ctx`,
+    the native ads are asked about too: an ad switched on between two chats since, or
+    off, is a clock with a stretch missing or one too many."""
     msgs, scenes = job.messages, job.scenes
-    return bool(msgs) and all(
+    ok = bool(msgs) and all(
         0 <= m.scene < len(scenes) and scenes[m.scene].duration > 0
         and scenes[m.scene].text in (m.text, "") for m in msgs) and all(
         a.scene < b.scene for a, b in zip(msgs, msgs[1:]))
+    if not ok or ctx is None:
+        return ok
+    from .stages.chat_script import ad_clip
+
+    convs = job.conversations
+    for ci, conv in enumerate(convs[:-1]):
+        nxt = next((c.messages[0] for c in convs[ci + 1:] if c.messages), None)
+        if not conv.messages or nxt is None:
+            continue
+        has = any(s.is_ad for s in scenes[conv.messages[-1].scene:nxt.scene])
+        wants = conv.ad_after and ad_clip(job, ctx, ci) is not None
+        if has != wants:
+            return False
+    return True
 
 
 def timeline(job: VideoJob, ctx: AppContext) -> tuple[VideoJob, bool]:
@@ -55,7 +71,7 @@ def timeline(job: VideoJob, ctx: AppContext) -> tuple[VideoJob, bool]:
     from .stages import chat_script
 
     copy = job.model_copy(deep=True)
-    if laid(job):
+    if laid(job, ctx):
         return copy, True
     chat_script.lay(copy, ctx)
     # The takes already made, by what they say — and by who says it where that still
@@ -102,7 +118,9 @@ def key(job: VideoJob, ctx: AppContext) -> str:
 
     h = hashlib.sha1()
     h.update(job.model_dump_json(include={"conversations", "scenes", "chat_title"}).encode())
-    h.update(ctx.params.model_dump_json().encode())
+    # the banner's place is left out: it is laid over the picture, not drawn into it,
+    # and dragging it must not cost a redraw of the whole conversation
+    h.update(ctx.params.model_dump_json(exclude={"ad_box"}).encode())
     h.update(ctx.chat.model_dump_json().encode())
     for name in sorted({m.persona for m in job.messages}):
         card = ctx.persona(name)
@@ -143,10 +161,12 @@ def build(job: VideoJob, ctx: AppContext) -> dict:
             "from_y": st.from_y, "to_y": st.to_y, "swipe": st.swipe,
             # how long the window takes to get where it is going, exactly as the
             # assembler is told it (see `chat_render.compile_assets`)
-            "travel": (max(0.0, float(cfg.swipe_s)) if st.swipe
+            "travel": (max(0.0, float(cfg.swipe_s)) if (st.swipe or st.ad_clip)
                        else (float(cfg.roll_s) if moves else 0.0)),
             "overlay": Path(st.overlay) if st.overlay else None,
             "ground": Path(st.ground) if st.ground and not st.swipe else None,
+            # a native ad: the clip that plays between the picture's two halves
+            "ad": Path(st.ad_clip) if st.ad_clip else None,
             "tiles": [] if st.swipe else [
                 {"path": Path(t["path"]), "x": t["x"], "y": t["y"], "w": t["w"],
                  "h": t["h"], "t0": t["t0"], "length": t["length"],
@@ -193,7 +213,35 @@ def build(job: VideoJob, ctx: AppContext) -> dict:
         "music": ({"path": Path(music), "gain": float(ctx.g.audio.music_volume)}
                   if music else None),
         "subs": subtitles(copy, ctx, starts),
+        "overlay": banner(copy, ctx),
+        # the native ads, each by the message it follows, for the room's rail
+        "ads": [{"at": st.start, "dur": st.duration,
+                 "after": max((n for n, m in enumerate(copy.messages)
+                               if m.scene < st.anchor_scene), default=-1)}
+                for st in copy.chat_states if st.ad_clip],
     }
+
+
+def banner(copy: VideoJob, ctx: AppContext) -> dict | None:
+    """The overlay ad as the delivery pass will stamp it (`stages.ads`): which
+    picture, when, with what words under it — and the box it falls back on when the
+    run has not placed one, as a share of the frame, which is where the page's
+    draggable box starts out."""
+    from .stages import ads
+
+    if not ctx.overlay_ad_on:
+        return None
+    try:
+        asset = ads.overlay_asset(copy, ctx)
+    except FileNotFoundError:
+        return None
+    start, dur = ads.overlay_window(copy, ctx)
+    plain = ctx.params.model_copy(update={"ad_box": None})
+    x, y, w, h = ads.overlay_box(AppContext(store=ctx.store, params=plain), asset)
+    v = ctx.g.video
+    return {"path": asset, "start": start, "dur": dur, "text": ctx.ad.overlay.text,
+            "aspect": h / w if w else 1.0,
+            "default": {"x": x / v.width, "y": y / v.height, "w": w / v.width}}
 
 
 def subtitles(copy: VideoJob, ctx: AppContext, starts: list[float]) -> dict:

@@ -1229,25 +1229,16 @@ function adHalf(name, half, c) {
 }
 
 function adOverlay(name, ov) {
-  const f = adFrame();
-  const pct = Math.round((ov.width / f.w) * 100);
+  // Where the banner goes and how big it is are not here any more: they belong to
+  // the video (`RunParams.ad_box`), dragged into place on the start form or over the
+  // chat room's picture. A contract's own corner and width are only what a run that
+  // never placed it falls back on, and stay in its file for that.
   return `<div class="ad-split">
-    <div class="ad-screen" style="aspect-ratio:${f.w}/${f.h}">
-      ${AD_CORNERS.map((p) => `<button class="ad-corner ${p}${p === ov.position ? " on" : ""}"
-        data-pos="${p}" title="${esc(lab("fx.place." + p, p))}"></button>`).join("")}
-      <div class="ad-banner" style="${adBannerStyle(ov, f)}">
-        <i>${esc(lab("js.ad.banner"))}</i>
-        <span class="cap${ov.text ? "" : " none"}">${esc(ov.text || lab("js.ad.nocap"))}</span>
-      </div>
-    </div>
     <div class="ad-fields">
+      <p class="dim">${esc(lab("web.ad.place.moved", ""))}</p>
       <label class="wide">${esc(lab("js.ad.caption"))}
         <input data-a="overlay.text" value="${esc(ov.text || "")}"
                placeholder="${esc(lab("js.ad.caption.ph"))}"></label>
-      <label class="wide">${esc(lab("js.ad.width"))}
-        <span class="row"><input type="range" min="40" max="${f.w}" step="10"
-               data-a="overlay.width" value="${esc(ov.width)}">
-        <b class="ad-wide">${esc(ov.width)} px · ${pct}%</b></span></label>
       <div class="grid">
         <label>${esc(lab("js.ad.from"))}
           <input type="number" step="0.5" min="0" data-a="overlay.start_s" value="${esc(ov.start_s)}"></label>
@@ -1259,9 +1250,6 @@ function adOverlay(name, ov) {
     </div>
   </div>`;
 }
-
-const adWhen = (ov) => `${lab("js.ad.window")} ${(+ov.start_s).toFixed(1)}–${
-  (+ov.start_s + +ov.duration_s).toFixed(1)} ${lab("js.s")}. ${lab("js.ad.short")}`;
 
 function adBannerStyle(ov, f) {
   const w = Math.min(Math.max(ov.width / f.w, 0.05), 0.95) * 100;
@@ -4021,14 +4009,6 @@ async function loadOptions() {
   fillAll(".f-bglink", opts.bg_linkages);
   fillAll(".f-motion", opts.motions);
   fillAll(".f-fgpos", opts.fg_positions);
-  // …and this one is set rather than left where the list starts: the picture fields
-  // are overwritten from the profile a moment later, but the overlay's corner is not,
-  // and `top_left` sorts first while `top_right` is what the model actually defaults
-  // to (the ad-mode select below is set for the same reason).
-  document.querySelectorAll(".f-ovpos").forEach((el) => {
-    fill(el, opts.overlay_positions || []);
-    el.value = "top_right";
-  });
   // …and then filled FROM the profile, which is what keeps taking the card apart from
   // changing anything: a card nobody touched rebuilds the profile it was filled from,
   // and the run carries that profile's NAME rather than a copy of it (the comparison
@@ -4047,6 +4027,7 @@ async function loadOptions() {
   // select spells silence (see params.AD_MANUAL)
   document.querySelectorAll(".f-ad")
     .forEach((el) => fill(el, (opts.ads || []).concat(["manual"]), true));
+  document.querySelectorAll("form").forEach((form) => adPlaceSetup(form));
   document.querySelectorAll(".f-push").forEach((el) => fill(el, opts.accounts, true));
   // With no account configured there is nowhere to publish, so the pair of controls
   // about publishing governs nothing: the dropdown offers only "none", and the switch
@@ -4531,7 +4512,6 @@ function fillForm(l) {
     };
     set("ad_url", mad.url);
     set("ov_text", ov.text);
-    set("ov_pos", ov.position);
     set("ov_start", ov.start_s);
     set("ov_dur", ov.duration_s);
     set("ad_points", nat.talking_points);
@@ -4688,6 +4668,135 @@ $("#preset-del").onclick = async () => {
 // The loop block, read off the card every mode form carries. It is sent with every
 // run: `on` off means what it says, and the server starts a plain run — the loop is
 // one flag on the same settings rather than a second way of describing a video.
+// -- the banner's place --------------------------------------------------------
+//
+// A box on a frame, dragged by its body to move and by its corner to resize: where
+// the overlay ad goes in THIS video (`RunParams.ad_box`). One component for both
+// places it is set — over the picture in the chat room, and on a stand-in frame on
+// the start form for every mode, including the ones with no room to drag it in. The
+// box is in shares of the frame (corner and width); its height follows the banner's
+// own shape, so a resize never stretches the picture.
+//
+//   rect()   -> the frame inside `host`, in pixels {left, top, width, height}, or null
+//   aspect() -> the box's height over its width, in shares of the frame
+//   get()    -> {x, y, w};  set(b) while it moves;  commit(b) when let go;  reset()
+function boxEditor(host, o) {
+  const el = document.createElement("div");
+  el.className = "ad-box";
+  el.title = lab("web.ad.place.how", "");
+  el.innerHTML = `<span class="ad-box-grip"></span>`;
+  host.appendChild(el);
+  const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), Math.max(lo, hi));
+  const round = (b) => ({ x: +b.x.toFixed(4), y: +b.y.toFixed(4), w: +b.w.toFixed(4) });
+  const place = () => {
+    const r = o.rect();
+    const b = r && o.get();
+    if (!r || !b) { el.hidden = true; return; }
+    el.hidden = false;
+    el.style.left = `${r.left + b.x * r.width}px`;
+    el.style.top = `${r.top + b.y * r.height}px`;
+    el.style.width = `${b.w * r.width}px`;
+    el.style.height = `${b.w * o.aspect() * r.height}px`;
+  };
+  let drag = null;
+  el.addEventListener("pointerdown", (e) => {
+    const r = o.rect();
+    const b = r && o.get();
+    if (!b) return;
+    e.preventDefault();
+    el.setPointerCapture(e.pointerId);
+    drag = { r, b: { ...b }, x: e.clientX, y: e.clientY,
+             grip: !!e.target.closest(".ad-box-grip") };
+    el.classList.add("busy");
+  });
+  el.addEventListener("pointermove", (e) => {
+    if (!drag) return;
+    const { r, b } = drag;
+    const dx = (e.clientX - drag.x) / r.width, dy = (e.clientY - drag.y) / r.height;
+    const a = o.aspect();
+    const n = drag.grip
+      // the corner: wider or narrower, the top-left corner staying put, never past
+      // the right edge or the bottom one
+      ? { x: b.x, y: b.y, w: clamp(b.w + dx, 0.04, Math.min(1 - b.x, (1 - b.y) / a)) }
+      : { x: clamp(b.x + dx, 0, 1 - b.w), y: clamp(b.y + dy, 0, 1 - b.w * a), w: b.w };
+    drag.now = round(n);
+    o.set(drag.now);
+    place();
+  });
+  const end = () => {
+    if (!drag) return;
+    const n = drag.now;
+    drag = null;
+    el.classList.remove("busy");
+    if (n) o.commit(n);
+  };
+  el.addEventListener("pointerup", end);
+  el.addEventListener("pointercancel", end);
+  // back to where the contract would put it
+  el.addEventListener("dblclick", () => { o.reset(); place(); });
+  return { el, place };
+}
+
+// The same box on the start form: a stand-in frame of the video's shape with the
+// contract's real banner in the box. Its value rides in a hidden `ad_box` field as
+// JSON, empty for "where the contract says" — which is also what a double click
+// puts back.
+function adPlaceSetup(form) {
+  const sel = form.querySelector(".f-ad");
+  if (!sel || form.querySelector(".ad-place")) return;
+  const wrap = document.createElement("div");
+  wrap.className = "ad-place";
+  wrap.hidden = true;
+  wrap.innerHTML = `<span class="ad-place-l">${esc(lab("web.ad.place", "где плашка"))}</span>
+    <div class="ad-place-frame"></div>
+    <input type="hidden" name="ad_box" value="">
+    <p class="dim">${esc(lab("web.ad.place.how", ""))}</p>`;
+  (sel.closest("label") || sel).after(wrap);
+  const frame = wrap.querySelector(".ad-place-frame");
+  const hid = wrap.querySelector('[name="ad_box"]');
+  let info = null;
+  const now = () => {
+    try { return hid.value ? JSON.parse(hid.value) : null; } catch (e) { return null; }
+  };
+  const ed = boxEditor(frame, {
+    rect: () => (info ? { left: 0, top: 0, width: frame.clientWidth, height: frame.clientHeight } : null),
+    aspect: () => info.aspect,
+    get: () => now() || info.default,
+    set: (b) => { hid.value = JSON.stringify(b); },
+    commit: (b) => { hid.value = JSON.stringify(b); },
+    reset: () => { hid.value = ""; },
+  });
+  const aspect = () => ((form.querySelector('[name="aspect"]') || {}).value === "16:9" ? "16:9" : "9:16");
+  const mode = form.querySelector(".f-admode");
+  async function refresh() {
+    const name = sel.value;
+    // the banner only matters to a run that will show one
+    const shows = name && !(mode && mode.value === "native");
+    if (!shows) { info = null; wrap.hidden = true; return; }
+    let d;
+    try {
+      d = await api(`/api/ads/banner?name=${encodeURIComponent(name)}&aspect=${aspect()}`);
+    } catch (e) { return; }
+    info = d.banner;
+    wrap.hidden = !info;
+    if (!info) return;
+    frame.style.aspectRatio = `${info.frame[0]} / ${info.frame[1]}`;
+    ed.el.querySelectorAll("img, video").forEach((x) => x.remove());
+    const pic = document.createElement(info.video ? "video" : "img");
+    if (info.video) Object.assign(pic, { muted: true, loop: true, autoplay: true, playsInline: true });
+    pic.src = tokd(info.src);
+    ed.el.prepend(pic);
+    ed.place();
+  }
+  sel.addEventListener("change", refresh);
+  if (mode) mode.addEventListener("change", refresh);
+  const asp = form.querySelector('[name="aspect"]');
+  if (asp) asp.addEventListener("change", refresh);
+  new ResizeObserver(() => ed.place()).observe(frame);
+  form._adPlace = refresh;
+  refresh();
+}
+
 function loopOf(form) {
   const f = new FormData(form);
   return {
@@ -4726,7 +4835,10 @@ function commonOf(form) {
     // switched back to a named contract must not be able to smuggle one in.
     ad_url: f.get("ad_url") || "",
     ov_text: f.get("ov_text") || "",
-    ov_pos: f.get("ov_pos") || "top_right",
+    // where the banner goes in this video, dragged into place (see `adPlaceSetup`)
+    ad_box: (() => {
+      try { return f.get("ad_box") ? JSON.parse(f.get("ad_box")) : null; } catch (e) { return null; }
+    })(),
     ov_start: +(f.get("ov_start") || 6),
     ov_dur: +(f.get("ov_dur") || 8),
     ad_points: f.get("ad_points") || "",

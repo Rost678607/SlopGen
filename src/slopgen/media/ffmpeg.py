@@ -471,7 +471,7 @@ def make_chat_part(img: Path, dur: float, out: Path, cfg: GlobalConfig,
                    x_from: float = 0.0, x_to: float = 0.0,
                    filler: Path | None = None, filler_seek: float = 0.0,
                    chat_h: int = 0, tiles: list | None = None,
-                   ground: Path | None = None) -> None:
+                   ground: Path | None = None, chat_ad: Path | None = None) -> None:
     """One piece of the chat track: a drawn state, with the view sliding down it.
 
     Not `make_photo_part` with a move, and the difference is not cosmetic. A
@@ -505,6 +505,29 @@ def make_chat_part(img: Path, dur: float, out: Path, cfg: GlobalConfig,
     )
     args = ["-loop", "1", "-i", str(img)]
     nxt = 1
+    if chat_ad is not None:
+        # The native ad between two chats. `img` is the old screen and the new one
+        # side by side, as a swipe's picture is; the clip goes BETWEEN them, and the
+        # window makes two swipes over the three: in over the old chat, hold on the
+        # clip, out to the new one — the same move a seam makes, twice.
+        sw = max(travel, 1e-3)
+        half = max(dur / 2, 1e-3)
+        sw = min(sw, half)
+        xs = _ramp([(at, 0.0), (at + sw, float(v.width)),
+                    (dur - sw, float(v.width)), (dur, float(v.width * 2))])
+        graph = (
+            f"[0:v]split=2[adl0][adr0];"
+            f"[adl0]crop={v.width}:{top}:0:0,setsar=1,fps={v.fps}[adl];"
+            f"[adr0]crop={v.width}:{top}:{v.width}:0,setsar=1,fps={v.fps}[adr];"
+            f"[1:v]scale={v.width}:{top}:force_original_aspect_ratio=increase,"
+            f"crop={v.width}:{top},setsar=1,fps={v.fps},"
+            f"tpad=stop_mode=clone:stop_duration={dur:.3f}[adc];"
+            f"[adl][adc][adr]hstack=inputs=3,"
+            f"crop={v.width}:{top}:'clip({xs},0,{v.width * 2})':0,setsar=1,fps={v.fps}"
+        )
+        args += ["-i", str(chat_ad)]
+        nxt = 2
+        tiles, header, ground = None, None, None
     if ground is not None:
         # The wallpaper, under a see-through drawing and NOT under the crop: the window
         # travels down the conversation and the wallpaper stays where the screen is,
@@ -893,6 +916,10 @@ class OverlaySpec:
     start_s: float
     duration_s: float
     text: str = ""
+    # the top-left corner in pixels, when the banner was placed rather than cornered
+    # (see `stages.ads.overlay_box`); None = `position` as it always was
+    x: int | None = None
+    y: int | None = None
 
 
 def _overlay_xy(position: str, margin: int = 40, top: int = 140, bottom: int = 420) -> tuple[str, str]:
@@ -1352,16 +1379,25 @@ def _delivery_cmd(
         filters.append(f"{vtag}{sub}[vs]")
         vtag = "[vs]"
     if overlay:
-        x, y = _overlay_xy(overlay.position)
+        placed = overlay.x is not None and overlay.y is not None
+        x, y = (str(overlay.x), str(overlay.y)) if placed else _overlay_xy(overlay.position)
         en = f"between(t,{overlay.start_s},{overlay.start_s + overlay.duration_s})"
         filters.append(f"[{overlay_idx}:v]scale={overlay.width}:-1[adov]")
         filters.append(f"{vtag}[adov]overlay=x={x}:y={y}:shortest=1:enable='{en}'[vo]")
         vtag = "[vo]"
         if overlay.text:
-            # ad caption pinned under the overlay corner
             aw, ah = video_dims(overlay.asset)
-            ty = f"{int(140 + overlay.width * ah / aw + 14)}" if overlay.position.startswith("top") else f"h-{420 - 14}"
-            tx = "40" if overlay.position.endswith("left") else "w-text_w-40"
+            bh = int(overlay.width * ah / aw) if aw else 0
+            if placed:
+                # under the banner, its left edge on the banner's — or over it, when
+                # the banner was put low enough that there is no room beneath
+                below = overlay.y + bh + 14
+                ty = str(below) if below + 60 < cfg.video.height else str(max(overlay.y - 58, 0))
+                tx = str(overlay.x)
+            else:
+                # ad caption pinned under the overlay corner
+                ty = f"{int(140 + bh + 14)}" if overlay.position.startswith("top") else f"h-{420 - 14}"
+                tx = "40" if overlay.position.endswith("left") else "w-text_w-40"
             # expansion=none: literal text ('%' breaks the default expansion mode)
             filters.append(
                 f"{vtag}drawtext=text={filter_arg(overlay.text)}:expansion=none:{_drawtext_face(cfg)}:fontsize=44:"
