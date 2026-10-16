@@ -297,9 +297,9 @@ function chatEditHTML(m) {
   <div class="row2">
     <label>${esc(lab("web.chat.day", "дата"))}
       <input type="date" data-f="day" data-i="${m.i}" value="${esc(m.day || "")}"></label>
-    <label>${esc(lab("web.chat.nick", "ник в этом сообщении"))}
+    <label title="${esc(lab("web.chat.nick.why", ""))}">${esc(lab("web.chat.nick", "имя только здесь"))}
       <input data-f="nick" data-i="${m.i}" value="${esc(m.nick)}" placeholder="${
-        esc(lab("web.chat.asthecard", "— как на карточке —"))}"></label>
+        esc(m.persona || lab("web.chat.asthecard", "— как на карточке —"))}"></label>
     <label class="inline"><input type="checkbox" data-f="clear_before" data-i="${m.i}"${
       m.clear_before ? " checked" : ""}> ${esc(lab("web.chat.clearhere", "чистить экран здесь"))}</label>
   </div>
@@ -389,6 +389,8 @@ function personHTML(c, here, isMe) {
       esc(v || lab(blank, "— нет —"))}</option>`).join("");
   return head + `
     <div class="who-edit">
+      <label title="${esc(lab("web.chat.who.name.why", ""))}">${esc(lab("web.chat.who.name", "ник"))}
+        <input data-rename-to="${esc(c.name)}" value="${esc(c.name)}"></label>
       <label>${esc(lab("web.chat.who.voice", "голос"))}
         <select data-p="voice">${pick(voices, c.voice, "web.chat.silent")}</select></label>
       <label>${esc(lab("web.chat.who.pic", "аватарка"))}
@@ -399,16 +401,14 @@ function personHTML(c, here, isMe) {
               : `<i>${esc((c.name[0] || "?").toUpperCase())}</i>`}</button>`).join("")}
         </span></label>
       <div class="row2">
-        <label>${esc(lab("web.chat.who.handle", "@ник"))}
-          <input data-p="handle" value="${esc(c.handle)}"></label>
+        ${CHAT.doc.tree ? `<label>${esc(lab("web.chat.who.handle", "u/ник"))}
+          <input data-p="handle" value="${esc(c.handle)}"></label>` : ""}
         <label>${esc(lab("web.chat.who.colour", "цвет"))}
           <input data-p="colour" value="${esc(c.colour)}" placeholder="#rrggbb"></label>
       </div>
       <div class="chat-acts">
         <button class="ghost${isMe ? " on" : ""}" data-me="${esc(c.name)}">${
           esc(lab(isMe ? "web.chat.who.unme" : "web.chat.who.beme", ""))}</button>
-        <button class="ghost" data-rename="${esc(c.name)}">${
-          esc(lab("web.chat.who.rename", "переименовать"))}</button>
         <span class="grow"></span>
         ${c.lines ? "" : `<button class="ghost warn" data-drop-who="${esc(c.name)}">${
           esc(lab("web.chat.who.drop", "удалить карточку"))}</button>`}
@@ -1093,14 +1093,6 @@ cq("#chat-list").addEventListener("click", async (e) => {
 }, true);
 
 cq("#chat-cast").addEventListener("click", async (e) => {
-  const re = e.target.closest("[data-rename]");
-  if (re) {
-    const now = prompt(lab("web.chat.who.rename", "переименовать"), re.dataset.rename);
-    if (!now || !now.trim() || now === re.dataset.rename) return;
-    chatWho = now.trim();
-    await chatDo("/rename", { body: { was: re.dataset.rename, now: now.trim() } });
-    return shootChat(chatSel);
-  }
   const be = e.target.closest("[data-me]");
   if (be) {
     // pressing it on the one who already is turns it off, which is the only way back
@@ -1132,6 +1124,28 @@ cq("#chat-cast").addEventListener("click", async (e) => {
     body: { name: chatWho, avatar: b.dataset.pic } });
   shootChat(chatSel);
 }, true);
+
+// The name, typed in place and applied when the field is left or Enter is pressed —
+// it was a dialog box over the page, which showed the current name only inside
+// itself and was gone the moment it was answered. Cleared, it springs back: a
+// person has to be called something.
+cq("#chat-cast").addEventListener("change", async (e) => {
+  const f = e.target.closest("[data-rename-to]");
+  if (!f) return;
+  const was = f.dataset.renameTo;
+  const now = f.value.trim();
+  if (!now || now === was) { f.value = was; return; }
+  chatWho = now;
+  const d = await chatDo("/rename", { body: { was, now } });
+  if (!d) { chatWho = was; f.value = was; return; }
+  shootChat(chatSel);
+});
+cq("#chat-cast").addEventListener("keydown", (e) => {
+  const f = e.target.closest("[data-rename-to]");
+  if (!f) return;
+  if (e.key === "Enter") f.blur();
+  if (e.key === "Escape") { f.value = f.dataset.renameTo; f.blur(); }
+});
 
 cq("#chat-cast").addEventListener("change", async (e) => {
   const f = e.target.closest("[data-p]");

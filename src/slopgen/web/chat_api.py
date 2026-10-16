@@ -894,13 +894,33 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
                             slopgen: str | None = Cookie(default=None)) -> dict:
         """Rename one participant in this conversation.
 
-        The CARD is not touched: a card outlives this video and renaming it belongs to
+        The CARD is not renamed: a card outlives this video and renaming it belongs to
         the config panel. What this fixes is an import that got somebody's name wrong
-        in every line of one chat."""
+        in every line of one chat — and the new name is given a copy of the card, so
+        the person keeps their face."""
         guard(slopgen)
         b = await body_of(request)
-        cp, i, job = edited(run_or_404(run_id), b)
-        n = guarded(chatroom.rename)(job, str(b.get("was", "")), str(b.get("now", "")))
+        run = run_or_404(run_id)
+        cp, i, job = edited(run, b)
+        was, now = str(b.get("was", "")), str(b.get("now", "")).strip()
+        n = guarded(chatroom.rename)(job, was, now)
+        # The face goes with the name. Renaming moved the lines and left the card
+        # behind, so somebody renamed in the room lost their picture, voice and colour
+        # without a word — the old card keeps its name, as above, and the new name gets
+        # a copy of it, unless it is somebody who already has a card of their own.
+        old = store.personas.get(was)
+        if old is not None and now and now != was and now not in store.personas:
+            card = old.model_copy(update={"name": now})
+            write_config("personas", now, card.model_dump(mode="json"))
+            store.personas[now] = card
+        # …and so does being the account the chat is read from, or their messages
+        # would leave the right-hand side the moment they were renamed
+        ctx = context(cp)
+        if was and ctx.chat.me == was:
+            fresh = ctx.chat.model_copy(update={"me": now})
+            run.params.manual_chat = fresh
+            cp.data["params"]["manual_chat"] = fresh.model_dump(mode="json")
+            cp.save()
         out = answer(cp, i, job)
         out["renamed"] = n
         return out

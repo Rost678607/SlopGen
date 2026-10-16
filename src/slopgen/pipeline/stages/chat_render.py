@@ -171,6 +171,19 @@ def people_of(job: VideoJob, ctx: AppContext) -> dict[str, Person]:
     return out
 
 
+def _face(person) -> str:
+    """Everything about a person that shows on their bubbles, for a file name: the
+    picture by its contents' age as well as its name, so a picture replaced under the
+    same name is a new file too."""
+    pic = person.avatar
+    try:
+        age = Path(pic).stat().st_mtime_ns if pic else 0
+    except OSError:
+        age = 0
+    return (f"{person.name}|{pic}|{age}|{person.colour}|{person.role}"
+            f"|{person.initials}|{person.mine}")
+
+
 def _stamp(canvas: Canvas, state: ChatState, height: int, pinned=None) -> str:
     """A name for this drawing that changes when the drawing does.
 
@@ -191,7 +204,11 @@ def _stamp(canvas: Canvas, state: ChatState, height: int, pinned=None) -> str:
             continue
         h.update(f"|{b.msg}|{b.top}|{b.height}|{b.show_head}|{b.depth}|{b.stamp}|".encode())
         h.update("".join(b.lines).encode())
-        h.update(f"{b.reactions}|{b.score}|{b.person.name}|{b.person.mine}".encode())
+        # The whole face and not just the name. With the name alone, a picture changed
+        # on somebody's card drew the same file name as before, and the old drawing was
+        # handed back with the old face on it — everywhere except at the foot of a run,
+        # where the picture is on the overlay, whose name did carry it.
+        h.update(f"{b.reactions}|{b.score}|{_face(b.person)}".encode())
         if b.media is not None:
             h.update(f"|{b.media.kind}|{b.media.path}|{b.media.box}|{b.media.shape}".encode())
         h.update(f"|{[(a, str(p)) for a, p in b.custom]}".encode())
@@ -290,8 +307,7 @@ def _overlay(canvas: "Canvas", out_dir: Path, width: int, height: int,
         top_guard = canvas.skin.header_h if bar is not None else 0
         ay = max(top_guard, min(ay, height - size))
         canvas.paint_avatar(img, person, (ax, ay), size)
-        key.update(f"|{person.name}|{person.avatar}|{person.colour}"
-                   f"|{person.initials}|{ax}|{ay}|{size}".encode())
+        key.update(f"|{_face(person)}|{ax}|{ay}|{size}".encode())
     at = out_dir / f"over_{key.hexdigest()[:16]}.png"
     if not at.is_file():
         img.save(at)

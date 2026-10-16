@@ -3472,7 +3472,10 @@ RU.update({
     "web.chat.stamp": "время",
     "web.chat.react": "реакции",
     "web.chat.score": "карма",
-    "web.chat.nick": "ник в этом сообщении",
+    "web.chat.nick": "имя только в этом сообщении",
+    "web.chat.nick.why": "Подписать одно это сообщение другим именем, не трогая "
+                         "человека: например, человек сменил ник посреди переписки. "
+                         "Пусто — как у человека в списке справа.",
     "web.chat.asthecard": "— как на карточке —",
     "web.chat.clearhere": "чистить экран здесь",
     "web.chat.excerpt": "кусок",
@@ -3511,7 +3514,10 @@ EN.update({
     "web.chat.stamp": "time",
     "web.chat.react": "reactions",
     "web.chat.score": "karma",
-    "web.chat.nick": "name on this one message",
+    "web.chat.nick": "name on this message only",
+    "web.chat.nick.why": "Sign this one message with another name without touching "
+                         "the person — somebody who changed their nickname halfway "
+                         "through, say. Empty is the person's name from the list.",
     "web.chat.asthecard": "— as the card says —",
     "web.chat.clearhere": "clear the screen here",
     "web.chat.excerpt": "excerpt",
@@ -3859,9 +3865,13 @@ RU.update({
     "web.chat.who.voice": "голос",
     "web.chat.who.pic": "аватарка",
     "web.chat.who.initials": "— кружок с инициалами —",
-    "web.chat.who.handle": "@ник",
+    "web.chat.who.handle": "ник на Reddit (u/…)",
+    "web.chat.who.name": "ник",
+    "web.chat.who.name.why": "Как человек подписан в сообщениях. Меняется во всём "
+                             "ролике, как только уйдёте из поля или нажмёте Enter; "
+                             "Esc — вернуть как было. Картинка, голос и цвет "
+                             "переходят на новое имя.",
     "web.chat.who.colour": "цвет",
-    "web.chat.who.rename": "переименовать",
 })
 EN.update({
     "web.chat.who.new": "＋ add a person",
@@ -3874,9 +3884,13 @@ EN.update({
     "web.chat.who.voice": "voice",
     "web.chat.who.pic": "picture",
     "web.chat.who.initials": "— the initials disc —",
-    "web.chat.who.handle": "@handle",
+    "web.chat.who.handle": "Reddit handle (u/…)",
+    "web.chat.who.name": "name",
+    "web.chat.who.name.why": "What the person's messages are signed with. Changed "
+                             "across the whole video when you leave the field or "
+                             "press Enter; Esc puts it back. The picture, voice and "
+                             "colour move to the new name.",
     "web.chat.who.colour": "colour",
-    "web.chat.who.rename": "rename",
 })
 RU.update({
     "web.chat.set.look": "как это нарисовано",
