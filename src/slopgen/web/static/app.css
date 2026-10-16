@@ -1362,26 +1362,54 @@ button.danger{border-color:var(--bad);color:var(--bad)}
 .chat-convhead{display:flex;gap:8px;align-items:center;margin-bottom:2px}
 /* the chat's own picture, where it sits in the client: left of the title. Same disc
    as the cast's, which is why it borrows that rule rather than inventing a second. */
-#chat-convpic{width:28px;height:28px;flex:0 0 auto;border-radius:50%;padding:0;
+.chat-convpic{width:28px;height:28px;flex:0 0 auto;border-radius:50%;padding:0;
   overflow:hidden;border:2px solid var(--line);background:var(--bg);cursor:pointer;
   display:grid;place-items:center}
-#chat-convpic img{width:100%;height:100%;object-fit:cover;display:block}
-#chat-convpic i{font-style:normal;font-size:12px;color:var(--dim)}
+.chat-convpic img{width:100%;height:100%;object-fit:cover;display:block}
+.chat-convpic i{font-style:normal;font-size:12px;color:var(--dim)}
 .chat-convpics{padding:4px 0 6px}
-#chat-convtitle{flex:1;font:inherit;font-size:13px;color:var(--ink);background:var(--bg);
+.chat-convtitle{flex:1;font:inherit;font-size:13px;color:var(--ink);background:var(--bg);
   border:1px solid var(--line);border-radius:6px;padding:5px 7px}
 .chat-src{margin:0;font-size:12px}
-#chat-list{flex:1;min-width:0;overflow:auto;display:grid;gap:6px;align-content:start}
+/* The list and its timeline side by side in one scroller, so the rail is exactly as
+   tall as the messages and scrolls with them: a stretch of rail per row, the head
+   riding down whichever row is up. */
+#chat-list{flex:1;min-width:0;overflow:auto;display:grid;grid-template-columns:16px 1fr;
+  gap:0 8px;align-content:start}
+#chat-msgs{min-width:0;display:grid;gap:6px;align-content:start}
+#chat-rail{position:relative;cursor:ns-resize;touch-action:none}
+#chat-rail .seg{position:absolute;left:6px;width:4px;border-radius:2px;
+  background:var(--line)}
+#chat-rail .seg.past{background:color-mix(in srgb,var(--accent) 45%,var(--line))}
+#chat-rail .seg.now{background:var(--accent)}
+#chat-rail:hover .seg{left:5px;width:6px}
+#chat-rail-head{position:absolute;left:0;right:0;height:4px;margin-top:-2px;
+  border-radius:2px;background:var(--accent);box-shadow:0 0 0 2px var(--bg);
+  pointer-events:none}
+/* one conversation of the video; the bar between two is the swipe between them */
+.chat-sec{display:grid;gap:6px;align-content:start}
+.chat-sec + .chat-sec{margin-top:12px;padding-top:12px;border-top:2px dashed var(--line)}
+.chat-sec .chat-convhead{position:sticky;top:0;z-index:1;background:var(--bg);
+  padding:2px 0 4px}
+.chat-sec.on .chat-convtitle{border-color:var(--accent)}
+.chat-conv.playing b::before{content:"▶ ";color:var(--accent)}
 #chat-side{width:min(360px,34vw);display:flex;flex-direction:column;gap:12px;overflow:auto}
+/* `flex:none`: the side column scrolls, and the frame used to be the item that gave
+   way to it — squeezed to the height of its header bar, which in a room that now
+   PLAYS the conversation hid exactly the part that moves. The cast scrolls instead. */
 #chat-frame{background:#000;border:1px solid var(--line);border-radius:8px;overflow:hidden;
-  display:grid;place-items:center;min-height:120px}
-#chat-frame img{width:100%;display:block}
+  display:grid;place-items:center;min-height:120px;flex:none}
+#chat-frame img{width:100%;max-height:72vh;object-fit:contain;display:block}
 .chat-empty{margin:4px 2px}
 
 /* One message. The whole row is the hit area for opening it, because a list you
    have to aim at is a list you stop using around the fortieth line. */
 .chat-row{border:1px solid var(--line);border-radius:8px;background:var(--panel)}
 .chat-row.on{border-color:var(--accent)}
+/* the line that is up while it plays: lit, not outlined — the outline is the one
+   open for editing, and the two are often different lines */
+.chat-row.now{background:color-mix(in srgb,var(--accent) 16%,var(--panel));
+  box-shadow:inset 3px 0 0 var(--accent)}
 .chat-line{display:flex;gap:8px;align-items:baseline;padding:7px 10px;cursor:pointer;
   flex-wrap:wrap}
 .chat-who{color:var(--accent);font-size:13px;white-space:nowrap}
@@ -1435,17 +1463,11 @@ button.danger{border-color:var(--bad);color:var(--bad)}
 #chat-paste-box textarea{font:inherit;font-size:13.5px;color:var(--ink);background:var(--bg);
   border:1px solid var(--line);border-radius:6px;padding:8px;resize:vertical}
 
-/* The clock. A strip of the finished video with the messages marked on it — not a
-   waveform and not a list of rows: the question it answers is "what is on screen at
-   this second", and the only gesture is to point at a second. */
-#chat-time{display:flex;gap:8px;align-items:center}
-#chat-track{position:relative;flex:1;height:22px;border:1px solid var(--line);
-  border-radius:6px;background:var(--panel);cursor:pointer;overflow:hidden}
-#chat-track .mark{position:absolute;top:0;bottom:0;width:1px;background:var(--line)}
-#chat-track .mark.swipe{background:var(--accent);width:2px}
-#chat-head{position:absolute;top:0;bottom:0;width:3px;background:var(--accent);
-  border-radius:2px;pointer-events:none}
-#chat-clock{font:12px/1 var(--mono);min-width:72px;text-align:right}
+/* play, and where the playhead is in seconds — `≈` while the pace is a guess */
+#chat-watch-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+#chat-watch-row .grow{flex:1}
+#chat-play{min-width:92px}
+#chat-clock{font:12px/1 var(--mono);white-space:nowrap}
 #chat-set{display:grid;gap:7px;border:1px solid var(--line);border-radius:8px;
   padding:10px;background:var(--panel)}
 #chat-set h4{margin:0;font-size:12px;color:var(--dim);text-transform:uppercase;

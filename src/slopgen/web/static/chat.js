@@ -7,10 +7,13 @@
 //
 // Three columns, because the thing has three levels and flattening any of them was
 // the first version's mistake. The pieces of conversation the video is made of; the
-// messages of whichever is open; and what it will actually look like. A video is
-// several chats shown one after another with a swipe between them — that is the
-// format, not an edge case — so the pieces are objects in a list you add to and
-// reorder, not a boundary flag buried in the messages.
+// messages; and what it will actually look like. A video is several chats shown one
+// after another with a swipe between them — that is the format, not an edge case — so
+// the pieces are objects in a list you add to and reorder, not a boundary flag buried
+// in the messages. The messages of ALL of them run down the middle column in the
+// order they are shown, a seam between each two, because that is what is played: a
+// list that showed one piece at a time had no place to put a playhead that walks
+// from the last line of one chat into the first of the next.
 //
 // Every edit is one request and the reply is the WHOLE document, for a sharp reason:
 // a reply points at a message by index, so dropping or moving one rewrites pointers
@@ -18,17 +21,22 @@
 // something that no longer exists.
 
 let CHAT = null;          // {id, title, video, doc}
-let chatConv = 0;         // which conversation is open
+let chatConv = 0;         // which conversation is being worked on (edits go to it)
 let chatSel = -1;         // which message is open for editing, by index within it
 const chatDrafts = new Map();  // typed-but-not-saved text, keyed "c:i"
 let chatOpts = null;      // /api/options, for the lists the settings sheet offers
-let chatAt = -1;          // where the playhead is, in seconds; -1 = follow the selection
+let chatT = 0;            // where the playhead is, in seconds of the video
+let chatNow = -1;         // which message it is on, by the video's numbering
+let chatPlaying = false;
 
 const cq = (s) => document.querySelector(s);
 const chatConvs = () => (CHAT && CHAT.doc.conversations) || [];
 const chatActive = () => chatConvs()[chatConv] || null;
-const draftKey = (i) => `${chatConv}:${i}`;
-const chatDraft = (m) => (chatDrafts.has(draftKey(m.i)) ? chatDrafts.get(draftKey(m.i)) : m.text);
+const draftKey = (c, i) => `${c}:${i}`;
+const chatDraft = (c, m) => (chatDrafts.has(draftKey(c, m.i)) ? chatDrafts.get(draftKey(c, m.i)) : m.text);
+// A message by the video's numbering — every conversation's lines one after another,
+// which is how the clock and the preview count — and back.
+const chatFirst = (c) => chatConvs().slice(0, c).reduce((n, x) => n + x.lines, 0);
 
 // ---------------------------------------------------------------- opening it
 
@@ -40,7 +48,10 @@ async function openChat(id, title, video = 0) {
   CHAT = { id, title, video, doc: d };
   chatConv = 0;
   chatSel = -1;
-  chatAt = -1;
+  chatPause();
+  chatT = 0;
+  chatNow = -1;
+  chatForget();
   chatDrafts.clear();
   // the lists the settings sheet offers are the start form's own, fetched once
   if (!chatOpts) { try { chatOpts = await api("/api/options"); } catch (e) { chatOpts = {}; } }
@@ -51,6 +62,8 @@ async function openChat(id, title, video = 0) {
 }
 
 function closeChat() {
+  chatPause();
+  if (chatWatching) showStill();
   cq("#chat").hidden = true;
   CHAT = null;
   loadRuns();
@@ -66,6 +79,7 @@ async function chatDo(path, opts = {}) {
       body: JSON.stringify(body),
     });
     CHAT.doc = d;
+    chatForget();
     if (chatConv >= d.conversations.length) chatConv = Math.max(0, d.conversations.length - 1);
     renderChat();
     return d;
@@ -80,6 +94,7 @@ async function reloadChat() {
   try {
     CHAT.doc = await api(`/api/runs/${CHAT.id}/chat?video=${CHAT.video}`);
   } catch (e) { return say(e.message, true); }
+  chatForget();
   if (chatConv >= chatConvs().length) chatConv = Math.max(0, chatConvs().length - 1);
   const conv = chatActive();
   if (!conv || chatSel >= conv.messages.length) chatSel = -1;
@@ -93,13 +108,11 @@ function renderChat() {
   renderChatStages();
   renderChatConvs();
   renderChatCast();
-  renderChatClock();
   renderChatWatch();
   if (!cq("#chat-set").hidden) renderChatSettings();
   cq("#chat-state").textContent = chatState();
-  const conv = chatActive();
-  const list = cq("#chat-list");
-  if (!conv) {
+  const list = cq("#chat-msgs");
+  if (!chatConvs().length) {
     // The front door, and the only place it can be: an empty room is the one screen
     // where nothing on it is obvious, and a line of grey text pointing at a button in
     // the header is not an answer to "where do I press".
@@ -108,31 +121,47 @@ function renderChat() {
       <button class="primary" id="chat-start-go">${
         esc(lab("web.chat.add.open", "＋ переписка"))}</button></div>`;
     cq("#chat-start-go").onclick = () => openAdd();
-    return;
+  } else {
+    list.innerHTML = chatConvs().map(chatSectionHTML).join("");
   }
-  list.innerHTML =
-    `<div class="chat-convhead">
-       <button id="chat-convpic" class="pic" title="${
+  drawRail();
+}
+
+// One conversation of the video: its title bar, its messages, and a way to add one.
+// The bar is the seam — what a viewer sees between two pieces is a swipe to another
+// chat with another name on top, so that is what the list draws between them.
+function chatSectionHTML(conv) {
+  const c = conv.c;
+  return `<section class="chat-sec${c === chatConv ? " on" : ""}" data-sec="${c}" id="chat-sec-${c}">
+    <div class="chat-convhead">
+       <button class="pic chat-convpic" title="${
          esc(lab("web.chat.convpic", "картинка чата"))}">${
          conv.avatar
            ? `<img src="${tokd(`/api/avatar?name=${encodeURIComponent(conv.avatar)}`)}" alt="">`
            : `<i>${esc((conv.title[0] || "#").toUpperCase())}</i>`}</button>
-       <input id="chat-convtitle" value="${esc(conv.title)}" placeholder="${
+       <input class="chat-convtitle" value="${esc(conv.title)}" placeholder="${
          esc(lab("web.chat.untitled", "без названия"))}">
        ${conv.source ? `<span class="dim">${esc(conv.source)}</span>` : ""}
      </div>`
-    + (chatConvPic ? `<div class="chat-convpics pic-pick">${
+    + (chatConvPic === c ? `<div class="chat-convpics pic-pick">${
         [""].concat(chatOpts.avatars || []).map((v) => `
           <button class="pic${v === conv.avatar ? " on" : ""}" data-convpic="${esc(v)}"
                   title="${esc(v || lab("web.chat.who.initials", ""))}">${
             v ? `<img src="${tokd(`/api/avatar?name=${encodeURIComponent(v)}`)}" alt="">`
               : `<i>#</i>`}</button>`).join("")}</div>` : "")
-    + conv.messages.map(chatRowHTML).join("")
+    + conv.messages.map((m) => chatRowHTML(conv, m)).join("")
+    + (conv.messages.length ? ""
+        : `<p class="dim chat-empty">${esc(lab("web.chat.empty", ""))}</p>`)
     + `<button class="ghost chat-add" data-add="${conv.messages.length}">${
-         esc(lab("web.chat.add", "＋ сообщение"))}</button>`;
-  if (!conv.messages.length)
-    list.insertAdjacentHTML("beforeend",
-      `<p class="dim chat-empty">${esc(lab("web.chat.empty", ""))}</p>`);
+         esc(lab("web.chat.add", "＋ сообщение"))}</button>
+  </section>`;
+}
+
+// Bring a conversation's section into view: the buttons on the left are a table of
+// contents for the list, not a switch between lists.
+function chatScrollTo(c) {
+  const sec = cq(`#chat-sec-${c}`);
+  if (sec) sec.scrollIntoView({ block: "start", behavior: "smooth" });
 }
 
 function chatState() {
@@ -180,9 +209,9 @@ function mediaChip(md, big = false) {
     esc((md.emoji ? md.emoji + " " : "") + word + len)}</i></span>`;
 }
 
-function chatRowHTML(m) {
-  const conv = chatActive();
-  const open = m.i === chatSel;
+function chatRowHTML(conv, m) {
+  const open = conv.c === chatConv && m.i === chatSel;
+  const n = chatFirst(conv.c) + m.i;
   const head = m.clear_before
     ? `<div class="chat-seam dim">${esc(lab("web.chat.cleared", "экран чистится"))}</div>` : "";
   const reply = m.reply_to >= 0 && conv.messages[m.reply_to]
@@ -190,22 +219,22 @@ function chatRowHTML(m) {
   const react = (m.reactions || [])
     .map(([e, n]) => `<span class="chat-react">${esc(rxLabel(e))}${n > 1 ? n : ""}</span>`).join("");
   return head + `
-<div class="chat-row${open ? " on" : ""}${m.pinned ? " pinned" : ""}" data-i="${m.i}"
-     draggable="true">
+<div class="chat-row${open ? " on" : ""}${n === chatNow ? " now" : ""}${m.pinned ? " pinned" : ""}"
+     data-i="${m.i}" data-n="${n}" draggable="true">
   <div class="chat-line" data-open="${m.i}">
     <b class="chat-who">${esc(m.nick || m.persona || lab("web.chat.nobody", "—"))}</b>
     ${mediaChip(m.media)}
-    <span class="chat-text">${esc(trim(chatDraft(m), 160))}</span>
+    <span class="chat-text">${esc(trim(chatDraft(conv.c, m), 160))}</span>
     ${reply}${react}
   </div>
   ${open ? chatEditHTML(m) : ""}
 </div>`;
 }
 
-// Whether the tray of chat pictures under the title is open. One conversation at a
-// time and shut by default: the picture is set once and the row of thumbnails is
+// Which conversation's tray of chat pictures is open under its title, or -1. One at
+// a time and shut by default: the picture is set once and the row of thumbnails is
 // the width of the list.
-let chatConvPic = false;
+let chatConvPic = -1;
 
 // A custom reaction is stored as `custom:<file>|<fallback>`; the lists show the
 // fallback, which is what it stands for.
@@ -232,7 +261,7 @@ function chatEditHTML(m) {
   ${m.media ? `<div class="chat-media-row">${mediaChip(m.media, true)}
     <button class="ghost danger" data-act="unmedia" data-i="${m.i}">${
       esc(lab("web.chat.media.drop", "убрать вложение"))}</button></div>` : ""}
-  <textarea class="chat-area" data-text="${m.i}" rows="3">${esc(chatDraft(m))}</textarea>
+  <textarea class="chat-area" data-text="${m.i}" rows="3">${esc(chatDraft(chatConv, m))}</textarea>
   ${m.source_text ? `<p class="dim chat-src">${esc(lab("web.chat.wassaid", "было"))}: ${
     esc(trim(m.source_text, 180))}</p>` : ""}
   <div class="row2">
@@ -396,18 +425,54 @@ function renderChatStages() {
 
 // The frame as it stands at one message of the open conversation. `at` is counted
 // across the whole video, because that is what the renderer lays out — the room knows
-// the conversations, the drawing knows only the order they are shown in.
+// the conversations, the drawing knows only the order they are shown in. Nothing
+// while the conversation is playing: the playhead owns the frame then, and an edit
+// made under it would yank the picture off the line that is up.
 function shootChat(at = -1) {
-  if (!CHAT) return;
-  chatAt = -1;
-  const before = chatConvs().slice(0, chatConv).reduce((n, c) => n + c.lines, 0);
-  const n = at < 0 ? before + ((chatActive() || { lines: 0 }).lines - 1) : before + at;
-  if (n < 0) return;
-  cq("#chat-shot-img").src =
-    // `x` and not `t`: `t` is the preview's other question — a MOMENT of the finished
-    // video — so a cache-buster parked in it asked for second 1.79e12 of a ten-second
-    // cut, and every click on a message drew the last frame of the video instead.
-    tokd(`/api/runs/${CHAT.id}/chat/preview?video=${CHAT.video}&at=${n}&x=${Date.now()}`);
+  if (!CHAT || chatPlaying) return;
+  const n = chatFirst(chatConv) + (at < 0 ? (chatActive() || { lines: 0 }).lines - 1 : at);
+  if (n >= 0) chatShow(n);
+}
+
+// -- frames, fetched ahead -----------------------------------------------------
+//
+// One frame per message, kept until the conversation changes, so playing it back
+// asks the server for each line once and scrubbing back over it asks for nothing.
+// Fetched rather than set as an <img> source because the next ones are wanted
+// BEFORE the playhead gets to them — a frame asked for on arrival lands a few hundred
+// milliseconds into a message that may only be up for one second — and with the
+// token as a header: in the query it would be `t`, which this endpoint reads as a
+// second of the video.
+const chatFrames = new Map();   // n -> Promise<object URL>
+
+function chatFrame(n) {
+  if (chatFrames.has(n)) return chatFrames.get(n);
+  const o = { credentials: "same-origin" };
+  if (TOK) o.headers = { "X-Slopgen-Token": TOK };
+  const got = fetch(`/api/runs/${CHAT.id}/chat/preview?video=${CHAT.video}&at=${n}`, o)
+    .then((r) => (r.ok ? r.blob() : Promise.reject(new Error(r.statusText))))
+    .then((b) => URL.createObjectURL(b));
+  got.catch(() => chatFrames.delete(n));
+  chatFrames.set(n, got);
+  return got;
+}
+
+// The cache answers for a conversation that no longer exists the moment anything in
+// it is edited, so every new document throws it away.
+function chatForget() {
+  for (const got of chatFrames.values()) got.then((u) => URL.revokeObjectURL(u), () => {});
+  chatFrames.clear();
+}
+
+let chatWant = -1;   // the frame last asked to be on screen
+
+function chatShow(n) {
+  chatWant = n;
+  // only if it is still the one wanted: a slow frame must not land over a later one
+  chatFrame(n).then((u) => { if (chatWant === n) cq("#chat-shot-img").src = u; }, () => {});
+  if (!chatPlaying) return;
+  const ahead = chatPace().at.length;
+  for (let k = 1; k <= 3 && n + k < ahead; k++) chatFrame(n + k);
 }
 
 // The settings, with the frame in front of you. Drawn from what the server says it
@@ -457,56 +522,197 @@ function renderChatSettings() {
   wirePicks(cq("#chat-set"));
 }
 
-// The clock. Hidden until there is one — a conversation being built has no timings at
-// all, and a strip pretending otherwise would be the one control on this screen that
-// lies. Every message is a tick and every swipe is a brighter one, because what you
-// scrub for is usually a seam.
-function renderChatClock() {
-  const c = (CHAT.doc.clock || { total: 0, marks: [] });
-  const box = cq("#chat-time");
-  box.hidden = !(c.total > 0);
-  if (box.hidden) return;
-  const track = cq("#chat-track");
-  // where one conversation gives way to the next, by the video's own numbering
-  const seams = new Set();
-  let n = 0;
-  for (const conv of CHAT.doc.conversations || []) {
-    if (n) seams.add(n);
-    n += conv.lines;
-  }
-  track.querySelectorAll(".mark").forEach((m) => m.remove());
-  for (const m of c.marks) {
-    const el = document.createElement("div");
-    el.className = "mark" + (seams.has(m.i) ? " swipe" : "");
-    el.style.left = `${(m.at / c.total) * 100}%`;
-    el.title = `${m.at.toFixed(1)}s · ${m.who || "—"}: ${m.text || ""}`;
-    el.dataset.at = m.at;
-    track.appendChild(el);
-  }
-  chatHead(chatAt < 0 ? 0 : chatAt);
+// -- playing it ------------------------------------------------------------
+//
+// The timeline is the list. A rail down its left edge, one stretch of it per message
+// and exactly as tall as that message's row, so the playhead is never anywhere but ON
+// the line that is up. The price is an even speed, and it is paid on purpose: the
+// head crawls down a line read for six seconds, runs down a one-word one and jumps
+// the seam between two chats — and that unevenness is the very thing being judged
+// when a conversation is watched before it is made, which is how long each line holds.
+//
+// The pace is the server's (`chat_api._pace`): the real clock once the scenes are
+// laid and voiced, and until then the same rules guessed at, which the clock beside
+// the button marks with a `≈`.
+
+const chatPace = () => (CHAT && CHAT.doc.pace) || { exact: false, total: 0, at: [], dur: [] };
+let chatGeo = [];     // n -> {top, h}: where that message's row is, down the list
+let chatLoopAt = 0;   // performance.now() of the last step
+
+function drawRail() {
+  const rail = cq("#chat-rail");
+  rail.querySelectorAll(".seg").forEach((x) => x.remove());
+  chatGeo = [];
+  if (!CHAT) return;
+  const msgs = cq("#chat-msgs");
+  const top = msgs.getBoundingClientRect().top;
+  const p = chatPace();
+  msgs.querySelectorAll(".chat-row[data-n]").forEach((row) => {
+    const n = +row.dataset.n;
+    const b = row.getBoundingClientRect();
+    chatGeo[n] = { top: b.top - top, h: b.height };
+    const seg = document.createElement("div");
+    seg.className = "seg";
+    seg.dataset.n = n;
+    seg.style.top = `${b.top - top}px`;
+    seg.style.height = `${b.height}px`;
+    if (p.at[n] !== undefined)
+      seg.title = `${p.at[n].toFixed(1)}s · ${p.dur[n].toFixed(1)}s`;
+    rail.appendChild(seg);
+  });
+  rail.hidden = !chatGeo.length;
+  chatNow = -1;   // re-mark the rows just drawn, without asking for a frame
+  chatPlace(true);
 }
 
-// Named `chatHead` rather than the obvious thing: the montage room already has a
-// function of that obvious name and loads after this file, so the plain one silently
-// became ITS playhead — the strip here moved nothing and said nothing, with no error
-// anywhere. All three rooms share one global scope, so everything in this file is
-// named as if the other two existed, because they do.
-function chatHead(at) {
-  const c = CHAT.doc.clock || { total: 0 };
-  if (!(c.total > 0)) return;
-  const k = Math.min(Math.max(at / c.total, 0), 1);
-  cq("#chat-head").style.left = `${k * 100}%`;
-  cq("#chat-clock").textContent = `${at.toFixed(2)} / ${c.total.toFixed(1)}s`;
+// Put the head where `chatT` says, and — when that is a different message than
+// before — say so: the row lit, the frame of that message up, the row scrolled to.
+function chatPlace(quiet = false) {
+  const p = chatPace();
+  const head = cq("#chat-rail-head");
+  if (!p.at.length || !chatGeo.length) {
+    head.hidden = true;
+    chatClock();
+    return;
+  }
+  chatT = Math.min(Math.max(chatT, 0), p.total);
+  let lo = 0, hi = p.at.length - 1;   // the last message to have started by now
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (p.at[mid] <= chatT + 1e-6) lo = mid; else hi = mid - 1;
+  }
+  const n = lo;
+  const g = chatGeo[n];
+  head.hidden = !g;
+  if (g) {
+    const k = p.dur[n] > 0 ? Math.min(Math.max((chatT - p.at[n]) / p.dur[n], 0), 1) : 0;
+    head.style.top = `${g.top + k * g.h}px`;
+  }
+  if (n !== chatNow) {
+    chatNow = n;
+    chatMark();
+    if (!quiet) chatArrive(n);
+  }
+  chatClock();
 }
 
-// ---------------------------------------------------------------- the gestures
+function chatMark() {
+  const msgs = cq("#chat-msgs");
+  msgs.querySelectorAll(".chat-row.now").forEach((r) => r.classList.remove("now"));
+  const row = msgs.querySelector(`.chat-row[data-n="${chatNow}"]`);
+  if (row) row.classList.add("now");
+  cq("#chat-rail").querySelectorAll(".seg").forEach((s) => {
+    s.classList.toggle("past", +s.dataset.n < chatNow);
+    s.classList.toggle("now", +s.dataset.n === chatNow);
+  });
+  // and which piece it is in, on the list of pieces
+  let c = -1;
+  for (let k = 0, first = 0; k < chatConvs().length; first += chatConvs()[k].lines, k++)
+    if (chatNow >= first && chatNow < first + chatConvs()[k].lines) c = k;
+  cq("#chat-convs").querySelectorAll(".chat-conv").forEach(
+    (el) => el.classList.toggle("playing", +el.dataset.conv === c));
+}
+
+function chatArrive(n) {
+  if (!chatWatching) chatShow(n);
+  if (!chatPlaying) return;
+  const row = cq(`#chat-msgs .chat-row[data-n="${n}"]`);
+  if (row) row.scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
+
+function chatClock() {
+  const p = chatPace();
+  const clock = cq("#chat-clock");
+  clock.textContent = p.at.length
+    ? `${chatT.toFixed(1)} / ${p.total.toFixed(1)}s${p.exact ? "" : " ≈"}` : "";
+  clock.title = lab(p.exact ? "web.chat.pace.exact" : "web.chat.pace.guess", "");
+  const go = cq("#chat-play");
+  go.textContent = lab(chatPlaying ? "web.chat.pause" : "web.chat.play", "");
+  go.disabled = !p.at.length;
+}
+
+function chatStep(now) {
+  if (!chatPlaying) return;
+  if (chatWatching) {
+    chatT = cq("#chat-video").currentTime;
+  } else {
+    chatT += (now - chatLoopAt) / 1000;
+    if (chatT >= chatPace().total) {
+      chatT = chatPace().total;
+      chatPlace();
+      return chatPause();
+    }
+  }
+  chatLoopAt = now;
+  chatPlace();
+  requestAnimationFrame(chatStep);
+}
+
+function chatPlay() {
+  if (!CHAT || !chatPace().at.length || chatPlaying) return;
+  // with the cut on screen the cut is what plays, and its own events start the clock
+  if (chatWatching) return void cq("#chat-video").play().catch(() => {});
+  if (chatT >= chatPace().total - 1e-3) chatT = 0;   // from the top, once it has ended
+  chatPlaying = true;
+  chatLoopAt = performance.now();
+  chatNow = -1;   // arrive at the current line afresh: its frame, and the next ones
+  chatPlace();
+  requestAnimationFrame(chatStep);
+}
+
+function chatPause() {
+  const v = cq("#chat-video");
+  if (chatWatching && !v.paused) v.pause();
+  chatPlaying = false;
+  chatClock();
+}
+
+// Put the head at the start of a message, which is where opening one should leave
+// it: pressing play after picking a line plays from that line.
+function chatSeek(n) {
+  const p = chatPace();
+  if (p.at[n] === undefined) return;
+  chatT = p.at[n];
+  if (chatWatching) cq("#chat-video").currentTime = chatT;
+  chatPlace(true);
+}
+
+cq("#chat-play").onclick = () => (chatPlaying ? chatPause() : chatPlay());
+
+// Scrubbing: a point on the rail is a point inside one message's row, and so a moment
+// inside that message's time. A point on a title bar between two chats is the start
+// of the first message under it.
+function chatSeekY(e) {
+  if (!chatGeo.length) return;
+  const p = chatPace();
+  const y = e.clientY - cq("#chat-msgs").getBoundingClientRect().top;
+  let n = chatGeo.findIndex((g) => g && y < g.top + g.h);
+  if (n < 0) n = chatGeo.length - 1;
+  const g = chatGeo[n];
+  if (!g || p.at[n] === undefined) return;
+  chatT = p.at[n] + Math.min(Math.max((y - g.top) / g.h, 0), 1) * p.dur[n];
+  if (chatWatching) cq("#chat-video").currentTime = chatT;
+  chatPlace();
+}
+
+cq("#chat-rail").addEventListener("pointerdown", (e) => {
+  cq("#chat-rail").setPointerCapture(e.pointerId);
+  chatSeekY(e);
+});
+cq("#chat-rail").addEventListener("pointermove", (e) => { if (e.buttons) chatSeekY(e); });
+
+// A row grows when it is opened, a textarea is dragged taller, the window narrows —
+// and every one of those moves where the messages after it sit on the rail.
+new ResizeObserver(() => { if (CHAT && !cq("#chat").hidden) drawRail(); })
+  .observe(cq("#chat-msgs"));
 
 // -- watching the real thing -----------------------------------------------
 //
 // The still is exact about everything except the one thing the format is made of:
 // movement. A message arriving a piece at a time, the view rolling up after it, the
 // swipe between two chats — none of that is in a frame, and no amount of frames makes
-// it. So once there is a cut, the room plays it.
+// it. So once there is a cut, the room plays it — on the same rail, which follows the
+// video and drives it.
 let chatWatching = false;
 
 function renderChatWatch() {
@@ -524,13 +730,15 @@ function showStill() {
   v.removeAttribute("src");
   v.load();
   v.hidden = true;
+  chatPlaying = false;
   cq("#chat-shot-img").hidden = false;
-  cq("#chat-time").hidden = !(CHAT && CHAT.doc.clock && CHAT.doc.clock.total > 0);
   renderChatWatch();
+  chatClock();
 }
 
 cq("#chat-watch").onclick = () => {
   if (chatWatching) return showStill();
+  chatPause();
   chatWatching = true;
   const v = cq("#chat-video");
   // cache-busted, because the whole point of pressing this is to see the cut that was
@@ -538,20 +746,27 @@ cq("#chat-watch").onclick = () => {
   v.src = tokd(`/api/runs/${CHAT.id}/video?x=${Date.now()}`);
   v.hidden = false;
   cq("#chat-shot-img").hidden = true;
-  // The strip STAYS. Hiding it here was the whole of why there was no way to watch
-  // the video against a timeline: the video has only the browser's own scrubber,
-  // which is a bare line with no idea where a message lands or where one chat gives
-  // way to the next — and those marks are the only reason to look at a timeline in
-  // this room at all. So the same strip now drives the video and follows it.
-  cq("#chat-time").hidden = false;
+  // from where the playhead stands, so the rail and the picture start out agreeing
+  v.addEventListener("loadedmetadata", () => { v.currentTime = chatT; }, { once: true });
   renderChatWatch();
   v.play().catch(() => {});
 };
 
-// The playhead follows the video while it plays, and the marks under it say what is
-// about to happen: a tick per message, a brighter one per swipe.
-cq("#chat-video").addEventListener("timeupdate", () => {
-  if (chatWatching) chatHead(cq("#chat-video").currentTime);
+// The video's own controls count as much as the button: whichever starts it, the
+// rail follows, and whichever stops it, the rail stops.
+cq("#chat-video").addEventListener("play", () => {
+  if (!chatWatching || chatPlaying) return;
+  chatPlaying = true;
+  chatLoopAt = performance.now();
+  chatClock();
+  requestAnimationFrame(chatStep);
+});
+for (const ev of ["pause", "ended"])
+  cq("#chat-video").addEventListener(ev, () => { chatPlaying = false; chatClock(); });
+cq("#chat-video").addEventListener("seeked", () => {
+  if (!chatWatching) return;
+  chatT = cq("#chat-video").currentTime;
+  chatPlace();
 });
 
 // -- making the video --------------------------------------------------------
@@ -595,7 +810,12 @@ async function buildChat() {
 
 cq("#chat-build").onclick = buildChat;
 cq("#chat-close").onclick = closeChat;
-cq("#chat-shot").onclick = () => (chatAt >= 0 ? shootAt(chatAt) : shootChat(chatSel));
+// Drawn again from scratch — the frames kept for playing are thrown away with it —
+// at whichever message the playhead is on, or the open one when it is on none.
+cq("#chat-shot").onclick = () => {
+  chatForget();
+  chatNow >= 0 ? chatShow(chatNow) : shootChat(chatSel);
+};
 cq("#chat-settings").onclick = () => {
   const box = cq("#chat-set");
   box.hidden = !box.hidden;
@@ -615,39 +835,6 @@ cq("#chat-set").addEventListener("change", async (e) => {
   // telling it again when `рисование` has run.
   shootChat(chatSel);
 });
-
-// Scrubbing. The frame comes out of the states already drawn, interpolated at that
-// instant by the very arithmetic the renderer uses, so it costs no encoder and cannot
-// disagree with the video.
-function scrubTo(e) {
-  const c = CHAT.doc.clock || { total: 0 };
-  if (!(c.total > 0)) return;
-  const box = cq("#chat-track").getBoundingClientRect();
-  chatAt = Math.min(Math.max((e.clientX - box.left) / box.width, 0), 1) * c.total;
-  chatHead(chatAt);
-  // While the cut is playing the strip is the video's own transport: the states
-  // behind it were drawn from the same clock, so the mark you aim at and the instant
-  // the video lands on are the same instant.
-  if (chatWatching) cq("#chat-video").currentTime = chatAt;
-}
-
-cq("#chat-track").addEventListener("pointerdown", (e) => {
-  cq("#chat-track").setPointerCapture(e.pointerId);
-  scrubTo(e);
-});
-cq("#chat-track").addEventListener("pointermove", (e) => {
-  if (e.buttons) scrubTo(e);
-});
-cq("#chat-track").addEventListener("pointerup", (e) => {
-  scrubTo(e);
-  if (!chatWatching) shootAt(chatAt);
-});
-
-function shootAt(at) {
-  if (!CHAT) return;
-  cq("#chat-shot-img").src = tokd(
-    `/api/runs/${CHAT.id}/chat/preview?video=${CHAT.video}&t=${at.toFixed(3)}&x=${Date.now()}`);
-}
 
 cq("#chat-convs").addEventListener("click", async (e) => {
   const act = e.target.closest("[data-cact]");
@@ -671,13 +858,32 @@ cq("#chat-convs").addEventListener("click", async (e) => {
     }
     return shootChat();
   }
+  // A name on the list is a place in the list below: it scrolls there, and makes
+  // that the piece being worked on — whose people the cast column shows.
   const pick = e.target.closest("[data-conv]");
   if (!pick) return;
-  chatConv = +pick.dataset.conv;
-  chatSel = -1;
+  chatTake(+pick.dataset.conv);
   renderChat();
+  chatScrollTo(chatConv);
   shootChat();
 });
+
+// Whichever conversation a gesture in the list lands in is the one being worked on,
+// before any handler reads it: every request carries `c`, and the list now holds all
+// of them. The open message belongs to its conversation, so moving to another one
+// closes it — an index in one piece means nothing in the next.
+function chatTake(c) {
+  if (c === chatConv) return;
+  chatConv = c;
+  chatSel = -1;
+  chatConvPic = -1;
+}
+
+for (const ev of ["click", "change", "input", "dragstart"])
+  cq("#chat-list").addEventListener(ev, (e) => {
+    const sec = e.target.closest("[data-sec]");
+    if (sec) chatTake(+sec.dataset.sec);
+  }, true);
 
 cq("#chat-list").addEventListener("click", async (e) => {
   const open = e.target.closest("[data-open]");
@@ -685,7 +891,10 @@ cq("#chat-list").addEventListener("click", async (e) => {
     const i = +open.dataset.open;
     chatSel = chatSel === i ? -1 : i;
     renderChat();
-    if (chatSel >= 0) shootChat(chatSel);
+    if (chatSel >= 0) {
+      chatSeek(chatFirst(chatConv) + chatSel);
+      shootChat(chatSel);
+    }
     return;
   }
   const add = e.target.closest("[data-add]");
@@ -707,7 +916,7 @@ cq("#chat-list").addEventListener("click", async (e) => {
     chatSel = -1;
     const was = chatConv;
     const d = await chatDo("/split", { body: { i } });
-    if (d) { chatConv = was + 1; renderChat(); }
+    if (d) { chatConv = was + 1; renderChat(); chatScrollTo(chatConv); }
   }
   else if (what === "after") {
     const d = await chatDo("/message", { body: { at: i + 1, persona: lastWho() } });
@@ -722,7 +931,10 @@ cq("#chat-list").addEventListener("click", async (e) => {
 // lines up" is nine presses and nine redraws. A conversation is a list and a list is
 // dragged. The line under the cursor says where it would land, because a drop with no
 // target drawn is a guess about what the program understood.
+// A line moves within its own conversation and no further: a reply never crosses a
+// seam, and taking a line to another chat is a cut and a paste, not a drag.
 let chatDrag = -1;
+const chatSameSec = (row) => row && +row.closest("[data-sec]").dataset.sec === chatConv;
 
 cq("#chat-list").addEventListener("dragstart", (e) => {
   const row = e.target.closest(".chat-row");
@@ -741,7 +953,7 @@ cq("#chat-list").addEventListener("dragover", (e) => {
   e.dataTransfer.dropEffect = "move";
   cq("#chat-list").querySelectorAll(".drop-here, .drop-after")
     .forEach((x) => x.classList.remove("drop-here", "drop-after"));
-  if (!row || +row.dataset.i === chatDrag) return;
+  if (!chatSameSec(row) || +row.dataset.i === chatDrag) return;
   // above or below the midline, which is the only thing a cursor can mean here
   const box = row.getBoundingClientRect();
   row.classList.add(e.clientY > box.top + box.height / 2 ? "drop-after" : "drop-here");
@@ -758,7 +970,7 @@ cq("#chat-list").addEventListener("drop", async (e) => {
   e.preventDefault();
   const from = chatDrag;
   chatDrag = -1;
-  if (!row || from < 0) return;
+  if (!chatSameSec(row) || from < 0) return;
   const box = row.getBoundingClientRect();
   const after = e.clientY > box.top + box.height / 2;
   let to = +row.dataset.i + (after ? 1 : 0);
@@ -784,28 +996,28 @@ function lastWho() {
 // the redraws in between, so the only way to lose what you typed is to say so.
 cq("#chat-list").addEventListener("input", (e) => {
   const area = e.target.closest("[data-text]");
-  if (area) chatDrafts.set(draftKey(+area.dataset.text), area.value);
+  if (area) chatDrafts.set(draftKey(chatConv, +area.dataset.text), area.value);
 });
 
 cq("#chat-list").addEventListener("click", async (e) => {
-  if (e.target.closest("#chat-convpic")) {
-    chatConvPic = !chatConvPic;
+  if (e.target.closest(".chat-convpic")) {
+    chatConvPic = chatConvPic === chatConv ? -1 : chatConv;
     return renderChat();
   }
   const pic = e.target.closest("[data-convpic]");
   if (!pic) return;
-  chatConvPic = false;
+  chatConvPic = -1;
   await chatDo("/conversation", { method: "PUT", body: { avatar: pic.dataset.convpic } });
   shootChat(chatSel);
 });
 
 cq("#chat-list").addEventListener("change", async (e) => {
-  const title = e.target.closest("#chat-convtitle");
+  const title = e.target.closest(".chat-convtitle");
   if (title) return void await chatDo("/conversation", { method: "PUT", body: { title: title.value } });
   const area = e.target.closest("[data-text]");
   if (area) {
     const i = +area.dataset.text;
-    chatDrafts.delete(draftKey(i));
+    chatDrafts.delete(draftKey(chatConv, i));
     await chatDo("/message", { method: "PUT", body: { i, text: area.value } });
     return shootChat(chatSel);
   }
@@ -926,6 +1138,7 @@ cq("#chat-paste-go").onclick = async () => {
     chatConv = Math.max(0, d.conversations.length - 1);
     chatSel = -1;
     renderChat();
+    chatScrollTo(chatConv);
     say(`${d.added} ${lab("web.chat.lines", "сообщений")}`);
   }
   shootChat();
@@ -1072,7 +1285,10 @@ cq("#chat-src-cancel").onclick = () => { cq("#chat-src-box").hidden = true; };
 cq("#chat-manual-go").onclick = async () => {
   const d = await chatDo("/conversation", { body: { at: -1 } });
   cq("#chat-src-box").hidden = true;
-  if (d) { chatConv = d.conversations.length - 1; chatSel = -1; renderChat(); shootChat(); }
+  if (d) {
+    chatConv = d.conversations.length - 1; chatSel = -1;
+    renderChat(); chatScrollTo(chatConv); shootChat();
+  }
 };
 
 cq("#chat-src-tabs").addEventListener("click", (e) => {
@@ -1120,6 +1336,7 @@ cq("#chat-invent-go").onclick = async () => {
     chatConv = Math.max(0, d.conversations.length - 1);
     chatSel = -1;
     renderChat();
+    chatScrollTo(chatConv);
     say(`${d.added} ${lab("web.chat.exports.added", "")}`);
     shootChat();
   }
@@ -1333,6 +1550,7 @@ cq("#chat-pick-go").onclick = async () => {
     chatConv = Math.max(0, d.conversations.length - 1);
     chatSel = -1;
     renderChat();
+    chatScrollTo(chatConv);
     say(`${lines.length} ${lab("web.chat.lines", "сообщений")}`);
     shootChat();
   }

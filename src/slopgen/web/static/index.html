@@ -513,7 +513,13 @@
 
   <div id="chat-body">
     <div id="chat-convs"></div>
-    <div id="chat-list"></div>
+    <!-- Every conversation of the video in one list, in the order they are shown,
+         with the timeline down its left edge: a rail as tall as the list, a stretch
+         of it per message, so the playhead is always ON the line that is up. -->
+    <div id="chat-list">
+      <div id="chat-rail" data-lt="web.chat.rail"><div id="chat-rail-head"></div></div>
+      <div id="chat-msgs"></div>
+    </div>
     <aside id="chat-side">
       <!-- A still answers "what will this look like" and cannot answer "how does it
            move" — and the reveal, the roll and the swipe are most of what this mode
@@ -524,14 +530,12 @@
         <video id="chat-video" controls playsinline hidden></video>
       </div>
       <div class="row" id="chat-watch-row">
+        <button id="chat-play" class="primary" data-l="web.chat.play">▶ играть</button>
+        <span class="dim" id="chat-clock"></span>
+        <span class="grow"></span>
         <button id="chat-shot" class="ghost" data-l="web.chat.shot">перерисовать</button>
         <button id="chat-watch" class="ghost" data-l="web.chat.watch" hidden>смотреть ролик</button>
       </div>
-      <!-- the clock, once there is one: a strip of the finished video with every
-           message marked on it and a handle you drag. Before `render` has run there
-           are no timings to show, so it stays hidden rather than lying about them. -->
-      <div id="chat-time" hidden><div id="chat-track"><div id="chat-head"></div></div>
-        <span class="dim" id="chat-clock"></span></div>
       <div id="chat-set" hidden></div>
       <div id="chat-cast"></div>
     </aside>

@@ -221,6 +221,12 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
         # room shows a list until then and a timeline afterwards, which is the honest
         # order and not a limitation to apologise for.
         out["clock"] = _clock(job)
+        # What the room PLAYS by: where every message starts and how long it is up.
+        # The real clock when the scenes are laid, voiced and still the conversation
+        # on the screen; otherwise the same rules guessed at (`chat_script.guess`) —
+        # a conversation being typed has to be watchable too, and that is the moment
+        # its pace is being decided.
+        out["pace"] = _pace(job, ctx)
         # Whether there is a finished cut to WATCH. A still frame answers "what will
         # this look like"; it cannot answer "how does it move", and the reveal, the
         # roll and the swipe are most of what this mode is. So the room says when the
@@ -247,6 +253,34 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
                               "who": msg.nick or msg.persona,
                               "text": (msg.text or "")[:60]})
         return {"total": at, "marks": marks}
+
+    def _pace(job, ctx) -> dict:
+        msgs = job.messages
+        scenes = job.scenes
+        starts, at = [], 0.0
+        for scene in scenes:
+            starts.append(at)
+            at += scene.duration
+        # Exact only while the scenes still ARE these messages: the room edits the
+        # conversations without re-laying them (see `chatroom`), so a line typed after
+        # `script` ran points at nothing, and a voiced line not yet voiced is 0s long.
+        laid = bool(msgs) and all(
+            0 <= m.scene < len(scenes) and scenes[m.scene].duration > 0
+            and scenes[m.scene].text in (m.text, "") for m in msgs) and all(
+            a.scene < b.scene for a, b in zip(msgs, msgs[1:]))
+        if laid:
+            begin = [starts[m.scene] for m in msgs]
+            dur = [e - b for b, e in zip(begin, begin[1:] + [at])]
+        else:
+            from ..pipeline.stages import chat_script
+
+            dur = chat_script.guess(job, ctx)
+            begin, t = [], 0.0
+            for d in dur:
+                begin.append(round(t, 3))
+                t += d
+        return {"exact": laid, "total": round(sum(dur), 3),
+                "at": [round(b, 3) for b in begin], "dur": [round(d, 3) for d in dur]}
 
     def _chain(cp: Checkpoint):
         from ..pipeline import orchestrator
@@ -1085,8 +1119,10 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
         if not job.messages:
             raise HTTPException(status_code=404, detail="there is no conversation yet")
         ctx = context(cp)
-        out = Path(job.workdir) / "chat" / "preview.png"
-        out.parent.mkdir(parents=True, exist_ok=True)
+        # In memory and not a file in the run: the room asks for the next frames
+        # ahead of the playhead, several at once, and one `preview.png` shared by all
+        # of them handed each request whichever frame finished last.
+        out = io.BytesIO()
         # A message named outright wins over a moment: they are two ways of asking
         # the same question and only one of them can be answered, so the more specific
         # one is. Belt and braces after a caller sent both and meant the first.
@@ -1108,8 +1144,8 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
         except Exception as e:  # noqa: BLE001
             log.exception("drawing the chat preview failed")
             raise HTTPException(status_code=502, detail=f"{type(e).__name__}: {e}")
-        return FileResponse(out, media_type="image/png",
-                            headers={"Cache-Control": "no-store"})
+        return Response(out.getvalue(), media_type="image/png",
+                        headers={"Cache-Control": "no-store"})
 
 
 def _safe_reaction(emoji: str, base: Path) -> str:
@@ -1205,7 +1241,7 @@ def _message_at(job, when: float) -> int:
     return max(0, min(last, len(job.messages) - 1))
 
 
-def _frame_at(job, ctx: AppContext, when: float, out: Path) -> None:
+def _frame_at(job, ctx: AppContext, when: float, out) -> None:
     """The frame the finished video shows at `when`, out of the states already drawn.
 
     The same arithmetic `ffmpeg.make_chat_part` renders with, done once in Pillow: find
@@ -1240,7 +1276,7 @@ def _frame_at(job, ctx: AppContext, when: float, out: Path) -> None:
         with Image.open(st.overlay) as bar:
             bar = bar.convert("RGBA")
             frame.paste(bar, (0, 0), bar)
-    _framed(frame, v, top).save(out)
+    _framed(frame, v, top).save(out, format="PNG")
 
 
 def _framed(chat, v, top: int):
@@ -1256,7 +1292,7 @@ def _framed(chat, v, top: int):
     return out
 
 
-def _draw_preview(job, ctx: AppContext, last: int, out: Path) -> None:
+def _draw_preview(job, ctx: AppContext, last: int, out) -> None:
     """Lay the conversation up to `last` and paint the frame it ends on.
 
     The same planner the render stage drives, stopped early (`Planner.lay_upto`), so
@@ -1286,4 +1322,4 @@ def _draw_preview(job, ctx: AppContext, last: int, out: Path) -> None:
             chat_render.asset(ctx, chat_render.AVATARS_DIR,
                               (conv.avatar if conv else "") or cfg.header_avatar))
         frame.paste(bar, (0, 0), bar)
-    _framed(frame, v, top).save(out)
+    _framed(frame, v, top).save(out, format="PNG")

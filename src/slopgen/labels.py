@@ -3899,6 +3899,20 @@ EN.update({
     "web.chat.watch.still": "← back to the frame",
 })
 RU.update({
+    "web.chat.play": "▶ играть",
+    "web.chat.pause": "❚❚ пауза",
+    "web.chat.pace.guess": "темп прикинут по длине строк — точный появится после озвучки",
+    "web.chat.pace.exact": "темп ролика как он озвучен",
+    "web.chat.rail": "таймлайн: щёлкните или тяните, чтобы перейти",
+})
+EN.update({
+    "web.chat.play": "▶ play",
+    "web.chat.pause": "❚❚ pause",
+    "web.chat.pace.guess": "the pace is guessed from line lengths — the real one comes with the voicing",
+    "web.chat.pace.exact": "the pace of the video as voiced",
+    "web.chat.rail": "the timeline: click or drag to go there",
+})
+RU.update({
     "web.chat.rx.which": "какое эмодзи",
     "web.chat.rx.swap": "поменять эмодзи",
 })

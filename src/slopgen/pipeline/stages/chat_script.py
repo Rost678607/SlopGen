@@ -136,6 +136,38 @@ def lay(job: VideoJob, ctx: AppContext) -> None:
     job.scenes = scenes
 
 
+def guess(job: VideoJob, ctx: AppContext) -> list[float]:
+    """How long each message will be up, before anything has been voiced to say so.
+
+    The rules of :func:`lay`, with the one number it cannot know yet — how long a
+    voice takes over a line — guessed from the line's length at the run's language
+    and rate. It is what the room plays a conversation by while it is still being
+    typed, so it lives beside the clock it imitates: a change to how `lay` paces a
+    message that does not reach here is a preview that lies about the pace."""
+    from ..drama import speech_seconds
+
+    cfg = ctx.chat
+    gap = max(0.0, float(cfg.gap_s))
+    flurry = (max(0.0, float(cfg.react_s))
+              if cfg.reactions and not ctx.chat_skin.votes else 0.0)
+    look = max(0.0, float(getattr(cfg, "media_s", 0.0)))
+    lang, rate = ctx.params.lang, int(getattr(ctx.params, "tts_rate", 0) or 0)
+    out: list[float] = []
+    for msg in (m for c in job.conversations for m in c.messages):
+        tail = gap + (flurry if msg.reactions else 0.0)
+        m = msg.media
+        if m is not None and m.kind in media_mod.AUDIBLE and m.duration > 0:
+            out.append(m.duration + tail)
+        elif m is not None and not msg.text.strip():
+            out.append(tail + look)
+        elif voice_for(msg, ctx):
+            out.append(speech_seconds(msg.text, lang, rate) + tail)
+        else:
+            out.append(tail)
+    # never nothing: a zero-length message is one the playhead could not stop on
+    return [max(d, 0.1) for d in out]
+
+
 def _heard(msg: ChatMsg, root):
     """(the sound, how long) of a message whose own recording is what is heard, or
     None. A voice message whose file is gone is not one — it falls back to being a
