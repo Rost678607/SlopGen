@@ -103,15 +103,44 @@ SHEET: list[dict] = [
     # there because the frame they are burned onto is on this screen, and a setting of
     # the picture that could only be reached by starting the run again was a setting
     # that, from here, did not exist.
+    {"head": "web.card.voice"},
+    {"note": "web.chat.set.voice.note"},
+    {"f": "chat_voice", "kind": "select", "l": "web.f.chatvoice", "opts": "chat_voices",
+     "blank": True, "blank_l": "w.cards.own", "words": True, "run": "voice"},
+    {"f": "tts_engine", "kind": "select", "l": "web.f.engine", "opts": "tts_engines",
+     "blank": True, "words": True, "run": "voice"},
+    {"f": "tts_rate", "kind": "number", "l": "web.f.rate", "min": -50, "max": 50,
+     "step": 5, "run": "voice"},
+    {"f": "tts_deliveries", "kind": "check", "l": "web.f.deliveries", "run": "voice"},
+    {"f": "tts_voicefx", "kind": "check", "l": "web.f.voicefx", "run": "voice"},
+    {"head": "web.chat.set.music"},
+    {"f": "music", "kind": "select", "l": "web.f.music", "opts": "music", "blank": True,
+     "blank_l": "w.music.roll", "words": True, "run": "cut"},
     {"head": "web.card.subs"},
     {"note": "web.chat.subs.note"},
     {"f": "subtitle_style", "kind": "select", "l": "web.f.style", "opts": "subtitle_styles",
-     "opt_l": "w.", "blank": True, "blank_l": "web.chat.subs.default", "run": True},
-    {"f": "clean_subtitles", "kind": "check", "l": "web.f.clean", "run": True},
+     "opt_l": "w.", "blank": True, "blank_l": "web.chat.subs.default", "run": "subs"},
+    {"f": "clean_subtitles", "kind": "check", "l": "web.f.clean", "run": "subs"},
+    {"head": "web.card.ad"},
+    {"f": "ad", "kind": "select", "l": "web.f.contract", "opts": "ads", "blank": True,
+     "words": True, "run": "cut"},
+    {"f": "ad_mode", "kind": "select", "l": "web.f.mode", "opts": "ad_modes",
+     "words": True, "run": "cut"},
+    {"head": "web.chat.set.post"},
+    {"f": "push", "kind": "select", "l": "web.f.publish", "opts": "accounts", "blank": True,
+     "words": True, "run": "post"},
+    {"f": "write_metadata", "kind": "check", "l": "web.f.meta", "run": "post"},
 ]
 
-# the rows of SHEET that are the run's and not the chat preset's
-RUN_FIELDS = {row["f"] for row in SHEET if row.get("run")}
+# The rows of SHEET that are the run's and not the chat preset's, and what each one
+# makes stale when it changes — which is the whole reason they are grouped:
+#   voice — who reads and how: the lines are cast again (`chat_script.lay`, carrying
+#           every take that still fits), so «озвучка» voices what changed and reuses
+#           the rest; the drawing and the cut, timed on the old voices, go
+#   subs  — what is burned on: the subtitles and the cut made with them
+#   cut   — what is mixed or laid over at the end: the cut alone
+#   post  — what happens after the video exists: nothing in it
+RUN_FIELDS = {row["f"]: row["run"] for row in SHEET if row.get("run")}
 
 
 def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
@@ -245,13 +274,9 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
                 row["take"] = bool(sc is not None and sc.audio and sc.text == m.text
                                    and Path(sc.audio).is_file())
         # the run's own rows of the sheet (see `RUN_FIELDS`)
-        out["run_settings"] = {
-            "subtitle_style": cp.params.subtitle_style or "",
-            "clean_subtitles": bool(cp.params.clean_subtitles),
-            # not a row of the sheet — it is the start form's — but the message's
-            # voice select says what "as the person reads" currently means
-            "chat_voice": cp.params.chat_voice or "",
-        }
+        params = cp.params.model_dump(mode="json")
+        out["run_settings"] = {k: ("" if params.get(k) is None else params.get(k))
+                               for k in RUN_FIELDS}
         # The clock, once there is one. A conversation being built has no timings at
         # all — they do not exist until something has voiced it and drawn it — so the
         # room shows a list until then and a timeline afterwards, which is the honest
@@ -1124,12 +1149,16 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
         # — and keep the drawn states.
         runs = {k: v for k, v in b.items() if k in RUN_FIELDS}
         if runs:
-            if "subtitle_style" in runs:
-                runs["subtitle_style"] = runs["subtitle_style"] or None
+            kind = type(cp.params)
+            for k, v in list(runs.items()):
+                # a blank choice is "not set", which for some fields is None and for
+                # others is the empty string — whichever the field itself defaults to
+                if v == "" and kind.model_fields[k].default is None:
+                    runs[k] = None
             base = cp.params.model_dump(mode="json")
             base.update(runs)
             try:
-                fresh = type(cp.params).model_validate(base)
+                fresh = kind.model_validate(base)
             except ValidationError as e:
                 raise HTTPException(status_code=422,
                                     detail=f"run settings: {e.errors()[0]['msg']}")
@@ -1137,9 +1166,18 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
             for k in runs:
                 cp.data["params"][k] = dumped[k]
                 setattr(run.params, k, getattr(fresh, k))
-            for part in job.parts:
-                part.ass = None
-                part.file = None
+            stale = {RUN_FIELDS[k] for k in runs}
+            if "voice" in stale and job.scenes:
+                from ..pipeline.stages import chat_script
+
+                chat_script.lay(job, context(cp), carry=True)
+                job.chat_states = []
+            if stale & {"voice", "subs"}:
+                for part in job.parts:
+                    part.ass = None
+            if stale & {"voice", "subs", "cut"}:
+                for part in job.parts:
+                    part.file = None
             cp.save()
             return answer(cp, i, job)
         known = {row["f"] for row in SHEET if "f" in row and not row.get("run")}

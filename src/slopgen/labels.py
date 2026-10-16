@@ -3920,6 +3920,11 @@ RU.update({
     "web.chat.rail": "таймлайн: щёлкните или тяните, чтобы перейти",
     "web.chat.reel.busy": "рисую анимацию…",
     "web.chat.subs.default": "как в общих настройках",
+    "web.chat.set.music": "музыка",
+    "web.chat.set.post": "публикация",
+    "web.chat.set.voice.note": "Смена здесь заново раздаёт голоса строкам; готовые "
+                               "дубли, которые подходят, сохраняются, а остальное "
+                               "озвучит следующая «озвучка».",
     "web.chat.voice": "голос",
     "web.chat.voice.theirs": "как у человека",
     "web.chat.voice.none": "— не читать —",
@@ -3946,6 +3951,10 @@ EN.update({
     "web.chat.rail": "the timeline: click or drag to go there",
     "web.chat.reel.busy": "drawing the animation…",
     "web.chat.subs.default": "as in the general settings",
+    "web.chat.set.music": "music",
+    "web.chat.set.post": "publishing",
+    "web.chat.set.voice.note": "Changing these casts the lines again; takes that still "
+                               "fit are kept, and the next «tts» voices the rest.",
     "web.chat.voice": "voice",
     "web.chat.voice.theirs": "as the person reads",
     "web.chat.voice.none": "— not read —",

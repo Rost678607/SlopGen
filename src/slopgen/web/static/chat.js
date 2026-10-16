@@ -560,16 +560,19 @@ function renderChatSettings() {
       const source = r.opts === "cast"
         ? (CHAT.doc.cast || []).map((c) => c.name)
         : (chatOpts[r.opts] || []);
-      const list = (r.blank ? [""] : []).concat(source);
+      // a list may come as {v, note} pairs (the ads do); the value is what is stored
+      const list = (r.blank ? [""] : []).concat(source.map((x) => (x && x.v !== undefined ? x.v : x)));
       // the blank choice is named by `blank_l` whether or not the others are looked
       // up — `opt_l` on "" asked for the label of the bare prefix and printed "w."
-      const word = (o) => (o === "" ? lab(r.blank_l || "w.none", "— нет —")
-        : (r.opt_l ? lab(r.opt_l + o, o) : o));
+      // `words` names the rest the way the start form does (`word`, as "none" is
+      // "тишина" on the music), so the two screens say the same thing
+      const named = (o) => (o === "" ? lab(r.blank_l || "w.none", "— нет —")
+        : (r.opt_l ? lab(r.opt_l + o, o) : (r.words ? word(o) : o)));
       // the two lists that are pictures get a picker that shows them (see `wirePicks`)
       const pics = { avatars: "avatars", chat_backgrounds: "chat_bg" }[r.opts];
       return `<label>${esc(lab(r.l, r.f))}<select data-s="${r.f}"${
         pics ? ` data-pics="${pics}"` : ""}>${list.map((o) =>
-        `<option value="${esc(o)}"${o === val ? " selected" : ""}>${esc(word(o))}</option>`
+        `<option value="${esc(o)}"${o === val ? " selected" : ""}>${esc(named(o))}</option>`
       ).join("")}</select></label>`;
     }
     return `<label>${esc(lab(r.l, r.f))}<input data-s="${r.f}" value="${esc(String(val || ""))}"></label>`;
