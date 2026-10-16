@@ -129,6 +129,7 @@ def build(job: VideoJob, ctx: AppContext) -> dict:
             "travel": (max(0.0, float(cfg.swipe_s)) if st.swipe
                        else (float(cfg.roll_s) if moves else 0.0)),
             "overlay": Path(st.overlay) if st.overlay else None,
+            "ground": Path(st.ground) if st.ground and not st.swipe else None,
             "tiles": [] if st.swipe else [
                 {"path": Path(t["path"]), "x": t["x"], "y": t["y"], "w": t["w"],
                  "h": t["h"], "t0": t["t0"], "length": t["length"],

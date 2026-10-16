@@ -205,6 +205,7 @@ def _segment(i: int, scene, tmp, ctx: AppContext):
             ffmpeg.make_chat_part(a.path, a.duration, part, ctx.g,
                                   y_from=a.scroll_from, y_to=a.scroll_to,
                                   at=a.scroll_at, travel=a.scroll_s, header=a.overlay,
+                                  ground=a.ground,
                                   x_from=a.scroll_from_x, x_to=a.scroll_to_x,
                                   filler=a.filler, filler_seek=a.start, chat_h=a.chat_h,
                                   tiles=a.tiles)

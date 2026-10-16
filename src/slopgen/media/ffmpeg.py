@@ -470,7 +470,8 @@ def make_chat_part(img: Path, dur: float, out: Path, cfg: GlobalConfig,
                    header: Path | None = None,
                    x_from: float = 0.0, x_to: float = 0.0,
                    filler: Path | None = None, filler_seek: float = 0.0,
-                   chat_h: int = 0, tiles: list | None = None) -> None:
+                   chat_h: int = 0, tiles: list | None = None,
+                   ground: Path | None = None) -> None:
     """One piece of the chat track: a drawn state, with the view sliding down it.
 
     Not `make_photo_part` with a move, and the difference is not cosmetic. A
@@ -504,6 +505,20 @@ def make_chat_part(img: Path, dur: float, out: Path, cfg: GlobalConfig,
     )
     args = ["-loop", "1", "-i", str(img)]
     nxt = 1
+    if ground is not None:
+        # The wallpaper, under a see-through drawing and NOT under the crop: the window
+        # travels down the conversation and the wallpaper stays where the screen is,
+        # which is what a client does and what painting it into the drawing could not.
+        graph = (
+            f"[0:v]format=rgba,pad='max(iw,{v.width})':'max(ih,{top})':0:0"
+            f":color=0x00000000,"
+            f"crop={v.width}:{top}:'clip({x},0,iw-{v.width})':'clip({y},0,ih-{top})',"
+            f"setsar=1,fps={v.fps}[band];"
+            f"[1:v]scale={v.width}:{top},setsar=1,fps={v.fps}[ground];"
+            f"[ground][band]overlay=0:0:format=auto"
+        )
+        args += ["-loop", "1", "-i", str(ground)]
+        nxt = 2
     if tiles:
         # What moves on the drawing — a sticker, a GIF, a round video, an animated
         # emoji — laid over its own first frame at the place the drawing has it, and

@@ -354,6 +354,7 @@ def compile_assets(job: VideoJob, states: list[ChatState], roll_s: float,
                 scroll_at=st.start - lo,
                 scroll_s=swipe_s if st.swipe else (roll_s if moves else 0.0),
                 overlay=st.overlay,
+                ground=None if st.swipe else st.ground,
                 tiles=[] if st.swipe else [
                     ChatTile(path=Path(t["path"]), x=t["x"], y=t["y"], w=t["w"],
                              h=t["h"], length=t["length"],
@@ -391,6 +392,8 @@ def run(job: VideoJob, ctx: AppContext) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     wallpaper = asset(ctx, BACKGROUNDS_DIR, cfg.background) if skin.wallpaper else None
+    layered = wallpaper is not None
+    ground_png: Path | None = None
     tally = {"drawn": 0, "reused": 0}
     # What the last state left on screen, kept so that the next conversation can slide
     # in over it. An image rather than a path: the swipe needs the two screens in ONE
@@ -421,23 +424,31 @@ def run(job: VideoJob, ctx: AppContext) -> None:
         # the block whose picture was lifted, which is not always the state's own
         # message: it is whichever block the picture actually belongs to
         moving: list[Moving] = []
+        # With a wallpaper the band is drawn see-through and the wallpaper goes UNDER
+        # the window as a layer of its own: painted in, it travelled up with the
+        # bubbles on every roll and jumped back on the next state.
         band = canvas.band(y0, band_h, pin=None if pinned is None else pinned[4],
-                           moving=moving)
+                           moving=moving, ground=not layered)
         # the window as it will rest at the END of this state, which is what the next
         # one slides away from
         rest = int(min(max(state.to_y - y0, 0), max(band_h - height, 0)))
-        # what the screen looks like at rest, stickers and all: the swipe slides THIS
-        # away, and a swipe has no clips laid over it
-        drawn = band
-        if any(mv.poster is not None for mv in moving):
-            drawn = band.copy()
-            for mv in moving:
-                if mv.poster is not None:
-                    drawn.paste(mv.poster, (mv.x, mv.y), mv.poster)
-        view = drawn.crop((0, rest, width, rest + height))
+        # what the screen looks like at rest, wallpaper and stickers and all: the
+        # swipe slides THIS away, and a swipe has no clips laid over it
+        view = band.crop((0, rest, width, rest + height))
+        if layered:
+            under = canvas.ground(height).copy()
+            under.paste(view, (0, 0), view)
+            view = under
+        for mv in moving:
+            if mv.poster is not None:
+                view.paste(mv.poster, (mv.x, mv.y - rest), mv.poster)
 
         ci = where[state.msg] if 0 <= state.msg < len(where) else 0
         picture, name = band, _stamp(canvas, state, height, pinned)
+        if layered:
+            # a see-through drawing is another file than the same screen painted on
+            # its wallpaper, and must not be handed back for it
+            name = f"lay_{name}"
         if state.swipe and seen["view"] is not None:
             # the old screen and the new one side by side, in one drawing. The window
             # then travels across the join, which is a swipe — and is the same crop
@@ -454,6 +465,7 @@ def run(job: VideoJob, ctx: AppContext) -> None:
             state.swipe = False  # nothing to slide away from: the first screen of all
             state.overlay = _overlay(canvas, out_dir, width, height, bars.get(ci),
                                      pinned, y0 + rest)
+            state.ground = ground_png
             # the window is recorded against the BAND, whose top is where it began
             state.from_y -= y0
             state.to_y -= y0
@@ -476,6 +488,13 @@ def run(job: VideoJob, ctx: AppContext) -> None:
         top_inset=skin.header_h if cfg.header else 0, paint=paint,
         day_label=lambda iso: day_label(iso, ctx.params.lang),
     )
+    if layered:
+        # one screen of wallpaper, drawn once, under every state that is not a swipe
+        key = hashlib.sha1(f"{wallpaper}|{wallpaper.stat().st_mtime_ns}|{width}x{height}"
+                           .encode()).hexdigest()[:12]
+        ground_png = out_dir / f"ground_{key}.png"
+        if not ground_png.is_file():
+            planner.canvas.ground(height).save(ground_png)
     # which conversation each message belongs to, by its place in the video — the one
     # thing `paint` needs that a state does not carry
     where = [ci for ci, conv in enumerate(job.conversations) for _ in conv.messages]
@@ -499,7 +518,8 @@ def run(job: VideoJob, ctx: AppContext) -> None:
     job.chat_states = [
         ChatState(path=s.path, start=s.start, duration=s.duration, msg=s.msg,
                   anchor_scene=s.anchor_scene, from_y=s.from_y, to_y=s.to_y,
-                  swipe=s.swipe, overlay=s.overlay, tiles=list(s.tiles))
+                  swipe=s.swipe, overlay=s.overlay, ground=s.ground,
+                  tiles=list(s.tiles))
         for s in planner.plan()
     ]
     compile_assets(job, job.chat_states, cfg.roll_s,

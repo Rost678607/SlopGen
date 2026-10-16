@@ -73,6 +73,9 @@ class State:
     # here on its way to the assembler — but it belongs to the state rather than to
     # the run, because which bar is up is a property of which conversation is.
     overlay: object = None
+    # The still layer UNDER the drawing — the wallpaper, which does not scroll —
+    # filled in like `overlay` by whoever painted it, when the drawing is see-through.
+    ground: object = None
     # What moves on this state's drawing, filled in by whoever painted it, as the
     # render stage's own records (see `chat_render._tiles`).
     tiles: list = field(default_factory=list)

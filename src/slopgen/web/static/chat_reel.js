@@ -110,6 +110,7 @@ function reelImg(src) {
   if (!im) {
     im = new Image();
     im.decoding = "async";
+    im.onload = reelRedraw;
     im.src = tokd(src);
     REEL.imgs.set(src, im);
     if (REEL.imgs.size > 40) REEL.imgs.delete(REEL.imgs.keys().next().value);
@@ -122,6 +123,12 @@ function reelImg(src) {
 }
 const reelReady = (im) => im && im.complete && im.naturalWidth > 0;
 
+// Something the still frame was waiting on has arrived — a picture, or a clip that has
+// finished seeking to where the head is. Playing, the next frame picks it up anyway.
+function reelRedraw() {
+  if (REEL && !chatPlaying) reelDraw(chatT);
+}
+
 // A moving thing's clip, one element per clip AND per moment it was born: the same
 // sticker sent twice is two stickers, each on its own clock (see `chat_render._tiles`).
 function reelClip(src, key) {
@@ -132,6 +139,8 @@ function reelClip(src, key) {
     v.loop = true;
     v.playsInline = true;
     v.preload = "auto";
+    v.addEventListener("loadeddata", reelRedraw);
+    v.addEventListener("seeked", reelRedraw);
     v.src = tokd(src);
     REEL.clips.set(key, v);
   }
@@ -192,6 +201,11 @@ function reelDraw(t) {
   g.beginPath();
   g.rect(0, 0, W, top);
   g.clip();
+  // the wallpaper stays where the screen is; the conversation travels over it
+  if (st.ground) {
+    const under = reelImg(st.ground);
+    if (reelReady(under)) g.drawImage(under, 0, 0);
+  }
   g.drawImage(im, -x, -y);
   for (const tile of st.tiles) {
     const at = [tile.x - x, tile.y - y, tile.w, tile.h];

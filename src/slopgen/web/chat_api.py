@@ -1134,7 +1134,7 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
         if path is None or not path.is_file():
             raise HTTPException(status_code=404, detail="not part of a reel")
         if kind == "state":
-            path = await run_in_threadpool(_as_jpeg, path)
+            path = await run_in_threadpool(_as_webp, path)
         return FileResponse(path, headers={"Cache-Control": "max-age=86400"})
 
     @app.get("/api/runs/{run_id}/chat/preview")
@@ -1213,6 +1213,7 @@ def _reel_json(run_id: str, reel: dict, files: dict) -> dict:
         **{k: st[k] for k in ("start", "dur", "msg", "from_y", "to_y", "swipe", "travel")},
         "src": url(st["path"], "state"),
         "overlay": url(st["overlay"], "image") if st["overlay"] else None,
+        "ground": url(st["ground"], "image") if st["ground"] else None,
         "tiles": [{**{k: t[k] for k in ("x", "y", "w", "h", "t0", "length")},
                    "src": url(t["path"], "clip" if t["length"] > 0 else "image"),
                    "poster": url(t["poster"], "image") if t.get("poster") else None}
@@ -1228,15 +1229,16 @@ def _reel_json(run_id: str, reel: dict, files: dict) -> dict:
     return out
 
 
-def _as_jpeg(png: Path) -> Path:
-    """A drawn state as a JPEG beside it, made once. The states are written fast and
+def _as_webp(png: Path) -> Path:
+    """A drawn state as a WebP beside it, made once. The states are written fast and
     therefore fat (`compress_level=1`) — megabytes each, a hundred of them to a video —
-    and the page needs to look at them, not to keep them lossless."""
-    out = png.with_name(png.stem + ".view.jpg")
+    and the page needs to look at them, not to keep them lossless. WebP and not JPEG
+    because a state over a wallpaper is see-through (see `Canvas.band`)."""
+    out = png.with_name(png.stem + ".view.webp")
     if not out.is_file() or out.stat().st_mtime < png.stat().st_mtime:
         with Image.open(png) as img:
             tmp = out.with_suffix(".tmp")
-            img.convert("RGB").save(tmp, "JPEG", quality=86)
+            img.save(tmp, "WEBP", quality=86)
             tmp.replace(out)
     return out
 
@@ -1351,7 +1353,7 @@ def _frame_at(job, ctx: AppContext, when: float, out) -> None:
             st = s
         else:
             break
-    img = Image.open(st.path).convert("RGB")
+    img = Image.open(st.path).convert("RGBA")
     top = chat_render.chat_height(ctx)
     span = max(cfg.swipe_s if st.swipe else cfg.roll_s, 1e-3)
     k = min(max((at - st.start) / span, 0.0), 1.0)
@@ -1363,6 +1365,12 @@ def _frame_at(job, ctx: AppContext, when: float, out) -> None:
         # the stickers that are only their clip in the drawing (see `media.hollow`)
         img = chat_render.with_posters(img, st.tiles)
     frame = img.crop((int(x), int(y), int(x) + v.width, int(y) + top))
+    # a see-through drawing goes onto its wallpaper, which the crop does not move
+    under = (Image.open(st.ground).convert("RGB")
+             if st.ground and Path(st.ground).is_file()
+             else Image.new("RGB", frame.size, "#000000"))
+    under.paste(frame, (0, 0), frame)
+    frame = under
     # A swipe already carries both bars inside the picture; everything else wears its
     # own as an overlay, exactly as the assembler lays it (see `chat_render`).
     if st.overlay and not st.swipe and Path(st.overlay).is_file():

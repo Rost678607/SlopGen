@@ -95,6 +95,11 @@ class BgAsset(BaseModel):
     # asset rather than looked up at render time for the reason `fit` is: by then the
     # conversation is gone, and the assembler is handed a path and a duration.
     overlay: Path | None = None
+    # The wallpaper, one screen of it, laid UNDER the travelling crop rather than
+    # painted into the drawing: a client's wallpaper stays put while the conversation
+    # slides over it. None when the drawing carries its own ground (no wallpaper, or a
+    # swipe, where the whole screen moves).
+    ground: Path | None = None
     # What moves on this piece of the drawing (see :class:`ChatTile`).
     tiles: list[ChatTile] = []
 
@@ -561,6 +566,8 @@ class ChatState(BaseModel):
     # the bar is part of the sliding picture, because moving to another chat moves the
     # whole screen and a bar that stayed put would be the one thing that gave it away.
     overlay: Path | None = None
+    # The wallpaper under a see-through drawing (see `BgAsset.ground`).
+    ground: Path | None = None
     # The moving things on this drawing, where they sit on it, and the moment of the
     # video each one started moving — so a later state picks its loop up where the
     # earlier one left it rather than restarting it (see `ChatTile.seek`).

@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 
+import numpy as np
 from PIL import Image, ImageDraw
 
 from . import fonts, media as media_mod, richtext
@@ -165,7 +166,7 @@ class Canvas:
         # one scratch image, because measuring needs a draw context and making one per
         # call is the single most expensive thing a layout pass can do
         self._probe = ImageDraw.Draw(Image.new("RGB", (8, 8)))
-        self._ground: Image.Image | None = None
+        self._grounds: dict[int, Image.Image] = {}
         self.f_text = fonts.load(skin.family, skin.text_px)
         self.f_name = fonts.load(skin.family, skin.name_px, "bold")
         self.f_meta = fonts.load(skin.family, skin.meta_px)
@@ -454,7 +455,7 @@ class Canvas:
 
     def band(self, y0: int, height: int, *, header: tuple[str, Path | None] | None = None,
              reveal: dict[int, int] | None = None, pin: int | None = None,
-             moving: list[Moving] | None = None) -> Image.Image:
+             moving: list[Moving] | None = None, ground: bool = True) -> Image.Image:
         """Render the canvas from `y0` for `height` pixels.
 
         `reveal` caps how many LINES of a block are painted, by message index — which
@@ -467,23 +468,52 @@ class Canvas:
         does not.
 
         `moving`, given, is filled with every moving thing that landed in the band
-        and where (see :class:`Moving`) — the band itself holds their first frames."""
+        and where (see :class:`Moving`) — the band itself holds their first frames.
+
+        `ground=False` leaves the wallpaper out and hands back the band see-through
+        (RGBA), for a band taller than the screen that a window will travel down. The
+        wallpaper does not scroll in a real client — the conversation slides over it —
+        and painted INTO the band it travelled with the bubbles, then jumped back to
+        the top on the next state, whose band starts it afresh. Out of the band it is
+        a layer of its own, laid under the window (see :meth:`ground`). Without a
+        wallpaper the ground is one colour, which cannot be seen to move, and the flag
+        changes nothing."""
         s = self.skin
-        self._moving = moving
-        img = self._ground_for(height).copy() if self.wallpaper else Image.new(
-            "RGB", (self.width, height), s.bg)
-        draw = ImageDraw.Draw(img, "RGBA")
-        top_guard = s.header_h if header else 0
-        for block in self.blocks:
-            if block.bottom < y0 or block.top > y0 + height:
-                continue
-            self._paint(img, draw, block, -y0, cap=(reveal or {}).get(block.msg),
-                        hide_pic=(pin is not None and block.msg == pin))
-        if header:
-            self._paint_header(img, draw, *header)
-        del top_guard
-        self._moving = None
-        return img
+
+        def paint(img: Image.Image, collect: list[Moving] | None) -> Image.Image:
+            self._moving = collect
+            draw = ImageDraw.Draw(img, "RGBA")
+            for block in self.blocks:
+                if block.bottom < y0 or block.top > y0 + height:
+                    continue
+                self._paint(img, draw, block, -y0, cap=(reveal or {}).get(block.msg),
+                            hide_pic=(pin is not None and block.msg == pin))
+            if header:
+                self._paint_header(img, draw, *header)
+            self._moving = None
+            return img
+
+        size = (self.width, height)
+        if ground or not self.wallpaper:
+            img = Image.new("RGB", size, s.bg)
+            if self.wallpaper:
+                img.paste(self.ground(height), (0, 0))
+            return paint(img, moving)
+        # See-through, recovered rather than painted. Pillow's strokes and pastes are
+        # an honest "over" onto an opaque picture and are not onto a transparent one
+        # (a half-covered edge pixel keeps the ink's alpha, not the sum), which drew a
+        # dark seam round every bubble and pill. So the band is painted twice, onto
+        # black and onto white, and what lies between the two is the answer: where
+        # they agree the paint covered everything, and how far apart they are is how
+        # much of the ground showed through. Exact for anything composited onto an
+        # opaque ground, which is everything this class draws.
+        on_black = np.asarray(paint(Image.new("RGB", size, (0, 0, 0)), moving), np.float32)
+        on_white = np.asarray(paint(Image.new("RGB", size, (255, 255, 255)), None), np.float32)
+        alpha = 255.0 - (on_white - on_black).mean(axis=2)
+        alpha = np.clip(alpha, 0.0, 255.0)
+        colour = on_black * (255.0 / np.maximum(alpha, 1.0))[..., None]
+        out = np.dstack([np.clip(colour, 0, 255), alpha]).round().astype(np.uint8)
+        return Image.fromarray(out, "RGBA")
 
     def avatar_of(self, msg: int) -> tuple[Person, int, int, int] | None:
         """Whose picture rides on this block and where it sits, or None.
@@ -522,25 +552,30 @@ class Canvas:
         out looking different."""
         self._avatar(img, ImageDraw.Draw(img, "RGBA"), person, xy, size)
 
-    def _ground_for(self, height: int) -> Image.Image:
-        """The wallpaper, scaled to cover the frame once and reused for every band.
+    def ground(self, height: int) -> Image.Image:
+        """What is behind the conversation on one screen `height` tall: the wallpaper
+        scaled to cover it, or the skin's ground colour.
 
-        Cached on the canvas because it is the same picture in all two hundred states
-        and decoding it two hundred times is the difference between a render that
-        takes a minute and one that takes ten."""
-        if self._ground is None or self._ground.height < height:
-            base = Image.new("RGB", (self.width, height), self.skin.bg)
+        One SCREEN and not one band: a band is as tall as the screen plus however far
+        the window travels down it, and covering that instead scaled the wallpaper by
+        the band's height, so it changed size from one state to the next. Cached per
+        height because it is the same picture in all two hundred states and decoding
+        it two hundred times is the difference between a render that takes a minute
+        and one that takes ten."""
+        got = self._grounds.get(height)
+        if got is None:
+            got = Image.new("RGB", (self.width, height), self.skin.bg)
             if self.wallpaper and self.wallpaper.is_file():
                 try:
                     pic = Image.open(self.wallpaper).convert("RGB")
                     k = max(self.width / pic.width, height / pic.height)
                     pic = pic.resize((int(pic.width * k) + 1, int(pic.height * k) + 1),
                                      Image.LANCZOS)
-                    base.paste(pic, (0, 0))
+                    got.paste(pic, (0, 0))
                 except OSError as e:
                     log.warning("the chat wallpaper %s will not open (%s)", self.wallpaper, e)
-            self._ground = base
-        return self._ground
+            self._grounds[height] = got
+        return got
 
     def _paint(self, img: Image.Image, draw: ImageDraw.ImageDraw, b: Block, dy: int,
                cap: int | None = None, hide_pic: bool = False) -> None:
