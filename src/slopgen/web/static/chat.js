@@ -1104,8 +1104,9 @@ cq("#chat-cast").addEventListener("click", async (e) => {
   const rm = e.target.closest("[data-drop-who]");
   if (rm) {
     const who = rm.dataset.dropWho;
-    if (!confirm(lab("web.chat.who.dropsure", "Удалить «%s»?").replace("%s", who)))
-      return;
+    // asked twice in place, as every other removal on this page is: the button is
+    // the confirmation, pressed again within a few seconds
+    if (!armTwice(rm, who, lab("web.chat.who.dropsure", "").replace("%s", who))) return;
     chatWho = "";
     await chatDo("/persona", { method: "DELETE", body: { name: who } });
     return shootChat(chatSel);

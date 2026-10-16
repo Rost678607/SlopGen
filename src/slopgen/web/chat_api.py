@@ -889,15 +889,35 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
         out["restamped"] = n
         return out
 
+    def speaks_anywhere(name: str, job, run_id: str) -> bool:
+        """Whether anybody still talks under this name: in this video, or in any
+        other chat run this machine knows about. Read off the checkpoints, so a run
+        that is not open anywhere still counts."""
+        if any(m.persona == name for m in job.messages):
+            return True
+        for other in list(sup.runs.values()):
+            if other.id == run_id or other.run_dir is None:
+                continue
+            if getattr(other.params, "mode", "") != "chat":
+                continue
+            try:
+                cp = Checkpoint.load(other.run_dir)
+                jobs = [cp.load_job(int(k)) for k in cp.data.get("jobs", {})]
+            except Exception:  # noqa: BLE001 — a run that will not open says nothing
+                continue
+            if any(j is not None and any(m.persona == name for m in j.messages)
+                   for j in jobs):
+                return True
+        return False
+
     @app.post("/api/runs/{run_id}/chat/rename")
     async def rename_person(run_id: str, request: Request,
                             slopgen: str | None = Cookie(default=None)) -> dict:
-        """Rename one participant in this conversation.
+        """Rename one participant in this conversation, and their card with them.
 
-        The CARD is not renamed: a card outlives this video and renaming it belongs to
-        the config panel. What this fixes is an import that got somebody's name wrong
-        in every line of one chat — and the new name is given a copy of the card, so
-        the person keeps their face."""
+        The card is renamed only as far as is safe: it outlives this video, so the old
+        name's card stays while another chat run still has somebody speaking under it,
+        and the new name gets a copy (see below)."""
         guard(slopgen)
         b = await body_of(request)
         run = run_or_404(run_id)
@@ -906,13 +926,20 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
         n = guarded(chatroom.rename)(job, was, now)
         # The face goes with the name. Renaming moved the lines and left the card
         # behind, so somebody renamed in the room lost their picture, voice and colour
-        # without a word — the old card keeps its name, as above, and the new name gets
-        # a copy of it, unless it is somebody who already has a card of their own.
+        # without a word. So the card moves too — unless the new name already has one
+        # of its own, which wins — and the old one goes, unless somebody still speaks
+        # under it: here, or in another chat run, whose people would otherwise lose
+        # their face the way this one used to. A copy left behind "just in case" was
+        # a stranger in the list of cards nobody uses, one per rename.
         old = store.personas.get(was)
-        if old is not None and now and now != was and now not in store.personas:
-            card = old.model_copy(update={"name": now})
-            write_config("personas", now, card.model_dump(mode="json"))
-            store.personas[now] = card
+        if old is not None and now and now != was:
+            if now not in store.personas:
+                card = old.model_copy(update={"name": now})
+                write_config("personas", now, card.model_dump(mode="json"))
+                store.personas[now] = card
+            if not speaks_anywhere(was, job, run_id):
+                delete_config("personas", was)
+                store.personas.pop(was, None)
         # …and so does being the account the chat is read from, or their messages
         # would leave the right-hand side the moment they were renamed
         ctx = context(cp)

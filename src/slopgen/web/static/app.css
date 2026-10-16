@@ -1445,6 +1445,9 @@ button.danger{border-color:var(--bad);color:var(--bad)}
 .chat-acts{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
 .chat-acts button{padding:3px 9px;font-size:12.5px}
 .chat-acts .danger{border-color:var(--bad);color:var(--bad)}
+/* a removal pressed once: the next press within a few seconds does it (`armTwice`) */
+.chat-acts .warn.armed{border-color:var(--bad);color:var(--bad);
+  background:color-mix(in srgb,var(--bad) 18%,var(--panel))}
 .chat-add{align-self:start;margin-top:4px}
 
 #chat-cast{display:grid;gap:6px;align-content:start}
