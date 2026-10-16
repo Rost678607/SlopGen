@@ -3919,6 +3919,10 @@ RU.update({
     "web.chat.pace.exact": "темп ролика как он озвучен",
     "web.chat.rail": "таймлайн: щёлкните или тяните, чтобы перейти",
     "web.chat.reel.busy": "рисую анимацию…",
+    "web.chat.subs.default": "как в общих настройках",
+    "web.chat.subs.note": "Субтитры — это ПРОИЗНЕСЁННЫЕ слова: строки, которые никто "
+                          "не читает вслух, без субтитров. Чтобы они были, дайте "
+                          "людям голос в их карточках справа.",
 })
 EN.update({
     "web.chat.play": "▶ play",
@@ -3927,6 +3931,10 @@ EN.update({
     "web.chat.pace.exact": "the pace of the video as voiced",
     "web.chat.rail": "the timeline: click or drag to go there",
     "web.chat.reel.busy": "drawing the animation…",
+    "web.chat.subs.default": "as in the general settings",
+    "web.chat.subs.note": "Subtitles are the SPOKEN words: a line nobody reads aloud "
+                          "has none. To have them, give people a voice on their "
+                          "cards on the right.",
 })
 RU.update({
     "web.chat.rx.which": "какое эмодзи",

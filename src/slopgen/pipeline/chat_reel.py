@@ -26,10 +26,11 @@ what is on them — so a preview drawn now is a drawing the render finds already
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 
 from .context import AppContext
-from .job import VideoJob
+from .job import VideoJob, Word
 
 log = logging.getLogger(__name__)
 
@@ -59,21 +60,37 @@ def timeline(job: VideoJob, ctx: AppContext) -> tuple[VideoJob, bool]:
     chat_script.lay(copy, ctx)
     # The takes already made, by what they say — and by who says it where that still
     # agrees, because the delivery pass may have recast a line since it was laid.
+    # Where each old scene began: a voiced line's words are stamped on the WHOLE
+    # video's clock (`stages.tts`), so a take carried into a timeline where the line
+    # now starts elsewhere has its words moved by the difference.
+    was_at, t = {}, 0.0
+    for s in job.scenes:
+        was_at[id(s)] = t
+        t += s.duration
     voiced = [s for s in job.scenes if s.audio and s.duration > 0 and not s.hush]
     by_voice = {(s.text, s.voice): s for s in voiced}
     by_text = {s.text: s for s in voiced}
     lang = ctx.params.lang
     rate = int(getattr(ctx.params, "tts_rate", 0) or 0)
+    taken = {}
     for s in copy.scenes:
         if s.duration > 0 or s.hush:
             continue
         old = by_voice.get((s.text, s.voice)) or by_text.get(s.text)
         if old is not None and Path(old.audio).is_file():
             s.audio, s.duration = old.audio, old.duration
-            s.words = list(old.words)
             s.audio_tempo = old.audio_tempo
+            taken[id(s)] = old
         else:
             s.duration = max(speech_seconds(s.text, lang, rate), 0.3)
+    t = 0.0
+    for s in copy.scenes:
+        old = taken.get(id(s))
+        if old is not None:
+            shift = t - was_at[id(old)]
+            s.words = [w.model_copy(update={"start": w.start + shift, "end": w.end + shift})
+                       for w in old.words]
+        t += s.duration
     return copy, False
 
 
@@ -175,4 +192,51 @@ def build(job: VideoJob, ctx: AppContext) -> dict:
         "states": states, "under": under, "sounds": sounds,
         "music": ({"path": Path(music), "gain": float(ctx.g.audio.music_volume)}
                   if music else None),
+        "subs": subtitles(copy, ctx, starts),
     }
+
+
+def subtitles(copy: VideoJob, ctx: AppContext, starts: list[float]) -> dict:
+    """The burned-in subtitles, as events the page draws — cut into words, phrases or
+    karaoke lines by the subtitle stage's own rules (`stages.subtitles`).
+
+    They are the SPOKEN words, as in the video: a line nobody reads aloud has none. A
+    line that will be read and has not been yet has its words spread over the time
+    its voice is guessed to take, the way `subtitles.respread` spreads a rewritten
+    line — right about which words, close about when. The profanity pass is not run:
+    it is a model call, and a preview is drawn on every edit."""
+    from .stages.subtitles import _clean, _phrases
+
+    sc = ctx.g.subtitles
+    style = ctx.params.subtitle_style or sc.style
+    words = []
+    for i, s in enumerate(copy.scenes):
+        if s.hush:
+            continue
+        if s.words:
+            words += list(s.words)
+        elif s.voice and not s.silent and s.text.strip():
+            new = s.text.split()
+            weights = [len(t) + 1 for t in new]
+            at, total = starts[i], sum(weights)
+            for t, w in zip(new, weights):
+                share = s.duration * w / total
+                words.append(Word(text=t, start=at, end=at + share))
+                at += share
+    events: list[dict] = []
+    if style == "word_pop":
+        for i, w in enumerate(words):
+            end = words[i + 1].start if i + 1 < len(words) else w.end + 0.25
+            events.append({"s": w.start, "e": max(end, w.start + 0.10),
+                           "text": _clean(w.text).upper(),
+                           "accent": bool(re.search(r"[!?]$", w.text))})
+    else:
+        for chunk in _phrases(words, max_words=4 if style == "phrases" else 5):
+            ev = {"s": chunk[0].start, "e": chunk[-1].end + 0.15,
+                  "text": " ".join(_clean(w.text) for w in chunk)}
+            if style == "karaoke":
+                ev["words"] = [{"text": _clean(w.text), "s": w.start} for w in chunk]
+            events.append(ev)
+    return {"style": style, "font": sc.font, "size": sc.font_size,
+            "primary": sc.primary_color, "accent": sc.accent_color,
+            "outline": sc.outline, "events": events}

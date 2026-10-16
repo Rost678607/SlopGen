@@ -98,7 +98,20 @@ SHEET: list[dict] = [
      "blank": True, "blank_l": "w.clip.roll", "aspect": "9:16"},
     {"f": "split_change_s", "kind": "number", "l": "web.f.splitchange", "min": 0,
      "max": 120, "step": 5, "aspect": "9:16"},
+    # The subtitles. Not the chat preset's but the RUN's (`RunParams`), as on the start
+    # form — `"run": True` says so, and the route writes them there. Here as well as
+    # there because the frame they are burned onto is on this screen, and a setting of
+    # the picture that could only be reached by starting the run again was a setting
+    # that, from here, did not exist.
+    {"head": "web.card.subs"},
+    {"note": "web.chat.subs.note"},
+    {"f": "subtitle_style", "kind": "select", "l": "web.f.style", "opts": "subtitle_styles",
+     "opt_l": "w.", "blank": True, "blank_l": "web.chat.subs.default", "run": True},
+    {"f": "clean_subtitles", "kind": "check", "l": "web.f.clean", "run": True},
 ]
+
+# the rows of SHEET that are the run's and not the chat preset's
+RUN_FIELDS = {row["f"] for row in SHEET if row.get("run")}
 
 
 def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
@@ -217,6 +230,11 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
         out["stages"] = [name for name, _ in _chain(cp)]
         out["sheet"] = SHEET
         out["settings"] = ctx.chat.model_dump(mode="json")
+        # the run's own rows of the sheet (see `RUN_FIELDS`)
+        out["run_settings"] = {
+            "subtitle_style": cp.params.subtitle_style or "",
+            "clean_subtitles": bool(cp.params.clean_subtitles),
+        }
         # The clock, once there is one. A conversation being built has no timings at
         # all — they do not exist until something has voiced it and drawn it — so the
         # room shows a list until then and a timeline afterwards, which is the honest
@@ -1025,7 +1043,31 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
         run = run_or_404(run_id)
         b = await body_of(request)
         cp, i, job = open_job(run, int(b.get("video", 0)))
-        known = {row["f"] for row in SHEET if "f" in row}
+        # The run's own rows first. They change what is burned onto the picture and
+        # nothing about the drawing, so they throw away the subtitles and the cut made
+        # with them — `subtitles` and `assemble` skip a part that already has its file
+        # — and keep the drawn states.
+        runs = {k: v for k, v in b.items() if k in RUN_FIELDS}
+        if runs:
+            if "subtitle_style" in runs:
+                runs["subtitle_style"] = runs["subtitle_style"] or None
+            base = cp.params.model_dump(mode="json")
+            base.update(runs)
+            try:
+                fresh = type(cp.params).model_validate(base)
+            except ValidationError as e:
+                raise HTTPException(status_code=422,
+                                    detail=f"run settings: {e.errors()[0]['msg']}")
+            dumped = fresh.model_dump(mode="json")
+            for k in runs:
+                cp.data["params"][k] = dumped[k]
+                setattr(run.params, k, getattr(fresh, k))
+            for part in job.parts:
+                part.ass = None
+                part.file = None
+            cp.save()
+            return answer(cp, i, job)
+        known = {row["f"] for row in SHEET if "f" in row and not row.get("run")}
         fields = {k: v for k, v in b.items() if k in known}
         if fields:
             base = context(cp).chat.model_dump(mode="json")
@@ -1255,7 +1297,8 @@ def _reel_json(run_id: str, reel: dict, files: dict) -> dict:
         files[fid] = (Path(path), kind)
         return f"/api/runs/{run_id}/chat/reel/f/{fid}"
 
-    out = {k: reel[k] for k in ("exact", "total", "width", "height", "top", "marks", "durs")}
+    out = {k: reel[k] for k in ("exact", "total", "width", "height", "top", "marks", "durs",
+                                "subs")}
     out["states"] = [{
         **{k: st[k] for k in ("start", "dur", "msg", "from_y", "to_y", "swipe", "travel")},
         "src": url(st["path"], "state"),

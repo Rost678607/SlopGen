@@ -494,8 +494,10 @@ function renderChatSettings() {
     // between them is a list nobody reaches the bottom of — which is how "there is no
     // way to turn the split screen on" happens to a screen that has one.
     if (r.head) return `<h5>${esc(lab(r.head, ""))}</h5>`;
+    if (r.note) return `<p class="dim">${esc(lab(r.note, ""))}</p>`;
     if (r.hide) return "";   // answered elsewhere; see SHEET
-    const val = v[r.f];
+    // a row of the run's own (`chat_api.RUN_FIELDS`) reads the run's value
+    const val = r.run ? (d.run_settings || {})[r.f] : v[r.f];
     if (r.kind === "check")
       return `<label class="inline"><input type="checkbox" data-s="${r.f}"${
         val ? " checked" : ""}> ${esc(lab(r.l, r.f))}</label>`;
@@ -511,8 +513,10 @@ function renderChatSettings() {
         ? (CHAT.doc.cast || []).map((c) => c.name)
         : (chatOpts[r.opts] || []);
       const list = (r.blank ? [""] : []).concat(source);
-      const word = (o) => (r.opt_l ? lab(r.opt_l + o, o)
-        : (o || lab(r.blank_l || "w.none", "— нет —")));
+      // the blank choice is named by `blank_l` whether or not the others are looked
+      // up — `opt_l` on "" asked for the label of the bare prefix and printed "w."
+      const word = (o) => (o === "" ? lab(r.blank_l || "w.none", "— нет —")
+        : (r.opt_l ? lab(r.opt_l + o, o) : o));
       // the two lists that are pictures get a picker that shows them (see `wirePicks`)
       const pics = { avatars: "avatars", chat_backgrounds: "chat_bg" }[r.opts];
       return `<label>${esc(lab(r.l, r.f))}<select data-s="${r.f}"${

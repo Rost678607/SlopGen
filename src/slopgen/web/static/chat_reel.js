@@ -243,8 +243,75 @@ function reelDraw(t) {
       }
     }
   }
+  reelSubs(g, t);
   // whatever is not on screen stops playing
   for (const [key, v] of REEL.clips) if (!used.has(key) && !v.paused) v.pause();
+}
+
+// -- the subtitles -------------------------------------------------------------------
+//
+// Drawn as libass would burn the stage's ASS (`stages/subtitles.py`): the same places,
+// the same sizes, an outline and a soft shadow, the popping word and the karaoke
+// sweep. Close rather than identical — a browser's font engine is not libass — but
+// what they say, where and when, is the video's.
+
+// `&HAABBGGRR`, where AA is TRANSPARENCY, as a CSS colour
+function assColour(c) {
+  const h = String(c || "").replace(/^&H/i, "").padStart(8, "0");
+  const a = 1 - parseInt(h.slice(0, 2), 16) / 255;
+  const [b, g, r] = [h.slice(2, 4), h.slice(4, 6), h.slice(6, 8)].map((x) => parseInt(x, 16));
+  return `rgba(${r},${g},${b},${a.toFixed(3)})`;
+}
+
+function reelSubs(g, t) {
+  const sb = REEL.subs;
+  if (!sb || !sb.events.length) return;
+  const ev = sb.events.find((e) => e.s <= t && t < e.e);
+  if (!ev) return;
+  const pop = sb.style === "word_pop";
+  // ASS sizes a font by its whole height, ascender to descender; a canvas by its em
+  const size = (pop ? sb.size : Math.round(sb.size * 0.62)) * 0.86;
+  const outline = pop ? sb.outline : Math.max(sb.outline - 3, 2);
+  const W = REEL.width;
+  let x, y, scale = 1;
+  if (pop) {
+    // \an5\pos(540,1430): centred on that point, popping from 70% past 106% to 100%
+    x = 540; y = 1430;
+    const ms = (t - ev.s) * 1000;
+    scale = ms < 110 ? 0.70 + 0.36 * (ms / 110) : (ms < 220 ? 1.06 - 0.06 * ((ms - 110) / 110) : 1);
+  } else {
+    // bottom centre, 320 up from the foot of the frame
+    x = W / 2; y = REEL.height - 320;
+  }
+  g.save();
+  g.translate(x, y);
+  g.scale(scale, scale);
+  g.font = `bold ${size}px "${sb.font}", "DejaVu Sans", sans-serif`;
+  g.textBaseline = pop ? "middle" : "alphabetic";
+  g.lineJoin = "round";
+  // the pieces of the line and the colour each is in right now: one piece for a
+  // word or a phrase, one per word for karaoke, which turns each word from the
+  // accent to the main colour as it is spoken (ASS's `\k`)
+  const pieces = ev.words
+    ? ev.words.map((w) => [w.text, t >= w.s ? sb.primary : sb.accent])
+    : [[ev.text, ev.accent ? sb.accent : sb.primary]];
+  const gap = g.measureText(" ").width;
+  const widths = pieces.map(([s]) => g.measureText(s).width);
+  let at = -(widths.reduce((a, b) => a + b, 0) + gap * (pieces.length - 1)) / 2;
+  for (let k = 0; k < pieces.length; k++) {
+    const [text, colour] = pieces[k];
+    // the shadow, two pixels down and right, half see-through
+    g.lineWidth = outline * 2;
+    g.strokeStyle = g.fillStyle = "rgba(0,0,0,0.5)";
+    g.strokeText(text, at + 2, 2);
+    g.fillText(text, at + 2, 2);
+    g.strokeStyle = "#000";
+    g.strokeText(text, at, 0);
+    g.fillStyle = assColour(colour);
+    g.fillText(text, at, 0);
+    at += widths[k] + gap;
+  }
+  g.restore();
 }
 
 // -- the sound ----------------------------------------------------------------------
