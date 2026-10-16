@@ -3904,6 +3904,7 @@ RU.update({
     "web.chat.pace.guess": "темп прикинут по длине строк — точный появится после озвучки",
     "web.chat.pace.exact": "темп ролика как он озвучен",
     "web.chat.rail": "таймлайн: щёлкните или тяните, чтобы перейти",
+    "web.chat.reel.busy": "рисую анимацию…",
 })
 EN.update({
     "web.chat.play": "▶ play",
@@ -3911,6 +3912,7 @@ EN.update({
     "web.chat.pace.guess": "the pace is guessed from line lengths — the real one comes with the voicing",
     "web.chat.pace.exact": "the pace of the video as voiced",
     "web.chat.rail": "the timeline: click or drag to go there",
+    "web.chat.reel.busy": "drawing the animation…",
 })
 RU.update({
     "web.chat.rx.which": "какое эмодзи",

@@ -26,6 +26,7 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 
 from PIL import Image, ImageDraw
@@ -820,42 +821,11 @@ class Canvas:
         if w <= 0 or h <= 0:
             return
 
-        mask = Image.new("L", (w * SS, h * SS), 0)
-        md = ImageDraw.Draw(mask)
-        bx0, bx1 = (x0 - left) * SS, (x1 - left) * SS - 1
-        by1 = h * SS - 1
-
-        # The four corners, each with its own radius, because Telegram gives them
-        # four. Within a run of messages from one person the corners that FACE the
-        # neighbouring bubble — the ones down the avatar's side — are pulled in tight,
-        # so the run reads as one block with seams in it rather than as three separate
-        # bubbles that happen to be close. Only the outer side stays fully round.
-        big, tight = s.radius * SS, int(s.radius * 0.3) * SS
         # a new run starts here: either nobody of theirs is above, or a day pill is
         joins_above = not b.show_head and not b.separator
-        joins_below = not b.show_tail
-        near_top = tight if joins_above else big
-        near_bot = 0 if t else (tight if joins_below else big)
-        if right_side:
-            radii = (big, near_top, near_bot, big)      # tl, tr, br, bl
-        else:
-            radii = (near_top, big, big, near_bot)
-        _corners(md, bx0, 0, bx1, by1, radii)
-        if t:
-            r = t * SS
-            # a quarter circle centred level with the foot of the bubble's edge and
-            # one tail out from it: the arc runs from that edge down to the tip, and
-            # is concave because the centre is on the far side of it
-            cy = by1 - r
-            cx = bx0 - r if not right_side else bx1 + r
-            steps = max(8, r // 2)
-            arc = []
-            for i in range(steps + 1):
-                a = math.pi / 2 * i / steps
-                dx = math.cos(a) * r
-                arc.append((cx + dx if not right_side else cx - dx, cy + math.sin(a) * r))
-            md.polygon(arc + [(bx0 if not right_side else bx1, by1)], fill=255)
-        img.paste(fill, (left, y), mask.resize((w, h), Image.LANCZOS))
+        img.paste(fill, (left, y), _bubble_mask(
+            w, h, x0 - left, x1 - left, t, bool(right_side), s.radius,
+            joins_above, not b.show_tail))
 
     def _paint_reply(self, img: Image.Image, draw: ImageDraw.ImageDraw, b: Block,
                      cx: int, cy: int, x1: int) -> int:
@@ -1011,6 +981,18 @@ def _rgba(colour: str, alpha: int) -> tuple[int, int, int, int]:
 def _round_photo(path: Path, size: int) -> Image.Image | None:
     """A picture cropped square from the centre and masked to a circle."""
     try:
+        age = Path(path).stat().st_mtime_ns
+    except OSError:
+        age = 0
+    return _round_photo_of(str(path), age, size)
+
+
+# Cached on the file's age as well as its name, so a picture replaced under the same
+# name is cut again. The result is only ever pasted FROM, never drawn on.
+@lru_cache(maxsize=256)
+def _round_photo_of(path_s: str, age: int, size: int) -> Image.Image | None:
+    path = Path(path_s)
+    try:
         pic = Image.open(path).convert("RGBA")
     except OSError as e:
         log.warning("avatar %s will not open (%s)", path, e)
@@ -1023,3 +1005,46 @@ def _round_photo(path: Path, size: int) -> Image.Image | None:
     ImageDraw.Draw(mask).ellipse([0, 0, size * 4 - 1, size * 4 - 1], fill=255)
     pic.putalpha(mask.resize((size, size), Image.LANCZOS))
     return pic
+
+
+# The same few bubble outlines come up in every state of a video — one per size of
+# message, side and place in a run — and the supersampled mask shrunk with LANCZOS
+# was a third of the drawing time, spent two hundred times on the same dozen shapes.
+@lru_cache(maxsize=1024)
+def _bubble_mask(w: int, h: int, x0: int, x1: int, t: int, right_side: bool,
+                 radius: int, joins_above: bool, joins_below: bool) -> Image.Image:
+    """The outline of one bubble and its tail, antialiased, at (w, h) — `x0`/`x1` are
+    where the bubble proper sits inside that box; see `Canvas._bubble`."""
+    mask = Image.new("L", (w * SS, h * SS), 0)
+    md = ImageDraw.Draw(mask)
+    bx0, bx1 = x0 * SS, x1 * SS - 1
+    by1 = h * SS - 1
+
+    # The four corners, each with its own radius, because Telegram gives them
+    # four. Within a run of messages from one person the corners that FACE the
+    # neighbouring bubble — the ones down the avatar's side — are pulled in tight,
+    # so the run reads as one block with seams in it rather than as three separate
+    # bubbles that happen to be close. Only the outer side stays fully round.
+    big, tight = radius * SS, int(radius * 0.3) * SS
+    near_top = tight if joins_above else big
+    near_bot = 0 if t else (tight if joins_below else big)
+    if right_side:
+        radii = (big, near_top, near_bot, big)      # tl, tr, br, bl
+    else:
+        radii = (near_top, big, big, near_bot)
+    _corners(md, bx0, 0, bx1, by1, radii)
+    if t:
+        r = t * SS
+        # a quarter circle centred level with the foot of the bubble's edge and
+        # one tail out from it: the arc runs from that edge down to the tip, and
+        # is concave because the centre is on the far side of it
+        cy = by1 - r
+        cx = bx0 - r if not right_side else bx1 + r
+        steps = max(8, r // 2)
+        arc = []
+        for i in range(steps + 1):
+            a = math.pi / 2 * i / steps
+            dx = math.cos(a) * r
+            arc.append((cx + dx if not right_side else cx - dx, cy + math.sin(a) * r))
+        md.polygon(arc + [(bx0 if not right_side else bx1, by1)], fill=255)
+    return mask.resize((w, h), Image.LANCZOS)

@@ -1399,7 +1399,8 @@ button.danger{border-color:var(--bad);color:var(--bad)}
    PLAYS the conversation hid exactly the part that moves. The cast scrolls instead. */
 #chat-frame{background:#000;border:1px solid var(--line);border-radius:8px;overflow:hidden;
   display:grid;place-items:center;min-height:120px;flex:none}
-#chat-frame img{width:100%;max-height:72vh;object-fit:contain;display:block}
+#chat-frame img,#chat-frame canvas{width:100%;max-height:72vh;object-fit:contain;display:block}
+#chat-reel-state{font-size:12px}
 .chat-empty{margin:4px 2px}
 
 /* One message. The whole row is the hit area for opening it, because a list you

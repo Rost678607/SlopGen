@@ -21,6 +21,7 @@ like*, and only the real renderer answers it.
 
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
 from pathlib import Path
@@ -255,19 +256,15 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
         return {"total": at, "marks": marks}
 
     def _pace(job, ctx) -> dict:
+        from ..pipeline.chat_reel import laid as is_laid
+
         msgs = job.messages
-        scenes = job.scenes
         starts, at = [], 0.0
-        for scene in scenes:
+        for scene in job.scenes:
             starts.append(at)
             at += scene.duration
-        # Exact only while the scenes still ARE these messages: the room edits the
-        # conversations without re-laying them (see `chatroom`), so a line typed after
-        # `script` ran points at nothing, and a voiced line not yet voiced is 0s long.
-        laid = bool(msgs) and all(
-            0 <= m.scene < len(scenes) and scenes[m.scene].duration > 0
-            and scenes[m.scene].text in (m.text, "") for m in msgs) and all(
-            a.scene < b.scene for a, b in zip(msgs, msgs[1:]))
+        # Exact only while the scenes still ARE these messages (see `chat_reel.laid`).
+        laid = is_laid(job)
         if laid:
             begin = [starts[m.scene] for m in msgs]
             dur = [e - b for b, e in zip(begin, begin[1:] + [at])]
@@ -1094,6 +1091,52 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
 
     # -- what it will look like ---------------------------------------------
 
+    # -- the reel ------------------------------------------------------------
+    #
+    # The video, played in the page rather than encoded (see `pipeline.chat_reel`).
+    # Built on request, one build per run at a time — a second request while one is
+    # drawing waits for it rather than drawing the same states beside it — and the
+    # drawings it makes are the render stage's own, so a second build after an edit
+    # redraws only what the edit changed on screen.
+    reel_locks: dict[str, asyncio.Lock] = {}
+    reel_files: dict[str, dict] = {}   # run id -> {file id: (path, kind)}
+    reel_memo: dict[str, tuple] = {}   # "run:video" -> (what it was of, the reel)
+
+    @app.get("/api/runs/{run_id}/chat/reel")
+    async def reel(run_id: str, video: int = 0, slopgen: str | None = Cookie(default=None)):
+        from ..pipeline import chat_reel
+
+        guard(slopgen)
+        run = run_or_404(run_id)
+        cp, i, job = open_job(run, video)
+        if not job.messages:
+            raise HTTPException(status_code=404, detail="there is no conversation yet")
+        ctx = context(cp)
+        lock = reel_locks.setdefault(f"{run_id}:{video}", asyncio.Lock())
+        async with lock:
+            want = chat_reel.key(job, ctx)
+            was = reel_memo.get(f"{run_id}:{video}")
+            if was is not None and was[0] == want:
+                return was[1]
+            try:
+                got = await run_in_threadpool(chat_reel.build, job, ctx)
+            except Exception as e:  # noqa: BLE001
+                log.exception("building the chat reel failed")
+                raise HTTPException(status_code=502, detail=f"{type(e).__name__}: {e}")
+            out = _reel_json(run_id, got, reel_files.setdefault(run_id, {}))
+            reel_memo[f"{run_id}:{video}"] = (want, out)
+            return out
+
+    @app.get("/api/runs/{run_id}/chat/reel/f/{fid}")
+    async def reel_file(run_id: str, fid: str, slopgen: str | None = Cookie(default=None)):
+        guard(slopgen)
+        path, kind = reel_files.get(run_id, {}).get(fid, (None, ""))
+        if path is None or not path.is_file():
+            raise HTTPException(status_code=404, detail="not part of a reel")
+        if kind == "state":
+            path = await run_in_threadpool(_as_jpeg, path)
+        return FileResponse(path, headers={"Cache-Control": "max-age=86400"})
+
     @app.get("/api/runs/{run_id}/chat/preview")
     async def preview(run_id: str, video: int = 0, at: int = -1, t: float = -1.0,
                       slopgen: str | None = Cookie(default=None)):
@@ -1146,6 +1189,56 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
             raise HTTPException(status_code=502, detail=f"{type(e).__name__}: {e}")
         return Response(out.getvalue(), media_type="image/png",
                         headers={"Cache-Control": "no-store"})
+
+
+def _reel_json(run_id: str, reel: dict, files: dict) -> dict:
+    """The reel with every path swapped for a URL the page may fetch, and the swap
+    remembered in `files`: the file route serves what is in there and nothing else, so
+    a reel is not a way to name an arbitrary path on this machine."""
+    import hashlib
+
+    def url(path, kind: str) -> str:
+        # the file's age is in the name: a take re-voiced in place is a new URL, and
+        # the day the browser may keep a file for cannot hand back the old voice
+        try:
+            age = Path(path).stat().st_mtime_ns
+        except OSError:
+            age = 0
+        fid = hashlib.sha1(f"{kind}|{path}|{age}".encode()).hexdigest()[:20]
+        files[fid] = (Path(path), kind)
+        return f"/api/runs/{run_id}/chat/reel/f/{fid}"
+
+    out = {k: reel[k] for k in ("exact", "total", "width", "height", "top", "marks", "durs")}
+    out["states"] = [{
+        **{k: st[k] for k in ("start", "dur", "msg", "from_y", "to_y", "swipe", "travel")},
+        "src": url(st["path"], "state"),
+        "overlay": url(st["overlay"], "image") if st["overlay"] else None,
+        "tiles": [{**{k: t[k] for k in ("x", "y", "w", "h", "t0", "length")},
+                   "src": url(t["path"], "clip" if t["length"] > 0 else "image"),
+                   "poster": url(t["poster"], "image") if t.get("poster") else None}
+                  for t in st["tiles"]],
+    } for st in reel["states"]]
+    out["under"] = [{"src": url(u["path"], "clip"), "at": u["at"], "dur": u["dur"],
+                     "seek": u["seek"]} for u in reel["under"]]
+    out["sounds"] = [{"src": url(x["path"], "sound"), "at": x["at"], "dur": x["dur"],
+                      "rate": x["rate"], "gain": x["gain"], "kind": x["kind"]}
+                     for x in reel["sounds"]]
+    m = reel["music"]
+    out["music"] = {"src": url(m["path"], "sound"), "gain": m["gain"]} if m else None
+    return out
+
+
+def _as_jpeg(png: Path) -> Path:
+    """A drawn state as a JPEG beside it, made once. The states are written fast and
+    therefore fat (`compress_level=1`) — megabytes each, a hundred of them to a video —
+    and the page needs to look at them, not to keep them lossless."""
+    out = png.with_name(png.stem + ".view.jpg")
+    if not out.is_file() or out.stat().st_mtime < png.stat().st_mtime:
+        with Image.open(png) as img:
+            tmp = out.with_suffix(".tmp")
+            img.convert("RGB").save(tmp, "JPEG", quality=86)
+            tmp.replace(out)
+    return out
 
 
 def _safe_reaction(emoji: str, base: Path) -> str:

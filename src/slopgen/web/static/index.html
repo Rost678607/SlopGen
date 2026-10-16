@@ -527,11 +527,14 @@
            to show in it. -->
       <div id="chat-frame">
         <img id="chat-shot-img" alt="">
+        <!-- the reel: the video as the render would make it, played here (chat_reel.js) -->
+        <canvas id="chat-reel" hidden></canvas>
         <video id="chat-video" controls playsinline hidden></video>
       </div>
       <div class="row" id="chat-watch-row">
         <button id="chat-play" class="primary" data-l="web.chat.play">▶ играть</button>
         <span class="dim" id="chat-clock"></span>
+        <span class="dim" id="chat-reel-state" hidden></span>
         <span class="grow"></span>
         <button id="chat-shot" class="ghost" data-l="web.chat.shot">перерисовать</button>
         <button id="chat-watch" class="ghost" data-l="web.chat.watch" hidden>смотреть ролик</button>
@@ -804,5 +807,6 @@
 <script src="/static/forms.js"></script>
 <script src="/static/app.js"></script>
 <script src="/static/chat.js"></script>
+<script src="/static/chat_reel.js"></script>
 <script src="/static/montage.js"></script>
 </body>

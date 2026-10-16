@@ -64,6 +64,10 @@ async function openChat(id, title, video = 0) {
 function closeChat() {
   chatPause();
   if (chatWatching) showStill();
+  clearTimeout(reelTimer);
+  reelTimer = 0;
+  REEL = null;
+  reelShowing();
   cq("#chat").hidden = true;
   CHAT = null;
   loadRuns();
@@ -462,6 +466,8 @@ function chatFrame(n) {
 function chatForget() {
   for (const got of chatFrames.values()) got.then((u) => URL.revokeObjectURL(u), () => {});
   chatFrames.clear();
+  // and the reel, which is of the same conversation (see chat_reel.js)
+  reelStale();
 }
 
 let chatWant = -1;   // the frame last asked to be on screen
@@ -535,7 +541,11 @@ function renderChatSettings() {
 // laid and voiced, and until then the same rules guessed at, which the clock beside
 // the button marks with a `≈`.
 
-const chatPace = () => (CHAT && CHAT.doc.pace) || { exact: false, total: 0, at: [], dur: [] };
+// The reel's clock when there is a reel — it is the clock its pictures and sounds are
+// laid on — and the document's until then.
+const chatPace = () => (REEL
+  ? { exact: REEL.exact, total: REEL.total, at: REEL.marks, dur: REEL.durs }
+  : (CHAT && CHAT.doc.pace) || { exact: false, total: 0, at: [], dur: [] });
 let chatGeo = [];     // n -> {top, h}: where that message's row is, down the list
 let chatLoopAt = 0;   // performance.now() of the last step
 
@@ -594,6 +604,9 @@ function chatPlace(quiet = false) {
     if (!quiet) chatArrive(n);
   }
   chatClock();
+  // standing still, the reel shows the instant the head is on; playing, `chatStep`
+  // draws every frame anyway
+  if (!chatPlaying) reelDraw(chatT);
 }
 
 function chatMark() {
@@ -614,7 +627,7 @@ function chatMark() {
 }
 
 function chatArrive(n) {
-  if (!chatWatching) chatShow(n);
+  if (!chatWatching && !REEL) chatShow(n);
   if (!chatPlaying) return;
   const row = cq(`#chat-msgs .chat-row[data-n="${n}"]`);
   if (row) row.scrollIntoView({ block: "nearest", behavior: "smooth" });
@@ -636,7 +649,10 @@ function chatStep(now) {
   if (chatWatching) {
     chatT = cq("#chat-video").currentTime;
   } else {
-    chatT += (now - chatLoopAt) / 1000;
+    // The reel's sound sets the clock while it is actually running. A browser that
+    // will not start sound without a gesture leaves the context suspended and its
+    // clock standing, and the picture must not stand with it.
+    chatT = reelLive() ? reelNow() : chatT + (now - chatLoopAt) / 1000;
     if (chatT >= chatPace().total) {
       chatT = chatPace().total;
       chatPlace();
@@ -645,6 +661,7 @@ function chatStep(now) {
   }
   chatLoopAt = now;
   chatPlace();
+  if (REEL && !chatWatching) { reelDraw(chatT); reelKeepMusic(); }
   requestAnimationFrame(chatStep);
 }
 
@@ -656,6 +673,7 @@ function chatPlay() {
   chatPlaying = true;
   chatLoopAt = performance.now();
   chatNow = -1;   // arrive at the current line afresh: its frame, and the next ones
+  if (REEL) reelSound(chatT);
   chatPlace();
   requestAnimationFrame(chatStep);
 }
@@ -664,7 +682,14 @@ function chatPause() {
   const v = cq("#chat-video");
   if (chatWatching && !v.paused) v.pause();
   chatPlaying = false;
+  reelSilence();
+  reelDraw(chatT);   // which also stops the clips where they are
   chatClock();
+}
+
+// The head was moved while playing: every sound starts again from where it now is.
+function chatJumped() {
+  if (chatPlaying && REEL && !chatWatching) reelSound(chatT);
 }
 
 // Put the head at the start of a message, which is where opening one should leave
@@ -675,6 +700,7 @@ function chatSeek(n) {
   chatT = p.at[n];
   if (chatWatching) cq("#chat-video").currentTime = chatT;
   chatPlace(true);
+  chatJumped();
 }
 
 cq("#chat-play").onclick = () => (chatPlaying ? chatPause() : chatPlay());
@@ -693,6 +719,7 @@ function chatSeekY(e) {
   chatT = p.at[n] + Math.min(Math.max((y - g.top) / g.h, 0), 1) * p.dur[n];
   if (chatWatching) cq("#chat-video").currentTime = chatT;
   chatPlace();
+  chatJumped();
 }
 
 cq("#chat-rail").addEventListener("pointerdown", (e) => {
@@ -733,6 +760,8 @@ function showStill() {
   chatPlaying = false;
   cq("#chat-shot-img").hidden = false;
   renderChatWatch();
+  reelShowing();
+  reelDraw(chatT);
   chatClock();
 }
 
@@ -746,6 +775,7 @@ cq("#chat-watch").onclick = () => {
   v.src = tokd(`/api/runs/${CHAT.id}/video?x=${Date.now()}`);
   v.hidden = false;
   cq("#chat-shot-img").hidden = true;
+  reelShowing();
   // from where the playhead stands, so the rail and the picture start out agreeing
   v.addEventListener("loadedmetadata", () => { v.currentTime = chatT; }, { once: true });
   renderChatWatch();
