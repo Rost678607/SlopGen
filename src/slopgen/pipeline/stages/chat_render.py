@@ -563,7 +563,9 @@ def run(job: VideoJob, ctx: AppContext) -> None:
             tally["drawn"] += 1
         state.path = path
         seen["view"], seen["bar"], seen["msg"] = view, bars.get(ci), state.msg
-        ctx.progress("render", tally["drawn"] + tally["reused"], len(job.messages))
+        # by MESSAGE: a message is several screens (its pieces, its reactions), and
+        # counting screens against messages ran the bar past its own end
+        ctx.progress("render", state.msg + 1, len(job.messages))
 
     planner = Planner(
         ctx, job, width, height, people=people_of(job, ctx), wallpaper=wallpaper,
@@ -614,4 +616,4 @@ def run(job: VideoJob, ctx: AppContext) -> None:
                    seed=str(job.workdir))
     log.info("chat: %d states (%d drawn, %d already there)",
              len(job.chat_states), tally["drawn"], tally["reused"])
-    ctx.progress("render", len(job.chat_states), len(job.chat_states))
+    ctx.progress("render", len(job.messages), len(job.messages))

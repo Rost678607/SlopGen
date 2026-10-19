@@ -979,6 +979,32 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
                 return True
         return False
 
+    # -- which messages are voiced -------------------------------------------
+
+    @app.get("/api/runs/{run_id}/chat/takes")
+    async def chat_takes(run_id: str, video: int = 0,
+                         slopgen: str | None = Cookie(default=None)) -> dict:
+        """Per message: voiced, its own recording, still to voice, or read by nobody
+        (`tts.chat_take_states`). Read off the checkpoint directly rather than through
+        `open_job`, because the moment this is asked most is while the voicing runs,
+        and `open_job` refuses a run that is moving."""
+        from ..pipeline.stages import tts as tts_stage
+
+        guard(slopgen)
+        run = run_or_404(run_id)
+        if run.run_dir is None:
+            raise HTTPException(status_code=409, detail="this run has no folder yet")
+        cp = Checkpoint.load(run.run_dir)
+        job = cp.load_job(video)
+        if job is None or not job.messages:
+            return {"takes": []}
+        try:
+            got = await run_in_threadpool(tts_stage.chat_take_states, job, context(cp))
+        except Exception as e:  # noqa: BLE001
+            log.exception("reading the takes failed")
+            raise HTTPException(status_code=502, detail=f"{type(e).__name__}: {e}")
+        return {"takes": got}
+
     # -- saying one message again ------------------------------------------
     voice_locks: dict[str, asyncio.Lock] = {}
 

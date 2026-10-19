@@ -46,6 +46,8 @@ async function openChat(id, title, video = 0) {
     d = await api(`/api/runs/${id}/chat?video=${video}`);
   } catch (e) { return say(e.message, true); }
   CHAT = { id, title, video, doc: d };
+  chatTakes = null;
+  chatVoicing = false;
   chatConv = 0;
   chatSel = -1;
   chatPause();
@@ -58,10 +60,15 @@ async function openChat(id, title, video = 0) {
   cq("#chat-title").textContent = title;
   renderChat();
   cq("#chat").hidden = false;
+  // opened on a video that is already being made: show it moving
+  chatProgStop();
+  chatProgWatch();
   shootChat();
 }
 
 function closeChat() {
+  chatProgStop();
+  chatProgSeen = false;
   chatPause();
   if (chatWatching) showStill();
   clearTimeout(reelTimer);
@@ -107,6 +114,78 @@ async function reloadChat() {
 
 // ---------------------------------------------------------------- drawing it
 
+// -- which messages are voiced ----------------------------------------------
+//
+// A mark beside each message that is read aloud: voiced, still to voice, or being
+// voiced right now. Asked of the files (`/chat/takes`, the stage's own cache test)
+// and not of the document, because while the voicing runs the document is the
+// stage's and reaches the checkpoint only at the end — each take is on disk the
+// moment it is made, so the marks fill in one by one as it goes.
+let chatTakes = null;      // per message, by the video's numbering; null = not asked yet
+let chatVoicing = false;   // the voicing stage is running on this video now
+let chatTakesTimer = 0;
+
+let chatTakesBusy = false;   // a look is already on its way: never two at once
+let chatTakesAt = 0;         // when the last look went out
+
+// `often` is the voicing's own pace: a look every few seconds, not every tick. Each
+// one lays the conversation out again on a machine whose every core the voice model
+// is using, and looks sent faster than they came back piled up until the room's own
+// tally stopped moving.
+async function chatTakesLoad(often = false) {
+  if (!CHAT || chatTakesBusy) return;
+  if (often && performance.now() - chatTakesAt < 3000) return;
+  chatTakesBusy = true;
+  chatTakesAt = performance.now();
+  const id = CHAT.id;
+  try {
+    const d = await api(`/api/runs/${id}/chat/takes?video=${CHAT.video}`);
+    if (CHAT && CHAT.id === id) chatTakes = d.takes;
+  } catch (e) { /* the marks are a courtesy; the room works without them */ }
+  finally { chatTakesBusy = false; }
+  chatTakesPaint();
+}
+
+// Said once a voicing has finished, when some lines would not come out: they stand
+// silent in the video, and nothing else on the screen would say why.
+async function chatTakesReport() {
+  // a fresh look, after any still on its way: the report is about the voicing that
+  // has just ended, not about whatever the last poll saw in the middle of it
+  while (chatTakesBusy) await new Promise((r) => setTimeout(r, 200));
+  await chatTakesLoad();
+  const n = (chatTakes || []).filter((s) => s === "failed").length;
+  if (n) say(lab("web.chat.take.failed.n", "").replace("%d", n), true);
+}
+
+// after an edit, once the typing has settled, rather than per keystroke
+function chatTakesSoon() {
+  clearTimeout(chatTakesTimer);
+  chatTakesTimer = setTimeout(chatTakesLoad, 400);
+}
+
+function chatTakesPaint() {
+  // The one being voiced now: the stage goes in order, so it is the first still to do
+  // AFTER the last one done — not simply the first still to do, which is wherever a
+  // line the voice gave up on is sitting until the stage finishes and says so.
+  let now = -1;
+  // while it runs, a line the LAST voicing gave up on is one this voicing tries
+  // again, so it reads as still to do rather than as given up on
+  const st = (s) => (chatVoicing && s === "failed" ? "todo" : s);
+  if (chatVoicing && chatTakes) {
+    const states = chatTakes.map(st);
+    const last = states.lastIndexOf("voiced");
+    now = states.indexOf("todo", last + 1);
+    if (now < 0) now = states.indexOf("todo");
+  }
+  cq("#chat-msgs").querySelectorAll(".chat-take-mark").forEach((el) => {
+    const n = +el.dataset.takeN;
+    const s = n === now ? "now" : (chatTakes ? st(chatTakes[n] || "") : "");
+    el.className = `chat-take-mark ${s}`;
+    el.textContent = { voiced: "🔊", own: "🎤", todo: "○", now: "◉", failed: "⚠" }[s] || "";
+    el.title = s ? lab("web.chat.take." + s, "") : "";
+  });
+}
+
 function renderChat() {
   if (!CHAT) return;
   renderChatStages();
@@ -128,6 +207,8 @@ function renderChat() {
   } else {
     list.innerHTML = chatConvs().map(chatSectionHTML).join("");
   }
+  chatTakesPaint();
+  chatTakesSoon();
   drawRail();
 }
 
@@ -243,6 +324,7 @@ function chatRowHTML(conv, m) {
 <div class="chat-row${open ? " on" : ""}${n === chatNow ? " now" : ""}${m.pinned ? " pinned" : ""}"
      data-i="${m.i}" data-n="${n}" draggable="true">
   <div class="chat-line" data-open="${m.i}">
+    <span class="chat-take-mark" data-take-n="${n}"></span>
     <b class="chat-who">${esc(m.nick || m.persona || lab("web.chat.nobody", "—"))}</b>
     ${mediaChip(m.media)}
     <span class="chat-text">${esc(trim(chatDraft(conv.c, m), 160))}</span>
@@ -932,9 +1014,10 @@ async function buildChat() {
       body: JSON.stringify({ run_dir: row.run_dir }),
     });
     say(lab("web.chat.build.started", ""));
-    // …and out to the list, which is where it can now be watched. Staying put would
-    // leave the operator looking at the one screen that cannot show what is happening.
-    closeChat();
+    // …and watched from here: the room draws the run's own bar now, so there is no
+    // longer a reason to be sent to the list to see it move
+    chatProgSeen = true;
+    chatProgWatch();
     return;
   } catch (e) {
     say(e.message, true);
@@ -1276,22 +1359,89 @@ cq("#chat-cast").addEventListener("change", async (e) => {
   shootChat(chatSel);
 });
 
+// -- what is running on this video -------------------------------------------
+//
+// A stage reports on the RUN's own stream (see `montage_api.run_stage`), which only the
+// runs list drew: voicing forty messages was a minute of a grey button here, and «собрать
+// ролик» sent you away to the list to see anything at all. The room reads the same
+// tally and draws the same bar under the chain — what is running, how many of how many
+// — whether a stage was pressed here or the whole chain is going.
+let chatProgTimer = 0;
+let chatProgSeen = false;    // the last look found the run moving
+let chatStageBusy = false;   // a stage pressed in this room is still running
+
+function chatProgWatch() {
+  if (chatProgTimer) return;
+  chatProgTick();
+  chatProgTimer = setInterval(chatProgTick, 1000);
+}
+
+function chatProgStop() {
+  clearInterval(chatProgTimer);
+  chatProgTimer = 0;
+  cq("#chat-prog").hidden = true;
+  cq("#chat-build").disabled = false;
+}
+
+let chatProgBusy = false;
+
+async function chatProgTick() {
+  if (!CHAT) return chatProgStop();
+  if (chatProgBusy) return;    // the last look has not come back yet
+  chatProgBusy = true;
+  let row;
+  try { row = (await api("/api/runs")).find((r) => r.id === CHAT.id); }
+  catch (e) { return; }
+  finally { chatProgBusy = false; }
+  const moving = !!row && (row.status === "running" || row.status === "queued");
+  chatProgPaint(moving ? row : null);
+  // while the voicing runs the marks are asked again on every look, so they fill in
+  // as each take lands; the look after it stops settles them
+  const voicing = moving && row.stage === "tts";
+  if (voicing) chatTakesLoad(true);
+  else if (chatVoicing) chatTakesLoad();
+  chatVoicing = voicing;
+  cq("#chat-build").disabled = moving;
+  if (moving) { chatProgSeen = true; return; }
+  if (chatStageBusy) return;    // its own handler reloads when it returns
+  chatProgStop();
+  if (chatProgSeen) {
+    // the chain has stopped — finished, failed or parked — so what is on the
+    // screen is out of date: everything the stages made is in the document now
+    chatProgSeen = false;
+    const st = (row && row.message) || "";
+    if (row && row.status === "failed") say(lab(st, st) || lab("web.chat.build.failed", ""), true);
+    await reloadChat();
+    chatTakesReport();
+    if (!chatWatching) shootChat(chatSel);
+  }
+}
+
+function chatProgPaint(row) {
+  const box = cq("#chat-prog");
+  if (!row) { box.hidden = true; return; }
+  box.hidden = false;
+  const p = row.progress;
+  const known = !!(p && p.total > 0);
+  // the stage's own name, as the runs list cuts it, and the tally in words: how many
+  // of how many, and of what
+  cq("#chat-prog-stage").textContent = row.stage
+    ? lab("bp.stage." + row.stage, word(row.stage)).split(" (")[0]
+    : lab("web.chat.prog.queued", "в очереди");
+  cq("#chat-prog-tally").textContent = known
+    ? `${p.done} ${lab("web.chat.prog.of", "из")} ${p.total} · ${lab("unit." + p.unit, p.unit)}` : "";
+  const bar = box.querySelector(".pbar");
+  bar.classList.toggle("idle", !known);
+  bar.firstElementChild.style.width =
+    `${known ? Math.min(100, Math.round((p.done / p.total) * 100)) : 100}%`;
+}
+
 cq("#chat-stages").addEventListener("click", async (e) => {
   const b = e.target.closest("[data-stage]");
   if (!b || !CHAT) return;
   b.disabled = true;
-  // The stage reports on the RUN's own stream (see `montage_api.run_stage`), which
-  // the runs list draws as a bar and this screen did not look at: voicing forty lines
-  // was a minute of a grey button. It is read from the same place and written on the
-  // button itself — "озвучка 12/40".
-  const id = CHAT.id;
-  const tick = setInterval(async () => {
-    try {
-      const row = (await api("/api/runs")).find((r) => r.id === id);
-      const p = row && row.progress;
-      if (p && p.total) b.textContent = `${word(b.dataset.stage)} ${p.done}/${p.total}`;
-    } catch (err) { /* the bar is a courtesy; the stage goes on without it */ }
-  }, 800);
+  chatStageBusy = true;
+  chatProgWatch();
   try {
     await api(`/api/runs/${CHAT.id}/montage/stage`, {
       method: "POST", headers: { "content-type": "application/json" },
@@ -1300,11 +1450,13 @@ cq("#chat-stages").addEventListener("click", async (e) => {
     say(`${word(b.dataset.stage)} ✓`);
   } catch (err) { say(err.message, true); }
   finally {
-    clearInterval(tick);
+    chatStageBusy = false;
+    chatProgSeen = false;
+    chatProgStop();
     b.disabled = false;
-    b.textContent = word(b.dataset.stage);
   }
   await reloadChat();
+  if (b.dataset.stage === "tts") chatTakesReport();
   if (!chatWatching) shootChat(chatSel);
 });
 

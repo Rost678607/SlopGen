@@ -510,6 +510,13 @@
   <!-- The pipeline as a row of buttons, exactly as the montage room draws it and
        pressing the same endpoint: the chain is an order and this screen is not. -->
   <div class="mont-stages" id="chat-stages"></div>
+  <!-- what is running on this video, how far it has got and out of how many — the
+       runs list's own bar, read from the same place (chat.js `chatProgTick`) -->
+  <div id="chat-prog" hidden>
+    <div class="ptop"><b id="chat-prog-stage"></b><span class="grow"></span>
+      <span class="ptally" id="chat-prog-tally"></span></div>
+    <div class="pbar"><i></i></div>
+  </div>
 
   <div id="chat-body">
     <div id="chat-convs"></div>

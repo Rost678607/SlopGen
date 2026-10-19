@@ -404,16 +404,16 @@ body:has(#panel:not([hidden])),body:has(#editor:not([hidden])),body:has(#mont:no
 /* What a running video is doing, over a bar — the terminal's progress line, brought
    across. The strip only exists while the run moves, so it never has to look settled. */
 .run .prog{margin-top:7px;display:grid;gap:4px}
-.run .ptop{display:flex;gap:8px;align-items:baseline;font-size:12.5px;color:var(--dim)}
-.run .ptop b{color:var(--ink);font-weight:600}
-.run .ptally{font:11.5px var(--mono)}
-.run .pbar{height:5px;border-radius:3px;background:var(--bg);overflow:hidden}
-.run .pbar > i{display:block;height:100%;background:var(--accent);border-radius:3px;
+:is(.run, #chat-prog) .ptop{display:flex;gap:8px;align-items:baseline;font-size:12.5px;color:var(--dim)}
+:is(.run, #chat-prog) .ptop b{color:var(--ink);font-weight:600}
+:is(.run, #chat-prog) .ptally{font:11.5px var(--mono)}
+:is(.run, #chat-prog) .pbar{height:5px;border-radius:3px;background:var(--bg);overflow:hidden}
+:is(.run, #chat-prog) .pbar > i{display:block;height:100%;background:var(--accent);border-radius:3px;
   transition:width .25s ease}
 /* A stage with nothing countable in it (the script, the metadata) still has to say
    that something is happening. A stripe that travels says it without claiming a
    position the run cannot report. */
-.run .pbar.idle > i{background:linear-gradient(90deg,
+:is(.run, #chat-prog) .pbar.idle > i{background:linear-gradient(90deg,
   transparent 0%, var(--accent) 45%, var(--accent) 55%, transparent 100%);
   transition:none;animation:pslide 1.4s linear infinite}
 @keyframes pslide{from{transform:translateX(-60%)}to{transform:translateX(60%)}}
@@ -1427,6 +1427,7 @@ button.danger{border-color:var(--bad);color:var(--bad)}
 #chat-rail .seg.ad{background:var(--warn, #e0a030);opacity:.7}
 #chat-frame img,#chat-frame canvas{width:100%;max-height:72vh;object-fit:contain;display:block}
 #chat-reel-state{font-size:12px}
+#chat-prog{display:grid;gap:4px;padding:6px 14px 2px}
 .chat-empty{margin:4px 2px}
 
 /* One message. The whole row is the hit area for opening it, because a list you
@@ -1440,6 +1441,14 @@ button.danger{border-color:var(--bad);color:var(--bad)}
 .chat-line{display:flex;gap:8px;align-items:baseline;padding:7px 10px;cursor:pointer;
   flex-wrap:wrap}
 .chat-who{color:var(--accent);font-size:13px;white-space:nowrap}
+/* voiced, still to voice, or being voiced now (see `chatTakesPaint`) */
+.chat-take-mark{font-size:11px;min-width:14px;text-align:center;color:var(--dim)}
+.chat-take-mark:empty{display:none}
+.chat-take-mark.voiced,.chat-take-mark.own{color:var(--ok)}
+.chat-take-mark.failed{color:var(--warn)}
+.chat-take-mark.now{color:var(--accent);animation:chat-take-pulse 1s ease-in-out infinite}
+@keyframes chat-take-pulse{50%{opacity:.25}}
+@media (prefers-reduced-motion: reduce){.chat-take-mark.now{animation:none}}
 .chat-text{flex:1;min-width:0;font-size:13.5px}
 .chat-reply{font-size:12px;color:var(--dim)}
 /* what a message carries: a first frame and a word, never the file itself */

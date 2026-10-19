@@ -230,6 +230,11 @@ class Scene(BaseModel):
     # re-decided whenever that pass runs again, and dropped when the line no longer
     # reads as something heard through anything.
     voice_fx_auto: bool = False
+    # A chat line the voice could not say after every attempt — a two-letter "пр" the
+    # model would only answer by reciting its reference. It stands silent so the rest
+    # of the conversation is voiced and kept, and the next voicing tries it again
+    # (see `stages.tts.run`).
+    voice_failed: bool = False
     # A line that is not a line: a stretch of SILENCE the operator put on the track
     # from the montage room. It has a `duration` and nothing else — no text, no voice,
     # no words — so nothing can be anchored inside it, nothing is synthesized for it,

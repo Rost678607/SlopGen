@@ -918,6 +918,64 @@ def audio_path(job: VideoJob, index: int, suffix: str = ".mp3") -> Path:
     return job.workdir / "tts" / f"scene_{index:02d}{suffix}"
 
 
+# The files a take can be, by engine: the cache sits beside whichever one it is.
+_TAKE_SUFFIXES = (".wav", ".mp3", ".m4a", ".ogg", ".flac")
+
+
+def chat_take_states(job: VideoJob, ctx: AppContext) -> list[str]:
+    """What each message of a chat has on disk, in the video's order: `voiced` (a take
+    of what it says now, by the voice it is cast with, sits where the stage will look
+    for it), `own` (a voice message or a round video, heard off its own recording),
+    `todo` (it is to be read and is not yet, or its take is of something else), or
+    `mute` (nobody reads it).
+
+    Asked of the FILES and not of the job, for the moment it is asked most: while the
+    voicing runs, the job is in the stage's hands and reaches the checkpoint only at
+    the end, but each take lands on disk as it is made. The answer is the stage's own
+    cache test (`_cached_words`) put to a timeline laid the way the stage lays it, so a
+    message shown as voiced is exactly one the stage will not synthesize again."""
+    from . import chat_script
+
+    copy = job.model_copy(deep=True)
+    chat_script.lay(copy, ctx)
+    table = _pronounce(ctx)
+    engine = resolve_engine(ctx)
+    tts_dir = Path(job.workdir) / "tts"
+    keys: dict[str, str | None] = {}
+    out: list[str] = []
+    # the lines the last voicing gave up on, off the job's own timeline while it is
+    # still the timeline of these messages
+    gave_up = ({n for n, m in enumerate(job.messages) if job.scenes[m.scene].voice_failed}
+               if chat_script.current(job) else set())
+    for n, m in enumerate(copy.messages):
+        if n in gave_up:
+            out.append("failed")
+            continue
+        sc = copy.scenes[m.scene] if 0 <= m.scene < len(copy.scenes) else None
+        if sc is None:
+            out.append("mute")
+            continue
+        if sc.silent and sc.audio:
+            out.append("own")
+            continue
+        if sc.unvoiced or not sc.voice:
+            out.append("mute")
+            continue
+        if sc.voice not in keys:
+            try:
+                keys[sc.voice] = _resolve_voice(ctx, engine, sc.voice).cache_key
+            except Exception:  # noqa: BLE001 — a voice that will not resolve has no take
+                keys[sc.voice] = None
+        key = keys[sc.voice]
+        stem = f"scene_{m.scene:02d}"
+        audio = next((tts_dir / f"{stem}{x}" for x in _TAKE_SUFFIXES
+                      if (tts_dir / f"{stem}{x}").is_file()), None)
+        ok = bool(key and audio is not None and _cached_words(
+            audio, _spoken(sc.text, table), key, rate_str(_scene_rate(sc, ctx)), engine))
+        out.append("voiced" if ok else "todo")
+    return out
+
+
 def resynth_one(job: VideoJob, ctx: AppContext, index: int, rate: int | None = None,
                 voice: str | None = None) -> float:
     """Re-voice a single line right now, ignoring the cache, and write the result
@@ -1327,7 +1385,20 @@ def run(job: VideoJob, ctx: AppContext) -> None:
     _cast_voicefx(job, ctx)
     table = _pronounce(ctx)
     offset = 0.0
-    total = len(job.scenes)
+    # What the bar counts is the LINES there are to say, not the scenes: a chat lays a
+    # pause after every spoken message and a silent message as a scene of its own, so
+    # "48/96" read as half done when it was the end, and counted things that are not
+    # voiced at all. A chat's lines are its messages, and the bar says so.
+    chat = bool(getattr(job, "conversations", None))
+    unit = "chat_tts" if chat else "tts"
+    # a line that failed last time is a line to try again now
+    for s in job.scenes:
+        if s.voice_failed:
+            s.voice_failed, s.silent, s.duration = False, False, 0.0
+    total = sum(1 for s in job.scenes if not s.unvoiced)
+    failed: list[int] = []
+    said = 0
+    ctx.progress(unit, 0, total)
     for i, scene in enumerate(job.scenes):
         # A pause has nothing to say and a length of its own already (see `Scene.hush`),
         # and so does a line nobody was cast to read (`Scene.silent`). Sent to a
@@ -1337,18 +1408,39 @@ def run(job: VideoJob, ctx: AppContext) -> None:
         if scene.unvoiced:
             if not ctx.is_beats:
                 offset += scene.duration
-            ctx.progress("tts", i + 1, total)
             continue
         path = audio_dir / f"scene_{i:02d}{speaker.suffix}"
-        raw_words = _synth_scene(scene, i, path, speaker,
-                                 rate_str(_scene_rate(scene, ctx)), table=table)
+        try:
+            raw_words = _synth_scene(scene, i, path, speaker,
+                                     rate_str(_scene_rate(scene, ctx)), table=table)
+        except RuntimeError as e:
+            if not chat:
+                raise
+            # One message the voice cannot say must not cost the whole conversation:
+            # the stage used to stop here and save NOTHING, every take before it
+            # included. It stands silent for its gap instead, marked, and is tried
+            # again on the next voicing.
+            log.warning("TTS: message line %d stays silent — %s", i, e)
+            scene.silent, scene.voice_failed = True, True
+            scene.audio, scene.words = None, []
+            scene.duration = max(float(ctx.chat.gap_s), 0.5)
+            failed.append(i)
+            if not ctx.is_beats:
+                offset += scene.duration
+            said += 1
+            ctx.progress(unit, said, total)
+            continue
         _finish_scene(scene, path, duration_of(path), raw_words, ctx, offset)
         if not ctx.is_beats:
             offset += scene.duration
-        ctx.progress("tts", i + 1, total)
+        said += 1
+        ctx.progress(unit, said, total)
     # The filters last, over the finished list. After the loop and not inside it,
     # because a background belongs to a RUN of lines and the run is not known until
     # every line's length is (see `settle_fx`). Everything already in place costs a
     # stamp comparison, so a re-entry on a video nobody re-filtered does nothing at all.
+    if failed:
+        log.warning("TTS: %d line(s) could not be voiced and stay silent: %s",
+                    len(failed), ", ".join(str(i) for i in failed))
     settle_fx(job, ctx.store)
     # the target duration is a hint for the LLM, not a hard cap — accept whatever came out

@@ -16,6 +16,7 @@ menus, so adding an engine adds it everywhere at once.
 from __future__ import annotations
 
 import hashlib
+import re
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -310,6 +311,8 @@ def trim_silence(path: Path) -> float:
 # references: takes that say the line score 0.53-0.94, takes that recite the sample
 # score 0.06-0.44, and nothing lands in between.
 MIN_SCRIPT_MATCH = 0.5
+# …and the line too short for that measure to mean anything (see `verify_take`)
+SHORT_LINE_LETTERS = 4
 
 
 def verify_take(engine, text: str, voice: Voice, seconds: float,
@@ -323,7 +326,11 @@ def verify_take(engine, text: str, voice: Voice, seconds: float,
     expected = getattr(engine, "expected_seconds", None)
     if expected is None:
         return
-    if matched < MIN_SCRIPT_MATCH:
+    # A line of a few letters — "пр", "ок", "ну?" — cannot be judged by how much of it
+    # the recognizer found: it hears "при" for "пр" and nothing at all for half the
+    # rest, so a perfectly good take scored 0% and the line failed every attempt. For
+    # those only the length guards against a recited reference, below.
+    if matched < MIN_SCRIPT_MATCH and len(re.findall(r"\w", text)) > SHORT_LINE_LETTERS:
         raise TTSError(
             f"the take does not say this line: only {matched:.0%} of it is in there. "
             "The model recited the reference instead of the text it was given. The "
