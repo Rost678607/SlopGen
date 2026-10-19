@@ -922,6 +922,47 @@ def audio_path(job: VideoJob, index: int, suffix: str = ".mp3") -> Path:
 _TAKE_SUFFIXES = (".wav", ".mp3", ".m4a", ".ogg", ".flac")
 
 
+class TakeFinder:
+    """Find the take a line already has on disk, by the stage's own cache test.
+
+    One instance per question asked of a whole job: resolving a voice is cheap, but
+    not free, and every line of a conversation tends to be one of two people."""
+
+    def __init__(self, job: VideoJob, ctx: AppContext):
+        self.ctx = ctx
+        self.dir = Path(job.workdir) / "tts"
+        self.table = _pronounce(ctx)
+        self.engine = resolve_engine(ctx)
+        self._keys: dict[str, str | None] = {}
+
+    def __call__(self, index: int, scene) -> tuple[Path, list[dict]] | None:
+        """(the take, its raw word timings) for this line laid at `index`, or None."""
+        if scene.unvoiced or not scene.voice or not self.dir.is_dir():
+            return None
+        if scene.voice not in self._keys:
+            try:
+                self._keys[scene.voice] = _resolve_voice(self.ctx, self.engine,
+                                                         scene.voice).cache_key
+            except Exception:  # noqa: BLE001 — a voice that will not resolve has no take
+                self._keys[scene.voice] = None
+        key = self._keys[scene.voice]
+        stem = f"scene_{index:02d}"
+        audio = next((self.dir / f"{stem}{x}" for x in _TAKE_SUFFIXES
+                      if (self.dir / f"{stem}{x}").is_file()), None)
+        if not key or audio is None:
+            return None
+        words = _cached_words(audio, _spoken(scene.text, self.table), key,
+                              rate_str(_scene_rate(scene, self.ctx)), self.engine)
+        return (audio, words) if words else None
+
+
+def finish_from_disk(scene, take: tuple[Path, list[dict]], ctx: AppContext,
+                     offset: float) -> None:
+    """Lay a take found by `TakeFinder` into its scene, as the stage itself would."""
+    path, raw = take
+    _finish_scene(scene, path, duration_of(path), raw, ctx, offset)
+
+
 def chat_take_states(job: VideoJob, ctx: AppContext) -> list[str]:
     """What each message of a chat has on disk, in the video's order: `voiced` (a take
     of what it says now, by the voice it is cast with, sits where the stage will look
@@ -938,10 +979,7 @@ def chat_take_states(job: VideoJob, ctx: AppContext) -> list[str]:
 
     copy = job.model_copy(deep=True)
     chat_script.lay(copy, ctx)
-    table = _pronounce(ctx)
-    engine = resolve_engine(ctx)
-    tts_dir = Path(job.workdir) / "tts"
-    keys: dict[str, str | None] = {}
+    find = TakeFinder(job, ctx)
     out: list[str] = []
     # the lines the last voicing gave up on, off the job's own timeline while it is
     # still the timeline of these messages
@@ -961,18 +999,7 @@ def chat_take_states(job: VideoJob, ctx: AppContext) -> list[str]:
         if sc.unvoiced or not sc.voice:
             out.append("mute")
             continue
-        if sc.voice not in keys:
-            try:
-                keys[sc.voice] = _resolve_voice(ctx, engine, sc.voice).cache_key
-            except Exception:  # noqa: BLE001 — a voice that will not resolve has no take
-                keys[sc.voice] = None
-        key = keys[sc.voice]
-        stem = f"scene_{m.scene:02d}"
-        audio = next((tts_dir / f"{stem}{x}" for x in _TAKE_SUFFIXES
-                      if (tts_dir / f"{stem}{x}").is_file()), None)
-        ok = bool(key and audio is not None and _cached_words(
-            audio, _spoken(sc.text, table), key, rate_str(_scene_rate(sc, ctx)), engine))
-        out.append("voiced" if ok else "todo")
+        out.append("voiced" if find(m.scene, sc) is not None else "todo")
     return out
 
 

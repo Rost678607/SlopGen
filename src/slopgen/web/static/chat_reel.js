@@ -68,6 +68,26 @@ async function reelLoad() {
   reelDraw(chatT);
 }
 
+// The reel again, for the same conversation with more of it voiced: the takes a
+// running voicing has made so far (`chat_reel.timeline` reads them off disk). Not a
+// stale reel — the old one plays on until the new one is drawn, then gives way at
+// the same moment of the video — and not more often than every few seconds, since
+// each one is a drawing on a machine the voice model is already busy on.
+let reelRefreshAt = 0;
+let reelRefreshTimer = 0;
+
+function reelRefresh() {
+  if (!REEL) return;   // nothing on screen yet: the ordinary load is already coming
+  const wait = 8000 - (performance.now() - reelRefreshAt);
+  clearTimeout(reelRefreshTimer);
+  if (wait > 0 || reelBusy) {
+    reelRefreshTimer = setTimeout(reelRefresh, Math.max(wait, 1000));
+    return;
+  }
+  reelRefreshAt = performance.now();
+  reelLoad();
+}
+
 // What the reel is doing, beside the clock: the one wait in this room that is long
 // enough to wonder about.
 function reelSay() {

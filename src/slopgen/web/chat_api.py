@@ -1368,8 +1368,14 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
 
         guard(slopgen)
         run = run_or_404(run_id)
-        cp, i, job = open_job(run, video)
-        if not job.messages:
+        # Read straight off the checkpoint, not through `open_job`: a reel only reads,
+        # and the moment it is wanted most is while the voicing runs, when `open_job`
+        # refuses the run as moving.
+        if run.run_dir is None:
+            raise HTTPException(status_code=409, detail="this run has no folder yet")
+        cp = Checkpoint.load(run.run_dir)
+        job = cp.load_job(video)
+        if job is None or not job.messages:
             raise HTTPException(status_code=404, detail="there is no conversation yet")
         ctx = context(cp)
         lock = reel_locks.setdefault(f"{run_id}:{video}", asyncio.Lock())

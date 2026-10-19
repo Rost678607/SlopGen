@@ -126,6 +126,7 @@ let chatVoicing = false;   // the voicing stage is running on this video now
 let chatTakesTimer = 0;
 
 let chatTakesBusy = false;   // a look is already on its way: never two at once
+let chatVoicedSeen = 0;      // how many were voiced at the last look
 let chatTakesAt = 0;         // when the last look went out
 
 // `often` is the voicing's own pace: a look every few seconds, not every tick. Each
@@ -140,7 +141,14 @@ async function chatTakesLoad(often = false) {
   const id = CHAT.id;
   try {
     const d = await api(`/api/runs/${id}/chat/takes?video=${CHAT.video}`);
-    if (CHAT && CHAT.id === id) chatTakes = d.takes;
+    if (CHAT && CHAT.id === id) {
+      chatTakes = d.takes;
+      // a new take is a new voice in the preview: while the voicing runs, the reel
+      // is drawn again with every take made so far (see `reelRefresh`)
+      const voiced = chatTakes.filter((s) => s === "voiced").length;
+      if (chatVoicing && voiced > chatVoicedSeen) reelRefresh();
+      chatVoicedSeen = voiced;
+    }
   } catch (e) { /* the marks are a courtesy; the room works without them */ }
   finally { chatTakesBusy = false; }
   chatTakesPaint();

@@ -87,24 +87,31 @@ def timeline(job: VideoJob, ctx: AppContext) -> tuple[VideoJob, bool]:
     by_text = {s.text: s for s in voiced}
     lang = ctx.params.lang
     rate = int(getattr(ctx.params, "tts_rate", 0) or 0)
-    taken = {}
-    for s in copy.scenes:
+    # The takes on DISK first: while the voicing runs, every take it has made is there
+    # and none is on the job yet — the job reaches the checkpoint when the stage ends —
+    # so a preview that only asked the job played a conversation half voiced as if
+    # nobody had been. The stage's own cache test decides, so what is heard here is
+    # what the stage would keep.
+    from .stages.tts import TakeFinder, finish_from_disk
+
+    find = TakeFinder(job, ctx)
+    t = 0.0
+    for i, s in enumerate(copy.scenes):
         if s.duration > 0 or s.hush:
+            t += s.duration
             continue
+        take = find(i, s)
         old = by_voice.get((s.text, s.voice)) or by_text.get(s.text)
-        if old is not None and Path(old.audio).is_file():
+        if take is not None:
+            finish_from_disk(s, take, ctx, t)
+        elif old is not None and Path(old.audio).is_file():
             s.audio, s.duration = old.audio, old.duration
             s.audio_tempo = old.audio_tempo
-            taken[id(s)] = old
-        else:
-            s.duration = max(speech_seconds(s.text, lang, rate), 0.3)
-    t = 0.0
-    for s in copy.scenes:
-        old = taken.get(id(s))
-        if old is not None:
             shift = t - was_at[id(old)]
             s.words = [w.model_copy(update={"start": w.start + shift, "end": w.end + shift})
                        for w in old.words]
+        else:
+            s.duration = max(speech_seconds(s.text, lang, rate), 0.3)
         t += s.duration
     return copy, False
 
@@ -124,6 +131,11 @@ def key(job: VideoJob, ctx: AppContext) -> str:
     for name in sorted({m.persona for m in job.messages}):
         card = ctx.persona(name)
         h.update(card.model_dump_json().encode() if card is not None else name.encode())
+    # …and the takes on disk, which change under an unchanged job while it is voiced
+    tts_dir = Path(job.workdir) / "tts"
+    if tts_dir.is_dir():
+        for f in sorted(tts_dir.glob("scene_*.json")):
+            h.update(f"{f.name}|{f.stat().st_mtime_ns}".encode())
     return h.hexdigest()
 
 
