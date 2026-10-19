@@ -140,6 +140,8 @@ def run_voice_spec(store, params, engine: str = "") -> str:
     one (see `web/montage_api.context`)."""
     if params.voice_override:
         return params.voice_override
+    if getattr(params, "chat_voice", "") and getattr(params, "chat_voice", "") != "none":
+        return params.chat_voice
     engine = engine or params.tts_engine or store.global_cfg.tts.engine or "edge"
     ct = store.content_types.get(params.content_type) if params.content_type else None
     if ct is not None:
@@ -708,7 +710,6 @@ class _Speaker:
         self.ctx = ctx
         self.id = resolve_engine(ctx)
         self.engine = build_engine(self.id, ctx.g.tts, ctx.params.lang, ctx.g.paths.models)
-        self.voice = _resolve_voice(ctx, self.id)
         self.suffix = self.engine.suffix
         # A network line is worth retrying five times. The local model is different on
         # both counts: its failures are not transient, they are DICE — generation is
@@ -725,9 +726,19 @@ class _Speaker:
         # is keyed by the SAMPLE rather than by the spec, so the same recording reached
         # two ways — as the run's voice and as `марта` spelled out on a line — is
         # listened to once.
-        self._voices: dict[str, Voice] = {"": self.voice}
+        self._voices: dict[str, Voice] = {}
         self._checked: set[str] = set()
-        self._listen(self.voice)
+        self.voice: Voice | None = None
+        try:
+            self.voice = _resolve_voice(ctx, self.id)
+            self._voices[""] = self.voice
+            self._listen(self.voice)
+        except RuntimeError:
+            # An engine with no catalogue (e.g. qwen-local) cannot resolve a default
+            # voice when neither --voice nor content_type voice is provided.
+            # In multi-voice modes (like chat), every line specifies its own persona voice,
+            # so a run-level default is not required unless an unvoiced line asks for one.
+            self.voice = None
 
     def voice_for(self, spec: str) -> Voice:
         """Who says THIS line: the run's voice, or the one the line names.
@@ -741,6 +752,7 @@ class _Speaker:
         resolution is cheap but what follows it is not: a cloning sample is listened to
         before it is trusted, and doing that per line would be a recognizer pass per
         line."""
+        spec = spec or ""
         if spec not in self._voices:
             self._voices[spec] = _resolve_voice(self.ctx, self.id, spec)
             self._listen(self._voices[spec])
@@ -772,6 +784,8 @@ class _Speaker:
         held.
         """
         voice = voice or self.voice
+        if voice is None:
+            voice = self.voice_for("")
         stretch = not self.engine.native_rate
         factor = rate_factor(rate) if stretch else 1.0
         # the model writes where it speaks: into the take itself when the rate was its
@@ -1287,12 +1301,22 @@ def run(job: VideoJob, ctx: AppContext) -> None:
     # refuses outright when no card was named. That is the right answer for a video
     # whose lines are meant to be spoken and the wrong one for a chat nobody reads
     # aloud, where every line is silent ON PURPOSE (see `Scene.silent`).
+    # A chat's lines are laid from its messages, and voicing a timeline that no
+    # longer matches them voices what the messages USED to say and skips whatever was
+    # added since. So it is laid again here when it is missing or stale — carrying
+    # every take that still fits, which the cache then finds — and «озвучка» pressed
+    # on its own after an edit does what it says.
+    if getattr(job, "conversations", None) and job.messages:
+        from . import chat_script
+
+        if not chat_script.current(job):
+            chat_script.lay(job, ctx, carry=True)
     if job.scenes and all(s.unvoiced for s in job.scenes):
         log.info("TTS: nothing to say — every line is silent")
         ctx.progress("tts", len(job.scenes), len(job.scenes))
         return
     speaker = _speaker_for(ctx)
-    log.info("TTS: %s · %s", speaker.id, speaker.voice)
+    log.info("TTS: %s · %s", speaker.id, speaker.voice or "per-scene")
     # before the first line is spoken, because the answer decides what is spoken with:
     # a line the writer recasts is voiced with that recording on the first attempt and
     # not re-voiced afterwards

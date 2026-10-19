@@ -429,6 +429,14 @@ def compile_assets(job: VideoJob, states: list[ChatState], roll_s: float,
 def run(job: VideoJob, ctx: AppContext) -> None:
     if not job.messages:
         raise ValueError("there is no conversation to draw")
+    from . import chat_script
+
+    if not chat_script.current(job):
+        # drawn against a stale timeline, an added message would be left out of the
+        # video without a word and a retyped one shown at its old length
+        raise ValueError(
+            "the conversation changed since its lines were laid and voiced — run "
+            "«озвучка» (it lays them again and voices only what changed), then draw")
     cfg = ctx.chat
     skin = ctx.chat_skin
     came_from = cfg.source if cfg.source in skins.SKINS else skin.key

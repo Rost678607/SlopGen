@@ -162,6 +162,24 @@ def lay(job: VideoJob, ctx: AppContext, carry: bool = False) -> None:
     job.scenes = scenes
 
 
+def current(job: VideoJob) -> bool:
+    """Whether the scenes are still a timeline of THESE messages: every message on a
+    scene of its own, in order, saying what the message says.
+
+    The room edits conversations without re-laying them (see `chatroom`), and before
+    this was asked anywhere, a timeline laid once counted as laid for good: a message
+    added afterwards had no scene and the drawing quietly left it out, a message
+    retyped was voiced as it used to read, and «сценарий» stayed ticked through all of
+    it. A heard voice message and a bare picture lay with no words of their own, so
+    an empty scene text is a match for them."""
+    msgs, scenes = job.messages, job.scenes
+    if not msgs or not scenes:
+        return False
+    return all(0 <= m.scene < len(scenes) and not scenes[m.scene].hush
+               and scenes[m.scene].text in (m.text, "") for m in msgs) and all(
+        a.scene < b.scene for a, b in zip(msgs, msgs[1:]))
+
+
 def _ad_after(job: VideoJob, ctx: AppContext, scenes: list, ci: int, end: bool,
               last: int) -> None:
     """Close conversation `ci` with the native ad, when it asked for one and is not

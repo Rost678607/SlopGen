@@ -43,11 +43,10 @@ def laid(job: VideoJob, ctx: AppContext | None = None) -> bool:
     something else, and a line laid but not yet voiced is a scene 0s long. With `ctx`,
     the native ads are asked about too: an ad switched on between two chats since, or
     off, is a clock with a stretch missing or one too many."""
+    from .stages.chat_script import current
+
     msgs, scenes = job.messages, job.scenes
-    ok = bool(msgs) and all(
-        0 <= m.scene < len(scenes) and scenes[m.scene].duration > 0
-        and scenes[m.scene].text in (m.text, "") for m in msgs) and all(
-        a.scene < b.scene for a, b in zip(msgs, msgs[1:]))
+    ok = current(job) and all(scenes[m.scene].duration > 0 for m in msgs)
     if not ok or ctx is None:
         return ok
     from .stages.chat_script import ad_clip
