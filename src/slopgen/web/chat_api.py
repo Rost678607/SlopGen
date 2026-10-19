@@ -147,6 +147,11 @@ SHEET: list[dict] = [
 #   post  — what happens after the video exists: nothing in it
 RUN_FIELDS = {row["f"]: row["run"] for row in SHEET if row.get("run")}
 
+# The chat preset's settings that `chat_script.lay` writes into the scenes — how long a
+# message holds, a picture lingers, the reactions take, and the skin, which decides
+# whether there are reactions to wait for at all. Changing one lays the lines again.
+LAY_FIELDS = ("gap_s", "media_s", "react_s", "reactions", "skin")
+
 
 def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
     """Hang the chat-room routes on the app, using its session guard and run lookup."""
@@ -1079,7 +1084,7 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
         conv = guarded(chatroom.conv_at)(job, int(b.get("c", 0)))
         conv.ad_after = bool(b.get("on", not conv.ad_after))
         if job.scenes:
-            chat_script.lay(job, context(cp), carry=True)
+            chat_script.relay(job, context(cp))
             job.chat_states = []
             for part in job.parts:
                 part.ass = None
@@ -1228,7 +1233,7 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
             if stale & {"voice", "lay"} and job.scenes:
                 from ..pipeline.stages import chat_script
 
-                chat_script.lay(job, context(cp), carry=True)
+                chat_script.relay(job, context(cp))
                 job.chat_states = []
             if stale & {"voice", "lay", "subs"}:
                 for part in job.parts:
@@ -1248,8 +1253,20 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
             except ValidationError as e:
                 raise HTTPException(status_code=422,
                                     detail=f"chat settings: {e.errors()[0]['msg']}")
+            was = context(cp).chat
             run.params.manual_chat = fresh
             cp.data["params"]["manual_chat"] = fresh.model_dump(mode="json")
+            # The settings the clock is laid with are in the scenes, not read off the
+            # preset later: a pause changed after the lines were laid changed nothing
+            # until they were laid again (`chat_script.relay`, which keeps the takes).
+            if job.scenes and any(getattr(was, k) != getattr(fresh, k) for k in LAY_FIELDS):
+                from ..pipeline.stages import chat_script
+
+                chat_script.relay(job, context(cp))
+                job.chat_states = []
+                relaid = True
+            else:
+                relaid = False
             # The drawing that exists belongs to the settings that drew it. Every one
             # of these changes the picture — the shape of the frame, the skin, the
             # header, the wallpaper, how far the view rolls — so the states on disk
@@ -1273,6 +1290,8 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404) -> None:
                 for part in job.parts:
                     part.file = None
                     part.ass = None
+                return answer(cp, i, job)
+            if relaid:
                 return answer(cp, i, job)
         return doc(cp, i, job)
 

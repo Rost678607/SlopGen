@@ -162,6 +162,31 @@ def lay(job: VideoJob, ctx: AppContext, carry: bool = False) -> None:
     job.scenes = scenes
 
 
+def relay(job: VideoJob, ctx: AppContext) -> None:
+    """Lay the lines again for settings that changed, and put back every take that
+    still fits.
+
+    The clock a timeline is laid with — the pause between messages, the hold on a
+    picture, the time for reactions — is written into its scenes, so a setting changed
+    after `script` changed nothing: the scenes kept the old lengths and the preview and
+    the cut went on with them. Laying again is what makes it count, and a plain re-lay
+    leaves every voiced line without its take, putting «озвучка» back on the table for
+    a change that has nothing to do with the voices. So the takes on disk that still
+    fit — the stage's own cache test — are laid straight back, and the voicing stays
+    done unless the change really did touch who says what."""
+    from .tts import TakeFinder, finish_from_disk
+
+    lay(job, ctx, carry=True)
+    find = TakeFinder(job, ctx)
+    t = 0.0
+    for i, s in enumerate(job.scenes):
+        if not s.unvoiced and s.voice and s.duration <= 0:
+            take = find(i, s)
+            if take is not None:
+                finish_from_disk(s, take, ctx, t)
+        t += s.duration
+
+
 def current(job: VideoJob) -> bool:
     """Whether the scenes are still a timeline of THESE messages: every message on a
     scene of its own, in order, saying what the message says.
