@@ -134,6 +134,7 @@ ALIASES = {
     "role": "viewer_role",
     "invent": "fandom_invent",
     "breaks": "breakpoints", "source": "manual_orchestration",
+    "sources": "fandom_sources", "источники": "fandom_sources",
     "type": "content_type", "swearing": "profanity",
 }
 
@@ -461,7 +462,7 @@ def parse_setting(field: str, text: str, store=None):
     if name in ("manual_visuals", "manual_ad"):
         plain = {"manual_visuals": "visuals", "manual_ad": "ad"}[name]
         raise ValueError(f"`{name}` is built by the wizard — set `{plain}` by name instead")
-    if name == "breakpoints" or ann is list[str]:
+    if name in ("breakpoints", "fandom_sources") or ann is list[str]:
         return [b.strip() for b in text.replace(",", " ").split() if b.strip()]
     if name == "subtitle_style" and text.lower() in ("", "-", "none"):
         return None

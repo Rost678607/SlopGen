@@ -118,68 +118,110 @@ const FORMS = {
       "title": "web.card.source",
       "rows": [
         {
-          "f": "medium",
-          "kind": "select",
-          "id": "f-medium",
-          "l": "web.f.medium"
+          "f": "src_frames",
+          "kind": "checkbox",
+          "inline": true,
+          "checked": true,
+          "l": "web.f.src.frames"
         },
         {
-          "f": "source",
-          "kind": "select",
-          "id": "f-source",
-          "l": "web.f.src"
+          "f": "src_ai_photo",
+          "kind": "checkbox",
+          "inline": true,
+          "l": "web.f.src.ai_photo"
         },
         {
-          "note": "",
-          "cls": "dim src-note"
+          "when": "src_ai_photo=*",
+          "rows": [
+            {
+              "f": "fandom_photo_model",
+              "kind": "select",
+              "id": "f-photo-model",
+              "l": "web.f.src.model"
+            }
+          ]
         },
         {
-          "when": "source=frames",
+          "f": "src_ai_video",
+          "kind": "checkbox",
+          "inline": true,
+          "l": "web.f.src.ai_video"
+        },
+        {
+          "when": "src_ai_video=*",
+          "rows": [
+            {
+              "f": "fandom_video_model",
+              "kind": "select",
+              "id": "f-video-model",
+              "l": "web.f.src.model"
+            }
+          ]
+        },
+        {
+          "f": "src_manual",
+          "kind": "checkbox",
+          "inline": true,
+          "checked": true,
+          "l": "web.f.src.manual"
+        },
+        {
+          "f": "src_search",
+          "kind": "checkbox",
+          "inline": true,
+          "l": "web.f.src.search"
+        },
+        {
+          "note": "web.src.note",
+          "cls": "dim"
+        },
+        {
+          "when": "src_frames=*",
           "rows": [
             {
               "f": "frame_fit",
               "kind": "select",
               "id": "f-fit",
               "l": "web.f.askwhen"
-            },
-            {
-              "f": "cut_sensitivity",
-              "kind": "range",
-              "min": "0",
-              "max": "1",
-              "step": "0.05",
-              "value": "0.35",
-              "id": "f-sens",
-              "l": "web.f.cutrate",
-              "dose": {
-                "v": "0.35",
-                "id": "sens-val"
-              }
-            },
-            {
-              "f": "frame_by_hand",
-              "kind": "checkbox",
-              "inline": true,
-              "id": "f-byhand",
-              "l": "web.f.byhand"
-            },
-            {
-              "note": "web.byhand.note",
-              "cls": "dim"
-            },
-            {
-              "f": "frame_effects",
-              "kind": "checkbox",
-              "inline": true,
-              "checked": true,
-              "id": "f-fxauto",
-              "l": "web.f.fxauto"
-            },
-            {
-              "note": "web.fxauto.note",
-              "cls": "dim"
             }
           ]
+        },
+        {
+          "f": "cut_sensitivity",
+          "kind": "range",
+          "min": "0",
+          "max": "1",
+          "step": "0.05",
+          "value": "0.35",
+          "id": "f-sens",
+          "l": "web.f.cutrate",
+          "dose": {
+            "v": "0.35",
+            "id": "sens-val"
+          }
+        },
+        {
+          "f": "frame_by_hand",
+          "kind": "checkbox",
+          "inline": true,
+          "id": "f-byhand",
+          "l": "web.f.byhand"
+        },
+        {
+          "note": "web.byhand.note",
+          "cls": "dim"
+        },
+        {
+          "f": "frame_effects",
+          "kind": "checkbox",
+          "inline": true,
+          "checked": true,
+          "id": "f-fxauto",
+          "l": "web.f.fxauto"
+        },
+        {
+          "note": "web.fxauto.note",
+          "cls": "dim"
         }
       ]
     },

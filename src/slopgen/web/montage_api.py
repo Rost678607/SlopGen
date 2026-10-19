@@ -267,10 +267,22 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404, card_json,
                 status_code=409,
                 detail="this video is not parked — there is nothing to edit here")
 
+    def run_world(run):
+        """The world as this run sees its frame base — its own private cards included
+        when it was told not to use the world's (see `framebase.run_world`)."""
+        if run.params.mode != "fandom":
+            return None
+        return framebase.run_world(store.fandoms.get(run.params.fandom), run.params,
+                                   run.run_dir)
+
+    def cjson(run, world, c):
+        """A card as the page needs it, addressed through the run when it is the run's."""
+        return card_json(run.params.fandom, c, run.id if framebase.own(world, c) else "")
+
     def world_of(run):
         """The world this run's pictures come out of. Only fandom has a frame base,
         and a montage without one is a track nothing can be cast from."""
-        world = store.fandoms.get(run.params.fandom) if run.params.mode == "fandom" else None
+        world = run_world(run)
         if world is None:
             raise HTTPException(status_code=409, detail="this run has no frame base")
         return world
@@ -300,7 +312,7 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404, card_json,
         holding numbers that are no longer true. The document is small (a minute of
         video is forty lines and a dozen shots) and being right is worth more than
         being short."""
-        world = store.fandoms.get(run.params.fandom) if run.params.mode == "fandom" else None
+        world = run_world(run)
         out = montage.read(job, cp.params)
         out["video"] = i
         out["stage"] = cp.review_stage(i)
@@ -349,7 +361,7 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404, card_json,
         # reply because saving a card is one of the things that happens in here.
         out["voicefx"] = [_voicefx_json(c) for c in store.voicefx.values()]
         out["world"] = run.params.fandom if world is not None else ""
-        out["cards"] = [card_json(run.params.fandom, c)
+        out["cards"] = [cjson(run, world, c)
                         for c in (world.frames if world else []) if c.usable]
         # Whether a shot's picture is too small to crop without softening it — asked
         # of the SHOT and not of every card in the world, which is both where it is
@@ -794,7 +806,7 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404, card_json,
         montage.recut(job, sens)
         # the cuts are new, so an effect aimed at a region of a card that is no longer
         # up at that moment has nothing left to point at (see `effects.settle`)
-        world = store.fandoms.get(run.params.fandom) if run.params.mode == "fandom" else None
+        world = run_world(run)
         fxeff.settle(job, list(world.frames) if world else [])
         cp.data["params"]["cut_sensitivity"] = min(max(sens, 0.0), 1.0)
         run.params.cut_sensitivity = min(max(sens, 0.0), 1.0)
@@ -874,7 +886,7 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404, card_json,
         run = run_or_404(run_id)
         b = await body_of(request)
         cp, i, job = open_job(run, int(b.get("video", 0)))
-        world = store.fandoms.get(run.params.fandom) if run.params.mode == "fandom" else None
+        world = run_world(run)
         cards = list(world.frames) if world else []
         try:
             if b.get("at") is not None:
@@ -901,7 +913,7 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404, card_json,
         guard(slopgen)
         run = run_or_404(run_id)
         _cp, _i, job = open_job(run, video)
-        world = store.fandoms.get(run.params.fandom) if run.params.mode == "fandom" else None
+        world = run_world(run)
         cards = [c for c in (world.frames if world else []) if c.usable]
         return [{"key": o.key, "effect": o.spec.name, "placed": o.placed,
                  "anchor": o.spec.anchor, "what": o.spec.description,

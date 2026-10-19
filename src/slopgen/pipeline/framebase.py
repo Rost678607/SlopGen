@@ -126,6 +126,83 @@ def planned(ctx) -> bool:
     return bool(stages) and all(is_frame_model(st.model or "") for st in stages)
 
 
+# The sources that fill a MISSING picture, as opposed to `frames`, which spends one the
+# base already has. The order is the order they are offered to the matcher in.
+ASK_SOURCES = ("ai_photo", "ai_video", "manual", "search")
+# The private base of a run told not to use the world's: beside its videos, shared by
+# all of them, so a picture made for the first video can be spent again in the third.
+RUN_FRAMES_DIR = "frames"
+
+
+def sources(params) -> list[str]:
+    """Where this fandom video's pictures may come from (see `config.FandomSource`).
+
+    A run from before the choice existed carries none, and says what it meant through
+    its chain: a frame-base run spent the base and asked the operator for the rest,
+    which is `frames` + `manual` exactly. Anything else is the old one-generator road,
+    which never reaches here — this returns nothing for it."""
+    picked = [s for s in getattr(params, "fandom_sources", None) or []]
+    if picked:
+        return picked
+    orch = getattr(params, "manual_orchestration", None)
+    from ..media.generate import is_frame_model
+
+    if orch and orch.stages and all(is_frame_model(st.model or "") for st in orch.stages):
+        return ["frames", "manual"]
+    return []
+
+
+def uses_base(params) -> bool:
+    """Whether the run spends the world's base — and keeps what it makes in it."""
+    return "frames" in sources(params)
+
+
+def ask_sources(params) -> list[str]:
+    """What may fill a missing picture. Never empty: a run that ticked only the base
+    still has to show something where the base has nothing, and asking the operator is
+    what the frame base always did there."""
+    return [s for s in ASK_SOURCES if s in sources(params)] or ["manual"]
+
+
+def run_world(world, params, run_dir):
+    """The world as THIS run sees its frame base.
+
+    A run that uses the base sees the world as it is. One that does not still sees
+    every card — the montage room is not bound by the boxes ticked on the form, and a
+    picture the world already has is the operator's to cast — but files whatever it
+    makes under the run's own folder (`FandomConfig.frames_root`), and those private
+    cards are loaded alongside. Which of them the MATCHER may spend is `matchable`'s
+    question, not this one's.
+
+    A copy, never the store's own object: a card filed here is appended to this list,
+    and the store is shared by every run the server has open."""
+    from pathlib import Path
+
+    from ..config.loader import load_frame_cards
+
+    if world is None or run_dir is None or uses_base(params):
+        return world
+    root = Path(run_dir) / RUN_FRAMES_DIR
+    own = load_frame_cards(root) if root.is_dir() else []
+    return world.model_copy(update={"frames": list(world.frames) + own, "frames_root": root})
+
+
+def own(world, card) -> bool:
+    """Whether `card` is one of the run's private cards rather than the world's."""
+    return bool(world is not None and world.frames_root and card.root == world.frames_root)
+
+
+def matchable(world, params) -> list:
+    """The cards the matcher may spend on this run: the whole base when it is ticked,
+    and otherwise only what this run has made for itself."""
+    if world is None:
+        return []
+    cards = [c for c in world.frames if c.usable]
+    if uses_base(params):
+        return cards
+    return [c for c in cards if own(world, c)]
+
+
 def pause_threshold(sensitivity: float) -> float:
     """How long a silence has to be, at this sensitivity, to be worth cutting on."""
     s = min(max(sensitivity, 0.0), 1.0)

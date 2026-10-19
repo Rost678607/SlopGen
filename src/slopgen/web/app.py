@@ -67,7 +67,7 @@ from ..config.models import (DEFAULT_DELIVERY,
 from ..config.models import BgSource, FgSource, Motion
 from ..media.stock import IMAGE_EXTS, VIDEO_EXTS
 from ..chat.skins import SKINS as CHAT_SKINS
-from ..pipeline import manual, review
+from ..pipeline import framebase, manual, review
 from ..pipeline.stages.chat_render import (AVATARS_DIR as CHAT_AVATARS,
                                            BACKGROUNDS_DIR as CHAT_BACKGROUNDS,
                                            IMAGE_EXTS as CHAT_IMAGE_EXTS)
@@ -383,10 +383,6 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
             # show which of two names is one person read two ways (see
             # `ConfigStore.voice_catalogue`).
             "voice_cards": store.voice_catalogue(),
-            # what a fandom run's picture can be made of. `frames` is the world's own
-            # base (see pipeline/framebase); the rest generate or are supplied per shot
-            "photo_sources": list(PHOTO_MODELS) + ["manual", "search"],
-            "video_sources": list(VIDEO_MODELS),
             # …and what an INFO run's picture can be made of, which is a different
             # question with a different shape: not one source for the whole video but
             # a background and an optional foreground, each with its own source, and
@@ -490,10 +486,17 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
 
     # -- the frame base ----------------------------------------------------
 
-    def world_or_404(name: str):
+    def world_or_404(name: str, run: str | None = None):
+        """A world by name — or, given a run of it, the world as that run sees its frame
+        base, which is how a run's own cards are reached (see `_card_json`)."""
         w = store.fandoms.get(name)
         if w is None:
             raise HTTPException(status_code=404, detail=f"no world named {name!r}")
+        if run:
+            r = sup.runs.get(run)
+            if r is None or r.params.mode != "fandom" or r.params.fandom != name:
+                raise HTTPException(status_code=404, detail=f"no run {run!r} of this world")
+            w = framebase.run_world(w, r.params, r.run_dir)
         return w
 
     def card_or_404(world, card_name: str) -> FrameCard:
@@ -512,22 +515,25 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
         ]
 
     @app.get("/api/worlds/{name}/cards")
-    async def cards(name: str, slopgen: str | None = Cookie(default=None)) -> list[dict]:
+    async def cards(name: str, run: str | None = None,
+                    slopgen: str | None = Cookie(default=None)) -> list[dict]:
         guard(slopgen)
-        w = world_or_404(name)
-        return [_card_json(name, c) for c in w.frames]
+        w = world_or_404(name, run)
+        return [_card_json(name, c, run if run and framebase.own(w, c) else "")
+                for c in w.frames]
 
     @app.get("/api/worlds/{name}/cards/{card}/file")
-    async def card_file(name: str, card: str, slopgen: str | None = Cookie(default=None)):
+    async def card_file(name: str, card: str, run: str | None = None,
+                        slopgen: str | None = Cookie(default=None)):
         guard(slopgen)
-        c = card_or_404(world_or_404(name), card)
+        c = card_or_404(world_or_404(name, run), card)
         p = c.path
         if p is None or not p.is_file():
             raise HTTPException(status_code=404, detail="this card has no picture yet")
         return FileResponse(p)
 
     @app.get("/api/worlds/{name}/cards/{card}/poster")
-    async def card_poster(name: str, card: str,
+    async def card_poster(name: str, card: str, run: str | None = None,
                           slopgen: str | None = Cookie(default=None)):
         """A still standing in for a card that is a CLIP.
 
@@ -539,8 +545,8 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
         Cached against the file it came from (path, size, mtime), so a clip is
         decoded once ever and a clip replaced under the same name gets a new face."""
         guard(slopgen)
-        world = store.fandoms.get(name)
-        c = next((x for x in (world.frames if world else []) if x.name == card), None)
+        world = world_or_404(name, run)
+        c = next((x for x in world.frames if x.name == card), None)
         if c is None or c.path is None or not c.path.is_file():
             raise HTTPException(status_code=404, detail="no such card")
         if c.path.suffix.lower() in IMAGE_EXTS:
@@ -558,10 +564,10 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
         return FileResponse(out, media_type="image/jpeg")
 
     @app.put("/api/worlds/{name}/cards/{card}")
-    async def save_card(name: str, card: str, request: Request,
+    async def save_card(name: str, card: str, request: Request, run: str | None = None,
                         slopgen: str | None = Cookie(default=None)) -> dict:
         guard(slopgen)
-        w = world_or_404(name)
+        w = world_or_404(name, run)
         c = card_or_404(w, card)
         body = await request.json()
         for field in ("description", "note", "prompt"):
@@ -593,7 +599,7 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
             if c.path and c.path.is_file():
                 c.file_sha = file_sha(c.path)
         write_frame_card(c)
-        return _card_json(name, c)
+        return _card_json(name, c, run or "")
 
     @app.post("/api/worlds/{name}/cards")
     async def new_card(name: str, file: UploadFile, description: str = Form(""),
@@ -621,7 +627,7 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
         return _card_json(name, c)
 
     @app.delete("/api/worlds/{name}/cards/{card}")
-    async def retire_card(name: str, card: str, purge: bool = False,
+    async def retire_card(name: str, card: str, purge: bool = False, run: str | None = None,
                           slopgen: str | None = Cookie(default=None)) -> dict:
         """Take a card out of the world — softly by default, for good on `purge`.
 
@@ -643,12 +649,12 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
         place here that removes a file the operator did not name, so it checks rather
         than trusts: `file` is a line in a TOML somebody may have edited."""
         guard(slopgen)
-        w = world_or_404(name)
+        w = world_or_404(name, run)
         c = card_or_404(w, card)
         if not purge:
             c.retired = True
             write_frame_card(c)
-            return _card_json(name, c)
+            return _card_json(name, c, run or "")
         root = frames_dir(w).resolve()
         for path in (c.path, root / f"{c.name}.toml"):
             if path is None:
@@ -1875,7 +1881,8 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
             # not a setting), but WHICH generator a run is using is the one thing about
             # it worth seeing in a list
             chain = r.params.manual_orchestration
-            d["source"] = chain.stages[0].model if chain and chain.stages else ""
+            d["source"] = (", ".join(r.params.fandom_sources) if r.params.fandom_sources
+                           else chain.stages[0].model if chain and chain.stages else "")
             d["parked"] = parked(r) if r.status not in ("running", "queued") else {
                 "review_stage": "", "asks": 0, "video": False}
             out.append(d)
@@ -2300,8 +2307,9 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
                 # and everything already IN it, so an ask can be answered without making
                 # anything: the matcher declined these, and it is wrong often enough that
                 # the operator gets to look for themselves (see `pin_ask`)
-                "base": [_card_json(run.params.fandom, c) for c in world.frames
-                         if c.usable] if world is not None else [],
+                "base": [_card_json(run.params.fandom, c,
+                                    run.id if framebase.own(world, c) else "")
+                         for c in world.frames if c.usable] if world is not None else [],
                 "pending": sum(1 for sh in out if sh["status"] != "delivered")}
 
     def shot_or_404(run, video: str, shot_id: str):
@@ -2329,7 +2337,8 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
         shots are clips for one video and belong to no world."""
         if run.params.mode != "fandom":
             return None
-        return store.fandoms.get(run.params.fandom)
+        return framebase.run_world(store.fandoms.get(run.params.fandom), run.params,
+                                   run.run_dir)
 
     def ask_job(run, video: str, shot_id: str):
         """The job one frame ask lives on, as `(checkpoint, index, job, ask)`.
@@ -2558,7 +2567,7 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
             # where the base covered nothing, so the list is empty and there is nothing
             # to pin. Here the world IS known, so the choice becomes the whole base.
             if stage == "picture":
-                world = store.fandoms.get(run.params.fandom)
+                world = frame_world(run)
                 names = sorted(c.name for c in (world.frames if world else []) if c.usable)
                 for r in doc.rows:
                     if r.kind == "choice":
@@ -3089,17 +3098,21 @@ def _ad_assets(ad: AdConfig) -> dict:
     return out
 
 
-def _card_json(world: str, c: FrameCard) -> dict:
+def _card_json(world: str, c: FrameCard, run: str = "") -> dict:
+    """A card as the page needs it. `run` is set for a card that is a run's own rather
+    than the world's (see `framebase.run_world`): every address of it then goes through
+    that run, because the world's folder does not have it."""
     p = c.path
+    q = f"?run={run}" if run else ""
     return {
         "name": c.name, "file": c.file, "prompt": c.prompt,
         "description": c.description, "note": c.note, "retired": c.retired,
-        "usable": c.usable,
+        "usable": c.usable, "run": run,
         "kind": "video" if (p and p.suffix.lower() in VIDEO_EXTS) else "image",
-        "url": f"/api/worlds/{world}/cards/{c.name}/file",
+        "url": f"/api/worlds/{world}/cards/{c.name}/file{q}",
         # what to DRAW this card as, whichever it is: a picture is itself, a clip is
         # a frame out of it. Every strip uses this and stops caring which it got.
-        "poster": f"/api/worlds/{world}/cards/{c.name}/poster",
+        "poster": f"/api/worlds/{world}/cards/{c.name}/poster{q}",
         # what becomes of this picture where its shape is not the video's, and where
         # the frame sits in it when cropping (see config.models.CardFit)
         "fit": c.fit, "fit_x": c.fit_x, "fit_y": c.fit_y,

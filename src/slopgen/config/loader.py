@@ -266,9 +266,19 @@ def frames_dir(cfg: FandomConfig) -> Path:
     """Where a world keeps its frame base. Not created on load: a world with no base
     is one nobody has drawn yet, not a broken one, and an empty folder appearing in
     every fandom would only say that slopgen has been run."""
+    if cfg.frames_root:
+        # a run told not to keep its pictures in the world (see FandomConfig.frames_root)
+        return cfg.frames_root
     if not cfg.root:
         raise ConfigError(f"fandom '{cfg.name}' has no folder to write to")
     return cfg.root / FRAMES_DIR
+
+
+def load_frame_cards(root: Path) -> list[FrameCard]:
+    """Every card in one frames folder, rooted there — the world's own base is loaded
+    this way, and so is a run's private one (see `pipeline.framebase.run_world`)."""
+    cards = _load_dir(str(Path(root).resolve()), FrameCard).values()
+    return [c.model_copy(update={"root": Path(root)}) for c in cards]
 
 
 def file_sha(path: Path) -> str:

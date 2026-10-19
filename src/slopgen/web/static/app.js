@@ -59,6 +59,11 @@ const show = (which) => {
 };
 
 let world = null, cards = [], card = null, targets = [], sel = -1;
+// The run whose eyes the base is being looked through, or "" for the world's own. Set
+// only by a run opening the editor: a run that was told not to use the base keeps the
+// pictures it makes in its own folder, and those cards are reached through it.
+let cardsRun = "";
+const runQ = (c, sep = "?") => (c && c.run ? `${sep}run=${encodeURIComponent(c.run)}` : "");
 // The video's shape, which is also the shape of every crop window. Both come from the
 // same place: a picture is fitted to the video's aspect before anything is cropped out
 // of it, so a region is a scaled copy of the frame and not a free rectangle.
@@ -2289,7 +2294,7 @@ function openSub(which) {
   $("#w-lore").hidden = which !== "lore";
   $("#w-castbox").hidden = which !== "cast";
   $("#w-frames").hidden = which !== "frames";
-  if (which === "frames") loadCards();
+  if (which === "frames") { cardsRun = ""; loadCards(); }
   else loadWorld();
 }
 
@@ -2303,7 +2308,8 @@ async function loadWorlds() {
 
 // ---------------------------------------------------------------- the base
 async function loadCards() {
-  cards = await api(`/api/worlds/${encodeURIComponent(world)}/cards`);
+  cards = await api(`/api/worlds/${encodeURIComponent(world)}/cards${
+    cardsRun ? `?run=${encodeURIComponent(cardsRun)}` : ""}`);
   $("#cards").innerHTML = cards.map((c) => `
     <div class="frame-card ${c.retired ? "retired" : ""}" data-name="${esc(c.name)}">
       <div class="thumb ${c.usable ? "" : "none"} ${c.fit === "pad" ? "pad" : ""}"
@@ -2352,9 +2358,10 @@ async function upload(file) {
 // `cards`, so both are set here rather than assumed — the operator may not have opened
 // the Worlds tab at all this session, and the world that matters is the RUN's, not
 // whichever one the select is showing.
-async function openMarkup(w, name) {
+async function openMarkup(w, name, run = "") {
   if (!w || !name) return;
   world = w;
+  cardsRun = run;
   const sel = $("#world");
   if (sel && [...sel.options].some((o) => o.value === w)) sel.value = w;
   await loadCards();
@@ -3046,7 +3053,7 @@ $("#save").onclick = async () => {
     fit_x: typeof card.fit_x === "number" ? card.fit_x : 0.5,
     fit_y: typeof card.fit_y === "number" ? card.fit_y : 0.5,
   };
-  const updated = await api(`/api/worlds/${encodeURIComponent(world)}/cards/${encodeURIComponent(card.name)}`,
+  const updated = await api(`/api/worlds/${encodeURIComponent(world)}/cards/${encodeURIComponent(card.name)}${runQ(card)}`,
     { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
   Object.assign(card, updated);
   const s = $("#saved"); s.textContent = lab("js.saved2"); s.classList.add("show");
@@ -3069,7 +3076,7 @@ $("#ed-del").onclick = async (e) => {
   clearTimeout(armed.get(key));
   armed.delete(key);
   try {
-    await api(`/api/worlds/${encodeURIComponent(world)}/cards/${encodeURIComponent(card.name)}?purge=true`,
+    await api(`/api/worlds/${encodeURIComponent(world)}/cards/${encodeURIComponent(card.name)}?purge=true${runQ(card, "&")}`,
               { method: "DELETE" });
   } catch (err) { return say(err.message, true); }
   say(`${card.name} — ${lab("js.card-deleted")}`);
@@ -4141,22 +4148,13 @@ async function loadOptions() {
   document.querySelectorAll("form.cards").forEach(applyConditions);
   $("#f-sens").oninput = () => ($("#sens-val").textContent = $("#f-sens").value);
 
-  // what a fandom's picture is made of, and where it comes from — the choice that was
-  // missing entirely, so the frame base could only be reached by hardcoding it
-  const medium = $("#f-medium"), source = $("#f-source");
-  fill(medium, ["photo", "video"]);
-  medium.onchange = () => {
-    const list = medium.value === "video" ? opts.video_sources : opts.photo_sources;
-    fill(source, list);
-    source.value = medium.value === "video" ? "wan2.1" : "frames";
-    source.onchange();
-  };
-  source.onchange = () => {
-    const note = lab("src." + source.value, lab("src.auto", ""));
-    document.querySelectorAll("#startform .src-note").forEach((el) => (el.textContent = note));
-    applyConditions($("#startform"));
-  };
-  medium.onchange();
+  // Where a fandom's pictures may come from: boxes, not one choice, because a video
+  // may mix them — the matcher decides per missing picture among the ticked ones. The
+  // two automatic sources each name their generator.
+  fill($("#f-photo-model"), opts.ai_photo_models);
+  $("#f-photo-model").value = "flux";
+  fill($("#f-video-model"), opts.ai_video_models);
+  $("#f-video-model").value = "wan2.1";
 
   // Last, once every select is filled and every conditional row has been settled: the
   // compositor measures cards, and a card measured before its contents arrived is a
@@ -4164,6 +4162,11 @@ async function loadOptions() {
   compose();
   drawPresets();
 }
+
+// The fandom form's source boxes as the list the server reads, in the form's order.
+const FANDOM_SOURCES = ["frames", "ai_photo", "ai_video", "manual", "search"];
+const sourcesOf = (form) =>
+  FANDOM_SOURCES.filter((s) => form.querySelector(`[name="src_${s}"]`)?.checked);
 
 // What the fandom form MEANS, read once. Two buttons send it now — start the chain,
 // or make the run and open the montage room on it — and a second copy of thirteen
@@ -4177,7 +4180,9 @@ function fandomBody(form) {
       // ignores for anyone but the usher
       viewer_role: f.get("viewer_role") || "",
       fandom_invent: inventLevel(f.get("fandom_invent")),
-      medium: f.get("medium"), source: f.get("source"),
+      fandom_sources: sourcesOf(form),
+      fandom_photo_model: f.get("fandom_photo_model"),
+      fandom_video_model: f.get("fandom_video_model"),
       scenario: f.get("scenario"), title: f.get("title"),
       duration_s: +f.get("duration_s"), count: +f.get("count"),
       dry_run: f.get("dry_run") === "on",
@@ -4471,14 +4476,25 @@ function fillForm(l) {
   const form = document.querySelector(`form.cards[data-mode="${l.mode}"]`);
   if (!form) return;
   const p = l.params || {};
-  // first, because the source list is rebuilt from it
-  const medium = form.querySelector('[name="medium"]');
-  if (medium && p.medium) { medium.value = p.medium; if (medium.onchange) medium.onchange(); }
-  const src = form.querySelector('[name="source"]');
-  if (src && l.picture_source) { src.value = l.picture_source; if (src.onchange) src.onchange(); }
+  // The source boxes, which are one list on the wire. A loop saved before there were
+  // boxes names one source instead, and is read as the ticks it meant (the same
+  // reading `web/params.fandom_sources_of` makes of it).
+  if (form.querySelector('[name="src_frames"]')) {
+    let picked = p.fandom_sources || [];
+    if (!picked.length) {
+      const old = l.picture_source || "frames";
+      picked = old === "frames" ? ["frames", "manual"]
+        : ["manual", "search"].includes(old) ? [old]
+        : (opts.ai_photo_models || []).includes(old) ? ["ai_photo"] : ["ai_video"];
+    }
+    FANDOM_SOURCES.forEach((s) => {
+      const box = form.querySelector(`[name="src_${s}"]`);
+      if (box) box.checked = picked.includes(s);
+    });
+  }
   form.querySelectorAll("[name]").forEach((el) => {
     const n = el.name;
-    if (n.startsWith("loop_") || ["title", "medium", "source"].includes(n)) return;
+    if (n.startsWith("loop_") || n.startsWith("src_") || ["title", "medium", "source"].includes(n)) return;
     if (n === "idea" || n === "scenario") { el.value = ""; return; }  // the queue's
     const v = n === "voice" ? p.fandom_voice : p[n];
     if (v === undefined || v === null) return;
@@ -4487,6 +4503,14 @@ function fillForm(l) {
     else if (n === "fandom_invent") el.value = inventIndex(v);
     else el.value = v;
   });
+  // …and the generator of a loop from before the boxes, which named it as its source
+  if (form.querySelector('[name="src_frames"]') && !p.fandom_sources?.length) {
+    const old = l.picture_source || "";
+    const pm = form.querySelector('[name="fandom_photo_model"]');
+    const vm = form.querySelector('[name="fandom_video_model"]');
+    if (pm && (opts.ai_photo_models || []).includes(old)) pm.value = old;
+    if (vm && (opts.ai_video_models || []).includes(old)) vm.value = old;
+  }
   form.querySelectorAll("[data-fx]").forEach((r) => {
     r.value = (p.filters || {})[r.dataset.fx] || 0;
     r.dispatchEvent(new Event("input"));
@@ -5003,7 +5027,7 @@ function bindAsks(id, forWorld, base) {
     el.querySelector("[data-copy]").onclick = () =>
       navigator.clipboard.writeText(el.querySelector("pre").textContent);
     const mark = el.querySelector("[data-mark]");
-    if (mark) mark.onclick = () => openMarkup(forWorld, mark.dataset.mark);
+    if (mark) mark.onclick = () => openMarkup(forWorld, mark.dataset.mark, id);
     // The base, offered as PICTURES. The matcher declined every one of these by reading
     // its description, and picking between pictures by their names would be the same
     // mistake in the other direction — so the strip is thumbnails, and clicking one
@@ -5068,7 +5092,7 @@ function bindAsks(id, forWorld, base) {
       // it up is made now, while the operator is still looking at the picture
       if (got && got.card) {
         say(lab("js.card-added-say-what-is-in-it"));
-        openMarkup(got.world, got.card);
+        openMarkup(got.world, got.card, id);
       }
     };
     take.onclick = () => input.click();

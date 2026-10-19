@@ -681,9 +681,9 @@ def fandom(
     invent: str = typer.Option("no", "--invent", help="how far the writer may add to this world where its records stop. `no` (the default) — the records are the whole world and a gap is simply not known. `gaps` — it may invent, but only where a beat cannot be written otherwise, and only the smallest ordinary detail that unblocks it. `free` — it furnishes the world at will, in the world's own grain. Under all three it never contradicts a record, never invents the subject of the piece, never coins a name for something the records leave unnamed, and never settles what they leave open"),
     shapes: Optional[str] = typer.Option(None, "--shapes", help="which catalogue of PIECE SHAPES to plan out of, by name under configs/shapes/. Default: the world's own `shapes`, else the shipped `default`"),
     shape: Optional[str] = typer.Option(None, "--shape", help="force the shape of this piece — a name from the catalogue above (mechanism, duties, rule, vignette, choice, procedure, creature, incident in the shipped one). Omit and the plan picks one from the brief and the records; naming one is how a run of alike videos is made"),
-    medium: str = typer.Option("video", "--medium", help="what the picture is made of: video (clips) | photo (a slideshow of stills, held and slowly panned)"),
-    source: Optional[str] = typer.Option(None, "--source", help="what makes the shots: a generator (wan2.1 | ltx-video | animatediff for video, flux | turbo for photo), `manual` (you generate them) or `search` (you find them; slopgen briefs you per shot). Default: wan2.1 for video, flux for photo"),
-    orchestration: Optional[str] = typer.Option(None, "--orchestration", help="a full chain from configs/orchestration/, overriding --source when you want to mix"),
+    sources: str = typer.Option("frames,manual", "--sources", "--source", help="where the pictures may come from, comma-separated, any mix: frames (spend the world's frame base, and keep what is made in it) | ai_photo (a picture generator draws it) | ai_video (a video generator makes a clip) | manual (you make it from slopgen's prompt) | search (you find real footage; slopgen briefs you). The model picks, per missing picture, which of them it comes from. Without `frames`, new cards stay in the run's own folder"),
+    photo_model: str = typer.Option("flux", "--photo-model", help="the generator behind ai_photo: flux | turbo"),
+    video_model: str = typer.Option("wan2.1", "--video-model", help="the generator behind ai_video: auto | wan2.1 | ltx-video | animatediff"),
     duration: float = typer.Option(120.0, "--duration", help="length of the finished video, in seconds; 0 = let the model choose it from the brief"),
     voice: Optional[str] = typer.Option(None, "--voice", help="narrator voice: a catalogue id for the active engine (ru-RU-SvetlanaNeural), a configs/voices/ clone (марта), or one of its other recordings (марта:зло)"),
     tts_rate: Optional[int] = typer.Option(None, "--tts-rate", min=-50, max=50, help="speech rate offset in percent (-50 = slowest, 0 = normal, +50 = fastest); the writer sizes each beat's narration to it"),
@@ -763,48 +763,42 @@ def fandom(
             fg="red",
         )
         raise typer.Exit(1)
-    if orchestration and orchestration not in store.orchestrations:
-        typer.secho(
-            f"error: orchestration '{orchestration}' not found "
-            f"(available: {', '.join(store.orchestrations) or 'none'})",
-            fg="red",
-        )
-        raise typer.Exit(1)
     if ad and ad not in store.ads:
         typer.secho(f"error: ad contract '{ad}' not found (available: {', '.join(store.ads)})", fg="red")
         raise typer.Exit(1)
-    if medium not in ("video", "photo"):
-        typer.secho(f"error: --medium must be video or photo, not '{medium}'", fg="red")
-        raise typer.Exit(1)
-    # The chain is what the pipeline runs on; --source is the one question this mode
-    # asks instead of authoring one (see tui FandomScreen._source_stage). A named
-    # profile still wins, for the operator who does want to mix sources.
-    manual_orch = None
-    if not orchestration:
-        from ..config.models import OrchestrationConfig, OrchestrationStage
-        from ..media.generate import PHOTO_MODELS, VIDEO_MODELS
+    # The picture is always the frame track; what the operator says is where its
+    # pictures may come from (see config.FandomSource). The chain the pipeline reads is
+    # therefore the one `frames` stage, whatever is ticked.
+    from ..config.models import FANDOM_SOURCES, OrchestrationConfig, OrchestrationStage
+    from ..media.generate import PHOTO_MODELS, VIDEO_MODELS, ai_models, model_clip_seconds
 
-        allowed = (set(PHOTO_MODELS) if medium == "photo" else set(VIDEO_MODELS)) | {"manual", "search"}
-        src = source or ("flux" if medium == "photo" else "wan2.1")
-        if src not in allowed:
-            typer.secho(
-                f"error: '{src}' cannot make {medium} (available: {', '.join(sorted(allowed))})",
-                fg="red",
-            )
-            raise typer.Exit(1)
-        manual_orch = OrchestrationConfig(name="source", stages=[OrchestrationStage(
-            model=src, metric="percent", amount=100.0,
-        )])
+    picked = [x.strip() for x in sources.split(",") if x.strip()]
+    bad = [x for x in picked if x not in FANDOM_SOURCES]
+    if bad or not picked:
+        typer.secho(
+            f"error: --sources {sources!r} (pick any of: {', '.join(FANDOM_SOURCES)})", fg="red")
+        raise typer.Exit(1)
+    if photo_model not in ai_models(PHOTO_MODELS) or video_model not in ai_models(VIDEO_MODELS):
+        typer.secho(
+            f"error: --photo-model is one of {', '.join(ai_models(PHOTO_MODELS))}, "
+            f"--video-model one of {', '.join(ai_models(VIDEO_MODELS))}", fg="red")
+        raise typer.Exit(1)
+    picked = [x for x in FANDOM_SOURCES if x in picked]
+    manual_orch = OrchestrationConfig(name="frames", stages=[OrchestrationStage(
+        model="frames", metric="percent", amount=100.0,
+        clip_seconds=model_clip_seconds("frames"),
+    )])
 
     try:
         params = RunParams(
             lang=lang, content_type="", mode="fandom",
-            manual_orchestration=manual_orch, medium=medium,
+            manual_orchestration=manual_orch,
+            fandom_sources=picked, fandom_photo_model=photo_model,
+            fandom_video_model=video_model,
             fandom=world, fandom_voice=narrator, fandom_invent=invent,
             fandom_shapes=shapes or "", fandom_shape=shape or "",
             viewer_role=viewer_role,
             scenario=scenario or "",
-            orchestration=orchestration or "",
             duration_s=0.0 if duration <= 0 else max(duration, 5.0),
             duration_tol_s=0.0,   # the length is the length (once there is one)
             clip_seconds=0.0,     # the writer sizes every shot (fandom_script.SHOT_RULE)
@@ -827,11 +821,10 @@ def fandom(
     fandom_cfg = store.fandoms[world]
     rprint(
         f"[bold]slopgen[/bold] fandom '{world}': {params.count}× {params.lang}"
-        f" {_length(params)} {medium}"
+        f" {_length(params)}"
         + f" narrator={narrator}"
         f" people=[{', '.join(c.name for c in fandom_cfg.cast) or '—'}]"
-        + (f" orch={orchestration}" if orchestration
-           else f" source={manual_orch.stages[0].model}")
+        + f" sources={','.join(picked)}"
         + f" ad={params.ad or '-'}({params.ad_mode}) push={params.push or 'local'}"
         + (f" fx=\\[{describe_filters(params.filters)}]" if params.filters else "")
         + (" [yellow]\\[dry-run][/yellow]" if params.dry_run else "")

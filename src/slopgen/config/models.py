@@ -791,6 +791,19 @@ class VoiceFxConfig(BaseModel):
 #   loose — of this world and this part of the story, but not about what is said
 #   any   — spend whatever is nearest and never ask for anything
 FrameFit = Literal["exact", "close", "loose", "any"]
+# Where a fandom video's pictures may come from — ticked, not chosen: one video may
+# mix several, and the picture matcher decides per missing picture which of the
+# ticked ones fills it (see stages/picture). `frames` is different in kind from the
+# other four: it is the base being SPENT, and also the answer to whether what the
+# others make is kept in the world for the next video. The montage room is not bound
+# by any of this — there every card and every file is the operator's to use.
+#   frames   — the world's frame base: reuse what it has, keep what is made
+#   ai_photo — a picture generator draws the missing still (`fandom_photo_model`)
+#   ai_video — a video generator makes the missing clip (`fandom_video_model`)
+#   manual   — slopgen writes the prompt, the operator makes it elsewhere
+#   search   — slopgen says what to look for, the operator brings real footage
+FandomSource = Literal["frames", "ai_photo", "ai_video", "manual", "search"]
+FANDOM_SOURCES: tuple[str, ...] = ("frames", "ai_photo", "ai_video", "manual", "search")
 # What each setting will actually accept. "any" holds every grade there is, which is
 # what makes it the "stop asking me" position rather than a quality setting.
 FIT_ACCEPTS: dict[str, frozenset[str]] = {
@@ -1360,6 +1373,11 @@ class FandomConfig(BaseModel):
     # (see :class:`FrameCard`). Empty is not a broken world, it is one nobody has
     # drawn yet — the footage stage asks the operator for what it is missing.
     frames: list[FrameCard] = Field(default_factory=list, exclude=True)
+    # Where a NEW card is filed, when it is not the world's own `frames/` folder. Set
+    # only on the per-run view of a world (see `pipeline.framebase.run_world`): a run
+    # that was told not to use the base keeps what it makes in its own folder, so the
+    # world is not filled with pictures nobody chose to keep.
+    frames_root: Path | None = Field(default=None, exclude=True)
 
 
 # --- configs/orchestration/*.toml -----------------------------------------
@@ -1861,6 +1879,13 @@ class RunParams(BaseModel):
     # for — a video whose effects were decided by somebody looking at it must not have
     # a second opinion laid over them on the next pass of the picture stage.
     frame_effects: bool = True
+    # Which sources this fandom video may draw on (see `FandomSource`). Empty is a run
+    # from before there was a choice, and it is read off the orchestration instead —
+    # see `pipeline.framebase.sources`.
+    fandom_sources: list[FandomSource] = []
+    # …and which generator each of the two automatic ones calls.
+    fandom_photo_model: str = "flux"
+    fandom_video_model: str = "wan2.1"
     # -- chat mode ---------------------------------------------------------
     # The preset this run draws its thirty-odd settings from (`configs/chat/*.toml`),
     # and the ad-hoc one built in the form instead. Exactly the pair `visuals` and

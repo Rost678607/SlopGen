@@ -102,11 +102,45 @@ MATCH_SYSTEM = (
     "where. This becomes the new card's own description, so write it the way the descriptions you "
     "were given are written: names, never looks.\n"
     '  • "shots": the stretch numbers this one picture would cover.\n'
+    "{sources}"
     'Respond with JSON only: {{"shots": [{{"n": <number>, "cards": ["name", ...], '
     '"target": "...", "fit": "exact|close|loose|wrong"}}, ...], "asks": [{{"prompt": "...", '
-    '"description": "...", "shots": [<number>, ...]}}, ...]}}. Every stretch appears once in '
-    '"shots". "asks" may be empty.'
+    '"description": "...", {ask_fields}"shots": [<number>, ...]}}, ...]}}. Every stretch '
+    'appears once in "shots". "asks" may be empty.'
 )
+
+# What each source that can fill an ask IS, said to the matcher in the terms that
+# decide between them: what it is good at and what it costs. Only the ticked ones are
+# offered, and with one ticked there is nothing to decide and the section is left out
+# altogether — a choice of one is a field the model can only get wrong.
+SOURCE_NOTES = {
+    "ai_photo": "an automatic picture generator draws the still. Immediate and free. Good "
+                "at places, light, crowds, objects and weather; weak at a precise action, "
+                "at hands, and at anything that has to be one particular face.",
+    "ai_video": "an automatic video generator makes a clip of about five seconds, looped "
+                "to fill its stretches. Only worth it where something MOVES and the "
+                "movement is the point — smoke, water, a crowd going past, a machine "
+                "running. Slow, and poor at faces and at anything precise.",
+    "manual": "the operator makes it by hand in a stronger outside generator from your "
+              "prompt. It costs a person's time, so spend it where the automatic ones would "
+              "get it wrong: a named person doing a particular thing, a composition that "
+              "has to be exact. Also say \"want\": \"photo\" or \"video\".",
+    "search": "the operator FINDS a real photograph or clip on a stock site. Only for what "
+              "a camera in our own world could have filmed — weather, a street, hands at "
+              "work, an ordinary object, a texture. Never for anything only this world "
+              "has: it does not exist to be found.",
+}
+
+
+def _sources_block(allowed: list[str]) -> str:
+    if len(allowed) < 2:
+        return ""
+    lines = "\n".join(f'  • "{s}" — {SOURCE_NOTES[s]}' for s in allowed)
+    return (
+        "WHO MAKES EACH ASK. Every ask names, in \"source\", which of these fills it:\n"
+        f"{lines}\n"
+        "Choose per ask, by what the picture needs; one video may use all of them.\n"
+    )
 
 
 def _cards_block(cards: list[FrameCard]) -> str:
@@ -136,14 +170,21 @@ def _shots_block(job: VideoJob) -> str:
 
 def _match(ctx: AppContext, job: VideoJob, cards: list[FrameCard]) -> tuple[
         dict[int, list[str]], dict[int, str], dict[int, str], list[dict]]:
-    """One call over the whole video: what fits where, and what is missing."""
+    """One call over the whole video: what fits where, what is missing — and, where
+    more than one source is ticked, which of them each missing picture comes from."""
     lang = LANG_NAMES.get(ctx.params.lang, ctx.params.lang)
+    allowed = framebase.ask_sources(ctx.params)
+    choose = len(allowed) > 1
     user = (
         f"Frame base ({len(cards)} cards):\n{_cards_block(cards)}\n\n"
         f"The video, {len(job.frame_shots)} stretches:\n{_shots_block(job)}"
     )
+    fields = ('"source": "' + "|".join(allowed) + '", '
+              + ('"want": "photo|video", ' if "manual" in allowed else "")) if choose else ""
     data = ctx.llm.complete_json(
-        "frame_match", MATCH_SYSTEM.format(depth=RANK_DEPTH, lang=lang), user)
+        "frame_match", MATCH_SYSTEM.format(
+            depth=RANK_DEPTH, lang=lang, sources=_sources_block(allowed),
+            ask_fields=fields), user)
 
     known = {c.name for c in cards}
     ranked: dict[int, list[str]] = {}
@@ -244,8 +285,13 @@ def run(job: VideoJob, ctx: AppContext) -> None:
     """Plan the picture track, and record what the base could not cover."""
     if not framebase.active(job, ctx):
         return
-    world = ctx.store.fandoms.get(ctx.params.fandom)
-    cards = [c for c in (world.frames if world else []) if c.usable]
+    world = world_of(job, ctx)
+    # Two lists, and they differ only on a run that did not tick the base. What the
+    # MATCHER may spend is that run's own cards; what may be on the track is every card
+    # the world has, because the operator may have cast one by hand in the montage room
+    # and a pin is not this stage's to take back.
+    every = [c for c in (world.frames if world else []) if c.usable]
+    cards = framebase.matchable(world, ctx.params)
     fix_durations(job)
 
     if job.frame_shots:
@@ -267,7 +313,7 @@ def run(job: VideoJob, ctx: AppContext) -> None:
         job.frame_asks = []
         # …and so are the effects: choosing is the thing this switch turns off, and a
         # cue placed by hand is a choice already made (see `fx.settle`).
-        effects.settle(job, cards)
+        effects.settle(job, every)
         log.info("picture: %d shots, cut by the speech and left for the operator",
                  len(job.frame_shots))
         return
@@ -285,22 +331,23 @@ def run(job: VideoJob, ctx: AppContext) -> None:
         # model ranked nothing for still has to show something, so the whole base
         # becomes the ranking and the rhythm rules choose out of it. Without this the
         # setting quietly still asks, which is the one thing it promises not to do.
-        every = [c.name for c in cards]
+        names = [c.name for c in cards]
         for i in range(len(job.frame_shots)):
             if not ranked.get(i):
-                ranked[i] = every
+                ranked[i] = names
 
-    stale = frozenset(c.name for c in cards if card_is_stale(c))
-    framebase.assign(job.frame_shots, cards, ranked, targets=targets,
-                     min_scales=min_scales(cards, ctx.g), stale=stale,
+    stale = frozenset(c.name for c in every if card_is_stale(c))
+    scales = min_scales(every, ctx.g)
+    framebase.assign(job.frame_shots, every, ranked, targets=targets,
+                     min_scales=scales, stale=stale,
                      seed=f"{job.index}|{job.topic}")
     for i, s in enumerate(job.frame_shots):
         s.fit = fits.get(i, "")
         s.target = targets.get(i, "")
-    job.frame_shots = _fuse(job.frame_shots, cards, min_scales(cards, ctx.g), stale, job)
+    job.frame_shots = _fuse(job.frame_shots, every, scales, stale, job)
 
-    job.frame_asks = _asks_for(job, asks)
-    _effects(job, ctx, cards)
+    job.frame_asks = _asks_for(job, asks, framebase.ask_sources(ctx.params))
+    _effects(job, ctx, every)
     covered = sum(1 for s in job.frame_shots if s.card)
     log.info("picture: %d shots, %d covered by the base, %d pictures to ask for",
              len(job.frame_shots), covered, len(job.frame_asks))
@@ -333,12 +380,37 @@ def _effects(job: VideoJob, ctx: AppContext, cards: list[FrameCard]) -> None:
     log.info("picture: %d effects on the track", len(job.effect_cues))
 
 
-def _asks_for(job: VideoJob, asks: list[dict]) -> list[FrameAsk]:
+def world_of(job: VideoJob, ctx: AppContext):
+    """The world this job's pictures come out of, as the run sees it (see
+    `framebase.run_world`). The run's folder is the job's parent: every video of a run
+    shares the private base, the way they share the world's."""
+    world = ctx.store.fandoms.get(ctx.params.fandom)
+    return framebase.run_world(world, ctx.params, Path(job.workdir).parent)
+
+
+def _source_of(a: dict, allowed: list[str]) -> tuple[str, str]:
+    """Which ticked source the matcher gave this ask, and what it should come back as.
+
+    A source that was not ticked is the model not listening, and it is overruled rather
+    than obeyed: the boxes are the operator's. It falls to the first ticked one, which
+    is as good a guess as any and better than a picture made somewhere it was told not
+    to be made."""
+    src = str(a.get("source", "")).strip().lower()
+    if src not in allowed:
+        src = allowed[0]
+    want = {"ai_photo": "photo", "ai_video": "video"}.get(src, "")
+    if src == "manual":
+        want = "video" if str(a.get("want", "")).strip().lower() == "video" else "photo"
+    return src, want
+
+
+def _asks_for(job: VideoJob, asks: list[dict], allowed: list[str] | None = None) -> list[FrameAsk]:
     """Turn the model's grouping into asks, over the shots that really are uncovered.
 
     The model grouped by meaning, before the rhythm rules had their say, so a stretch
     it wanted a picture for may have ended up covered anyway — and one it thought
     covered may have been blocked. What is actually missing is only knowable here."""
+    allowed = allowed or ["manual"]
     missing = {i for i, s in enumerate(job.frame_shots) if not s.card}
     out: list[FrameAsk] = []
     claimed: set[int] = set()
@@ -354,17 +426,20 @@ def _asks_for(job: VideoJob, asks: list[dict]) -> list[FrameAsk]:
         if not idx:
             continue
         claimed |= idx
+        src, want = _source_of(a, allowed)
         out.append(FrameAsk(
             id=f"frame_{len(out):02d}",
             prompt=str(a.get("prompt", "")).strip(),
             description=str(a.get("description", "")).strip(),
-            shots=sorted(idx),
+            shots=sorted(idx), source=src, want=want,
         ))
     # anything uncovered the model said nothing about still has to be asked for, one
     # picture each: no grouping is safer than a guessed one
+    src, want = _source_of({}, allowed)
     for i in sorted(missing - claimed):
         s = job.frame_shots[i]
-        out.append(FrameAsk(id=f"frame_{len(out):02d}", prompt=s.prompt, shots=[i]))
+        out.append(FrameAsk(id=f"frame_{len(out):02d}", prompt=s.prompt, shots=[i],
+                            source=src, want=want))
     for a in out:
         for i in a.shots:
             job.frame_shots[i].ask_id = a.id
@@ -491,34 +566,58 @@ def unpin_card(job: VideoJob, ask: FrameAsk) -> None:
 
 
 def collect(job: VideoJob, ctx: AppContext) -> None:
-    """Ask for what the base is missing, take in what has arrived, and lay the track
-    onto the scenes.
+    """Make or ask for what the base is missing, take in what has arrived, and lay the
+    track onto the scenes.
 
-    Everything the video needs is asked for in ONE pause. The manifest, the inbox, the
-    `ManualInputPending` checkpoint and the gather screen are all :mod:`..manual`'s,
-    unchanged — a frame ask is just a third kind of id alongside `shot_NN` and
-    `fg_NN_K`, and `manual._match_shot` already matches an exact id, so `frame_00.png`
-    in the inbox needs no new plumbing at all.
+    Each ask goes to the source the matcher gave it. The two automatic ones are called
+    here and now, one picture per ask, and what they return is filed exactly like a
+    delivery; one that fails becomes the operator's to make (`source` turns `manual`),
+    because a stretch with no picture is not a video. Everything left for the operator
+    is asked for in ONE pause. The manifest, the inbox, the `ManualInputPending`
+    checkpoint and the gather screen are all :mod:`..manual`'s, unchanged — a frame ask
+    is just a third kind of id alongside `shot_NN` and `fg_NN_K`, and
+    `manual._match_shot` already matches an exact id, so `frame_00.png` in the inbox
+    needs no new plumbing at all.
 
     A delivered picture goes straight onto the shots that asked for it. There is no
     second trip to the matcher: the operator made this picture FOR those stretches, and
     re-deciding where it belongs would be both a waste and a way to put it somewhere
     else."""
-    world = ctx.store.fandoms.get(ctx.params.fandom)
+    world = world_of(job, ctx)
     cards = [c for c in (world.frames if world else []) if c.usable]
     pending = [a for a in job.frame_asks if not a.card]
+
+    if pending and world is not None:
+        rng = random.Random(f"{job.index}|delivered")
+        for a in [a for a in pending if a.source in ("ai_photo", "ai_video")]:
+            path = _generate(job, ctx, a)
+            if path is None:
+                log.warning("picture: %s could not be generated (%s) — it is yours to make",
+                            a.id, a.source)
+                a.source, a.want = "manual", "video" if a.source == "ai_video" else "photo"
+                continue
+            card = file_card(world, a, path)
+            cards.append(card)
+            pin_card(job, a, card, rng)
+        pending = [a for a in pending if not a.card]
 
     if pending and world is not None:
         specs = [
             manual.ShotSpec(
                 id=a.id,
-                prompt=", ".join(x for x in (
-                    shot_prompt_for(job, ctx, a), FRAME_BRIEF, ctx.style_suffix) if x),
+                # a search is rewritten by the briefer below and starts from the shot;
+                # a prompt for a person to paste says everything a generator is told
+                prompt=shot_prompt_for(job, ctx, a) if a.source == "search" else ", ".join(
+                    x for x in (shot_prompt_for(job, ctx, a), FRAME_BRIEF, ctx.style_suffix) if x),
                 target_s=max((job.frame_shots[i].duration for i in a.shots), default=5.0),
-                scene_index=0, part=1, kind="generate", want="photo",
+                scene_index=0, part=1,
+                kind="search" if a.source == "search" else "generate",
+                # a search decides photo-or-clip in the briefer, per what the moment needs
+                want="" if a.source == "search" else (a.want or "photo"),
             )
             for a in pending
         ]
+        _brief(job, specs, ctx)
         delivered = manual.collect_or_pause(
             job.workdir, specs,
             ctx.g.video.width * ASK_SCALE, ctx.g.video.height * ASK_SCALE)
@@ -538,6 +637,63 @@ def collect(job: VideoJob, ctx: AppContext) -> None:
     effects.settle(job, cards)
     framebase.apply_to_scenes(job, cards)
     job.pending_parts = []
+
+
+def _brief(job: VideoJob, specs: list[manual.ShotSpec], ctx: AppContext) -> None:
+    """Turn the search asks into tasks a person can act on, as every other search is
+    (see `drama_footage._brief_searches`) — once. The manifest is rebuilt from the specs
+    on every resume, so a brief already written is carried over from it rather than
+    paid for again, and only the searches it has never seen go to the briefer."""
+    from .drama_footage import _brief_searches
+
+    old = manual.ManualManifest.load(job.workdir)
+    fresh = []
+    for spec in specs:
+        if spec.kind != "search":
+            continue
+        prev = old.by_id(spec.id)
+        if prev and prev.kind == "search" and prev.queries:
+            spec.prompt, spec.queries, spec.want = prev.prompt, list(prev.queries), prev.want
+        else:
+            fresh.append(spec)
+    _brief_searches(fresh, ctx)
+
+
+# What a generated CLIP is asked for besides what is in it. The still's brief is about
+# cropping into it; a clip is not cropped (see `FrameCard`), so what matters instead is
+# that it is one continuous shot that can be looped without a visible seam.
+CLIP_BRIEF = "slow steady camera, one continuous shot, no cuts, no text, no watermark"
+
+
+def _generate(job: VideoJob, ctx: AppContext, ask: FrameAsk) -> Path | None:
+    """One picture for one ask, from the generator its source names, trying every key.
+
+    A still is bought at `ASK_SCALE` for the reason a delivered one is: it is cropped
+    into. A clip is whatever size the Space makes — it is looped, never cropped."""
+    from dataclasses import replace
+
+    from ...media.generate import env_keys, key_var_for_model, pollinations_image, wan_video
+    from .drama_footage import SINGLE_FRAME, _genparams
+
+    video = ask.source == "ai_video"
+    model = ctx.params.fandom_video_model if video else ctx.params.fandom_photo_model
+    brief = f"{CLIP_BRIEF}, {SINGLE_FRAME}" if video else FRAME_BRIEF
+    prompt = ", ".join(x for x in (shot_prompt_for(job, ctx, ask), brief) if x)
+    cache = ctx.g.paths.state / "cache" / ("footage" if video else "images")
+    cache.mkdir(parents=True, exist_ok=True)
+    for token in env_keys(key_var_for_model(model)) or [None]:
+        gen = _genparams(ctx, model, token)
+        if not video:
+            gen = replace(gen, width=gen.width * ASK_SCALE, height=gen.height * ASK_SCALE)
+        try:
+            path = wan_video(prompt, cache, ctx.used_clips, gen) if video \
+                else pollinations_image(prompt, cache, ctx.used_clips, gen)
+        except Exception as e:
+            log.info("picture: %s via %s failed — %s", ask.id, model, e)
+            path = None
+        if path:
+            return Path(path)
+    return None
 
 
 def said_of(job: VideoJob, ask: FrameAsk) -> str:

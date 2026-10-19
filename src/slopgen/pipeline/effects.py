@@ -1023,7 +1023,14 @@ def for_part(job: VideoJob, ctx, scenes: list) -> list[Draw]:
     out: list[Draw] = chat_sounds(job, ctx, start, end)
     if not job.effect_cues:
         return out
-    world = ctx.store.fandoms.get(ctx.params.fandom) if ctx.params.mode == "fandom" else None
+    world = None
+    if ctx.params.mode == "fandom":
+        from pathlib import Path
+
+        from . import framebase
+
+        world = framebase.run_world(ctx.store.fandoms.get(ctx.params.fandom), ctx.params,
+                                    Path(job.workdir).parent)
     cards = list(world.frames) if world else []
     specs = dict(getattr(ctx.store, "effects", {}) or {})
     if not specs:

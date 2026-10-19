@@ -416,6 +416,14 @@ class FrameAsk(BaseModel):
     description: str = ""  # the draft of the new card's own description, to be edited
     shots: list[int] = []  # indices into VideoJob.frame_shots this one picture covers
     card: str = ""  # the card it became, once delivered and filed
+    # Which ticked source fills it (`config.FandomSource` minus `frames`), as the
+    # matcher chose. "" is an ask from before there was a choice, and means `manual`,
+    # which is what every ask was then. An automatic one that failed is turned into a
+    # `manual` one rather than left owing: somebody still has to make the picture.
+    source: str = ""
+    # photo | video, where the source does not settle it by itself — a picture made by
+    # hand may be either, and the matcher says which the stretch wants. "" = a still.
+    want: str = ""
 
 
 class ChatMedia(BaseModel):

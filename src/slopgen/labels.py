@@ -1289,8 +1289,12 @@ WEB_RU: dict[str, str] = {
     "web.f.narrator": 'рассказчик',
     "web.f.brief": 'о чём рассказать',
     "web.card.source": 'откуда картинки',
-    "web.f.medium": 'из чего',
-    "web.f.src": 'источник',
+    "web.f.src.frames": 'база кадров мира',
+    "web.f.src.ai_photo": 'ИИ рисует картинку',
+    "web.f.src.ai_video": 'ИИ делает клип',
+    "web.f.src.manual": 'делаю сам по промпту',
+    "web.f.src.search": 'ищу сам (стоки)',
+    "web.f.src.model": 'чем',
     "web.f.askwhen": 'когда просить новую картинку',
     "web.f.cutrate": 'как часто менять кадр',
     "web.card.amount": 'сколько',
@@ -1421,8 +1425,12 @@ WEB_EN: dict[str, str] = {
     "web.f.narrator": 'narrator',
     "web.f.brief": 'what to tell',
     "web.card.source": 'where pictures come from',
-    "web.f.medium": 'made of',
-    "web.f.src": 'source',
+    "web.f.src.frames": "the world's frame base",
+    "web.f.src.ai_photo": 'AI draws a picture',
+    "web.f.src.ai_video": 'AI makes a clip',
+    "web.f.src.manual": 'I make it from a prompt',
+    "web.f.src.search": 'I find it (stock)',
+    "web.f.src.model": 'with',
     "web.f.askwhen": 'when to ask for a new picture',
     "web.f.cutrate": 'how often the shot changes',
     "web.card.amount": 'how much',
@@ -1591,10 +1599,7 @@ RU.update({
     "w.one": 'один',
     "w.many": 'много одинаковых',
     "w.class": 'целый вид',
-    "src.frames": 'База кадров мира: картинки берутся из его собственной папки и переиспользуются. Чего не хватит — попросит у тебя.',
-    "src.manual": 'Слопген напишет промпт на каждый кадр, ты сделаешь его во внешнем сервисе и принесёшь файл.',
-    "src.search": 'Слопген скажет, что искать, и выдаст готовые запросы — ты приносишь настоящие съёмки.',
-    "src.auto": 'Генерируется само, по кадру на бит. Бесплатно, медленно и часто мимо.',
+    "web.src.note": 'Можно отметить несколько: нейронка сама решает, откуда взять каждый недостающий кадр. База — это ещё и то, оседает ли сделанное в мире: без неё новые карточки живут только в этом прогоне. В монтажке доступно всё, что бы здесь ни было отмечено.',
 })
 
 EN.update({
@@ -1646,10 +1651,7 @@ EN.update({
     "w.one": 'one',
     "w.many": 'many alike',
     "w.class": 'a whole kind',
-    "src.frames": "The world's frame base: pictures come from its own folder and get reused. Whatever is missing, it will ask you for.",
-    "src.manual": 'Slopgen writes a prompt per shot, you make it elsewhere and bring the file back.',
-    "src.search": 'Slopgen says what to look for and hands you the queries — you bring real footage.',
-    "src.auto": 'Generated on its own, a shot per beat. Free, slow and often wide of the mark.',
+    "web.src.note": "Tick several: the model decides, for each missing picture, which of them it comes from. The base is also whether what gets made stays in the world — without it, new cards live in this run only. The montage room offers everything, whatever is ticked here.",
 })
 
 # Handing things over: the two panels under Configuration, and the words

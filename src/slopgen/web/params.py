@@ -21,12 +21,12 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from ..config import ConfigStore, RunParams
-from ..config.models import (AdConfig, AdDescriptionConfig, AdNativeConfig,
+from ..config.models import (FANDOM_SOURCES, AdConfig, AdDescriptionConfig, AdNativeConfig,
                              AdOverlayConfig, ChatConfig, OrchestrationConfig,
                              OrchestrationStage, VisualsBackground, VisualsConfig,
                              VisualsForeground)
 from ..media.filters import CATALOGUE as FILTER_CATALOGUE
-from ..media.generate import PHOTO_MODELS, VIDEO_MODELS, model_clip_seconds
+from ..media.generate import PHOTO_MODELS, VIDEO_MODELS, ai_models, model_clip_seconds
 
 # What the ad field says when the contract is typed into the form instead of picked
 # out of `configs/ads/`. A reserved name rather than a second field, the way the music
@@ -205,36 +205,70 @@ def manual_visuals(store: ConfigStore, b: dict, profile: str) -> VisualsConfig |
     return built
 
 
+def fandom_sources_of(b: dict) -> tuple[list[str], str, str]:
+    """Which sources the form ticked, and the generator each automatic one calls.
+
+    A body from before the boxes — a saved loop, an old page still open — names ONE
+    `source` and a `medium`, and is read as the ticks it meant: the frame base was the
+    base plus the operator for what it lacked, a generator was that generator, and the
+    two pairs of hands were themselves."""
+    photo = str(b.get("fandom_photo_model") or "flux")
+    video = str(b.get("fandom_video_model") or "wan2.1")
+    if photo not in ai_models(PHOTO_MODELS):
+        raise HTTPException(status_code=422, detail=f"{photo!r} does not draw pictures")
+    if video not in ai_models(VIDEO_MODELS):
+        raise HTTPException(status_code=422, detail=f"{video!r} does not make clips")
+    if "fandom_sources" in b:
+        picked = [str(x) for x in b.get("fandom_sources") or []]
+    else:
+        old = str(b.get("source") or "frames")
+        if old == "frames":
+            picked = ["frames", "manual"]
+        elif old in ("manual", "search"):
+            picked = [old]
+        elif old in PHOTO_MODELS:
+            picked, photo = ["ai_photo"], old
+        elif old in VIDEO_MODELS:
+            picked, video = ["ai_video"], old
+        else:
+            raise HTTPException(status_code=422, detail=f"no picture source {old!r}")
+    bad = [x for x in picked if x not in FANDOM_SOURCES]
+    if bad:
+        raise HTTPException(status_code=422, detail=f"no picture source {bad[0]!r}")
+    if not picked:
+        raise HTTPException(status_code=422, detail="tick at least one picture source")
+    # in the order the form shows them, once each
+    return [x for x in FANDOM_SOURCES if x in picked], photo, video
+
+
 def fandom_params(store: ConfigStore, b: dict) -> RunParams:
     """A fandom run, from the form's body.
 
-    The chain is built here rather than named, because a fandom's picture comes
-    from ONE source for the whole video — `frames` most of all, which is
-    all-or-nothing by construction (see framebase.active). So the form picks the
-    source and this turns it into a one-stage chain, which is what the pipeline
-    reads. Hardcoding `frames` was the first version, and it left the old
-    per-shot modes unreachable from the browser entirely."""
+    The picture is always the frame track — cut on the speech, cast card by card, and
+    open in the montage room — and the form says only where its pictures may come
+    FROM: several boxes, any mix (see `config.FandomSource`). The chain the pipeline
+    reads is therefore always the one `frames` stage; which source fills each missing
+    picture is the matcher's choice among the ticked ones (see stages/picture)."""
     world = str(b.get("fandom", ""))
     if world not in store.fandoms:
         raise HTTPException(status_code=404, detail=f"no world named {world!r}")
-    medium = b.get("medium", "photo")
-    source = str(b.get("source") or ("frames" if medium == "photo" else "wan2.1"))
-    allowed = (list(PHOTO_MODELS) + ["manual", "search"]) if medium == "photo" \
-        else list(VIDEO_MODELS)
-    if source not in allowed:
-        raise HTTPException(status_code=422,
-                            detail=f"{source!r} does not make {medium}")
+    sources, photo_model, video_model = fandom_sources_of(b)
+    source = "frames"
     # Cutting and casting the track by hand means stopping at the screen that does it,
     # so the breakpoint comes with the switch rather than being a second thing to
     # remember: a by-hand run that walked past `picture` would go straight on to ask
     # for pictures for a track nobody had filled in.
     breakpoints = [x for x in b.get("breakpoints", []) if isinstance(x, str)]
-    by_hand = bool(b.get("frame_by_hand")) and source == "frames"
+    by_hand = bool(b.get("frame_by_hand"))
     if by_hand and "picture" not in breakpoints:
         breakpoints.append("picture")
     params = RunParams(
         lang=str(b.get("lang", "ru")), content_type="", mode="fandom",
-        fandom=world, fandom_voice=b.get("voice", "resident"), medium=medium,
+        fandom=world, fandom_voice=b.get("voice", "resident"),
+        # each source makes what it makes, and a search decides per shot (see llm/lookup)
+        medium="",
+        fandom_sources=sources, fandom_photo_model=photo_model,
+        fandom_video_model=video_model,
         viewer_role=str(b.get("viewer_role", "")),
         fandom_invent=b.get("fandom_invent", "no"),
         scenario=str(b.get("scenario", "")),

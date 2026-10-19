@@ -1817,7 +1817,7 @@ function bindShotInspector() {
   const clear = mq("#i-clear");
   if (clear) clear.onclick = () => cast({ card: "" });
   const mark = mq("#i-mark");
-  if (mark) mark.onclick = () => openMarkup(MONT.doc.world, s.card);
+  if (mark) mark.onclick = () => openMarkup(MONT.doc.world, s.card, MONT.id);
   dropTarget(mq("#i-take"), async (file) => {
     const body = new FormData(); body.append("file", file);
     const q = `?video=${MONT.video}&shot=${montSel.i}&description=${
@@ -1825,7 +1825,7 @@ function bindShotInspector() {
     const d = await send(`/shot/card${q}`, { method: "POST", body });
     // a card arrives with nothing marked on it, so it can only be held or drifted
     // across until somebody draws a region — and the operator is right here
-    if (d && d.card) { say(lab("js.card-added-say-what-is-in-it")); openMarkup(d.world, d.card); }
+    if (d && d.card) { say(lab("js.card-added-say-what-is-in-it")); openMarkup(d.world, d.card, MONT.id); }
   });
 }
 
