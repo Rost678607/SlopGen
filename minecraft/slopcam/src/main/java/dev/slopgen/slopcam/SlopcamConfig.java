@@ -16,6 +16,12 @@ public final class SlopcamConfig {
     public int brushRadius = 0;
     /** How tall a polygon piece is, from its floor, in blocks. */
     public int polygonHeight = 3;
+    /** Easy NPC part rotations in radians (true) or degrees; to be confirmed in game. */
+    public boolean poseRadians = true;
+    /** Easy NPC part offsets per block: 16 if they are model pixels. */
+    public float positionScale = 16f;
+    /** Walking speed of an actor, blocks per second; running is `speed` times it. */
+    public double walkSpeed = 2.8;
 
     private static Path path() {
         return FabricLoader.getInstance().getConfigDir().resolve("slopcam.json");

@@ -384,6 +384,7 @@ def test_compile_lays_actions_on_ticks_after_the_preroll():
     assert walk["tick"] == mc_compile.tick(raw_t + mc_compile.PREROLL)
     assert walk["target"] == {"pos": [7.5, 1, 7.5]}
     assert s["ticks"] == mc_compile.tick(18.0 + mc_compile.PREROLL)
+    assert len(s["focus"]) == 3
     assert [a["id"] for a in s["actors"][:2]] == ["a", "b"]
     assert s["actors"][0]["equip"]["mainhand"] == "minecraft:iron_shovel"
     assert s["events"] == sorted(s["events"], key=lambda e: (e["tick"], e["actor"]))

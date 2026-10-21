@@ -255,8 +255,14 @@ def _scene(i: int, sc: Scene, reg: Registry, lib: Library, clock: Clock, block_s
     for j, s in enumerate(shots):
         s["end"] = shots[j + 1]["start"] if j + 1 < len(shots) else s1 - s0
 
+    # where the scene happens: the player is parked (invisible) above it during the
+    # take, near enough for every chunk the cameras will see to load and be recorded
+    spots = [a["pos"] for a in actors] or [list(_area_centre(a)) for a in cx.areas.values()][:1] or [[0.0, 0.0, 0.0]]
+    focus = [sum(p[k] for p in spots) / len(spots) for k in range(3)]
+
     script = {
         "scene": i,
+        "focus": focus,
         "place": sc.place,
         "time": TIMES.get(sc.time, 6000) if isinstance(sc.time, str) else int(sc.time),
         "weather": sc.weather,

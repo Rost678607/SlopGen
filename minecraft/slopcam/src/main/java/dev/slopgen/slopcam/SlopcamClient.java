@@ -10,12 +10,15 @@ import dev.slopgen.slopcam.net.ControlServer;
 import dev.slopgen.slopcam.net.Events;
 import dev.slopgen.slopcam.registry.Registry;
 import dev.slopgen.slopcam.registry.RegistryStore;
+import dev.slopgen.slopcam.stage.Performer;
+import dev.slopgen.slopcam.stage.Script;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents;
 import net.fabricmc.fabric.api.client.screen.v1.ScreenEvents;
 import net.fabricmc.fabric.api.client.screen.v1.Screens;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.components.Button;
@@ -87,10 +90,14 @@ public final class SlopcamClient implements ClientModInitializer {
                 lastWorld = store.saveDir();
                 markup.worldChanged();
                 // a world left while in the markup mode gets its owner's game mode back
-                if (lastWorld != null) markup.restoreGameMode(mc);
+                if (lastWorld != null) {
+                    markup.restoreGameMode(mc);
+                    removeLeftovers(mc);
+                }
             }
             markup.tick(mc);
         });
+        ServerTickEvents.END_SERVER_TICK.register(Performer::serverTick);
         HudRenderCallback.EVENT.register((g, delta) -> MarkupHud.render(g, markup, store));
         WorldRenderEvents.LAST.register(ctx -> renderer.render(ctx, markup, store, shots));
         WorldRenderEvents.END.register(ctx -> shots.endOfWorld());
@@ -116,6 +123,19 @@ public final class SlopcamClient implements ClientModInitializer {
             store.replace(r);
             return Json.GSON.toJsonTree(store.get());
         });
+        control.handle("perform", p -> {
+            if (store.saveDir() == null) throw new IllegalStateException("no world is open");
+            Script script = Json.GSON.fromJson(p.get("script"), Script.class);
+            boolean record = !p.has("record") || p.get("record").getAsBoolean();
+            String name = p.has("name") ? p.get("name").getAsString() : "take";
+            Path out = p.has("out") ? Path.of(p.get("out").getAsString())
+                    : store.dir().resolve("takes").resolve(name.replaceAll("[^\\w.-]", "_") + ".zip");
+            return Performer.start(script, record, out, name);
+        });
+        control.handleNow("perform.cancel", p -> {
+            Performer.cancel(p.has("why") ? p.get("why").getAsString() : "asked to");
+            return null;
+        });
         control.handle("markup.state", p -> {
             JsonObject o = new JsonObject();
             o.addProperty("active", markup.active());
@@ -123,6 +143,22 @@ public final class SlopcamClient implements ClientModInitializer {
             o.addProperty("tool", markup.tool().key);
             o.addProperty("selected", markup.selectedId());
             return CompletableFuture.completedFuture(o);
+        });
+    }
+
+    /**
+     * Actors a crashed take left behind. Everything a take spawns is tagged, so a game
+     * that died mid-take does not leave a cook standing in the canteen for ever.
+     */
+    private static void removeLeftovers(Minecraft mc) {
+        var server = mc.getSingleplayerServer();
+        if (server == null) return;
+        server.execute(() -> {
+            for (var level : server.getAllLevels()) {
+                for (var e : level.getAllEntities()) {
+                    if (e.getTags().contains("slopgen") && !(e instanceof net.minecraft.world.entity.player.Player)) e.discard();
+                }
+            }
         });
     }
 
@@ -138,6 +174,7 @@ public final class SlopcamClient implements ClientModInitializer {
         o.addProperty("save_dir", store.saveDir() == null ? null : store.saveDir().toString());
         o.addProperty("world", store.saveDir() == null ? null : store.saveDir().getFileName().toString());
         o.addProperty("markup", markup.active());
+        o.addProperty("busy", Performer.busy());
         o.addProperty("player", mc.player == null ? null : mc.player.getGameProfile().getName());
         return o;
     }
