@@ -573,3 +573,9 @@ def test_render_job_is_half_size_for_a_draft():
     j = film.job(plan, take, [{"tick": 30}], Path("/tmp/x.mp4"), final=False)
     assert (j["width"], j["height"]) == (540, 960)
     assert j["start_tick"] == plan.script["preroll"] and len(j["actors"]) == len(plan.script["actors"])
+
+
+def test_place_bounds_cover_what_is_marked():
+    lo, hi = film.place_bounds(canteen(), "Буфет")
+    assert lo[0] <= 0 and hi[0] >= 9 and lo[2] <= 0 and hi[2] >= 9
+    assert film.place_bounds(canteen(), "нет такого") is None

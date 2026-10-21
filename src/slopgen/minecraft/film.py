@@ -71,6 +71,43 @@ class Take:
         return list((self.report.get("uuids") or {}).values())
 
 
+def place_bounds(reg: Registry, place_name: str, pad: int = 6) -> tuple[list[int], list[int]] | None:
+    """A box around everything marked in a place, padded — what to scan before a crowd
+    can be placed in it."""
+    import math
+
+    place = reg.place(place_name)
+    if place is None:
+        return None
+    pts = []
+    for e in reg.elements(place):
+        if hasattr(e, "bounds") and callable(e.bounds) and e.bounds():
+            lo, hi = e.bounds()
+            pts += [lo, hi]
+        elif hasattr(e, "pos"):
+            pts.append(tuple(math.floor(v) for v in e.pos))
+        elif hasattr(e, "points"):
+            pts += [tuple(math.floor(v) for v in p) for p in e.points if len(p) == 3]
+    if not pts:
+        return None
+    lo = [min(p[i] for p in pts) - pad for i in range(3)]
+    hi = [max(p[i] for p in pts) + pad for i in range(3)]
+    lo[1] = min(p[1] for p in pts) - 3
+    hi[1] = max(p[1] for p in pts) + 6
+    return lo, hi
+
+
+def scan_places(game, reg: Registry, places: set[str]) -> dict[str, World]:
+    """The world around each place, from the game — crowds are placed on it."""
+    out = {}
+    for name in places:
+        box = place_bounds(reg, name)
+        if box is None:
+            continue
+        out[name] = World.from_payload(game.call("world.scan", {"min": box[0], "max": box[1]}, timeout=30.0))
+    return out
+
+
 def perform(game, plan: ScenePlan, out: Path, name: str) -> Take:
     """Play one scene and record it. Blocks until the world is back."""
     report = game.call("perform", {"script": plan.script, "record": True, "name": name,

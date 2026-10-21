@@ -165,10 +165,9 @@ def shoot(ctx: typer.Context,
         if not h.get("in_world"):
             rprint("[yellow]open the world in the game first[/yellow]")
             raise typer.Exit(1)
-        # the crowds need the world around each place: one quick take per scene would
-        # be wasteful, so a crowd-less first pass is not attempted — scenes with crowds
-        # are compiled against an empty world and the mod's own scan of the first take
-        plans = compile_block(d, reg, lib, Clock([]), 0.0, length)
+        # crowds are placed on the world around their place, so it is scanned first
+        worlds = film.scan_places(g, reg, {sc.place for sc in d.scenes if sc.crowd})
+        plans = compile_block(d, reg, lib, Clock([]), 0.0, length, worlds=worlds)
         takes, jobs = [], []
         for plan in plans:
             for w in plan.warnings:

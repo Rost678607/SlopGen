@@ -138,6 +138,28 @@ public final class SlopcamClient implements ClientModInitializer {
             Boolean shaders = p.has("shaders") && !p.get("shaders").isJsonNull() ? p.get("shaders").getAsBoolean() : null;
             return Renderer.start(p.getAsJsonArray("jobs"), shaders);
         });
+        control.handle("world.scan", p -> {
+            var server = Minecraft.getInstance().getSingleplayerServer();
+            var player = Minecraft.getInstance().player;
+            if (server == null || player == null) throw new IllegalStateException("no world is open");
+            var min = p.getAsJsonArray("min");
+            var max = p.getAsJsonArray("max");
+            net.minecraft.core.BlockPos a = new net.minecraft.core.BlockPos(min.get(0).getAsInt(), min.get(1).getAsInt(), min.get(2).getAsInt());
+            net.minecraft.core.BlockPos b = new net.minecraft.core.BlockPos(
+                    Math.min(max.get(0).getAsInt(), a.getX() + 255), Math.min(max.get(1).getAsInt(), a.getY() + 127),
+                    Math.min(max.get(2).getAsInt(), a.getZ() + 255));
+            java.util.UUID id = player.getUUID();
+            CompletableFuture<JsonElement> out = new CompletableFuture<>();
+            server.execute(() -> {
+                try {
+                    var sp = server.getPlayerList().getPlayer(id);
+                    out.complete(dev.slopgen.slopcam.stage.WorldScan.scan(sp.serverLevel(), a, b));
+                } catch (Exception e) {
+                    out.completeExceptionally(e);
+                }
+            });
+            return out;
+        });
         control.handleNow("perform.cancel", p -> {
             Performer.cancel(p.has("why") ? p.get("why").getAsString() : "asked to");
             return null;
