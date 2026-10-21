@@ -579,3 +579,132 @@ def test_place_bounds_cover_what_is_marked():
     lo, hi = film.place_bounds(canteen(), "Буфет")
     assert lo[0] <= 0 and hi[0] >= 9 and lo[2] <= 0 and hi[2] >= 9
     assert film.place_bounds(canteen(), "нет такого") is None
+
+
+# --------------------------------------------------------------------------
+# the pipeline: the matcher, blocks on the track, the director
+# --------------------------------------------------------------------------
+
+from types import SimpleNamespace  # noqa: E402
+
+from slopgen.config.models import FandomConfig, FandomMinecraft  # noqa: E402
+from slopgen.minecraft import block as mc_block, direct  # noqa: E402
+from slopgen.pipeline import framebase  # noqa: E402
+from slopgen.pipeline.job import Scene, VideoJob, Word  # noqa: E402
+from slopgen.pipeline.stages import picture  # noqa: E402
+
+
+def narrated_job(tmp_path) -> VideoJob:
+    """Two lines, eight words each, a word a second, a breath between the lines."""
+    scenes = []
+    for k, line in enumerate(["и он подошёл к кассе и спросил про", "обед она только кивнула не поднимая половника тут"]):
+        ws = [Word(text=t, start=i * 1.0, end=i * 1.0 + 0.8) for i, t in enumerate(line.split())]
+        scenes.append(Scene(text=line, duration=len(ws) * 1.0 + 0.5, words=ws, gen_model="frames"))
+    job = VideoJob(index=0, workdir=tmp_path, scenes=scenes)
+    job.frame_shots = framebase.plan_cuts(job.scenes, 0.5)
+    return job
+
+
+def built_world(tmp_path) -> tuple[SimpleNamespace, FandomMinecraft]:
+    mc = FandomMinecraft(instance="Object", world="ОБЪЕКТ", prism_dir=str(tmp_path / "prism"))
+    from slopgen.minecraft import paths
+
+    canteen().save(paths.save_dir(mc))
+    store = SimpleNamespace(fandoms={"F": FandomConfig(name="F", minecraft=mc)})
+    return store, mc
+
+
+class StubLLM:
+    def __init__(self, *answers):
+        self.answers = list(answers)
+        self.calls = []
+
+    def complete_json(self, kind, system, user, **kw):
+        self.calls.append((kind, system, user))
+        return self.answers.pop(0) if self.answers else {}
+
+
+def test_matcher_offers_the_places_only_when_minecraft_is_ticked(tmp_path):
+    store, _ = built_world(tmp_path)
+    job = narrated_job(tmp_path)
+    for sources, offered in ((["frames", "minecraft"], True), (["frames", "manual"], False)):
+        llm = StubLLM({"shots": [], "asks": [], "machinima": [{"shots": [1, 2], "place": "Буфет", "why": "подходит"}]})
+        ctx = SimpleNamespace(params=SimpleNamespace(fandom="F", fandom_sources=sources, lang="ru",
+                                                     manual_orchestration=None), store=store, llm=llm)
+        *_, played = picture._match(ctx, job, [])
+        system = llm.calls[0][1]
+        assert ("Буфет" in system) is offered
+        assert bool(played) is offered
+        assert "{{" not in system
+
+
+def test_claimed_block_spans_consecutive_stretches_and_follows_the_words(tmp_path):
+    job = narrated_job(tmp_path)
+    n = len(job.frame_shots)
+    assert n >= 2
+    blocks = mc_block.claim(job, [{"shots": [1, 2], "place": "Буфет", "why": "он подходит"}])
+    assert len(blocks) == 1 and blocks[0].id == "mc_00"
+    b = blocks[0]
+    assert job.frame_shots[0].block == b.id
+    start, dur = b.start, b.duration
+    # re-voicing the first line slower moves the block with its words
+    job.scenes[0].duration *= 1.5
+    job.scenes[0].audio_src_duration = job.scenes[0].duration / 1.5
+    framebase.reanchor(job.scenes, job.frame_shots)
+    mc_block.measure(job)
+    assert b.start == pytest.approx(start * 1.5, abs=1e-6)
+    assert b.duration > dur
+
+
+def test_a_played_stretch_shows_its_block_seeked_into_place(tmp_path):
+    job = narrated_job(tmp_path)
+    b = mc_block.claim(job, [{"shots": list(range(1, len(job.frame_shots) + 1))}])[0]
+    clip_path = mc_block.folder(job, b) / "final.mp4"
+    clip_path.parent.mkdir(parents=True)
+    clip_path.write_bytes(b"not really a video")
+    b.final = str(clip_path.relative_to(tmp_path))
+    framebase.apply_to_scenes(job, [])
+    second = job.scenes[1].bg_assets
+    assert second and all(p.path == clip_path for p in second)
+    # the second line's first piece starts in the clip where the second line starts
+    assert second[0].start == pytest.approx(job.scenes[0].duration - b.start, abs=1e-6)
+
+
+def test_no_ask_is_made_for_a_played_stretch(tmp_path):
+    job = narrated_job(tmp_path)
+    mc_block.claim(job, [{"shots": [1]}])
+    asks = picture._asks_for(job, [], ["manual"])
+    assert all(0 not in a.shots for a in asks)
+
+
+def test_director_writes_a_direction_and_repairs_once(tmp_path):
+    job = narrated_job(tmp_path)
+    b = mc_block.claim(job, [{"shots": list(range(1, len(job.frame_shots) + 1)), "place": "Буфет"}])[0]
+    clock = anchors.Clock.of(job.scenes)
+    bad = {"blocks": {b.id: {"scenes": [{"place": "Буфет",
+                                         "cast": [{"as": "a", "actor": "Повариха/старшая", "at": "стол_3"}],
+                                         "shots": [{"at": {"w": 0}, "camera": {"on": "a"}}]}]}}}
+    good = {"blocks": {b.id: {"scenes": [{"place": "Буфет",
+                                          "cast": [{"as": "a", "actor": "Повариха/старшая", "at": "стойка"}],
+                                          "action": [{"at": {"w": 11}, "who": "a", "do": "gesture", "name": "nod"}],
+                                          "shots": [{"at": {"w": 0}, "camera": {"on": "a", "distance": 2.5}}]}]}}}
+    llm = StubLLM(bad, good)
+    ctx = SimpleNamespace(llm=llm)
+    from slopgen.minecraft.library import BUILTIN
+
+    direct.direct_blocks(job, [b], canteen(), BUILTIN, clock, ctx)
+    assert len(llm.calls) == 2 and "стол_3" in llm.calls[1][2]  # the repair names the mistake
+    d = mc_block.load_direction(job, b)
+    assert d is not None and not b.failed
+    nod = d.scenes[0].action[0].at.word
+    assert (nod.scene, nod.i, nod.text) == (1, 3, "кивнула")  # word 11 of the block
+
+
+def test_director_gives_a_block_up_after_the_repair(tmp_path):
+    job = narrated_job(tmp_path)
+    b = mc_block.claim(job, [{"shots": [1]}])[0]
+    llm = StubLLM({"blocks": {}}, {"blocks": {}})
+    from slopgen.minecraft.library import BUILTIN
+
+    direct.direct_blocks(job, [b], canteen(), BUILTIN, anchors.Clock.of(job.scenes), SimpleNamespace(llm=llm))
+    assert b.failed and not any(s.block for s in job.frame_shots)

@@ -316,6 +316,10 @@ class FrameShot(BaseModel):
     move: KenBurns | None = None
     pinned: bool = False  # the operator chose this card; selection may not overrule it
     ask_id: str = ""  # the manual-manifest id when this shot is (or was) an ask
+    # The machinima block this stretch is played in (`MachinimaBlock.id`), or "". A
+    # shot in a block shows no card: its picture is the block's clip, at the moment
+    # of the clip that lines up with this stretch (see `framebase.apply_to_scenes`).
+    block: str = ""
     # The montage LOOK over this shot — `{effect: dose}`, see `media/filters` — or None
     # to take the run's (`RunParams.filters`), which is what every shot does until one
     # is changed in the montage room.
@@ -424,6 +428,38 @@ class FrameAsk(BaseModel):
     # photo | video, where the source does not settle it by itself — a picture made by
     # hand may be either, and the matcher says which the stretch wants. "" = a still.
     want: str = ""
+
+
+class MachinimaBlock(BaseModel):
+    """A run of the video played in the world's Minecraft build and filmed under its
+    own words (see `slopgen.minecraft`).
+
+    It is a kind of FRAME, not a card: the clip belongs to this video, is never filed
+    into any frame base, and sits on the track over the stretches it spans, in sync
+    with the speech. Like a cut it is identified by WORDS rather than seconds — the
+    word it starts on and the word the next picture starts on — so re-voicing a line
+    moves it without unpinning it; the seconds are derived (`minecraft.block.measure`).
+
+    Its direction file is the operator's as much as the model's and is always kept:
+    the block is edited and recompiled, never regenerated over."""
+
+    id: str  # "mc_00"; also the folder under <workdir>/machinima/
+    anchor_scene: int = -1
+    anchor_word: int = -1
+    end_scene: int = -1  # -1 = to the end of the region the block starts in
+    end_word: int = -1
+    start: float = 0.0  # derived: absolute seconds in the video
+    duration: float = 0.0
+    place: str = ""  # where the matcher thought it happens — the director's hint
+    why: str = ""  # what the matcher wanted played, in the content language
+    direction: str = ""  # workdir-relative path of the direction file, once written
+    draft: str = ""  # workdir-relative clips
+    final: str = ""
+    timing: str = ""  # `anchors.timing_hash` of the played keys when the final was made
+    stale: bool = False  # re-voicing moved a key the actors play: play it again
+    issues: list[str] = []  # what the director, the game or the camera could not do
+    pinned: bool = False  # the operator placed or edited it; a re-match may not drop it
+    failed: bool = False  # given up on: its stretches went back to the other sources
 
 
 class ChatMedia(BaseModel):
@@ -654,6 +690,7 @@ class VideoJob(BaseModel):
     # per scene (see pipeline/framebase.py). Empty in every other mode.
     frame_shots: list[FrameShot] = Field(default_factory=list)
     frame_asks: list[FrameAsk] = Field(default_factory=list)  # pictures still to be made
+    machinima: list[MachinimaBlock] = Field(default_factory=list)  # played-and-filmed blocks
     # the effects laid over that track — arrows, circles, stings — each on the word it
     # is about (see :class:`EffectCue` and pipeline/effects.py). Empty everywhere else.
     effect_cues: list[EffectCue] = Field(default_factory=list)

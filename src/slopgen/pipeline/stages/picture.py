@@ -103,11 +103,50 @@ MATCH_SYSTEM = (
     "were given are written: names, never looks.\n"
     '  • "shots": the stretch numbers this one picture would cover.\n'
     "{sources}"
+    "{machinima}"
     'Respond with JSON only: {{"shots": [{{"n": <number>, "cards": ["name", ...], '
     '"target": "...", "fit": "exact|close|loose|wrong"}}, ...], "asks": [{{"prompt": "...", '
-    '"description": "...", {ask_fields}"shots": [<number>, ...]}}, ...]}}. Every stretch '
+    '"description": "...", {ask_fields}"shots": [<number>, ...]}}, ...]{machinima_field}}}. Every stretch '
     'appears once in "shots". "asks" may be empty.'
 )
+
+# Offered when `minecraft` is ticked and the world is built. Unlike every other
+# source this one is asked for a MOMENT rather than a place: the stretches are played
+# under their own words, so the piece is about this video and nothing else.
+MACHINIMA_NOTE = (
+    "PLAY IT IN THE WORLD'S OWN BUILD. This world is built in Minecraft, and these places in it "
+    "are marked up for staging:\n{places}\n"
+    "Some stretches are better PLAYED there than shown as a still: actors who are this world's "
+    "people (blocky figures — no faces, no fine hand work) do what the narration says, in one of "
+    "these places, filmed under those very words. That is a MOMENT, not a place: a run of "
+    "CONSECUTIVE stretches whose narration has people doing something — walking in, turning to "
+    "each other, talking, sitting down, a crowd at the counter. Never a place that is not listed. "
+    "List them in \"machinima\": each with the stretch numbers it covers (consecutive), the place, "
+    "and in {lang} what is happening. Stretches you put there need no card and no ask; still rank "
+    "cards for them in \"shots\", in case the playing fails.\n"
+)
+
+
+def _machinima_places(ctx) -> str:
+    """The marked-up places of the fandom's Minecraft build, as the matcher reads them,
+    or "" when the source is not ticked or the world is not built — then the section is
+    left out and the field with it."""
+    if "minecraft" not in framebase.sources(ctx.params):
+        return ""
+    fandom = ctx.store.fandoms.get(ctx.params.fandom)
+    mc = getattr(fandom, "minecraft", None)
+    if mc is None or not mc.world:
+        return ""
+    try:
+        from ...minecraft import paths
+        from ...minecraft.registry import Registry
+
+        reg = Registry.load(paths.save_dir(mc))
+    except Exception as e:  # an unreadable markup is a machinima-less run, not a dead one
+        log.warning("picture: the Minecraft markup cannot be read — %s", e)
+        return ""
+    lines = [f"  - «{p.name}»" + (f": {p.description}" if p.description else "") for p in reg.places]
+    return "\n".join(lines)
 
 # What each source that can fill an ask IS, said to the matcher in the terms that
 # decide between them: what it is good at and what it costs. Only the ticked ones are
@@ -169,7 +208,7 @@ def _shots_block(job: VideoJob) -> str:
 
 
 def _match(ctx: AppContext, job: VideoJob, cards: list[FrameCard]) -> tuple[
-        dict[int, list[str]], dict[int, str], dict[int, str], list[dict]]:
+        dict[int, list[str]], dict[int, str], dict[int, str], list[dict], list[dict]]:
     """One call over the whole video: what fits where, what is missing — and, where
     more than one source is ticked, which of them each missing picture comes from."""
     lang = LANG_NAMES.get(ctx.params.lang, ctx.params.lang)
@@ -181,10 +220,14 @@ def _match(ctx: AppContext, job: VideoJob, cards: list[FrameCard]) -> tuple[
     )
     fields = ('"source": "' + "|".join(allowed) + '", '
               + ('"want": "photo|video", ' if "manual" in allowed else "")) if choose else ""
+    places = _machinima_places(ctx)
     data = ctx.llm.complete_json(
         "frame_match", MATCH_SYSTEM.format(
             depth=RANK_DEPTH, lang=lang, sources=_sources_block(allowed),
-            ask_fields=fields), user)
+            ask_fields=fields,
+            machinima=MACHINIMA_NOTE.format(places=places, lang=lang) if places else "",
+            machinima_field=(', "machinima": [{"shots": [<number>, ...], "place": "...", "why": "..."}]'
+                             if places else "")), user)
 
     known = {c.name for c in cards}
     ranked: dict[int, list[str]] = {}
@@ -204,7 +247,8 @@ def _match(ctx: AppContext, job: VideoJob, cards: list[FrameCard]) -> tuple[
         targets[i] = str(row.get("target", "")).strip()
         fits[i] = str(row.get("fit", "")).strip().lower()
     asks = [a for a in data.get("asks", []) if isinstance(a, dict)]
-    return ranked, targets, fits, asks
+    machinima = [m for m in data.get("machinima", []) if isinstance(m, dict)] if places else []
+    return ranked, targets, fits, asks, machinima
 
 
 def fix_durations(job: VideoJob) -> None:
@@ -318,9 +362,23 @@ def run(job: VideoJob, ctx: AppContext) -> None:
                  len(job.frame_shots))
         return
 
-    ranked, targets, fits, asks = ({}, {}, {}, [])
+    ranked, targets, fits, asks, played = ({}, {}, {}, [], [])
     if job.frame_shots:
-        ranked, targets, fits, asks = _match(ctx, job, cards)
+        ranked, targets, fits, asks, played = _match(ctx, job, cards)
+    if job.machinima:
+        # a re-run: the blocks stay where their words are, and say if a re-voice moved
+        # anything their actors play
+        from ...minecraft import block as mc_block
+
+        mc_block.measure(job)
+        mc_block.mark_stale(job)
+    if played:
+        from ...minecraft import block as mc_block
+
+        mc_block.claim(job, played)
+    for i, s in enumerate(job.frame_shots):
+        if s.block:
+            ranked[i] = []  # a played stretch shows its block, not a card
 
     accepts = FIT_ACCEPTS.get(ctx.params.frame_fit, FIT_ACCEPTS["close"])
     for i in list(ranked):
@@ -345,12 +403,17 @@ def run(job: VideoJob, ctx: AppContext) -> None:
         s.fit = fits.get(i, "")
         s.target = targets.get(i, "")
     job.frame_shots = _fuse(job.frame_shots, every, scales, stale, job)
+    if job.machinima:
+        from ...minecraft import block as mc_block
+
+        mc_block.measure(job)
 
     job.frame_asks = _asks_for(job, asks, framebase.ask_sources(ctx.params))
     _effects(job, ctx, every)
     covered = sum(1 for s in job.frame_shots if s.card)
-    log.info("picture: %d shots, %d covered by the base, %d pictures to ask for",
-             len(job.frame_shots), covered, len(job.frame_asks))
+    log.info("picture: %d shots, %d covered by the base, %d played in %d machinima blocks, %d pictures to ask for",
+             len(job.frame_shots), covered, sum(1 for s in job.frame_shots if s.block),
+             len([b for b in job.machinima if not b.failed]), len(job.frame_asks))
 
 
 def _effects(job: VideoJob, ctx: AppContext, cards: list[FrameCard]) -> None:
@@ -411,7 +474,7 @@ def _asks_for(job: VideoJob, asks: list[dict], allowed: list[str] | None = None)
     it wanted a picture for may have ended up covered anyway — and one it thought
     covered may have been blocked. What is actually missing is only knowable here."""
     allowed = allowed or ["manual"]
-    missing = {i for i, s in enumerate(job.frame_shots) if not s.card}
+    missing = {i for i, s in enumerate(job.frame_shots) if not s.card and not s.block}
     out: list[FrameAsk] = []
     claimed: set[int] = set()
     for a in asks:
@@ -585,6 +648,8 @@ def collect(job: VideoJob, ctx: AppContext) -> None:
     else."""
     world = world_of(job, ctx)
     cards = [c for c in (world.frames if world else []) if c.usable]
+    if job.machinima:
+        _film_blocks(job, ctx)
     pending = [a for a in job.frame_asks if not a.card]
 
     if pending and world is not None:
@@ -637,6 +702,29 @@ def collect(job: VideoJob, ctx: AppContext) -> None:
     effects.settle(job, cards)
     framebase.apply_to_scenes(job, cards)
     job.pending_parts = []
+
+
+def _film_blocks(job: VideoJob, ctx: AppContext) -> None:
+    """Play and film every machinima block still short of its final clip. The game not
+    being there pauses the run (see `minecraft.block.MachinimaWaiting`); a block that
+    cannot be made gives its stretches back, and they are asked for like any other
+    stretch the base does not cover."""
+    from ...minecraft import block as mc_block
+
+    mc_block.shoot(job, ctx, final=True)
+    for b in job.machinima:
+        if not b.failed and mc_block.clip(job, b) is None:
+            mc_block.give_up(job, b, "no clip came out of the game")
+    orphans = [i for i, s in enumerate(job.frame_shots) if not s.card and not s.block
+               and not any(i in a.shots for a in job.frame_asks)]
+    if not orphans:
+        return
+    src, want = _source_of({}, framebase.ask_sources(ctx.params))
+    for i in orphans:
+        s = job.frame_shots[i]
+        ask = FrameAsk(id=f"frame_{len(job.frame_asks):02d}", prompt=s.prompt, shots=[i], source=src, want=want)
+        job.frame_asks.append(ask)
+        s.ask_id = ask.id
 
 
 def _brief(job: VideoJob, specs: list[manual.ShotSpec], ctx: AppContext) -> None:

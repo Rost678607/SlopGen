@@ -704,6 +704,18 @@ def apply_to_scenes(job, cards: list[FrameCard]) -> None:
             if b - a <= 1e-6:
                 continue
             cursor = b
+            if s.block:
+                # a played stretch shows its block's clip at the moment of the clip
+                # that lines up with it: the block was filmed under these very words,
+                # so it is seeked, never looped or retimed
+                from ..minecraft import block as mc_block
+
+                blk = mc_block.by_id(job, s.block)
+                path = mc_block.clip(job, blk) if blk else None
+                if path is not None:
+                    parts.append(BgAsset(path=path, duration=b - a, is_photo=False,
+                                         start=max(0.0, a - blk.start), fit="crop"))
+                    continue
             card = by.get(s.card)
             path = card.path if card else None
             if path is None:

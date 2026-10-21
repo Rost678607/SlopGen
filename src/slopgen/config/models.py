@@ -802,8 +802,11 @@ FrameFit = Literal["exact", "close", "loose", "any"]
 #   ai_video — a video generator makes the missing clip (`fandom_video_model`)
 #   manual   — slopgen writes the prompt, the operator makes it elsewhere
 #   search   — slopgen says what to look for, the operator brings real footage
-FandomSource = Literal["frames", "ai_photo", "ai_video", "manual", "search"]
-FANDOM_SOURCES: tuple[str, ...] = ("frames", "ai_photo", "ai_video", "manual", "search")
+#   minecraft — a run of stretches is PLAYED in the world's Minecraft build and filmed
+#              under its words (a machinima block, see `slopgen.minecraft`); it fills
+#              no ask and files no card — the clip belongs to its video
+FandomSource = Literal["frames", "ai_photo", "ai_video", "manual", "search", "minecraft"]
+FANDOM_SOURCES: tuple[str, ...] = ("frames", "ai_photo", "ai_video", "manual", "search", "minecraft")
 # What each setting will actually accept. "any" holds every grade there is, which is
 # what makes it the "stop asking me" position rather than a quality setting.
 FIT_ACCEPTS: dict[str, frozenset[str]] = {
