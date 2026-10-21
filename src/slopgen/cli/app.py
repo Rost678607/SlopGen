@@ -61,11 +61,13 @@ app = typer.Typer(add_completion=False, rich_markup_mode="rich")
 # ConfigStore the top-level callback puts on `ctx.obj`, so none needs an
 # AppContext or an Orchestrator.
 from .loop_cmd import app as loop_app  # noqa: E402
+from .minecraft_cmd import app as minecraft_app  # noqa: E402
 from .models_cmd import app as models_app  # noqa: E402
 from .voices_cmd import app as voices_app  # noqa: E402
 
 app.add_typer(models_app, name="models")
 app.add_typer(voices_app, name="voices")
+app.add_typer(minecraft_app, name="minecraft")
 # The third is neither: a loop is RUN rather than managed, but the loop already
 # running is steered from outside it, and that is what these are.
 app.add_typer(loop_app, name="loop")

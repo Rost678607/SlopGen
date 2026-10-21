@@ -1320,6 +1320,21 @@ class FrameCard(BaseModel):
         return [t for t in self.targets if t.of and t.of in referents]
 
 
+class FandomMinecraft(BaseModel):
+    """Which Minecraft world a fandom is built in.
+
+    The markup itself is not here: it is a list of coordinates and lives in the save
+    it was taken in (`<save>/slopgen/registry.json`, see `slopgen.minecraft.registry`).
+    This only says which save that is — a Prism instance and a world folder in it —
+    so slopgen can read the markup with the game closed and check that the game it is
+    talking to has the right world open."""
+
+    instance: str = ""  # the Prism Launcher instance folder name, e.g. "Object"
+    world: str = ""  # the save folder inside it, e.g. "ОБЪЕКТ"
+    # Prism's own folder, when it is not the usual ~/.local/share/PrismLauncher
+    prism_dir: str = ""
+
+
 class FandomConfig(BaseModel):
     """A fictional world the fandom mode narrates from the INSIDE, and the folder
     that holds it: `configs/fandoms/<name>/` with `fandom.toml`, one or more lore
@@ -1363,6 +1378,10 @@ class FandomConfig(BaseModel):
     # place affords — duty rosters, warnings, recipes, creatures, choices — are a fact
     # about the place, and switching the whole set is one word here.
     shapes: str = ""
+    # Where this world is BUILT, if it is: the Minecraft world a machinima block is
+    # staged and filmed in (see `slopgen.minecraft`). Empty = the world has no build,
+    # and the `minecraft` picture source is not offered.
+    minecraft: FandomMinecraft | None = None
     # -- LLM-compiled, rebuilt when `docs_sha` stops matching (see above) --
     canon: str = ""  # the canon sheet: rules, glossary, factions, timeline, taboos
     docs_sha: str = ""  # sha1 of the documents `canon` was compiled from

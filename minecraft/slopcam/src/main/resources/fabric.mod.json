@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "slopcam",
+  "version": "${version}",
+  "name": "slopcam",
+  "description": "Lets slopgen mark up a world and stage and film machinima in it: markup mode, Easy NPC actors, Flashback recording and export.",
+  "authors": ["slopgen"],
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "client": ["dev.slopgen.slopcam.SlopcamClient"]
+  },
+  "mixins": ["slopcam.mixins.json"],
+  "depends": {
+    "fabricloader": ">=0.16",
+    "minecraft": "~1.21.1",
+    "java": ">=21",
+    "fabric-api": "*",
+    "flashback": "${flashback_version}",
+    "easy_npc": ">=${easy_npc_version}"
+  }
+}

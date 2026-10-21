@@ -168,7 +168,8 @@ def write_fandom(cfg: FandomConfig) -> Path:
         raise ConfigError(f"fandom '{cfg.name}' has no folder to write to")
     cfg.root.mkdir(parents=True, exist_ok=True)
     path = cfg.root / FANDOM_TOML
-    path.write_bytes(tomli_w.dumps(cfg.model_dump()).encode())
+    # TOML has no null: an optional section that is not set (`minecraft`) is left out
+    path.write_bytes(tomli_w.dumps(cfg.model_dump(exclude_none=True)).encode())
     return path
 
 

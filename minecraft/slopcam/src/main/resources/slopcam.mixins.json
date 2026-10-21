@@ -1,0 +1,13 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "dev.slopgen.slopcam.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "GuiMixin",
+    "MouseHandlerMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

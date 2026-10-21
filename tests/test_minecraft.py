@@ -426,3 +426,104 @@ def test_shots_become_spans_of_the_scene():
     assert [s["camera"]["fixed"] for s in plan.shots] == ["", "", "из-за стойки"]
     assert plan.shots[-1]["end"] == pytest.approx(18.0)
     assert all(a["end"] == pytest.approx(b["start"]) for a, b in zip(plan.shots, plan.shots[1:]))
+
+
+# --------------------------------------------------------------------------
+# the line to the game, and the markup as the mod writes it
+# --------------------------------------------------------------------------
+
+import json  # noqa: E402
+import socket  # noqa: E402
+import threading  # noqa: E402
+
+from slopgen.minecraft.client import Game, GameError, GameUnavailable  # noqa: E402
+
+
+def fake_game(handler):
+    """A one-connection NDJSON server answering like slopcam's ControlServer."""
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    port = srv.getsockname()[1]
+
+    def run():
+        conn, _ = srv.accept()
+        f = conn.makefile("rwb")
+        f.write(b'{"event": "world", "data": "/saves/x"}\n')
+        f.flush()
+        for line in f:
+            req = json.loads(line)
+            try:
+                out = {"id": req["id"], "ok": True, "result": handler(req["method"], req["params"])}
+            except Exception as e:
+                out = {"id": req["id"], "ok": False, "error": str(e)}
+            f.write((json.dumps(out) + "\n").encode())
+            f.flush()
+        conn.close()
+        srv.close()
+
+    threading.Thread(target=run, daemon=True).start()
+    return port
+
+
+def test_client_calls_errors_and_events():
+    def handler(method, params):
+        if method == "hello":
+            return {"mod": "slopcam", "in_world": True}
+        raise ValueError("unknown method " + method)
+
+    events = []
+    g = Game(port=fake_game(handler))
+    g.on_event(lambda e, d: events.append((e, d)))
+    with g:
+        assert g.hello()["mod"] == "slopcam"
+        with pytest.raises(GameError, match="unknown method"):
+            g.call("nope")
+    # the event was sent before the reply to hello, on the same stream
+    assert events == [("world", "/saves/x")]
+
+
+def test_client_says_when_the_game_is_not_there():
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    with pytest.raises(GameUnavailable):
+        Game(port=port, timeout=0.5).connect()
+
+
+MOD_WRITTEN = """{
+  "version": 1,
+  "places": [{"id": "p1", "name": "Буфет", "description": "", "screenshot": "shots/place_p1.png"}],
+  "areas": [{"pieces": [{"op": "add", "kind": "box", "a": [0, 1, 0], "b": [3, 1, 3], "points": [],
+              "y0": 0, "y1": 0, "cells": []},
+             {"op": "cut", "kind": "cells", "a": null, "b": null, "points": [], "y0": 0, "y1": 0,
+              "cells": [[1, 1, 1]]}],
+             "id": "a1", "place": "p1", "name": "зал", "description": "", "roles": ["zone"]}],
+  "points": [{"pos": [1.5, 1.0, 1.5], "yaw": 90.0, "id": "t1", "place": "p1", "name": "касса",
+              "description": "", "roles": ["landmark", "entry"]}],
+  "lines": [],
+  "cameras": [{"kind": "fixed", "pos": [2.0, 2.6, 4.0], "yaw": 180.0, "pitch": 10.0, "fov": 60.0,
+               "rail": "", "screenshot": "shots/c1.png", "id": "c1", "place": "p1", "name": "общий",
+               "description": "", "roles": []}],
+  "characters": [{"name": "Повариха", "variants": [{"name": "старшая", "preset": "actors/Повариха/старшая.snbt",
+                  "body": "humanoid", "description": ""}]}],
+  "props": [{"name": "половник", "item": "{count:1,id:\\"minecraft:iron_shovel\\"}", "description": ""}]
+}"""
+
+
+def test_registry_reads_what_the_mod_writes(tmp_path):
+    (tmp_path / "slopgen").mkdir()
+    (tmp_path / "slopgen" / "registry.json").write_text(MOD_WRITTEN, encoding="utf-8")
+    reg = Registry.load(tmp_path)
+    p = reg.place("Буфет")
+    zone = reg.find(p, "зал", (Area,))
+    assert zone.contains((0, 1, 0)) and not zone.contains((1, 1, 1))
+    assert reg.find(p, "касса", (Point,)).roles == ["landmark", "entry"]
+    assert reg.cameras[0].fov == 60.0
+    assert reg.variant("Повариха")[1].preset.endswith(".snbt")
+    # and what Python writes back must keep every field the mod reads
+    reg.save(tmp_path)
+    back = json.loads((tmp_path / "slopgen" / "registry.json").read_text(encoding="utf-8"))
+    assert set(back["areas"][0]["pieces"][1]) >= {"op", "kind", "a", "b", "points", "y0", "y1", "cells"}
+    assert back["cameras"][0]["kind"] == "fixed"
