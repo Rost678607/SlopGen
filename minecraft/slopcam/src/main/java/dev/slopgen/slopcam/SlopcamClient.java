@@ -11,6 +11,7 @@ import dev.slopgen.slopcam.net.Events;
 import dev.slopgen.slopcam.registry.Registry;
 import dev.slopgen.slopcam.registry.RegistryStore;
 import dev.slopgen.slopcam.stage.Performer;
+import dev.slopgen.slopcam.stage.Renderer;
 import dev.slopgen.slopcam.stage.Script;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
@@ -96,6 +97,7 @@ public final class SlopcamClient implements ClientModInitializer {
                 }
             }
             markup.tick(mc);
+            Renderer.clientTick(mc);
         });
         ServerTickEvents.END_SERVER_TICK.register(Performer::serverTick);
         HudRenderCallback.EVENT.register((g, delta) -> MarkupHud.render(g, markup, store));
@@ -131,6 +133,10 @@ public final class SlopcamClient implements ClientModInitializer {
             Path out = p.has("out") ? Path.of(p.get("out").getAsString())
                     : store.dir().resolve("takes").resolve(name.replaceAll("[^\\w.-]", "_") + ".zip");
             return Performer.start(script, record, out, name);
+        });
+        control.handle("render", p -> {
+            Boolean shaders = p.has("shaders") && !p.get("shaders").isJsonNull() ? p.get("shaders").getAsBoolean() : null;
+            return Renderer.start(p.getAsJsonArray("jobs"), shaders);
         });
         control.handleNow("perform.cancel", p -> {
             Performer.cancel(p.has("why") ? p.get("why").getAsString() : "asked to");
@@ -174,7 +180,7 @@ public final class SlopcamClient implements ClientModInitializer {
         o.addProperty("save_dir", store.saveDir() == null ? null : store.saveDir().toString());
         o.addProperty("world", store.saveDir() == null ? null : store.saveDir().getFileName().toString());
         o.addProperty("markup", markup.active());
-        o.addProperty("busy", Performer.busy());
+        o.addProperty("busy", Performer.busy() || Renderer.busy());
         o.addProperty("player", mc.player == null ? null : mc.player.getGameProfile().getName());
         return o;
     }

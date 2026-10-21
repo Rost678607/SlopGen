@@ -129,3 +129,67 @@ def places(ctx: typer.Context,
             rprint(f"  {c.name}: " + ", ".join(f"{v.name} [dim]({v.body})[/dim]" for v in c.variants))
     if reg.props:
         rprint("\n[bold]props[/bold]  " + ", ".join(p.name for p in reg.props))
+
+
+@app.command()
+def shoot(ctx: typer.Context,
+          direction: Path = typer.Argument(..., exists=True, help="a direction file (anchors in `sec` — there is no narration here)"),
+          fandom: Optional[str] = typer.Option(None, "--fandom", "-f"),
+          instance: Optional[str] = typer.Option(None, "--instance"),
+          world: Optional[str] = typer.Option(None, "--world"),
+          length: float = typer.Option(8.0, "--length", help="seconds of the block"),
+          final: bool = typer.Option(False, "--final/--draft", help="with shaders at full size, or a quick draft"),
+          out: Path = typer.Option(Path("output/machinima"), "--out"),
+          port: int = typer.Option(DEFAULT_PORT, "--port")) -> None:
+    """Play, film and join one direction file — the whole machinima path, without a run."""
+    import json as _json
+
+    from ..minecraft import film, library
+    from ..minecraft.anchors import Clock
+    from ..minecraft.compile import compile_block
+    from ..minecraft.direction import Direction, validate
+
+    mc = _world(ctx, fandom, instance, world)
+    reg, src = load_registry(mc, port)
+    d = Direction.model_validate(_json.loads(direction.read_text(encoding="utf-8")))
+    lib = library.load(paths.save_dir(mc))
+    errs = validate(d, reg, None, set(lib.gestures), set(lib.poses))
+    if errs:
+        for e in errs:
+            rprint(f"[red]✘[/red] {e}")
+        raise typer.Exit(1)
+    out.mkdir(parents=True, exist_ok=True)
+    stem = direction.stem
+    with Game(port=port, timeout=10.0) as g:
+        h = g.hello()
+        if not h.get("in_world"):
+            rprint("[yellow]open the world in the game first[/yellow]")
+            raise typer.Exit(1)
+        # the crowds need the world around each place: one quick take per scene would
+        # be wasteful, so a crowd-less first pass is not attempted — scenes with crowds
+        # are compiled against an empty world and the mod's own scan of the first take
+        plans = compile_block(d, reg, lib, Clock([]), 0.0, length)
+        takes, jobs = [], []
+        for plan in plans:
+            for w in plan.warnings:
+                rprint(f"[yellow]![/yellow] scene {plan.index + 1}: {w}")
+            name = f"{stem}_s{plan.index + 1}"
+            rprint(f"[dim]playing scene {plan.index + 1} ({plan.script['ticks'] / 20:.1f}s)…[/dim]")
+            take = film.perform(g, plan, (out / name).with_suffix(".zip").resolve(), name)
+            film.save_report(take, out / f"{name}.report.json")
+            for i in take.issues:
+                rprint(f"[yellow]![/yellow] {i}")
+            ks, issues = film.keys(plan, take, reg)
+            for i in issues:
+                rprint(f"[yellow]![/yellow] {i}")
+            takes.append(take)
+            jobs.append(film.job(plan, take, ks, (out / f"{name}.{'final' if final else 'draft'}.mp4").resolve(), final))
+        rprint(f"[dim]rendering {len(jobs)} scene(s) {'with shaders' if final else 'as a draft'} — the game leaves the world and comes back…[/dim]")
+        results = film.render(g, jobs, final)
+    bad = [r for r in results if not r.get("ok")]
+    for r in bad:
+        rprint(f"[red]✘[/red] {r.get('out')}: {r.get('error', 'not written')}")
+    clips = [Path(r["out"]) for r in results if r.get("ok")]
+    if clips:
+        joined = film.join(clips, out / f"{stem}.{'final' if final else 'draft'}.mp4", length)
+        rprint(f"[green]✔[/green] {joined}")

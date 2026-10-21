@@ -51,6 +51,11 @@ class World:
                    bytearray(base64.b64decode(data["solid"])),
                    bytearray(base64.b64decode(data["opaque"])))
 
+    def to_payload(self) -> dict:
+        return {"origin": list(self.origin), "size": list(self.size),
+                "solid": base64.b64encode(bytes(self.solid)).decode(),
+                "opaque": base64.b64encode(bytes(self.opaque)).decode()}
+
     def _index(self, c: Cell) -> int:
         x, y, z = (c[i] - self.origin[i] for i in range(3))
         sx, sy, sz = self.size

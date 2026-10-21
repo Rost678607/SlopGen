@@ -57,6 +57,8 @@ class ScenePlan:
     script: dict
     shots: list[dict] = field(default_factory=list)  # {"start","end","camera"} in scene seconds
     warnings: list[str] = field(default_factory=list)
+    # who speaks when, in take seconds (preroll included): the dialogue camera cuts on these
+    turns: list[dict] = field(default_factory=list)
 
 
 def scene_spans(d: Direction, clock: Clock, block_start: float, block_len: float) -> list[tuple[float, float]]:
@@ -92,6 +94,7 @@ class _Ctx:
         self.lines = {e.name: e for e in here if isinstance(e, Line)}
         self.aliases = {c.alias for c in sc.cast}
         self.warnings: list[str] = []
+        self.turns: list[dict] = []
 
     def t(self, anchor) -> float:
         """Take seconds (preroll included) for an anchor."""
@@ -277,7 +280,7 @@ def _scene(i: int, sc: Scene, reg: Registry, lib: Library, clock: Clock, block_s
         "shots": [{**s, "start_tick": tick(s["start"] + PREROLL), "end_tick": tick(s["end"] + PREROLL)}
                   for s in shots],
     }
-    return ScenePlan(i, s0, s1, script, shots, cx.warnings)
+    return ScenePlan(i, s0, s1, script, shots, cx.warnings, sorted(cx.turns, key=lambda t: t["start"]))
 
 
 def _cell(p) -> tuple[int, int, int]:
@@ -375,6 +378,8 @@ def _dialogue(a: Action, t: float, until: float | None, cx: _Ctx, bodies, lib: L
             ends[k] = starts[k] + (later - starts[k]) / open_n
     talk, listen, nod = lib.gestures.get("talk"), lib.gestures.get("listen"), lib.gestures.get("nod")
     for turn, s, e in zip(turns, starts, ends):
+        cx.turns.append({"start": s, "end": e, "speaker": turn.speaker,
+                         "listeners": [p for p in people if p != turn.speaker]})
         for p in people:
             b = bodies.setdefault(p, _Body())
             if p == turn.speaker:

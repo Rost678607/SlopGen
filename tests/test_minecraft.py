@@ -2,6 +2,7 @@
 plain data and geometry, tested without a game or a model."""
 
 import math
+from pathlib import Path
 import random
 
 import pytest
@@ -528,3 +529,47 @@ def test_registry_reads_what_the_mod_writes(tmp_path):
     back = json.loads((tmp_path / "slopgen" / "registry.json").read_text(encoding="utf-8"))
     assert set(back["areas"][0]["pieces"][1]) >= {"op", "kind", "a", "b", "points", "y0", "y1", "cells"}
     assert back["cameras"][0]["kind"] == "fixed"
+
+
+# --------------------------------------------------------------------------
+# filming: camera keys from a take's report
+# --------------------------------------------------------------------------
+
+from slopgen.minecraft import film  # noqa: E402
+
+
+def fake_take(plan) -> film.Take:
+    """A report as the mod sends it: everybody standing where the script put them."""
+    n = plan.script["ticks"] + 1
+    actors = {}
+    for a in plan.script["actors"]:
+        row = [a["pos"][0], a["pos"][1], a["pos"][2], a["yaw"], a["yaw"], 0.0, 1.62]
+        actors[a["id"]] = {"face": a["face"], "extra": a.get("extra", False), "track": [row] * n}
+    world = floor_world()
+    return film.Take(plan.index, "/tmp/take.zip", {
+        "actors": actors, "world": world.to_payload(),
+        "uuids": {a["id"]: f"00000000-0000-0000-0000-{i:012d}" for i, a in enumerate(plan.script["actors"])},
+    })
+
+
+def test_camera_keys_cover_the_scene_and_cut_between_shots():
+    plan = compiled()[0]
+    take = fake_take(plan)
+    ks, issues = film.keys(plan, take, canteen())
+    ticks = [k["tick"] for k in ks]
+    assert ticks == sorted(ticks)
+    assert ticks[0] >= plan.script["preroll"] - 1
+    assert ticks[-1] <= plan.script["ticks"] + 1
+    cuts = [k for k in ks if k.get("cut")]
+    # three shots, and the dialogue shot cuts once per turn
+    assert len(cuts) >= 3
+    for k in ks:
+        assert 10 <= k["fov"] <= 120 and len(k["pos"]) == 3
+
+
+def test_render_job_is_half_size_for_a_draft():
+    plan = compiled()[0]
+    take = fake_take(plan)
+    j = film.job(plan, take, [{"tick": 30}], Path("/tmp/x.mp4"), final=False)
+    assert (j["width"], j["height"]) == (540, 960)
+    assert j["start_tick"] == plan.script["preroll"] and len(j["actors"]) == len(plan.script["actors"])
