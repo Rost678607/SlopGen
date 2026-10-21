@@ -67,7 +67,7 @@ def good_direction() -> dict:
             {"at": {"word": {"scene": 0, "i": 3}}, "do": "dialogue", "who": ["a", "b"],
              "turns": [{"speaker": "b", "until": {"word": {"scene": 0, "i": 5}}}, {"speaker": "a"}]},
             {"at": {"between": [{"scene": 1, "i": 0}, {"scene": 1, "i": 2}], "frac": 0.4},
-             "who": "a", "do": "gesture", "name": "кивок", "ease": "out"},
+             "who": "a", "do": "gesture", "name": "nod", "ease": "out"},
         ],
         "shots": [
             {"at": {"word": {"scene": 0, "i": 1}}, "camera": {"on": "b", "side": "back", "distance": [4, 2.5]}},
@@ -356,3 +356,73 @@ def test_fixed_camera_reports_rather_than_moves():
     p = camera.fixed((5.5, 2.6, 8.5), camera.Scene3D(w), duration=1.0, aim=tr, aim_name="a")
     assert {s.pos for s in p.samples} == {(5.5, 2.6, 8.5)}
     assert p.issues and "hidden" in p.issues[0].what
+
+
+# --------------------------------------------------------------------------
+# compile
+# --------------------------------------------------------------------------
+
+from slopgen.minecraft import compile as mc_compile  # noqa: E402
+from slopgen.minecraft.library import BUILTIN  # noqa: E402
+
+
+def compiled(raw=None, world=True):
+    d = Direction.model_validate(raw or good_direction())
+    c = clock()
+    return mc_compile.compile_block(d, canteen(), BUILTIN, c, block_start=10.0, block_len=18.0,
+                                    worlds={"Буфет": floor_world()} if world else None)
+
+
+def test_compile_lays_actions_on_ticks_after_the_preroll():
+    raw = good_direction()
+    raw["scenes"][0]["action"][2]["name"] = "nod"
+    plan = compiled(raw)[0]
+    s = plan.script
+    walk = next(e for e in s["events"] if e["op"] == "navigate" and e["actor"] == "b")
+    # «подошёл» is word (0, 2) at 12.0s; block starts at 10.0; preroll 1.5s
+    raw_t = anchors.resolve(Anchor(word=ref(0, 1)), clock(), 10.0)
+    assert walk["tick"] == mc_compile.tick(raw_t + mc_compile.PREROLL)
+    assert walk["target"] == {"pos": [7.5, 1, 7.5]}
+    assert s["ticks"] == mc_compile.tick(18.0 + mc_compile.PREROLL)
+    assert [a["id"] for a in s["actors"][:2]] == ["a", "b"]
+    assert s["actors"][0]["equip"]["mainhand"] == "minecraft:iron_shovel"
+    assert s["events"] == sorted(s["events"], key=lambda e: (e["tick"], e["actor"]))
+
+
+def test_gesture_is_added_onto_the_held_pose():
+    raw = good_direction()
+    sc = raw["scenes"][0]
+    sc["action"] = [{"at": {"sec": 1}, "who": "a", "do": "pose", "name": "head_down"},
+                    {"at": {"sec": 4}, "who": "a", "do": "gesture", "name": "nod"}]
+    plan = compiled(raw)[0]
+    head = plan.script["bodies"]["a"]["parts"]["HEAD"]
+    pitch = {tk: rot[0] for tk, rot in head}
+    t_nod_peak = mc_compile.tick(4 + mc_compile.PREROLL + 0.2)
+    before = max(v for tk, v in pitch.items() if tk < mc_compile.tick(4 + mc_compile.PREROLL))
+    assert before == pytest.approx(35.0)  # bowed
+    assert pitch[t_nod_peak] == pytest.approx(55.0)  # bowed + the nod's 20°
+
+
+def test_dialogue_turns_look_and_talk():
+    plan = compiled()[0]
+    looks = [e for e in plan.script["events"] if e["op"] == "look"]
+    # first turn: b speaks, a looks at b; second: a speaks, b looks at a
+    assert any(e["actor"] == "a" and e["target"] == {"actor": "b"} for e in looks)
+    assert any(e["actor"] == "b" and e["target"] == {"actor": "a"} for e in looks)
+    assert "RIGHT_ARM" in plan.script["bodies"]["b"]["parts"]  # talking hand
+
+
+def test_crowd_needs_a_world_scan():
+    plan = compiled(world=False)[0]
+    assert not any(a.get("extra") for a in plan.script["actors"])
+    assert any("crowd" in w for w in plan.warnings)
+    plan = compiled()[0]
+    extras = [a for a in plan.script["actors"] if a.get("extra")]
+    assert extras and all(a["face"] != "Практиканты/очкарик" for a in extras)
+
+
+def test_shots_become_spans_of_the_scene():
+    plan = compiled()[0]
+    assert [s["camera"]["fixed"] for s in plan.shots] == ["", "", "из-за стойки"]
+    assert plan.shots[-1]["end"] == pytest.approx(18.0)
+    assert all(a["end"] == pytest.approx(b["start"]) for a, b in zip(plan.shots, plan.shots[1:]))
