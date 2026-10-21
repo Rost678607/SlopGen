@@ -411,11 +411,14 @@ function shotHTML(s, i, mine = [], rows = null) {
              top:${70 + (rows ? rows.rows.get(n) : 0) * FX_ROW_H}px"
       title="${esc(`${q.effect}${q.said ? " · " + q.said : ""}${q.cycles ? ` ×${q.loops}` : ""}`)}">
       <b>${esc(q.effect)}${q.cycles ? ` ×${q.loops}` : ""}</b></i>`).join("");
-  return `<div class="shot${sel ? " sel" : ""}${s.card ? "" : " empty"}"
+  // a stretch PLAYED in a machinima block shows the block, whatever card it may have
+  const blk = s.block ? (MONT.doc.machinima || []).find((b) => b.id === s.block) : null;
+  return `<div class="shot${sel ? " sel" : ""}${s.card || blk ? "" : " empty"}${blk ? " played" : ""}"
       data-shot="${i}" style="left:${X(s.start)}px;width:${Math.max(X(s.duration) - 2, 8)}px;
                               height:${70 + deep}px">
-    <div class="pic" style="${thumb}"></div>
-    <div class="tag">${esc(s.card || lab("js.mont.nopicture"))}</div>
+    <div class="pic" style="${blk ? "" : thumb}"></div>
+    <div class="tag">${blk ? `🎬 ${esc(blk.id)}${blk.clip ? "" : " · " + esc(lab("js.mc.noclip-short", "не снято"))}`
+                            : esc(s.card || lab("js.mont.nopicture"))}</div>
     ${s.move ? `<div class="kind">${esc((s.move.keys || []).length >= 2
         ? lab("mv.keys") : lab("mv." + s.move.kind, s.move.kind))}</div>` : ""}
     ${s.pinned ? `<span class="pin">✔</span>` : ""}
@@ -1574,12 +1577,32 @@ function shotInspector() {
     ${s.card ? `<button class="ghost" id="i-clear">${lab("js.mont.clearshot")}</button>` : ""}
   </div>
   ${s.said ? `<p class="said"><span class="dim">${lab("js.said-here")}</span> ${esc(s.said)}</p>` : ""}
+  ${machinimaRow(s)}
   <div class="row">${lookRow(s)}</div>
   ${moveBlock(s, card, targets)}
   <h4 class="insp-h">${lab("js.mont.whatshown")}</h4>
   <div class="strip">${strip || `<p class="empty">${lab("js.the-base-is-empty")}</p>`}</div>
   <div class="take" id="i-take"><span class="say">${lab("js.mont.newcard")}</span>
     <input type="file" hidden accept="image/*,video/*"></div>`;
+}
+
+// Machinima: a stretch played in the world's Minecraft build (see machinima.js). The
+// shot is either in a block — open its editor — or, when the world is built, may be
+// made into one, alone or with its neighbours up to the next block.
+function machinimaRow(s) {
+  if (s.block) {
+    const b = (MONT.doc.machinima || []).find((x) => x.id === s.block) || { id: s.block };
+    return `<div class="block"><h4 class="insp-h">🎬 ${lab("js.mc.title", "Машинима")} ${esc(b.id)}</h4>
+      <div class="row"><span class="dim">${b.clip ? (b.final ? lab("js.mc.has-final", "снят чистовик")
+                                                              : lab("js.mc.has-draft", "есть черновик"))
+                                                  : lab("js.mc.noclip-short", "не снято")}${b.stale ? " · " + lab("js.mc.stale", "переиграть") : ""}${b.issues ? ` · ⚠ ${b.issues}` : ""}</span>
+        <span class="grow"></span>
+        <button class="primary" data-mc-open="${esc(b.id)}">${lab("js.mc.open", "открыть съёмку")}</button></div></div>`;
+  }
+  if (!MONT.doc.minecraft) return "";
+  const i = montSel.i;
+  return `<div class="row"><span class="dim">${lab("js.mc.offer", "можно сыграть в мире")}</span><span class="grow"></span>
+    <button class="ghost" data-mc-new="${i}-${i}">🎬 ${lab("js.mc.make", "сыграть в Майнкрафте")}</button></div>`;
 }
 
 // The shot's ANIMATION, as its own named block. It used to be an unlabelled row of six

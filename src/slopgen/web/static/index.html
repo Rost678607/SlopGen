@@ -106,6 +106,8 @@
         <div id="w-cast"></div>
       </div>
 
+      <div id="w-minecraft" hidden></div>
+
       <div id="w-frames" hidden>
         <div id="cards"></div>
         <label class="drop" id="drop">
@@ -667,6 +669,10 @@
   <!-- Asking before doing. Not `confirm()`: a native dialog blocks the whole renderer
        until somebody clicks it, which is wrong for a tool you leave running in a tab
        and fatal for anything driving the page — the same reason `say()` is inline. -->
+  <!-- A machinima block's editor: its direction as a form, its clip, draft and compile
+       (see static/machinima.js). Over the room, like the other sheets. -->
+  <div id="mont-mc" hidden><div class="sheet" id="mc-sheet"></div></div>
+
   <div id="mont-ask" hidden>
     <div class="sheet">
       <h3 id="ask-title"></h3>
@@ -816,4 +822,5 @@
 <script src="/static/chat.js"></script>
 <script src="/static/chat_reel.js"></script>
 <script src="/static/montage.js"></script>
+<script src="/static/machinima.js"></script>
 </body>

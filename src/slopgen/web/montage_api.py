@@ -411,7 +411,23 @@ def mount(app, *, store: ConfigStore, sup, guard, run_or_404, card_json,
         out["effects"] = fxeff.rows(job, cards, store.effects,
                                     aspect=(v.width / v.height) if v.height else 9 / 16)
         out["fx_base"] = [effect_json(e) for e in store.effects.values() if e.usable]
+        # whether this world is built in Minecraft — the room offers to PLAY a stretch
+        # only then — and the blocks already on the track
+        from ..minecraft import block as mc_block
+
+        fandom = store.fandoms.get(run.params.fandom) if run.params.mode == "fandom" else None
+        mc = getattr(fandom, "minecraft", None)
+        out["minecraft"] = bool(mc and mc.world)
+        out["machinima"] = [{"id": b.id, "start": b.start, "duration": b.duration, "failed": b.failed,
+                             "stale": b.stale, "clip": mc_block.clip(job, b) is not None,
+                             "final": bool(b.final), "issues": len(b.issues)} for b in job.machinima]
         return out
+
+    # the machinima blocks of a track are edited here too, through the same door
+    from . import machinima_api
+
+    machinima_api.mount_runs(app, store=store, guard=guard, run_or_404=run_or_404,
+                             open_job=open_job, save=save, doc=doc)
 
     # -- the document -------------------------------------------------------
 

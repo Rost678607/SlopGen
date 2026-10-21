@@ -20,6 +20,7 @@ from ..config import ConfigStore
 from ..config.models import FandomMinecraft
 from ..minecraft import paths
 from ..minecraft.client import DEFAULT_PORT, Game, GameUnavailable
+from ..minecraft.markup import load_registry
 from ..minecraft.registry import Area, Camera, Line, Point, Registry
 
 app = typer.Typer(add_completion=False, help="the fandom's Minecraft world: the slopcam mod, the game, the markup")
@@ -89,18 +90,6 @@ def status(ctx: typer.Context,
         mc = _world(ctx, fandom, None, None)
         if mc.world and h.get("world") != mc.world:
             rprint(f"[yellow]the fandom is built in {mc.world!r}, but {h.get('world')!r} is open[/yellow]")
-
-
-def load_registry(mc: FandomMinecraft, port: int = DEFAULT_PORT) -> tuple[Registry, str]:
-    """The markup, from the game if it has this world open, else from the save."""
-    try:
-        with Game(port=port, timeout=2.0) as g:
-            h = g.hello()
-            if h.get("in_world") and (not mc.world or h.get("world") == mc.world):
-                return Registry.model_validate(g.call("registry.get")), "game"
-    except GameUnavailable:
-        pass
-    return Registry.load(paths.save_dir(mc)), "save"
 
 
 @app.command()

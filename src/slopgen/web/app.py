@@ -2758,6 +2758,10 @@ def create_app(store: ConfigStore, bound: str = "", bound_port: int = 0,
     chat_api.mount(app, store=store, sup=sup, guard=guard, run_or_404=run_or_404)
     montage_api.mount(app, store=store, sup=sup, guard=guard, run_or_404=run_or_404,
                       card_json=_card_json, effect_json=_effect_json)
+    # a world's Minecraft tab: where it is built and its markup (see `web/machinima_api`)
+    from . import machinima_api
+
+    machinima_api.mount_worlds(app, store=store, guard=guard, world_or_404=world_or_404)
 
     @app.get("/api/runs/{run_id}/events")
     async def run_events(run_id: str, after: int = 0,

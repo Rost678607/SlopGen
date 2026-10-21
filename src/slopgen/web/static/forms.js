@@ -172,6 +172,12 @@ const FORMS = {
           "l": "web.f.src.search"
         },
         {
+          "f": "src_minecraft",
+          "kind": "checkbox",
+          "inline": true,
+          "l": "web.f.src.minecraft"
+        },
+        {
           "note": "web.src.note",
           "cls": "dim"
         },

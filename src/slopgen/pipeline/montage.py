@@ -308,6 +308,7 @@ def _shot_json(i: int, s: FrameShot) -> dict:
         "said": s.said,
         "referents": list(s.referents),
         "ask": s.ask_id,
+        "block": s.block,
         "move": {"kind": s.move.kind,
                  "a": s.move.rect_a.model_dump(), "b": s.move.rect_b.model_dump(),
                  "from": s.move.move_start, "to": s.move.move_end,
@@ -437,9 +438,15 @@ def blocking(job: VideoJob) -> list[dict]:
     silent = sum(1 for s in beats if not (s.audio and s.words))
     if silent:
         out.append({"what": "unvoiced", "n": silent})
-    empty = sum(1 for s in job.frame_shots if not s.card)
+    empty = sum(1 for s in job.frame_shots if not s.card and not s.block)
     if empty:
         out.append({"what": "uncovered", "n": empty})
+    # a played stretch is covered by its block's clip — once there is one
+    from ..minecraft import block as mc_block
+
+    unfilmed = sum(1 for b in job.machinima if not b.failed and mc_block.clip(job, b) is None)
+    if unfilmed:
+        out.append({"what": "unfilmed", "n": unfilmed})
     return out
 
 

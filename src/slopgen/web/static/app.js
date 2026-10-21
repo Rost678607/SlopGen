@@ -2275,7 +2275,7 @@ function bindConfigs(kind) {
 
 // inside a world: its lore, who is in it, and the pictures it is told out of
 const SUBS = [["lore", "js.lore"], ["cast", "js.who-lives-here"],
-              ["frames", "js.frame-base"]];
+              ["frames", "js.frame-base"], ["minecraft", "js.mc.tab"]];
 let sub = "lore";
 const drawSubMenu = () => ($("#w-sub").innerHTML = SUBS.map(([k, key]) =>
   `<button data-sub="${k}"${k === sub ? ' class="on"' : ""}>${esc(lab(key))}</button>`)
@@ -2294,7 +2294,9 @@ function openSub(which) {
   $("#w-lore").hidden = which !== "lore";
   $("#w-castbox").hidden = which !== "cast";
   $("#w-frames").hidden = which !== "frames";
+  $("#w-minecraft").hidden = which !== "minecraft";
   if (which === "frames") { cardsRun = ""; loadCards(); }
+  else if (which === "minecraft") loadMinecraftWorld(world);
   else loadWorld();
 }
 
@@ -4164,7 +4166,7 @@ async function loadOptions() {
 }
 
 // The fandom form's source boxes as the list the server reads, in the form's order.
-const FANDOM_SOURCES = ["frames", "ai_photo", "ai_video", "manual", "search"];
+const FANDOM_SOURCES = ["frames", "ai_photo", "ai_video", "manual", "search", "minecraft"];
 const sourcesOf = (form) =>
   FANDOM_SOURCES.filter((s) => form.querySelector(`[name="src_${s}"]`)?.checked);
 

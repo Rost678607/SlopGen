@@ -184,10 +184,14 @@ def mark_stale(job: VideoJob) -> None:
 
 
 def shoot(job: VideoJob, ctx, final: bool = True, port: int = DEFAULT_PORT,
-          only: set[str] | None = None) -> None:
+          only: set[str] | None = None, force: bool = False) -> None:
     """Direct what has no direction, then play, film and join every block that needs a
-    clip. Pauses the run (`MachinimaWaiting`) when the game is not reachable."""
-    todo = [b for b in job.machinima if needs_shooting(job, b, final) and (only is None or b.id in only)]
+    clip — or, with `force`, every block in `only` whether it has one or not (the
+    montage room's «draft» and «compile»). Pauses the run (`MachinimaWaiting`) when the
+    game is not reachable."""
+    todo = [b for b in job.machinima
+            if (only is None or b.id in only)
+            and ((force and not b.failed) or needs_shooting(job, b, final))]
     if not todo:
         return
     fandom = ctx.store.fandoms.get(ctx.params.fandom)
