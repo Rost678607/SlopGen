@@ -40,7 +40,22 @@ and given back even if the game was closed while in the mode.
 
 `127.0.0.1:25599` (`config/slopcam.json`), newline-delimited JSON: `{"id", "method",
 "params"}` → `{"id", "ok", "result" | "error"}`, plus unprompted `{"event", "data"}`.
-Methods so far: `hello`, `status`, `registry.get`, `registry.put`, `markup.state`.
+Methods: `hello`, `status`, `registry.get`, `registry.put`, `markup.state`,
+`world.scan`, `perform` (play one scene and record it), `perform.cancel`, `render`
+(film recorded takes in one trip out of the world and back).
+
+## Playing and filming
+
+A take is played first and filmed second. `perform` makes the player an invisible
+spectator above the place, sets time and weather, places the actors as copies of their
+Easy NPC presets (AI off, moved by the mod), starts Flashback, runs the script a tick
+at a time, and puts everything back; its report carries every actor's position on every
+tick and a scan of the blocks around. `render` opens each replay in Flashback — which
+closes the world, hence batches — writes the camera keys slopgen planned, hides the
+spectators, the player and the name tags, exports (shaders on for a final) and reopens
+the world. Calls into Flashback's internals are in `FlashbackBridge`, pinned to 0.39.8.
+Units of Easy NPC's part rotations are a config switch (`poseRadians`, `positionScale`)
+until confirmed in game.
 
 ---
 
@@ -85,5 +100,20 @@ Flashback 0.39.8 и Easy NPC 7.12.1+.
 ## Сокет
 
 `127.0.0.1:25599` (`config/slopcam.json`), JSON построчно: `{"id", "method", "params"}`
-→ `{"id", "ok", "result" | "error"}`, плюс события `{"event", "data"}`. Пока есть методы
-`hello`, `status`, `registry.get`, `registry.put`, `markup.state`.
+→ `{"id", "ok", "result" | "error"}`, плюс события `{"event", "data"}`. Методы: `hello`,
+`status`, `registry.get`, `registry.put`, `markup.state`, `world.scan`, `perform` (сыграть
+одну сцену и записать), `perform.cancel`, `render` (снять записанные дубли за одну
+поездку из мира и обратно).
+
+## Игра и съёмка
+
+Дубль сначала играется, потом снимается. `perform` делает игрока невидимым наблюдателем
+над местом, ставит время и погоду, расставляет актёров — копии их пресетов Easy NPC (ИИ
+выключен, двигает мод), запускает Flashback, проигрывает сценарий по тикам и всё
+возвращает; в отчёте — позиции всех актёров на каждом тике и снимок блоков вокруг.
+`render` открывает каждый реплей во Flashback — а это закрывает мир, поэтому пакетами, —
+пишет ключи камеры, рассчитанные slopgen, прячет наблюдателей, игрока и подписи над
+головами, экспортирует (для чистовика — с шейдерами) и снова открывает мир. Вызовы во
+внутренности Flashback собраны в `FlashbackBridge` и привязаны к 0.39.8. Единицы
+поворотов частей тела Easy NPC — переключатели в конфиге (`poseRadians`,
+`positionScale`), пока не подтверждены в игре.
